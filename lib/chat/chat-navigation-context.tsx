@@ -17,7 +17,7 @@ import type { WorkspaceMatch, NoteMatch } from './resolution-types'
 // =============================================================================
 
 export interface SelectionOption {
-  type: 'workspace' | 'note'
+  type: 'workspace' | 'note' | 'confirm_delete'
   id: string
   label: string
   sublabel?: string

@@ -16,6 +16,7 @@ export interface WorkspaceMatch {
   entryName: string
   isDefault: boolean
   updatedAt?: string
+  noteCount?: number
 }
 
 export interface WorkspaceResolutionResult {

@@ -16,6 +16,11 @@ export const IntentType = z.enum([
   'open_recent_workspace',
   'open_note',
   'create_workspace',
+  // Phase 1: Workspace Operations (current entry only)
+  'list_workspaces',
+  'go_to_dashboard',
+  'rename_workspace',
+  'delete_workspace',
   'unsupported',
 ])
 
@@ -37,6 +42,9 @@ export const IntentArgs = z.object({
 
   // For create_workspace: the name for the new workspace
   newWorkspaceName: z.string().optional(),
+
+  // For rename_workspace: the new name to rename to
+  newName: z.string().optional(),
 
   // For unsupported: brief reason why the request is not supported
   reason: z.string().optional(),
@@ -87,6 +95,10 @@ export const SUPPORTED_ACTIONS = [
   'open recent workspace',
   'open note by title',
   'create workspace',
+  'list workspaces',
+  'go to dashboard',
+  'rename workspace',
+  'delete workspace',
 ] as const
 
 export const SUPPORTED_ACTIONS_TEXT = SUPPORTED_ACTIONS.join(', ')

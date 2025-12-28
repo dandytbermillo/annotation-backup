@@ -22,7 +22,7 @@ import type { WorkspaceMatch, NoteMatch } from './resolution-types'
 export interface ChatNavigationResult {
   success: boolean
   message: string
-  action?: 'navigated' | 'created' | 'selected' | 'error'
+  action?: 'navigated' | 'created' | 'selected' | 'renamed' | 'deleted' | 'listed' | 'error'
 }
 
 export interface UseChatNavigationOptions {
@@ -72,8 +72,17 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
           setActiveEntryContext(workspace.entryId)
         }
 
-        // Step 2: Set workspace context
+        // Step 2: Set workspace context (for other consumers)
         setActiveWorkspaceContext(workspace.id)
+
+        // Step 3: Dispatch event for DashboardView to switch view mode
+        // This handles the case where workspace context is already set to this workspace
+        // (setActiveWorkspaceContext early-returns on same value, so subscription won't fire)
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('chat-navigate-workspace', {
+            detail: { workspaceId: workspace.id, workspaceName: workspace.name },
+          }))
+        }
 
         const result: ChatNavigationResult = {
           success: true,
@@ -202,6 +211,143 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
   )
 
   // ---------------------------------------------------------------------------
+  // Go to Dashboard
+  // ---------------------------------------------------------------------------
+
+  const goToDashboard = useCallback(
+    async (entryId?: string): Promise<ChatNavigationResult> => {
+      try {
+        // Keep entry context but clear workspace context
+        // This navigates to the "dashboard" view of the entry
+        if (entryId) {
+          setActiveEntryContext(entryId)
+        }
+
+        // Dispatch event to signal dashboard navigation
+        // DashboardView listens for this and calls handleReturnToDashboard
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('chat-navigate-dashboard', {
+            detail: { entryId },
+          }))
+        }
+
+        const result: ChatNavigationResult = {
+          success: true,
+          message: 'Returned to dashboard',
+          action: 'navigated',
+        }
+
+        onNavigationComplete?.(result)
+        return result
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error))
+        onError?.(err)
+        return {
+          success: false,
+          message: `Failed to navigate: ${err.message}`,
+          action: 'error',
+        }
+      }
+    },
+    [onNavigationComplete, onError]
+  )
+
+  // ---------------------------------------------------------------------------
+  // Rename Workspace
+  // ---------------------------------------------------------------------------
+
+  const renameWorkspace = useCallback(
+    async (workspaceId: string, oldName: string, newName: string): Promise<ChatNavigationResult> => {
+      try {
+        // First, get the workspace to retrieve its current revision
+        const getResponse = await fetch(`/api/note-workspaces/${workspaceId}`)
+        if (!getResponse.ok) {
+          throw new Error('Failed to fetch workspace for rename')
+        }
+        const { workspace } = await getResponse.json()
+
+        // Now rename with the revision
+        const patchResponse = await fetch(`/api/note-workspaces/${workspaceId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: newName,
+            revision: workspace.revision,
+            payload: workspace.payload || { openNotes: [] },
+          }),
+        })
+
+        if (!patchResponse.ok) {
+          const error = await patchResponse.json().catch(() => ({ error: 'Failed to rename workspace' }))
+          throw new Error(error.error || 'Failed to rename workspace')
+        }
+
+        // Refresh workspace list
+        requestWorkspaceListRefresh()
+
+        const result: ChatNavigationResult = {
+          success: true,
+          message: `Renamed workspace "${oldName}" to "${newName}"`,
+          action: 'renamed',
+        }
+
+        onNavigationComplete?.(result)
+        return result
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error))
+        onError?.(err)
+        return {
+          success: false,
+          message: `Failed to rename workspace: ${err.message}`,
+          action: 'error',
+        }
+      }
+    },
+    [onNavigationComplete, onError]
+  )
+
+  // ---------------------------------------------------------------------------
+  // Delete Workspace
+  // ---------------------------------------------------------------------------
+
+  const deleteWorkspace = useCallback(
+    async (workspaceId: string, workspaceName: string): Promise<ChatNavigationResult> => {
+      try {
+        // Call API to delete workspace
+        const response = await fetch(`/api/note-workspaces/${workspaceId}`, {
+          method: 'DELETE',
+        })
+
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ error: 'Failed to delete workspace' }))
+          throw new Error(error.error || 'Failed to delete workspace')
+        }
+
+        // Refresh workspace list
+        requestWorkspaceListRefresh()
+
+        const result: ChatNavigationResult = {
+          success: true,
+          message: `Deleted workspace "${workspaceName}"`,
+          action: 'deleted',
+        }
+
+        onNavigationComplete?.(result)
+        return result
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error))
+        onError?.(err)
+        return {
+          success: false,
+          message: `Failed to delete workspace: ${err.message}`,
+          action: 'error',
+        }
+      }
+    },
+    [onNavigationComplete, onError]
+  )
+
+  // ---------------------------------------------------------------------------
   // Execute Action (from resolution result)
   // ---------------------------------------------------------------------------
 
@@ -273,6 +419,46 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
             action: 'selected',
           }
 
+        // Phase 1: Workspace Operations
+        case 'navigate_dashboard':
+          return goToDashboard()
+
+        case 'list_workspaces':
+          // Workspace list is provided as options - return for UI to display as pills
+          // Use 'selected' action so the UI renders the options as clickable pills
+          return {
+            success: true,
+            message: resolution.message,
+            action: 'selected',
+          }
+
+        case 'rename_workspace':
+          // Rename was already performed by the resolver
+          // Refresh workspace list so UI shows the new name
+          requestWorkspaceListRefresh()
+          return {
+            success: true,
+            message: resolution.message,
+            action: 'renamed',
+          }
+
+        case 'confirm_delete':
+          // Delete confirmation - return for UI to display confirmation pill
+          return {
+            success: true,
+            message: resolution.message,
+            action: 'selected', // Shows the confirmation pill
+          }
+
+        case 'delete_workspace':
+          // Delete was confirmed and executed by resolver (not used directly)
+          // This case is for completeness
+          return {
+            success: true,
+            message: resolution.message,
+            action: 'deleted',
+          }
+
         case 'error':
         default:
           return {
@@ -282,7 +468,7 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
           }
       }
     },
-    [navigateToWorkspace, navigateToNote, createWorkspace]
+    [navigateToWorkspace, navigateToNote, createWorkspace, goToDashboard]
   )
 
   // ---------------------------------------------------------------------------
@@ -291,17 +477,48 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
 
   const selectOption = useCallback(
     async (option: {
-      type: 'workspace' | 'note'
+      type: 'workspace' | 'note' | 'confirm_delete'
       id: string
-      data: WorkspaceMatch | NoteMatch
+      data: WorkspaceMatch | NoteMatch | (WorkspaceMatch & { pendingDelete?: boolean; pendingNewName?: string })
     }): Promise<ChatNavigationResult> => {
-      if (option.type === 'workspace') {
-        return navigateToWorkspace(option.data as WorkspaceMatch)
-      } else {
-        return navigateToNote(option.data as NoteMatch)
+      switch (option.type) {
+        case 'workspace':
+          // Check if this is a pending operation (disambiguation step)
+          const workspaceData = option.data as WorkspaceMatch & { pendingDelete?: boolean; pendingNewName?: string }
+
+          // Handle pending rename (from rename disambiguation)
+          if (workspaceData.pendingNewName) {
+            return renameWorkspace(workspaceData.id, workspaceData.name, workspaceData.pendingNewName)
+          }
+
+          // Handle pending delete (from delete disambiguation)
+          if (workspaceData.pendingDelete) {
+            // Return a result that signals the UI should show delete confirmation
+            // The UI will need to show a new message with the confirmation pill
+            return {
+              success: true,
+              message: `Are you sure you want to permanently delete workspace "${workspaceData.name}"?`,
+              action: 'selected', // Triggers showing the confirmation pill
+            }
+          }
+
+          // Default: navigate to workspace
+          return navigateToWorkspace(option.data as WorkspaceMatch)
+        case 'note':
+          return navigateToNote(option.data as NoteMatch)
+        case 'confirm_delete':
+          // User confirmed deletion - execute delete
+          const workspace = option.data as WorkspaceMatch
+          return deleteWorkspace(workspace.id, workspace.name)
+        default:
+          return {
+            success: false,
+            message: 'Unknown option type',
+            action: 'error',
+          }
       }
     },
-    [navigateToWorkspace, navigateToNote]
+    [navigateToWorkspace, navigateToNote, deleteWorkspace, renameWorkspace]
   )
 
   return {
@@ -309,6 +526,9 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
     navigateToWorkspace,
     navigateToNote,
     createWorkspace,
+    goToDashboard,
+    renameWorkspace,
+    deleteWorkspace,
     selectOption,
   }
 }

@@ -1236,6 +1236,64 @@ export function DashboardView({
     }
   }, [viewMode, activeWorkspaceId, workspaces, hasVisitedWorkspace, entryId, handleWorkspaceSelectById])
 
+  // Chat Navigation Fix 3: Listen for chat-navigate-dashboard events
+  // This handles "go to dashboard" / "back" commands from chat navigation
+  useEffect(() => {
+    const handleChatNavigateDashboard = (event: CustomEvent<{ entryId?: string }>) => {
+      void debugLog({
+        component: "DashboardView",
+        action: "chat_navigate_dashboard_received",
+        metadata: { eventEntryId: event.detail?.entryId, currentEntryId: entryId, viewMode },
+      })
+
+      // Only handle if we're in workspace mode (otherwise already on dashboard)
+      if (viewMode === 'workspace') {
+        handleReturnToDashboard()
+      }
+    }
+
+    window.addEventListener('chat-navigate-dashboard', handleChatNavigateDashboard as EventListener)
+    return () => {
+      window.removeEventListener('chat-navigate-dashboard', handleChatNavigateDashboard as EventListener)
+    }
+  }, [viewMode, entryId, handleReturnToDashboard])
+
+  // Chat Navigation Fix 4: Listen for chat-navigate-workspace events
+  // This handles "open workspace X" commands even when workspace context is unchanged
+  // (setActiveWorkspaceContext early-returns on same value, so subscription won't fire)
+  useEffect(() => {
+    const handleChatNavigateWorkspace = (event: CustomEvent<{ workspaceId: string; workspaceName?: string }>) => {
+      const { workspaceId, workspaceName } = event.detail
+
+      void debugLog({
+        component: "DashboardView",
+        action: "chat_navigate_workspace_received",
+        metadata: { workspaceId, workspaceName, viewMode, activeWorkspaceId },
+      })
+
+      if (!workspaceId) return
+
+      // Check if workspace belongs to this entry
+      const workspaceExists = workspaces.some(ws => ws.id === workspaceId)
+      if (!workspaceExists) {
+        void debugLog({
+          component: "DashboardView",
+          action: "chat_navigate_workspace_not_in_entry",
+          metadata: { workspaceId, workspaceName, entryId },
+        })
+        return
+      }
+
+      // Switch to workspace (works even if already the active workspace)
+      handleWorkspaceSelectById(workspaceId)
+    }
+
+    window.addEventListener('chat-navigate-workspace', handleChatNavigateWorkspace as EventListener)
+    return () => {
+      window.removeEventListener('chat-navigate-workspace', handleChatNavigateWorkspace as EventListener)
+    }
+  }, [viewMode, activeWorkspaceId, workspaces, entryId, handleWorkspaceSelectById])
+
   // Phase 5: Detect workspace deletion while viewing
   // If activeWorkspaceId is no longer in the workspaces list, return to dashboard
   useEffect(() => {

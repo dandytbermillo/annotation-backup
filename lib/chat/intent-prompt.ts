@@ -33,7 +33,24 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
    IMPORTANT: Must include "create", "new", or "make" to be this intent
    Args: newWorkspaceName (optional - if not provided, will be prompted)
 
-5. **unsupported** - Request doesn't match any supported intent
+5. **list_workspaces** - User wants to see all workspaces in current entry
+   Examples: "list workspaces", "show all workspaces", "what workspaces do I have?", "show workspaces"
+   Args: none required
+
+6. **go_to_dashboard** - User wants to return to the entry dashboard (exit workspace view)
+   Examples: "go to dashboard", "back", "exit workspace", "dashboard", "home", "back to dashboard"
+   Args: none required
+
+7. **rename_workspace** - User wants to rename a workspace
+   Examples: "rename workspace Sprint 5 to Sprint 6", "change workspace name to Research", "rename Research to Archive"
+   Args: workspaceName (required - current name), newName (optional - new name)
+
+8. **delete_workspace** - User wants to delete a workspace
+   Examples: "delete workspace Sprint 5", "remove workspace Old", "delete Research workspace"
+   IMPORTANT: This is destructive - only match if user explicitly says "delete" or "remove"
+   Args: workspaceName (required - name of workspace to delete)
+
+9. **unsupported** - Request doesn't match any supported intent
    Args: reason (brief explanation)
 
 ## Intent Disambiguation Rules
@@ -48,8 +65,10 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
 
 ## Special Cases
 
-- "dashboard" or "go to dashboard" → open_workspace with workspaceName: "Dashboard"
-- "home" → open_workspace with workspaceName: "Dashboard"
+- "dashboard", "go to dashboard", "home", "back", "exit workspace" → **go_to_dashboard**
+- "list", "show workspaces", "what workspaces" → **list_workspaces**
+- "delete X", "remove X" (where X is a workspace name) → **delete_workspace**
+- "rename X to Y" → **rename_workspace**
 
 ## Response Format
 
@@ -61,6 +80,7 @@ Return ONLY a JSON object with this exact structure:
     "entryName": "<string or omit>",
     "noteTitle": "<string or omit>",
     "newWorkspaceName": "<string or omit>",
+    "newName": "<string or omit - for rename_workspace>",
     "reason": "<string or omit>"
   }
 }

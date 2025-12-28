@@ -10,16 +10,11 @@
 'use client'
 
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { MessageSquare, Send, X, Loader2, ChevronRight } from 'lucide-react'
+import { MessageSquare, Send, X, Loader2, ChevronRight, PanelLeftClose } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import {
   useChatNavigation,
@@ -27,6 +22,7 @@ import {
   type IntentResolutionResult,
   type ChatMessage,
   type SelectionOption,
+  type WorkspaceMatch,
 } from '@/lib/chat'
 import { getActiveEntryContext } from '@/lib/entry/entry-context'
 import { getActiveWorkspaceContext } from '@/lib/note-workspaces/state'
@@ -143,7 +139,7 @@ export function ChatNavigationPanel({
   trigger,
   className,
   showTrigger = true,
-  anchorClassName,
+  // anchorClassName is no longer used (was for Popover positioning)
 }: ChatNavigationPanelProps) {
   const [isLoading, setIsLoading] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -278,11 +274,28 @@ export function ChatNavigationPanel({
       setIsLoading(true)
 
       try {
+        // Check if this is a pending delete selection (disambiguation for delete)
+        const workspaceData = option.data as WorkspaceMatch & { pendingDelete?: boolean }
+        const isPendingDelete = option.type === 'workspace' && workspaceData.pendingDelete
+
         const result = await selectOption({
           type: option.type,
           id: option.id,
           data: option.data,
         })
+
+        // If this was a pending delete, show confirmation pill
+        const confirmationOptions: SelectionOption[] | undefined = isPendingDelete
+          ? [
+              {
+                type: 'confirm_delete' as const,
+                id: option.id,
+                label: '🗑️ Confirm Delete',
+                sublabel: workspaceData.name,
+                data: workspaceData,
+              },
+            ]
+          : undefined
 
         const assistantMessage: ChatMessage = {
           id: `assistant-${Date.now()}`,
@@ -290,6 +303,7 @@ export function ChatNavigationPanel({
           content: result.message,
           timestamp: new Date(),
           isError: !result.success,
+          options: confirmationOptions,
         }
         addMessage(assistantMessage)
       } catch {
@@ -334,164 +348,190 @@ export function ChatNavigationPanel({
   // Render
   // ---------------------------------------------------------------------------
 
-  const triggerNode = showTrigger ? (
+  // Render trigger button if showTrigger is true (for non-global usage)
+  const triggerButton = showTrigger ? (
     trigger || (
-      <Button variant="ghost" size="icon" className="h-8 w-8">
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8"
+        onClick={() => setOpen(!isOpen)}
+      >
         <MessageSquare className="h-4 w-4" />
         <span className="sr-only">Open chat navigation</span>
       </Button>
     )
-  ) : (
-    <button
-      type="button"
-      aria-hidden="true"
-      tabIndex={-1}
-      className={cn(
-        'fixed bottom-24 left-1/2 -translate-x-1/2 h-0 w-0 opacity-0 pointer-events-none',
-        anchorClassName
-      )}
-    />
-  )
+  ) : null
 
   return (
-    <Popover open={isOpen} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        {triggerNode}
-      </PopoverTrigger>
+    <>
+      {/* Trigger button (only when showTrigger is true) */}
+      {triggerButton}
 
-      <PopoverContent
-        className={cn('w-80 p-0', className)}
-        align="end"
-        sideOffset={8}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between border-b px-3 py-2">
-          <div className="flex items-center gap-2">
-            <MessageSquare className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-medium">Navigate</span>
-          </div>
-          <div className="flex items-center gap-1">
-            {messages.length > 0 && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6"
-                onClick={clearChat}
-              >
-                <X className="h-3 w-3" />
-                <span className="sr-only">Clear chat</span>
-              </Button>
+      {/* Left-side overlay panel */}
+      {isOpen && (
+        <>
+          {/* Backdrop - click to close */}
+          <div
+            className="fixed inset-0 bg-black/20 z-40"
+            onClick={() => setOpen(false)}
+            aria-hidden="true"
+          />
+
+          {/* Panel */}
+          <div
+            className={cn(
+              'fixed left-0 top-0 z-50',
+              'h-screen',
+              'bg-background border-r shadow-xl',
+              'flex flex-col',
+              'animate-in slide-in-from-left duration-200',
+              className
             )}
-          </div>
-        </div>
-
-        {/* Messages */}
-        <ScrollArea className="h-64" ref={scrollRef as any}>
-          <div className="flex flex-col gap-3 p-3">
-            {messages.length === 0 ? (
-              <div className="text-center text-xs text-muted-foreground py-8">
-                <p className="mb-2">Try saying:</p>
-                <p className="italic">&quot;open workspace Research&quot;</p>
-                <p className="italic">&quot;go to note Project Plan&quot;</p>
-                <p className="italic">&quot;create workspace Sprint 12&quot;</p>
+            style={{ width: '25vw', minWidth: '320px' }}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between border-b px-4 py-3 shrink-0">
+              <div className="flex items-center gap-2">
+                <MessageSquare className="h-5 w-5 text-muted-foreground" />
+                <span className="text-base font-medium">Navigate</span>
               </div>
-            ) : (
-              messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={cn(
-                    'flex flex-col gap-1',
-                    message.role === 'user' ? 'items-end' : 'items-start'
-                  )}
-                >
-                  <div
-                    className={cn(
-                      'rounded-lg px-3 py-2 text-sm max-w-[90%]',
-                      message.role === 'user'
-                        ? 'bg-primary text-primary-foreground'
-                        : message.isError
-                          ? 'bg-destructive/10 text-destructive'
-                          : 'bg-muted'
-                    )}
+              <div className="flex items-center gap-1">
+                {messages.length > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={clearChat}
+                    title="Clear chat"
                   >
-                    {message.content}
-                  </div>
-
-                  {/* Selection Pills */}
-                  {message.options && message.options.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {message.options.map((option) => (
-                        <button
-                          key={option.id}
-                          onClick={() => handleSelectOption(option)}
-                          disabled={isLoading}
-                          className="group"
-                        >
-                          <Badge
-                            variant="secondary"
-                            className={cn(
-                              'cursor-pointer transition-colors',
-                              'hover:bg-primary hover:text-primary-foreground',
-                              isLoading && 'opacity-50 cursor-not-allowed'
-                            )}
-                          >
-                            <span className="flex items-center gap-1">
-                              {option.label}
-                              {option.sublabel && (
-                                <span className="text-xs opacity-70">
-                                  ({option.sublabel})
-                                </span>
-                              )}
-                              <ChevronRight className="h-3 w-3 opacity-50 group-hover:opacity-100" />
-                            </span>
-                          </Badge>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))
-            )}
-
-            {/* Loading Indicator */}
-            {isLoading && (
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span className="text-xs">Processing...</span>
+                    <X className="h-4 w-4" />
+                    <span className="sr-only">Clear chat</span>
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => setOpen(false)}
+                  title="Close panel"
+                >
+                  <PanelLeftClose className="h-4 w-4" />
+                  <span className="sr-only">Close panel</span>
+                </Button>
               </div>
-            )}
-          </div>
-        </ScrollArea>
+            </div>
 
-        {/* Input */}
-        <div className="border-t p-2">
-          <div className="flex items-center gap-2">
-            <Input
-              ref={inputRef}
-              type="text"
-              placeholder="Where would you like to go?"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              disabled={isLoading}
-              className="h-8 text-sm"
-            />
-            <Button
-              size="icon"
-              className="h-8 w-8 shrink-0"
-              onClick={sendMessage}
-              disabled={!input.trim() || isLoading}
-            >
-              {isLoading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Send className="h-4 w-4" />
-              )}
-              <span className="sr-only">Send</span>
-            </Button>
+            {/* Messages - takes remaining space */}
+            <ScrollArea className="flex-1" ref={scrollRef as any}>
+              <div className="flex flex-col gap-3 p-4">
+                {messages.length === 0 ? (
+                  <div className="text-center text-sm text-muted-foreground py-12">
+                    <p className="mb-3">Try saying:</p>
+                    <p className="italic mb-1">&quot;open workspace Research&quot;</p>
+                    <p className="italic mb-1">&quot;go to note Project Plan&quot;</p>
+                    <p className="italic mb-1">&quot;create workspace Sprint 12&quot;</p>
+                    <p className="italic">&quot;list workspaces&quot;</p>
+                  </div>
+                ) : (
+                  messages.map((message) => (
+                    <div
+                      key={message.id}
+                      className={cn(
+                        'flex flex-col gap-1',
+                        message.role === 'user' ? 'items-end' : 'items-start'
+                      )}
+                    >
+                      <div
+                        className={cn(
+                          'rounded-lg px-3 py-2 text-sm max-w-[90%]',
+                          message.role === 'user'
+                            ? 'bg-primary text-primary-foreground'
+                            : message.isError
+                              ? 'bg-destructive/10 text-destructive'
+                              : 'bg-muted'
+                        )}
+                      >
+                        {message.content}
+                      </div>
+
+                      {/* Selection Pills */}
+                      {message.options && message.options.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 mt-1.5">
+                          {message.options.map((option) => (
+                            <button
+                              key={option.id}
+                              onClick={() => handleSelectOption(option)}
+                              disabled={isLoading}
+                              className="group"
+                            >
+                              <Badge
+                                variant="secondary"
+                                className={cn(
+                                  'cursor-pointer transition-colors',
+                                  'hover:bg-primary hover:text-primary-foreground',
+                                  isLoading && 'opacity-50 cursor-not-allowed'
+                                )}
+                              >
+                                <span className="flex items-center gap-1">
+                                  {option.label}
+                                  {option.sublabel && (
+                                    <span className="text-xs opacity-70">
+                                      ({option.sublabel})
+                                    </span>
+                                  )}
+                                  <ChevronRight className="h-3 w-3 opacity-50 group-hover:opacity-100" />
+                                </span>
+                              </Badge>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+
+                {/* Loading Indicator */}
+                {isLoading && (
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span className="text-sm">Processing...</span>
+                  </div>
+                )}
+              </div>
+            </ScrollArea>
+
+            {/* Input - fixed at bottom */}
+            <div className="border-t p-3 shrink-0">
+              <div className="flex items-center gap-2">
+                <Input
+                  ref={inputRef}
+                  type="text"
+                  placeholder="Where would you like to go?"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  disabled={isLoading}
+                  className="h-10 text-sm"
+                />
+                <Button
+                  size="icon"
+                  className="h-10 w-10 shrink-0"
+                  onClick={sendMessage}
+                  disabled={!input.trim() || isLoading}
+                >
+                  {isLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Send className="h-4 w-4" />
+                  )}
+                  <span className="sr-only">Send</span>
+                </Button>
+              </div>
+            </div>
           </div>
-        </div>
-      </PopoverContent>
-    </Popover>
+        </>
+      )}
+    </>
   )
 }
