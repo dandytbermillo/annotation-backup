@@ -18,6 +18,7 @@ import { WorkspaceToggleMenu } from "@/components/workspace/workspace-toggle-men
 import { DashboardDock } from "./DashboardDock"
 import { AnnotationAppShell } from "@/components/annotation-app-shell"
 import { setActiveWorkspaceContext, subscribeToWorkspaceListRefresh, requestWorkspaceListRefresh, subscribeToActiveWorkspaceContext } from "@/lib/note-workspaces/state"
+import { useChatNavigationContext } from "@/lib/chat"
 import { requestDashboardPanelRefresh } from "@/lib/dashboard/category-store"
 import type { WorkspacePanel, PanelConfig } from "@/lib/dashboard/panel-registry"
 import { cn } from "@/lib/utils"
@@ -97,6 +98,9 @@ export function DashboardView({
   const [highlightedPanelId, setHighlightedPanelId] = useState<string | null>(null)
   const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
+  // Chat Navigation: Get functions to track view mode and workspace opens
+  const { setCurrentLocation, incrementOpenCount } = useChatNavigationContext()
+
   // Debug: Track mount/unmount and initial state
   useEffect(() => {
     void debugLog({
@@ -150,6 +154,18 @@ export function DashboardView({
   const [isWorkspacesLoading, setIsWorkspacesLoading] = useState(false)
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false)
   const [deletingWorkspaceId, setDeletingWorkspaceId] = useState<string | null>(null)
+
+  // Chat Navigation: Update location tracking when view mode changes
+  useEffect(() => {
+    const currentWorkspace = workspaces.find(ws => ws.id === activeWorkspaceId)
+    setCurrentLocation(
+      viewMode,
+      entryId,
+      entryName,
+      activeWorkspaceId ?? undefined,
+      currentWorkspace?.name
+    )
+  }, [viewMode, entryId, entryName, activeWorkspaceId, workspaces, setCurrentLocation])
 
   // Drag state
   const [draggingPanelId, setDraggingPanelId] = useState<string | null>(null)
@@ -511,7 +527,11 @@ export function DashboardView({
     setActiveWorkspaceContext(selectedWorkspaceId)
     // Phase 4: Notify parent for navigation tracking and URL updates
     onViewModeChange?.('workspace', selectedWorkspaceId)
-  }, [entryId, workspaces, onViewModeChange])
+    // Chat Navigation: Track workspace open count for session stats
+    if (ws) {
+      incrementOpenCount(selectedWorkspaceId, ws.name)
+    }
+  }, [entryId, workspaces, onViewModeChange, incrementOpenCount])
 
   // Handle navigating to Home
   const handleGoHome = useCallback(() => {
@@ -544,7 +564,12 @@ export function DashboardView({
     setActiveWorkspaceContext(workspaceId)
     // Notify parent for URL updates
     onViewModeChange?.('workspace', workspaceId)
-  }, [activeWorkspaceId, entryId, onViewModeChange])
+    // Chat Navigation: Track workspace open count for session stats
+    const ws = workspaces.find(w => w.id === workspaceId)
+    if (ws) {
+      incrementOpenCount(workspaceId, ws.name)
+    }
+  }, [activeWorkspaceId, entryId, onViewModeChange, workspaces, incrementOpenCount])
 
   // Handle returning to dashboard mode (Phase 2)
   // Phase 4: Calls onViewModeChange for navigation tracking and URL updates

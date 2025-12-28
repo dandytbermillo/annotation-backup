@@ -48,7 +48,7 @@ export type { UseChatNavigationListenerOptions } from './use-chat-navigation-lis
 
 // Context (for shared state across mode switches)
 export { ChatNavigationProvider, useChatNavigationContext } from './chat-navigation-context'
-export type { ChatMessage, SelectionOption } from './chat-navigation-context'
+export type { ChatMessage, SelectionOption, SessionState, LastAction } from './chat-navigation-context'
 
 // Schema utilities (for reference)
 export { SUPPORTED_ACTIONS_TEXT, parseIntentResponse } from './intent-schema'

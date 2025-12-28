@@ -69,8 +69,11 @@ export interface EntryResolutionResult {
 // Context
 // =============================================================================
 
+import type { SessionState } from './intent-prompt'
+
 export interface ResolutionContext {
   currentEntryId?: string
   currentWorkspaceId?: string
   userId: string
+  sessionState?: SessionState
 }

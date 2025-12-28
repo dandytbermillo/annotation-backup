@@ -4,7 +4,7 @@ import { readFileSync, existsSync } from 'fs'
 import { join } from 'path'
 
 import { debugLog } from '@/lib/utils/debug-logger'
-import { buildIntentMessages } from '@/lib/chat/intent-prompt'
+import { buildIntentMessages, type ConversationContext, type SessionState } from '@/lib/chat/intent-prompt'
 import {
   parseIntentResponse,
   SUPPORTED_ACTIONS_TEXT,
@@ -93,12 +93,13 @@ export async function POST(request: NextRequest) {
 
     const userMessage = message.trim()
 
-    // Extract conversation context (optional)
-    const conversationContext = context as {
-      summary?: string
-      recentUserMessages?: string[]
-      lastAssistantQuestion?: string
-    } | undefined
+    // Extract conversation context (optional) and session state
+    const conversationContext: ConversationContext | undefined = context ? {
+      summary: context.summary,
+      recentUserMessages: context.recentUserMessages,
+      lastAssistantQuestion: context.lastAssistantQuestion,
+      sessionState: context.sessionState,
+    } : undefined
 
     // Check if OpenAI is configured
     const apiKey = getOpenAIApiKey()
@@ -178,6 +179,7 @@ export async function POST(request: NextRequest) {
       userId,
       currentEntryId: currentEntryId || undefined,
       currentWorkspaceId: currentWorkspaceId || undefined,
+      sessionState: conversationContext?.sessionState,
     }
 
     const resolution = await resolveIntent(intent, resolutionContext)

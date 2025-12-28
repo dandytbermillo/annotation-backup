@@ -21,6 +21,11 @@ export const IntentType = z.enum([
   'go_to_dashboard',
   'rename_workspace',
   'delete_workspace',
+  // Phase 2: Informational Intents (answer questions from session state)
+  'location_info',
+  'last_action',
+  'session_stats',
+  'verify_action',
   'unsupported',
 ])
 
@@ -45,6 +50,15 @@ export const IntentArgs = z.object({
 
   // For rename_workspace: the new name to rename to
   newName: z.string().optional(),
+
+  // For session_stats: optional workspace name to query stats for
+  statsWorkspaceName: z.string().optional(),
+
+  // For verify_action: verify if a specific action was performed
+  verifyActionType: z.enum(['open_workspace', 'rename_workspace', 'delete_workspace', 'create_workspace', 'go_to_dashboard']).optional(),
+  verifyWorkspaceName: z.string().optional(),  // workspace name to verify
+  verifyFromName: z.string().optional(),       // for rename: original name
+  verifyToName: z.string().optional(),         // for rename: new name
 
   // For unsupported: brief reason why the request is not supported
   reason: z.string().optional(),
@@ -99,6 +113,10 @@ export const SUPPORTED_ACTIONS = [
   'go to dashboard',
   'rename workspace',
   'delete workspace',
+  'ask where I am',
+  'ask what I just did',
+  'ask session stats',
+  'verify recent action',
 ] as const
 
 export const SUPPORTED_ACTIONS_TEXT = SUPPORTED_ACTIONS.join(', ')

@@ -38,6 +38,7 @@ export interface IntentResolutionResult {
     | 'confirm_delete'
     | 'delete_workspace'
     | 'select'
+    | 'inform'
     | 'error'
 
   // For navigate_workspace
@@ -61,6 +62,7 @@ export interface IntentResolutionResult {
 
   // For rename_workspace
   renamedWorkspace?: WorkspaceMatch
+  renamedFrom?: string  // Original name before rename
 
   // For confirm_delete / delete_workspace
   deleteTarget?: {
@@ -118,6 +120,19 @@ export async function resolveIntent(
 
     case 'delete_workspace':
       return resolveDeleteWorkspace(intent, context)
+
+    // Phase 2: Informational Intents (resolved from sessionState)
+    case 'location_info':
+      return resolveLocationInfo(context)
+
+    case 'last_action':
+      return resolveLastAction(context)
+
+    case 'session_stats':
+      return resolveSessionStats(intent, context)
+
+    case 'verify_action':
+      return resolveVerifyAction(intent, context)
 
     case 'unsupported':
     default:
@@ -463,6 +478,7 @@ async function resolveRenameWorkspace(
         success: true,
         action: 'rename_workspace',
         renamedWorkspace: renameResult.workspace,
+        renamedFrom: result.workspace!.name,  // Original name before rename
         message: renameResult.message,
       }
 
@@ -589,5 +605,388 @@ async function resolveDeleteWorkspace(
         action: 'error',
         message: result.message || `No workspace found matching "${workspaceName}". Try "list workspaces" to see available workspaces.`,
       }
+  }
+}
+
+// =============================================================================
+// Phase 2: Informational Intent Handlers
+// =============================================================================
+
+/**
+ * Resolve location_info intent - answer "where am I?"
+ */
+function resolveLocationInfo(
+  context: ResolutionContext
+): IntentResolutionResult {
+  const ss = context.sessionState
+
+  if (!ss) {
+    return {
+      success: true,
+      action: 'inform',
+      message: "I don't have location information available. Try navigating to a workspace first.",
+    }
+  }
+
+  const viewMode = ss.currentViewMode || 'unknown'
+
+  if (viewMode === 'dashboard') {
+    const entryName = ss.currentEntryName || 'an entry'
+    return {
+      success: true,
+      action: 'inform',
+      message: `You're on the dashboard of "${entryName}".`,
+    }
+  }
+
+  if (viewMode === 'workspace') {
+    const workspaceName = ss.currentWorkspaceName || 'unknown workspace'
+    const entryName = ss.currentEntryName || 'an entry'
+    return {
+      success: true,
+      action: 'inform',
+      message: `You're in workspace "${workspaceName}" in "${entryName}".`,
+    }
+  }
+
+  return {
+    success: true,
+    action: 'inform',
+    message: "I'm not sure where you are. Try navigating to a workspace.",
+  }
+}
+
+/**
+ * Resolve last_action intent - answer "what did I just do?"
+ */
+function resolveLastAction(
+  context: ResolutionContext
+): IntentResolutionResult {
+  const ss = context.sessionState
+  const lastAction = ss?.lastAction
+
+  if (!lastAction) {
+    return {
+      success: true,
+      action: 'inform',
+      message: "I don't have any record of recent actions in this session.",
+    }
+  }
+
+  const timeAgo = formatTimeAgo(new Date(lastAction.timestamp).toISOString())
+
+  switch (lastAction.type) {
+    case 'open_workspace':
+      return {
+        success: true,
+        action: 'inform',
+        message: `You opened workspace "${lastAction.workspaceName}" ${timeAgo}.`,
+      }
+
+    case 'rename_workspace':
+      return {
+        success: true,
+        action: 'inform',
+        message: `You renamed workspace "${lastAction.fromName}" to "${lastAction.toName}" ${timeAgo}.`,
+      }
+
+    case 'delete_workspace':
+      return {
+        success: true,
+        action: 'inform',
+        message: `You deleted workspace "${lastAction.workspaceName}" ${timeAgo}.`,
+      }
+
+    case 'create_workspace':
+      return {
+        success: true,
+        action: 'inform',
+        message: `You created workspace "${lastAction.workspaceName}" ${timeAgo}.`,
+      }
+
+    case 'go_to_dashboard':
+      return {
+        success: true,
+        action: 'inform',
+        message: `You returned to the dashboard ${timeAgo}.`,
+      }
+
+    default:
+      return {
+        success: true,
+        action: 'inform',
+        message: `Your last action was ${timeAgo}.`,
+      }
+  }
+}
+
+/**
+ * Resolve session_stats intent - answer "did I open X?" or "how many times did I open X?"
+ * Returns comprehensive response: session-level + last-action clarification per the plan.
+ */
+function resolveSessionStats(
+  intent: IntentResponse,
+  context: ResolutionContext
+): IntentResolutionResult {
+  const ss = context.sessionState
+  const openCounts = ss?.openCounts
+  const lastAction = ss?.lastAction
+
+  // If user asked about a specific workspace
+  const targetName = intent.args.statsWorkspaceName
+  if (targetName) {
+    // If no openCounts at all, the answer is no
+    if (!openCounts || Object.keys(openCounts).length === 0) {
+      return {
+        success: true,
+        action: 'inform',
+        message: `No, I have no record of opening "${targetName}" this session.`,
+      }
+    }
+
+    // Find by name (case-insensitive match)
+    const entry = Object.entries(openCounts).find(
+      ([_, data]) => data.name.toLowerCase() === targetName.toLowerCase()
+    )
+
+    if (entry) {
+      const [_, data] = entry
+      const times = data.count === 1 ? 'once' : `${data.count} times`
+
+      // Check if last action was opening this same workspace
+      const lastActionWasOpeningThis =
+        lastAction?.type === 'open_workspace' &&
+        lastAction.workspaceName?.toLowerCase() === data.name.toLowerCase()
+
+      if (lastActionWasOpeningThis) {
+        // Last action WAS opening this workspace - simple yes
+        return {
+          success: true,
+          action: 'inform',
+          message: `Yes, you opened "${data.name}" ${times} this session.`,
+        }
+      } else if (lastAction) {
+        // Last action was something else - provide comprehensive response
+        const lastActionSummary = formatLastActionSummary(lastAction)
+        return {
+          success: true,
+          action: 'inform',
+          message: `Yes, you opened "${data.name}" ${times} this session. (Not just now — your last action was ${lastActionSummary}.)`,
+        }
+      } else {
+        // No last action info - just return session stats
+        return {
+          success: true,
+          action: 'inform',
+          message: `Yes, you opened "${data.name}" ${times} this session.`,
+        }
+      }
+    }
+
+    return {
+      success: true,
+      action: 'inform',
+      message: `No, I have no record of opening "${targetName}" this session.`,
+    }
+  }
+
+  // No specific workspace - show summary
+  if (!openCounts || Object.keys(openCounts).length === 0) {
+    return {
+      success: true,
+      action: 'inform',
+      message: "You haven't opened any workspaces yet in this session.",
+    }
+  }
+
+  // No specific workspace - show summary
+  const entries = Object.entries(openCounts)
+    .map(([_, data]) => `"${data.name}" (${data.count}x)`)
+    .join(', ')
+
+  return {
+    success: true,
+    action: 'inform',
+    message: `Workspaces opened this session: ${entries}.`,
+  }
+}
+
+/**
+ * Resolve verify_action intent - verify if a specific action was performed
+ * Uses case-insensitive, trimmed comparison per the plan's name matching rules.
+ */
+function resolveVerifyAction(
+  intent: IntentResponse,
+  context: ResolutionContext
+): IntentResolutionResult {
+  const ss = context.sessionState
+  const lastAction = ss?.lastAction
+
+  if (!lastAction) {
+    return {
+      success: true,
+      action: 'inform',
+      message: "I don't have enough info to confirm that. No recent actions recorded.",
+    }
+  }
+
+  const { verifyActionType, verifyWorkspaceName, verifyFromName, verifyToName } = intent.args
+
+  // Helper for case-insensitive, trimmed comparison
+  const matches = (a?: string, b?: string): boolean => {
+    if (!a || !b) return false
+    return a.trim().toLowerCase() === b.trim().toLowerCase()
+  }
+
+  // If no action type specified, we can't verify
+  if (!verifyActionType) {
+    return {
+      success: true,
+      action: 'inform',
+      message: "I'm not sure what action you want to verify. Could you be more specific?",
+    }
+  }
+
+  // Check if action type matches
+  if (lastAction.type !== verifyActionType) {
+    const lastActionSummary = formatLastActionSummary(lastAction)
+    return {
+      success: true,
+      action: 'inform',
+      message: `No, the last action was ${lastActionSummary}.`,
+    }
+  }
+
+  // Action type matches - now verify details based on type
+  switch (verifyActionType) {
+    case 'open_workspace':
+      if (verifyWorkspaceName) {
+        if (matches(lastAction.workspaceName, verifyWorkspaceName)) {
+          return {
+            success: true,
+            action: 'inform',
+            message: `Yes, you opened workspace "${lastAction.workspaceName}".`,
+          }
+        } else {
+          return {
+            success: true,
+            action: 'inform',
+            message: `No, the last action was opening workspace "${lastAction.workspaceName}".`,
+          }
+        }
+      }
+      // No specific workspace to verify, just confirm the action type
+      return {
+        success: true,
+        action: 'inform',
+        message: `Yes, you opened workspace "${lastAction.workspaceName}".`,
+      }
+
+    case 'rename_workspace':
+      // For rename, we need to check fromName and toName
+      if (verifyFromName || verifyToName) {
+        const fromMatches = !verifyFromName || matches(lastAction.fromName, verifyFromName)
+        const toMatches = !verifyToName || matches(lastAction.toName, verifyToName)
+
+        if (fromMatches && toMatches) {
+          return {
+            success: true,
+            action: 'inform',
+            message: `Yes, you renamed "${lastAction.fromName}" to "${lastAction.toName}".`,
+          }
+        } else {
+          return {
+            success: true,
+            action: 'inform',
+            message: `No, the last action was renaming "${lastAction.fromName}" to "${lastAction.toName}".`,
+          }
+        }
+      }
+      // No specific names to verify
+      return {
+        success: true,
+        action: 'inform',
+        message: `Yes, you renamed "${lastAction.fromName}" to "${lastAction.toName}".`,
+      }
+
+    case 'delete_workspace':
+      if (verifyWorkspaceName) {
+        if (matches(lastAction.workspaceName, verifyWorkspaceName)) {
+          return {
+            success: true,
+            action: 'inform',
+            message: `Yes, you deleted workspace "${lastAction.workspaceName}".`,
+          }
+        } else {
+          return {
+            success: true,
+            action: 'inform',
+            message: `No, the last action was deleting workspace "${lastAction.workspaceName}".`,
+          }
+        }
+      }
+      return {
+        success: true,
+        action: 'inform',
+        message: `Yes, you deleted workspace "${lastAction.workspaceName}".`,
+      }
+
+    case 'create_workspace':
+      if (verifyWorkspaceName) {
+        if (matches(lastAction.workspaceName, verifyWorkspaceName)) {
+          return {
+            success: true,
+            action: 'inform',
+            message: `Yes, you created workspace "${lastAction.workspaceName}".`,
+          }
+        } else {
+          return {
+            success: true,
+            action: 'inform',
+            message: `No, the last action was creating workspace "${lastAction.workspaceName}".`,
+          }
+        }
+      }
+      return {
+        success: true,
+        action: 'inform',
+        message: `Yes, you created workspace "${lastAction.workspaceName}".`,
+      }
+
+    case 'go_to_dashboard':
+      return {
+        success: true,
+        action: 'inform',
+        message: 'Yes, you returned to the dashboard.',
+      }
+
+    default:
+      return {
+        success: true,
+        action: 'inform',
+        message: "I'm not sure how to verify that action type.",
+      }
+  }
+}
+
+/**
+ * Helper to format last action as a summary string
+ */
+function formatLastActionSummary(lastAction: NonNullable<ResolutionContext['sessionState']>['lastAction']): string {
+  if (!lastAction) return 'unknown'
+
+  switch (lastAction.type) {
+    case 'open_workspace':
+      return `opening workspace "${lastAction.workspaceName}"`
+    case 'rename_workspace':
+      return `renaming "${lastAction.fromName}" to "${lastAction.toName}"`
+    case 'delete_workspace':
+      return `deleting workspace "${lastAction.workspaceName}"`
+    case 'create_workspace':
+      return `creating workspace "${lastAction.workspaceName}"`
+    case 'go_to_dashboard':
+      return 'returning to the dashboard'
+    default:
+      return 'an unknown action'
   }
 }

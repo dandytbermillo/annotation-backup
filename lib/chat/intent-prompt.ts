@@ -50,8 +50,32 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
    IMPORTANT: This is destructive - only match if user explicitly says "delete" or "remove"
    Args: workspaceName (required - name of workspace to delete)
 
-9. **unsupported** - Request doesn't match any supported intent
-   Args: reason (brief explanation)
+9. **location_info** - User asks about their current location/context
+   Examples: "where am I?", "what workspace am I in?", "am I on the dashboard?", "current location", "what's open?"
+   Args: none required
+   IMPORTANT: Use sessionState to answer this question
+
+10. **last_action** - User asks about the most recent action they performed
+    Examples: "what did I just do?", "what did I just rename?", "is workspace77 the one I just renamed?", "what was the last thing I did?"
+    Args: none required
+    IMPORTANT: Use sessionState.lastAction to answer this question
+
+11. **session_stats** - User asks about session history (e.g., did they open a workspace, how many times)
+    Examples: "how many times did I open workspace 3?", "did I open workspace77?", "have I used Research workspace?"
+    Args: statsWorkspaceName (optional - specific workspace to query stats for)
+    IMPORTANT: Use sessionState.openCounts to answer this question. Returns yes/no + count.
+
+12. **verify_action** - User asks to verify their LAST/MOST RECENT action specifically
+    Examples: "did you just rename Sprint 6 to Sprint 66?", "did I just open workspace77?", "was my last action opening X?"
+    Args:
+      - verifyActionType (required): "open_workspace" | "rename_workspace" | "delete_workspace" | "create_workspace" | "go_to_dashboard"
+      - verifyWorkspaceName (optional): workspace name to verify
+      - verifyFromName (optional): for rename - original name to verify
+      - verifyToName (optional): for rename - new name to verify
+    IMPORTANT: Only use this for questions with "just", "last", or "previous". Compare against sessionState.lastAction only.
+
+13. **unsupported** - Request doesn't match any supported intent
+    Args: reason (brief explanation)
 
 ## Intent Disambiguation Rules
 
@@ -69,6 +93,12 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
 - "list", "show workspaces", "what workspaces" → **list_workspaces**
 - "delete X", "remove X" (where X is a workspace name) → **delete_workspace**
 - "rename X to Y" → **rename_workspace**
+- "where am I", "current location", "what workspace", "am I on dashboard" → **location_info**
+- "what did I just", "last action", "what was the last thing" → **last_action**
+- "how many times", "how often", "session stats" → **session_stats**
+- "did I open X?" (without "just/last/previous") → **session_stats** (checks session history)
+- "did I just/last open X?", "was my last action X?" → **verify_action** (checks most recent action only)
+- "did you rename X to Y?" → **verify_action** (verifies specific action details)
 
 ## Response Format
 
@@ -81,6 +111,11 @@ Return ONLY a JSON object with this exact structure:
     "noteTitle": "<string or omit>",
     "newWorkspaceName": "<string or omit>",
     "newName": "<string or omit - for rename_workspace>",
+    "statsWorkspaceName": "<string or omit - for session_stats>",
+    "verifyActionType": "<string or omit - for verify_action>",
+    "verifyWorkspaceName": "<string or omit - for verify_action>",
+    "verifyFromName": "<string or omit - for verify_action rename>",
+    "verifyToName": "<string or omit - for verify_action rename>",
     "reason": "<string or omit>"
   }
 }
@@ -96,12 +131,33 @@ Return ONLY a JSON object with this exact structure:
 7. When conversation context is provided, use it to understand follow-up requests`
 
 /**
+ * Session state for informational intents
+ */
+export interface SessionState {
+  currentEntryId?: string
+  currentEntryName?: string
+  currentWorkspaceId?: string
+  currentWorkspaceName?: string
+  currentViewMode?: 'dashboard' | 'workspace'
+  lastAction?: {
+    type: 'open_workspace' | 'rename_workspace' | 'delete_workspace' | 'create_workspace' | 'go_to_dashboard'
+    workspaceId?: string
+    workspaceName?: string
+    fromName?: string  // for rename
+    toName?: string    // for rename
+    timestamp: number
+  }
+  openCounts?: Record<string, { count: number; name: string }>  // workspaceId -> { count, name }
+}
+
+/**
  * Context type for conversation history
  */
 export interface ConversationContext {
   summary?: string
   recentUserMessages?: string[]
   lastAssistantQuestion?: string
+  sessionState?: SessionState
 }
 
 /**
@@ -117,22 +173,61 @@ export function buildIntentMessages(
   ]
 
   // Add context block if provided
-  if (context && (context.summary || context.recentUserMessages?.length || context.lastAssistantQuestion)) {
-    let contextBlock = 'Conversation context:\n'
+  const hasContext = context && (
+    context.summary ||
+    context.recentUserMessages?.length ||
+    context.lastAssistantQuestion ||
+    context.sessionState
+  )
+
+  if (hasContext) {
+    let contextBlock = 'Context:\n'
+
+    // Add session state for informational intents
+    if (context.sessionState) {
+      const ss = context.sessionState
+      contextBlock += '\nSession State:\n'
+      contextBlock += `  currentViewMode: ${ss.currentViewMode || 'unknown'}\n`
+      if (ss.currentEntryName) {
+        contextBlock += `  currentEntryName: "${ss.currentEntryName}"\n`
+      }
+      if (ss.currentWorkspaceName) {
+        contextBlock += `  currentWorkspaceName: "${ss.currentWorkspaceName}"\n`
+      }
+      if (ss.lastAction) {
+        contextBlock += `  lastAction:\n`
+        contextBlock += `    type: ${ss.lastAction.type}\n`
+        if (ss.lastAction.workspaceName) {
+          contextBlock += `    workspaceName: "${ss.lastAction.workspaceName}"\n`
+        }
+        if (ss.lastAction.fromName) {
+          contextBlock += `    fromName: "${ss.lastAction.fromName}"\n`
+        }
+        if (ss.lastAction.toName) {
+          contextBlock += `    toName: "${ss.lastAction.toName}"\n`
+        }
+      }
+      if (ss.openCounts && Object.keys(ss.openCounts).length > 0) {
+        contextBlock += `  openCounts:\n`
+        for (const [wsId, data] of Object.entries(ss.openCounts)) {
+          contextBlock += `    "${data.name}": ${data.count} times\n`
+        }
+      }
+    }
 
     if (context.summary) {
-      contextBlock += `Summary: "${context.summary}"\n`
+      contextBlock += `\nConversation Summary: "${context.summary}"\n`
     }
 
     if (context.recentUserMessages && context.recentUserMessages.length > 0) {
-      contextBlock += 'Recent user messages:\n'
+      contextBlock += '\nRecent user messages:\n'
       context.recentUserMessages.forEach((msg, i) => {
         contextBlock += `  ${i + 1}) "${msg}"\n`
       })
     }
 
     if (context.lastAssistantQuestion) {
-      contextBlock += `Last assistant question: "${context.lastAssistantQuestion}"\n`
+      contextBlock += `\nLast assistant question: "${context.lastAssistantQuestion}"\n`
     }
 
     contextBlock += '\nCurrent request:'

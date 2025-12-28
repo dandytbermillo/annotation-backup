@@ -22,7 +22,7 @@ import type { WorkspaceMatch, NoteMatch } from './resolution-types'
 export interface ChatNavigationResult {
   success: boolean
   message: string
-  action?: 'navigated' | 'created' | 'selected' | 'renamed' | 'deleted' | 'listed' | 'error'
+  action?: 'navigated' | 'created' | 'selected' | 'renamed' | 'deleted' | 'listed' | 'informed' | 'error'
 }
 
 export interface UseChatNavigationOptions {
@@ -457,6 +457,15 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
             success: true,
             message: resolution.message,
             action: 'deleted',
+          }
+
+        // Phase 2: Informational Intents
+        case 'inform':
+          // Informational response - just display the message, no navigation
+          return {
+            success: true,
+            message: resolution.message,
+            action: 'informed',
           }
 
         case 'error':

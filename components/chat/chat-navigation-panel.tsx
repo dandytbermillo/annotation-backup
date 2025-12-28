@@ -154,6 +154,8 @@ export function ChatNavigationPanel({
     setInput,
     isOpen,
     setOpen,
+    sessionState,
+    setLastAction,
   } = useChatNavigationContext()
 
   const { executeAction, selectOption } = useChatNavigation({
@@ -205,9 +207,9 @@ export function ChatNavigationPanel({
       const normalizedMessage = normalizeUserMessage(trimmedInput)
 
       // Build conversation context from message history
-      const context = buildContextPayload(messages)
+      const contextPayload = buildContextPayload(messages)
 
-      // Call the navigate API with normalized message and context
+      // Call the navigate API with normalized message, context, and session state
       const response = await fetch('/api/chat/navigate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -215,9 +217,10 @@ export function ChatNavigationPanel({
           message: normalizedMessage,
           currentEntryId: entryId,
           currentWorkspaceId: workspaceId,
-          context: context.summary || context.recentUserMessages.length > 0 || context.lastAssistantQuestion
-            ? context
-            : undefined,
+          context: {
+            ...contextPayload,
+            sessionState,
+          },
         }),
       })
 
@@ -231,6 +234,61 @@ export function ChatNavigationPanel({
 
       // Execute the action
       const result = await executeAction(resolution)
+
+      // Track successful actions for session state
+      if (result.success && result.action) {
+        const now = Date.now()
+        switch (result.action) {
+          case 'navigated':
+            if (resolution.action === 'navigate_workspace' && resolution.workspace) {
+              setLastAction({
+                type: 'open_workspace',
+                workspaceId: resolution.workspace.id,
+                workspaceName: resolution.workspace.name,
+                timestamp: now,
+              })
+              // Note: incrementOpenCount is NOT called here - DashboardView.handleWorkspaceSelectById
+              // is the single source of truth for open counts (avoids double-counting)
+            } else if (resolution.action === 'navigate_dashboard') {
+              setLastAction({
+                type: 'go_to_dashboard',
+                timestamp: now,
+              })
+            }
+            break
+          case 'created':
+            if (resolution.newWorkspace) {
+              setLastAction({
+                type: 'create_workspace',
+                workspaceName: resolution.newWorkspace.name,
+                timestamp: now,
+              })
+            }
+            break
+          case 'renamed':
+            if (resolution.renamedWorkspace) {
+              setLastAction({
+                type: 'rename_workspace',
+                workspaceId: resolution.renamedWorkspace.id,
+                workspaceName: resolution.renamedWorkspace.name,
+                fromName: resolution.renamedFrom,  // Original name before rename
+                toName: resolution.renamedWorkspace.name,
+                timestamp: now,
+              })
+            }
+            break
+          case 'deleted':
+            if (resolution.deleteTarget) {
+              setLastAction({
+                type: 'delete_workspace',
+                workspaceId: resolution.deleteTarget.id,
+                workspaceName: resolution.deleteTarget.name,
+                timestamp: now,
+              })
+            }
+            break
+        }
+      }
 
       // Create assistant message
       const assistantMessage: ChatMessage = {
@@ -263,7 +321,7 @@ export function ChatNavigationPanel({
     } finally {
       setIsLoading(false)
     }
-  }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction, messages, addMessage, setInput])
+  }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction, messages, addMessage, setInput, sessionState, setLastAction])
 
   // ---------------------------------------------------------------------------
   // Handle Selection
@@ -283,6 +341,47 @@ export function ChatNavigationPanel({
           id: option.id,
           data: option.data,
         })
+
+        // Track successful actions for session state
+        if (result.success && result.action) {
+          const now = Date.now()
+          switch (result.action) {
+            case 'navigated':
+              if (option.type === 'workspace') {
+                setLastAction({
+                  type: 'open_workspace',
+                  workspaceId: workspaceData.id,
+                  workspaceName: workspaceData.name,
+                  timestamp: now,
+                })
+                // Note: incrementOpenCount is NOT called here - DashboardView.handleWorkspaceSelectById
+                // is the single source of truth for open counts (avoids double-counting)
+              }
+              break
+            case 'deleted':
+              if (option.type === 'confirm_delete') {
+                setLastAction({
+                  type: 'delete_workspace',
+                  workspaceId: workspaceData.id,
+                  workspaceName: workspaceData.name,
+                  timestamp: now,
+                })
+              }
+              break
+            case 'renamed':
+              const renameData = option.data as WorkspaceMatch & { pendingNewName?: string }
+              if (renameData.pendingNewName) {
+                setLastAction({
+                  type: 'rename_workspace',
+                  workspaceId: renameData.id,
+                  fromName: renameData.name,
+                  toName: renameData.pendingNewName,
+                  timestamp: now,
+                })
+              }
+              break
+          }
+        }
 
         // If this was a pending delete, show confirmation pill
         const confirmationOptions: SelectionOption[] | undefined = isPendingDelete
@@ -319,7 +418,7 @@ export function ChatNavigationPanel({
         setIsLoading(false)
       }
     },
-    [selectOption, addMessage]
+    [selectOption, addMessage, setLastAction]
   )
 
   // ---------------------------------------------------------------------------
@@ -431,7 +530,9 @@ export function ChatNavigationPanel({
                     <p className="italic mb-1">&quot;open workspace Research&quot;</p>
                     <p className="italic mb-1">&quot;go to note Project Plan&quot;</p>
                     <p className="italic mb-1">&quot;create workspace Sprint 12&quot;</p>
-                    <p className="italic">&quot;list workspaces&quot;</p>
+                    <p className="italic mb-1">&quot;list workspaces&quot;</p>
+                    <p className="italic mb-1">&quot;where am I?&quot;</p>
+                    <p className="italic">&quot;what did I just do?&quot;</p>
                   </div>
                 ) : (
                   messages.map((message) => (
