@@ -100,8 +100,12 @@ function summarizeUserMessages(messages: string[]): string | undefined {
 /**
  * Build context payload from message history.
  * Returns recent user messages and last assistant question (if any).
+ * Uses DB summary if available, otherwise falls back to in-memory summary.
  */
-function buildContextPayload(messages: ChatMessage[]): {
+function buildContextPayload(
+  messages: ChatMessage[],
+  dbSummary?: string | null
+): {
   summary?: string
   recentUserMessages: string[]
   lastAssistantQuestion?: string
@@ -112,8 +116,15 @@ function buildContextPayload(messages: ChatMessage[]): {
 
   // Get last N user messages
   const recentUserMessages = allUserMessages.slice(-MAX_RECENT_USER_MESSAGES)
-  const olderUserMessages = allUserMessages.slice(0, -MAX_RECENT_USER_MESSAGES)
-  const summary = summarizeUserMessages(olderUserMessages)
+
+  // Use DB summary if available, otherwise build from older in-memory messages
+  let summary: string | undefined
+  if (dbSummary) {
+    summary = dbSummary
+  } else {
+    const olderUserMessages = allUserMessages.slice(0, -MAX_RECENT_USER_MESSAGES)
+    summary = summarizeUserMessages(olderUserMessages)
+  }
 
   // Check if last assistant message was a question (has options or ends with ?)
   const lastAssistant = messages.filter((m) => m.role === 'assistant').slice(-1)[0]
@@ -156,6 +167,11 @@ export function ChatNavigationPanel({
     setOpen,
     sessionState,
     setLastAction,
+    // Persistence
+    isLoadingHistory,
+    hasMoreMessages,
+    loadOlderMessages,
+    conversationSummary,
   } = useChatNavigationContext()
 
   const { executeAction, selectOption } = useChatNavigation({
@@ -172,11 +188,39 @@ export function ChatNavigationPanel({
     }
   }, [isOpen])
 
-  // Scroll to bottom when messages change
-  useEffect(() => {
+  // Track previous message count and scroll state to detect new vs older messages
+  const prevMessageCountRef = useRef(messages.length)
+  const scrollHeightBeforeRef = useRef(0)
+  const isLoadingOlderRef = useRef(false)
+
+  // Capture scroll height BEFORE loading older messages
+  const handleLoadOlder = useCallback(async () => {
     if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+      scrollHeightBeforeRef.current = scrollRef.current.scrollHeight
+      isLoadingOlderRef.current = true
     }
+    await loadOlderMessages()
+  }, [loadOlderMessages])
+
+  // Handle scroll position after messages change
+  useEffect(() => {
+    const prevCount = prevMessageCountRef.current
+    const currentCount = messages.length
+
+    if (currentCount > prevCount && scrollRef.current) {
+      if (isLoadingOlderRef.current) {
+        // Older messages were prepended - preserve scroll position
+        const scrollHeightAfter = scrollRef.current.scrollHeight
+        const addedHeight = scrollHeightAfter - scrollHeightBeforeRef.current
+        scrollRef.current.scrollTop = addedHeight
+        isLoadingOlderRef.current = false
+      } else {
+        // New messages added at the end - scroll to bottom
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+      }
+    }
+
+    prevMessageCountRef.current = currentCount
   }, [messages])
 
   // ---------------------------------------------------------------------------
@@ -206,8 +250,8 @@ export function ChatNavigationPanel({
       // Normalize the input message before sending to LLM
       const normalizedMessage = normalizeUserMessage(trimmedInput)
 
-      // Build conversation context from message history
-      const contextPayload = buildContextPayload(messages)
+      // Build conversation context from message history (use DB summary if available)
+      const contextPayload = buildContextPayload(messages, conversationSummary)
 
       // Call the navigate API with normalized message, context, and session state
       const response = await fetch('/api/chat/navigate', {
@@ -477,30 +521,30 @@ export function ChatNavigationPanel({
             aria-hidden="true"
           />
 
-          {/* Panel */}
+          {/* Panel - Glassmorphism effect */}
           <div
             className={cn(
               'fixed left-0 top-0 z-50',
               'h-screen',
-              'bg-background border-r shadow-xl',
+              'bg-background/80 backdrop-blur-xl border-r border-white/20 shadow-2xl',
               'flex flex-col',
               'animate-in slide-in-from-left duration-200',
               className
             )}
             style={{ width: '25vw', minWidth: '320px' }}
           >
-            {/* Header */}
-            <div className="flex items-center justify-between border-b px-4 py-3 shrink-0">
+            {/* Header - high contrast for readability */}
+            <div className="flex items-center justify-between border-b border-white/20 px-4 py-3 shrink-0 bg-white/90 backdrop-blur-md">
               <div className="flex items-center gap-2">
-                <MessageSquare className="h-5 w-5 text-muted-foreground" />
-                <span className="text-base font-medium">Navigate</span>
+                <MessageSquare className="h-5 w-5 text-zinc-600" />
+                <span className="text-base font-semibold text-zinc-800">Navigate</span>
               </div>
               <div className="flex items-center gap-1">
                 {messages.length > 0 && (
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8"
+                    className="h-8 w-8 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200/50"
                     onClick={clearChat}
                     title="Clear chat"
                   >
@@ -511,7 +555,7 @@ export function ChatNavigationPanel({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-8 w-8"
+                  className="h-8 w-8 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200/50"
                   onClick={() => setOpen(false)}
                   title="Close panel"
                 >
@@ -524,15 +568,46 @@ export function ChatNavigationPanel({
             {/* Messages - takes remaining space */}
             <ScrollArea className="flex-1" ref={scrollRef as any}>
               <div className="flex flex-col gap-3 p-4">
-                {messages.length === 0 ? (
-                  <div className="text-center text-sm text-muted-foreground py-12">
-                    <p className="mb-3">Try saying:</p>
-                    <p className="italic mb-1">&quot;open workspace Research&quot;</p>
-                    <p className="italic mb-1">&quot;go to note Project Plan&quot;</p>
-                    <p className="italic mb-1">&quot;create workspace Sprint 12&quot;</p>
-                    <p className="italic mb-1">&quot;list workspaces&quot;</p>
-                    <p className="italic mb-1">&quot;where am I?&quot;</p>
-                    <p className="italic">&quot;what did I just do?&quot;</p>
+                {/* Loading history indicator */}
+                {isLoadingHistory && messages.length === 0 && (
+                  <div className="flex items-center justify-center py-8 bg-white/80 backdrop-blur-sm rounded-lg mx-2">
+                    <Loader2 className="h-5 w-5 animate-spin text-zinc-500" />
+                    <span className="ml-2 text-sm text-zinc-600">Loading history...</span>
+                  </div>
+                )}
+
+                {/* Load older messages button */}
+                {hasMoreMessages && !isLoadingHistory && (
+                  <button
+                    onClick={handleLoadOlder}
+                    className="text-xs text-zinc-600 hover:text-zinc-900 text-center py-2 px-3 transition-colors bg-white/70 hover:bg-white/90 rounded-lg mx-auto block"
+                  >
+                    ↑ Show older messages
+                  </button>
+                )}
+                {hasMoreMessages && isLoadingHistory && (
+                  <div className="flex items-center justify-center py-2 bg-white/70 rounded-lg mx-auto px-3">
+                    <Loader2 className="h-3 w-3 animate-spin text-zinc-500" />
+                    <span className="ml-1.5 text-xs text-zinc-600">Loading...</span>
+                  </div>
+                )}
+
+                {/* Summary banner (optional) - high contrast */}
+                {conversationSummary && messages.length > 0 && (
+                  <div className="text-xs text-zinc-600 bg-white/90 backdrop-blur-md rounded-lg px-3 py-2 mb-2 shadow-sm">
+                    <span className="font-semibold text-zinc-800">Earlier:</span> {conversationSummary}
+                  </div>
+                )}
+
+                {messages.length === 0 && !isLoadingHistory ? (
+                  <div className="text-center text-sm py-12 bg-white/80 backdrop-blur-sm rounded-lg mx-2 shadow-sm">
+                    <p className="mb-3 text-zinc-700 font-medium">Try saying:</p>
+                    <p className="italic mb-1 text-zinc-600">&quot;open workspace Research&quot;</p>
+                    <p className="italic mb-1 text-zinc-600">&quot;go to note Project Plan&quot;</p>
+                    <p className="italic mb-1 text-zinc-600">&quot;create workspace Sprint 12&quot;</p>
+                    <p className="italic mb-1 text-zinc-600">&quot;list workspaces&quot;</p>
+                    <p className="italic mb-1 text-zinc-600">&quot;where am I?&quot;</p>
+                    <p className="italic text-zinc-600">&quot;what did I just do?&quot;</p>
                   </div>
                 ) : (
                   messages.map((message) => (
@@ -545,12 +620,12 @@ export function ChatNavigationPanel({
                     >
                       <div
                         className={cn(
-                          'rounded-lg px-3 py-2 text-sm max-w-[90%]',
+                          'rounded-lg px-3 py-2 text-sm max-w-[90%] shadow-lg',
                           message.role === 'user'
-                            ? 'bg-primary text-primary-foreground'
+                            ? 'bg-zinc-900/90 text-white backdrop-blur-xl border border-white/10'
                             : message.isError
-                              ? 'bg-destructive/10 text-destructive'
-                              : 'bg-muted'
+                              ? 'bg-red-950/90 text-red-200 backdrop-blur-xl border border-red-500/20'
+                              : 'bg-white/90 text-indigo-900 backdrop-blur-xl border border-white/20'
                         )}
                       >
                         {message.content}
@@ -602,8 +677,8 @@ export function ChatNavigationPanel({
               </div>
             </ScrollArea>
 
-            {/* Input - fixed at bottom */}
-            <div className="border-t p-3 shrink-0">
+            {/* Input - fixed at bottom with high contrast */}
+            <div className="border-t border-white/20 p-3 shrink-0 bg-white/90 backdrop-blur-md">
               <div className="flex items-center gap-2">
                 <Input
                   ref={inputRef}
@@ -613,7 +688,7 @@ export function ChatNavigationPanel({
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
                   disabled={isLoading}
-                  className="h-10 text-sm"
+                  className="h-10 text-sm bg-white text-zinc-900 border-zinc-300 placeholder:text-zinc-400"
                 />
                 <Button
                   size="icon"

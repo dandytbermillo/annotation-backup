@@ -6,11 +6,13 @@
  *
  * This ensures messages persist when switching between dashboard and workspace modes.
  * Also tracks session state for informational intents (location_info, last_action, session_stats).
+ *
+ * Phase 2: Persistence - Messages are stored in the database and restored on reload.
  */
 
 'use client'
 
-import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
+import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
 import type { WorkspaceMatch, NoteMatch } from './resolution-types'
 import type { SessionState } from './intent-prompt'
 
@@ -63,6 +65,123 @@ interface ChatNavigationContextValue {
   setCurrentLocation: (viewMode: 'dashboard' | 'workspace', entryId?: string, entryName?: string, workspaceId?: string, workspaceName?: string) => void
   setLastAction: (action: LastAction) => void
   incrementOpenCount: (workspaceId: string, workspaceName: string) => void
+  // Persistence
+  conversationId: string | null
+  isLoadingHistory: boolean
+  hasMoreMessages: boolean
+  loadOlderMessages: () => Promise<void>
+  conversationSummary: string | null
+}
+
+// =============================================================================
+// API Helpers
+// =============================================================================
+
+interface DbMessage {
+  id: string
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  metadata: {
+    options?: SelectionOption[]
+    isError?: boolean
+    intent?: string
+    entryContext?: { id: string; name: string }
+    workspaceContext?: { id: string; name: string }
+  } | null
+  createdAt: string
+}
+
+async function getOrCreateConversation(): Promise<{ id: string; summary: string | null } | null> {
+  try {
+    const response = await fetch('/api/chat/conversations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scope: 'global' }),
+    })
+    if (!response.ok) return null
+    const data = await response.json()
+    return { id: data.conversation.id, summary: data.conversation.summary }
+  } catch {
+    return null
+  }
+}
+
+async function fetchMessages(
+  conversationId: string,
+  cursor?: string
+): Promise<{ messages: DbMessage[]; nextCursor: string | null } | null> {
+  try {
+    const url = new URL(`/api/chat/conversations/${conversationId}/messages`, window.location.origin)
+    if (cursor) url.searchParams.set('cursor', cursor)
+    url.searchParams.set('limit', '30')
+
+    const response = await fetch(url.toString())
+    if (!response.ok) return null
+    return await response.json()
+  } catch {
+    return null
+  }
+}
+
+async function persistMessage(
+  conversationId: string,
+  role: 'user' | 'assistant',
+  content: string,
+  metadata?: Record<string, unknown>
+): Promise<DbMessage | null> {
+  try {
+    const response = await fetch(`/api/chat/conversations/${conversationId}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role, content, metadata }),
+    })
+    if (!response.ok) return null
+    const data = await response.json()
+    return data.message
+  } catch {
+    return null
+  }
+}
+
+async function triggerSummarization(conversationId: string): Promise<string | null> {
+  try {
+    const response = await fetch(`/api/chat/conversations/${conversationId}/summary`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    if (!response.ok) return null
+    const data = await response.json()
+    if (data.updated && data.summary) {
+      return data.summary
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+async function clearConversation(conversationId: string): Promise<boolean> {
+  try {
+    // Delete all messages and reset summary
+    const response = await fetch(`/api/chat/conversations/${conversationId}/messages`, {
+      method: 'DELETE',
+    })
+    return response.ok
+  } catch {
+    return false
+  }
+}
+
+function dbMessageToChatMessage(dbMsg: DbMessage): ChatMessage {
+  return {
+    id: dbMsg.id,
+    role: dbMsg.role as 'user' | 'assistant',
+    content: dbMsg.content,
+    timestamp: new Date(dbMsg.createdAt),
+    options: dbMsg.metadata?.options,
+    isError: dbMsg.metadata?.isError,
+  }
 }
 
 // =============================================================================
@@ -80,17 +199,129 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
   const [input, setInput] = useState('')
   const [isOpen, setOpen] = useState(false)
 
-  // Session state for informational intents
+  // Persistence state
+  const [conversationId, setConversationId] = useState<string | null>(null)
+  const [conversationSummary, setConversationSummary] = useState<string | null>(null)
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false)
+  const [hasMoreMessages, setHasMoreMessages] = useState(false)
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const initRef = useRef(false)
+
+  // Session state for informational intents (session-only, not persisted)
   const [sessionState, setSessionState] = useState<SessionState>({})
 
-  const addMessage = useCallback((message: ChatMessage) => {
-    setMessages((prev) => [...prev, message])
+  // Initialize: get or create conversation and load recent messages
+  useEffect(() => {
+    if (initRef.current) return
+    initRef.current = true
+
+    async function init() {
+      setIsLoadingHistory(true)
+      try {
+        const conv = await getOrCreateConversation()
+        if (!conv) {
+          console.warn('[ChatNavigation] Failed to get/create conversation')
+          return
+        }
+
+        setConversationId(conv.id)
+        setConversationSummary(conv.summary)
+
+        const result = await fetchMessages(conv.id)
+        if (result) {
+          const chatMessages = result.messages
+            .filter((m) => m.role !== 'system')
+            .map(dbMessageToChatMessage)
+          setMessages(chatMessages)
+          setNextCursor(result.nextCursor)
+          setHasMoreMessages(!!result.nextCursor)
+        }
+      } catch (err) {
+        console.error('[ChatNavigation] Init error:', err)
+      } finally {
+        setIsLoadingHistory(false)
+      }
+    }
+
+    init()
   }, [])
 
-  const clearMessages = useCallback(() => {
+  // Add message with persistence
+  const addMessage = useCallback(
+    async (message: ChatMessage) => {
+      // Add to local state immediately for responsiveness
+      setMessages((prev) => [...prev, message])
+
+      // Persist to database
+      if (conversationId) {
+        const metadata: Record<string, unknown> = {}
+        if (message.options) metadata.options = message.options
+        if (message.isError) metadata.isError = message.isError
+
+        const persisted = await persistMessage(
+          conversationId,
+          message.role,
+          message.content,
+          Object.keys(metadata).length > 0 ? metadata : undefined
+        )
+
+        // If persisted, update the message ID to match database
+        if (persisted) {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === message.id ? { ...m, id: persisted.id } : m))
+          )
+
+          // Trigger async summarization after assistant responses (non-blocking)
+          if (message.role === 'assistant') {
+            triggerSummarization(conversationId).then((newSummary) => {
+              if (newSummary) {
+                setConversationSummary(newSummary)
+              }
+            })
+          }
+        }
+      }
+    },
+    [conversationId]
+  )
+
+  // Clear messages with persistence
+  const clearMessages = useCallback(async () => {
     setMessages([])
     setInput('')
-  }, [])
+    setNextCursor(null)
+    setHasMoreMessages(false)
+    setConversationSummary(null)
+
+    // Clear from database (create fresh conversation)
+    if (conversationId) {
+      await clearConversation(conversationId)
+    }
+  }, [conversationId])
+
+  // Load older messages (pagination)
+  const loadOlderMessages = useCallback(async () => {
+    if (!conversationId || !nextCursor || isLoadingHistory) return
+
+    setIsLoadingHistory(true)
+    try {
+      const result = await fetchMessages(conversationId, nextCursor)
+      if (result) {
+        const olderMessages = result.messages
+          .filter((m) => m.role !== 'system')
+          .map(dbMessageToChatMessage)
+
+        // Prepend older messages
+        setMessages((prev) => [...olderMessages, ...prev])
+        setNextCursor(result.nextCursor)
+        setHasMoreMessages(!!result.nextCursor)
+      }
+    } catch (err) {
+      console.error('[ChatNavigation] Load older messages error:', err)
+    } finally {
+      setIsLoadingHistory(false)
+    }
+  }, [conversationId, nextCursor, isLoadingHistory])
 
   const openChat = useCallback(() => {
     setOpen(true)
@@ -160,6 +391,11 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         setCurrentLocation,
         setLastAction,
         incrementOpenCount,
+        conversationId,
+        isLoadingHistory,
+        hasMoreMessages,
+        loadOlderMessages,
+        conversationSummary,
       }}
     >
       {children}

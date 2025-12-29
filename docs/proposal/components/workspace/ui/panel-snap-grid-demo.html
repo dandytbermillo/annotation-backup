@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Panel Snap Grid Demo</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+      min-height: 100vh;
+      overflow: hidden;
+    }
+
+    /* Header Controls */
+    .header {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      background: rgba(255,255,255,0.1);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .header h1 {
+      color: white;
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .header-controls {
+      display: flex;
+      gap: 8px;
+      margin-left: auto;
+    }
+
+    .btn {
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.2);
+      background: rgba(255,255,255,0.1);
+      color: white;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .btn:hover {
+      background: rgba(255,255,255,0.2);
+    }
+
+    .btn.active {
+      background: rgba(99,102,241,0.8);
+      border-color: rgba(99,102,241,1);
+    }
+
+    .size-selector {
+      display: flex;
+      gap: 4px;
+      background: rgba(0,0,0,0.2);
+      padding: 4px;
+      border-radius: 8px;
+    }
+
+    .size-btn {
+      padding: 6px 12px;
+      border-radius: 6px;
+      border: none;
+      background: transparent;
+      color: rgba(255,255,255,0.7);
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .size-btn:hover {
+      background: rgba(255,255,255,0.1);
+      color: white;
+    }
+
+    .size-btn.selected {
+      background: rgba(99,102,241,0.8);
+      color: white;
+    }
+
+    /* Canvas */
+    .canvas {
+      position: absolute;
+      top: 60px;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      overflow: auto;
+    }
+
+    .canvas-inner {
+      position: relative;
+      width: 2000px;
+      height: 1500px;
+      background-image:
+        radial-gradient(circle, rgba(255,255,255,0.05) 1px, transparent 1px);
+      background-size: 40px 40px;
+    }
+
+    /* Grid overlay (visible when dragging) */
+    .grid-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+
+    .grid-overlay.visible {
+      opacity: 1;
+    }
+
+    .grid-line-h, .grid-line-v {
+      position: absolute;
+      background: rgba(99,102,241,0.15);
+    }
+
+    .grid-line-h {
+      left: 0;
+      right: 0;
+      height: 1px;
+    }
+
+    .grid-line-v {
+      top: 0;
+      bottom: 0;
+      width: 1px;
+    }
+
+    /* Drop placeholder */
+    .drop-placeholder {
+      position: absolute;
+      border: 2px dashed rgba(99,102,241,0.8);
+      background: rgba(99,102,241,0.1);
+      border-radius: 16px;
+      pointer-events: none;
+      opacity: 0;
+      transition: all 0.15s ease-out;
+      z-index: 5;
+    }
+
+    .drop-placeholder.visible {
+      opacity: 1;
+    }
+
+    /* Panels */
+    .panel {
+      position: absolute;
+      background: rgba(255,255,255,0.95);
+      border-radius: 16px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+      cursor: grab;
+      user-select: none;
+      transition: transform 0.2s, box-shadow 0.2s;
+      overflow: hidden;
+      z-index: 10;
+    }
+
+    .panel:hover {
+      box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+    }
+
+    .panel.dragging {
+      cursor: grabbing;
+      opacity: 0.8;
+      transform: scale(1.02);
+      box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+      z-index: 100;
+      transition: none;
+    }
+
+    .panel.snapping {
+      transition: left 0.2s ease-out, top 0.2s ease-out, transform 0.2s;
+    }
+
+    .panel-header {
+      padding: 12px 16px;
+      background: rgba(0,0,0,0.03);
+      border-bottom: 1px solid rgba(0,0,0,0.05);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .panel-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+    }
+
+    .panel-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #1a1a2e;
+    }
+
+    .panel-size-badge {
+      margin-left: auto;
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(99,102,241,0.1);
+      color: #6366f1;
+      font-weight: 500;
+    }
+
+    .panel-content {
+      padding: 16px;
+      color: #374151;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    /* Panel size variants (GRID=170, GAP=16, BASE=154) */
+    .panel.size-small {
+      width: 154px;   /* 1 unit */
+      height: 154px;
+    }
+
+    .panel.size-medium {
+      width: 324px;   /* 2 units + 1 gap */
+      height: 154px;
+    }
+
+    .panel.size-tall {
+      width: 154px;
+      height: 324px;  /* 2 units + 1 gap */
+    }
+
+    .panel.size-large {
+      width: 324px;
+      height: 324px;
+    }
+
+    .panel.size-wide {
+      width: 494px;   /* 3 units + 2 gaps */
+      height: 154px;
+    }
+
+    .panel.size-xlarge {
+      width: 494px;
+      height: 324px;
+    }
+
+    /* Resize handles */
+    .resize-handle {
+      position: absolute;
+      bottom: 8px;
+      right: 8px;
+      width: 20px;
+      height: 20px;
+      cursor: nwse-resize;
+      opacity: 0;
+      transition: opacity 0.15s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .panel:hover .resize-handle {
+      opacity: 0.5;
+    }
+
+    .resize-handle:hover {
+      opacity: 1 !important;
+    }
+
+    .resize-handle svg {
+      width: 12px;
+      height: 12px;
+      color: #6366f1;
+    }
+
+    /* Size picker popup */
+    .size-picker {
+      position: absolute;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+      padding: 12px;
+      z-index: 200;
+      display: none;
+    }
+
+    .size-picker.visible {
+      display: block;
+    }
+
+    .size-picker-title {
+      font-size: 11px;
+      color: #6b7280;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .size-picker-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 40px);
+      gap: 6px;
+    }
+
+    .size-option {
+      width: 40px;
+      height: 40px;
+      border: 2px solid #e5e7eb;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s;
+      position: relative;
+    }
+
+    .size-option:hover {
+      border-color: #6366f1;
+      background: rgba(99,102,241,0.05);
+    }
+
+    .size-option.current {
+      border-color: #6366f1;
+      background: rgba(99,102,241,0.1);
+    }
+
+    .size-option-inner {
+      background: #6366f1;
+      border-radius: 2px;
+    }
+
+    /* Size option representations */
+    .size-option[data-size="small"] .size-option-inner { width: 12px; height: 12px; }
+    .size-option[data-size="medium"] .size-option-inner { width: 24px; height: 12px; }
+    .size-option[data-size="tall"] .size-option-inner { width: 12px; height: 24px; }
+    .size-option[data-size="large"] .size-option-inner { width: 24px; height: 24px; }
+    .size-option[data-size="wide"] .size-option-inner { width: 32px; height: 12px; }
+    .size-option[data-size="xlarge"] .size-option-inner { width: 32px; height: 24px; }
+
+    /* Info panel */
+    .info-panel {
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      background: rgba(0,0,0,0.8);
+      backdrop-filter: blur(10px);
+      border-radius: 12px;
+      padding: 16px;
+      color: white;
+      font-size: 12px;
+      max-width: 280px;
+      z-index: 50;
+    }
+
+    .info-panel h3 {
+      font-size: 13px;
+      margin-bottom: 8px;
+      color: #a5b4fc;
+    }
+
+    .info-panel ul {
+      list-style: none;
+      padding: 0;
+    }
+
+    .info-panel li {
+      padding: 4px 0;
+      color: rgba(255,255,255,0.8);
+    }
+
+    .info-panel li::before {
+      content: "→ ";
+      color: #6366f1;
+    }
+
+    /* Add panel button */
+    .add-panel-btn {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      border: none;
+      color: white;
+      font-size: 28px;
+      cursor: pointer;
+      box-shadow: 0 4px 20px rgba(99,102,241,0.4);
+      transition: all 0.2s;
+      z-index: 50;
+    }
+
+    .add-panel-btn:hover {
+      transform: scale(1.1);
+      box-shadow: 0 6px 30px rgba(99,102,241,0.6);
+    }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <div class="header">
+    <h1>Panel Snap Grid Demo</h1>
+    <span style="color: rgba(255,255,255,0.5); font-size: 12px;">Grid: 170px | Gap: 16px</span>
+    <div class="header-controls">
+      <button class="btn" id="toggleGrid">Show Grid</button>
+      <button class="btn" id="resetLayout">Reset Layout</button>
+    </div>
+  </div>
+
+  <!-- Canvas -->
+  <div class="canvas" id="canvas">
+    <div class="canvas-inner" id="canvasInner">
+      <!-- Grid overlay -->
+      <div class="grid-overlay" id="gridOverlay"></div>
+
+      <!-- Drop placeholder -->
+      <div class="drop-placeholder" id="dropPlaceholder"></div>
+
+      <!-- Panels will be added here -->
+    </div>
+  </div>
+
+  <!-- Size picker popup -->
+  <div class="size-picker" id="sizePicker">
+    <div class="size-picker-title">Resize Panel</div>
+    <div class="size-picker-grid">
+      <div class="size-option" data-size="small" title="Small (1x1)"><div class="size-option-inner"></div></div>
+      <div class="size-option" data-size="medium" title="Medium (2x1)"><div class="size-option-inner"></div></div>
+      <div class="size-option" data-size="wide" title="Wide (3x1)"><div class="size-option-inner"></div></div>
+      <div class="size-option" data-size="tall" title="Tall (1x2)"><div class="size-option-inner"></div></div>
+      <div class="size-option" data-size="large" title="Large (2x2)"><div class="size-option-inner"></div></div>
+      <div class="size-option" data-size="xlarge" title="X-Large (3x2)"><div class="size-option-inner"></div></div>
+    </div>
+  </div>
+
+  <!-- Info panel -->
+  <div class="info-panel">
+    <h3>Instructions</h3>
+    <ul>
+      <li>Drag panels to move them</li>
+      <li>Panels snap to 170px grid</li>
+      <li>16px gap between panels</li>
+      <li>Click resize handle to change size</li>
+      <li>Blue placeholder shows snap position</li>
+    </ul>
+  </div>
+
+  <!-- Add panel button -->
+  <button class="add-panel-btn" id="addPanelBtn">+</button>
+
+  <script>
+    // =========================================================================
+    // Configuration
+    // =========================================================================
+    const GRID_SIZE = 170  // Grid cell size (panel + gap)
+    const GAP = 16         // Gap between panels
+    const PANEL_BASE = GRID_SIZE - GAP  // Actual panel size = 154px
+
+    // Panel sizes (accounting for gap)
+    const PANEL_SIZES = {
+      small:  { cols: 1, rows: 1, width: PANEL_BASE * 1,         height: PANEL_BASE * 1 },
+      medium: { cols: 2, rows: 1, width: PANEL_BASE * 2 + GAP,   height: PANEL_BASE * 1 },
+      tall:   { cols: 1, rows: 2, width: PANEL_BASE * 1,         height: PANEL_BASE * 2 + GAP },
+      large:  { cols: 2, rows: 2, width: PANEL_BASE * 2 + GAP,   height: PANEL_BASE * 2 + GAP },
+      wide:   { cols: 3, rows: 1, width: PANEL_BASE * 3 + GAP*2, height: PANEL_BASE * 1 },
+      xlarge: { cols: 3, rows: 2, width: PANEL_BASE * 3 + GAP*2, height: PANEL_BASE * 2 + GAP },
+    }
+
+    // Sample panels
+    const initialPanels = [
+      { id: 'panel-1', title: 'Calendar', icon: '📅', color: '#ef4444', size: 'medium', gridX: 1, gridY: 1 },
+      { id: 'panel-2', title: 'Weather', icon: '🌤️', color: '#6366f1', size: 'small', gridX: 3, gridY: 1 },
+      { id: 'panel-3', title: 'Notes', icon: '📝', color: '#10b981', size: 'large', gridX: 1, gridY: 2 },
+      { id: 'panel-4', title: 'Tasks', icon: '✅', color: '#f59e0b', size: 'tall', gridX: 3, gridY: 2 },
+      { id: 'panel-5', title: 'Quick Links', icon: '🔗', color: '#8b5cf6', size: 'wide', gridX: 4, gridY: 1 },
+    ]
+
+    let panels = [...initialPanels]
+    let panelIdCounter = panels.length + 1
+
+    // =========================================================================
+    // DOM Elements
+    // =========================================================================
+    const canvasInner = document.getElementById('canvasInner')
+    const gridOverlay = document.getElementById('gridOverlay')
+    const dropPlaceholder = document.getElementById('dropPlaceholder')
+    const sizePicker = document.getElementById('sizePicker')
+    const toggleGridBtn = document.getElementById('toggleGrid')
+    const resetLayoutBtn = document.getElementById('resetLayout')
+    const addPanelBtn = document.getElementById('addPanelBtn')
+
+    // =========================================================================
+    // Grid Setup
+    // =========================================================================
+    function setupGrid() {
+      gridOverlay.innerHTML = ''
+      const width = canvasInner.offsetWidth
+      const height = canvasInner.offsetHeight
+
+      // Horizontal lines
+      for (let y = GRID_SIZE; y < height; y += GRID_SIZE) {
+        const line = document.createElement('div')
+        line.className = 'grid-line-h'
+        line.style.top = y + 'px'
+        gridOverlay.appendChild(line)
+      }
+
+      // Vertical lines
+      for (let x = GRID_SIZE; x < width; x += GRID_SIZE) {
+        const line = document.createElement('div')
+        line.className = 'grid-line-v'
+        line.style.left = x + 'px'
+        gridOverlay.appendChild(line)
+      }
+    }
+
+    // =========================================================================
+    // Panel Rendering
+    // =========================================================================
+    function createPanelElement(panel) {
+      const sizeConfig = PANEL_SIZES[panel.size]
+      const x = panel.gridX * GRID_SIZE
+      const y = panel.gridY * GRID_SIZE
+
+      const el = document.createElement('div')
+      el.className = `panel size-${panel.size}`
+      el.id = panel.id
+      el.dataset.size = panel.size
+      el.dataset.gridX = panel.gridX
+      el.dataset.gridY = panel.gridY
+      el.style.left = x + 'px'
+      el.style.top = y + 'px'
+
+      el.innerHTML = `
+        <div class="panel-header">
+          <div class="panel-icon" style="background: ${panel.color}20; color: ${panel.color}">
+            ${panel.icon}
+          </div>
+          <div class="panel-title">${panel.title}</div>
+          <div class="panel-size-badge">${sizeConfig.cols}×${sizeConfig.rows}</div>
+        </div>
+        <div class="panel-content">
+          ${getPanelContent(panel)}
+        </div>
+        <div class="resize-handle" title="Resize panel">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 21l-6-6m6 6v-6m0 6h-6M3 3l6 6M3 3v6m0-6h6"/>
+          </svg>
+        </div>
+      `
+
+      // Setup drag
+      setupPanelDrag(el)
+
+      // Setup resize
+      const resizeHandle = el.querySelector('.resize-handle')
+      resizeHandle.addEventListener('click', (e) => {
+        e.stopPropagation()
+        showSizePicker(el)
+      })
+
+      return el
+    }
+
+    function getPanelContent(panel) {
+      const contents = {
+        'Calendar': '<div style="text-align:center;padding:20px 0;"><strong>December 2024</strong><br><span style="font-size:32px;color:#ef4444;">29</span></div>',
+        'Weather': '<div style="text-align:center;"><span style="font-size:24px;">2°</span><br>Cloudy</div>',
+        'Notes': '<p>Meeting notes from yesterday...</p><p style="margin-top:8px;color:#9ca3af;">Click to edit</p>',
+        'Tasks': '<div>☑️ Review PR<br>☐ Update docs<br>☐ Deploy</div>',
+        'Quick Links': '<div style="display:flex;gap:8px;flex-wrap:wrap;"><span style="background:#e5e7eb;padding:4px 8px;border-radius:4px;font-size:11px;">Project A</span><span style="background:#e5e7eb;padding:4px 8px;border-radius:4px;font-size:11px;">Dashboard</span><span style="background:#e5e7eb;padding:4px 8px;border-radius:4px;font-size:11px;">Settings</span></div>',
+      }
+      return contents[panel.title] || '<p>Panel content</p>'
+    }
+
+    function renderPanels() {
+      // Remove existing panels
+      document.querySelectorAll('.panel').forEach(el => el.remove())
+
+      // Render all panels
+      panels.forEach(panel => {
+        const el = createPanelElement(panel)
+        canvasInner.appendChild(el)
+      })
+    }
+
+    // =========================================================================
+    // Drag and Drop with Snap
+    // =========================================================================
+    let dragState = {
+      isDragging: false,
+      panel: null,
+      startX: 0,
+      startY: 0,
+      offsetX: 0,
+      offsetY: 0,
+    }
+
+    function setupPanelDrag(panelEl) {
+      panelEl.addEventListener('mousedown', (e) => {
+        if (e.target.closest('.resize-handle')) return
+
+        dragState.isDragging = true
+        dragState.panel = panelEl
+        dragState.startX = e.clientX
+        dragState.startY = e.clientY
+        dragState.offsetX = e.clientX - panelEl.offsetLeft
+        dragState.offsetY = e.clientY - panelEl.offsetTop
+
+        panelEl.classList.add('dragging')
+        gridOverlay.classList.add('visible')
+
+        // Show initial placeholder
+        updatePlaceholder(panelEl.offsetLeft, panelEl.offsetTop, panelEl.dataset.size)
+      })
+    }
+
+    document.addEventListener('mousemove', (e) => {
+      if (!dragState.isDragging) return
+
+      const canvas = document.getElementById('canvas')
+      const rect = canvas.getBoundingClientRect()
+      const scrollLeft = canvas.scrollLeft
+      const scrollTop = canvas.scrollTop
+
+      const x = e.clientX - rect.left + scrollLeft - dragState.offsetX + rect.left
+      const y = e.clientY - rect.top + scrollTop - dragState.offsetY + rect.top
+
+      // Move panel freely
+      dragState.panel.style.left = x + 'px'
+      dragState.panel.style.top = y + 'px'
+
+      // Calculate snap position
+      const snapX = Math.round(x / GRID_SIZE) * GRID_SIZE
+      const snapY = Math.round(y / GRID_SIZE) * GRID_SIZE
+
+      // Update placeholder
+      updatePlaceholder(snapX, snapY, dragState.panel.dataset.size)
+    })
+
+    document.addEventListener('mouseup', () => {
+      if (!dragState.isDragging) return
+
+      const panelEl = dragState.panel
+      const x = panelEl.offsetLeft
+      const y = panelEl.offsetTop
+
+      // Calculate snap position
+      const snapX = Math.round(x / GRID_SIZE) * GRID_SIZE
+      const snapY = Math.round(y / GRID_SIZE) * GRID_SIZE
+
+      // Animate to snap position
+      panelEl.classList.remove('dragging')
+      panelEl.classList.add('snapping')
+      panelEl.style.left = snapX + 'px'
+      panelEl.style.top = snapY + 'px'
+
+      // Update panel data
+      const panelData = panels.find(p => p.id === panelEl.id)
+      if (panelData) {
+        panelData.gridX = snapX / GRID_SIZE
+        panelData.gridY = snapY / GRID_SIZE
+      }
+      panelEl.dataset.gridX = snapX / GRID_SIZE
+      panelEl.dataset.gridY = snapY / GRID_SIZE
+
+      // Hide grid and placeholder
+      gridOverlay.classList.remove('visible')
+      dropPlaceholder.classList.remove('visible')
+
+      setTimeout(() => {
+        panelEl.classList.remove('snapping')
+      }, 200)
+
+      dragState.isDragging = false
+      dragState.panel = null
+    })
+
+    function updatePlaceholder(x, y, size) {
+      const sizeConfig = PANEL_SIZES[size]
+      dropPlaceholder.style.left = x + 'px'
+      dropPlaceholder.style.top = y + 'px'
+      dropPlaceholder.style.width = sizeConfig.width + 'px'
+      dropPlaceholder.style.height = sizeConfig.height + 'px'
+      dropPlaceholder.classList.add('visible')
+    }
+
+    // =========================================================================
+    // Size Picker
+    // =========================================================================
+    let currentResizePanel = null
+
+    function showSizePicker(panelEl) {
+      currentResizePanel = panelEl
+      const rect = panelEl.getBoundingClientRect()
+
+      sizePicker.style.left = (rect.right + 10) + 'px'
+      sizePicker.style.top = rect.top + 'px'
+      sizePicker.classList.add('visible')
+
+      // Highlight current size
+      document.querySelectorAll('.size-option').forEach(opt => {
+        opt.classList.toggle('current', opt.dataset.size === panelEl.dataset.size)
+      })
+    }
+
+    function hideSizePicker() {
+      sizePicker.classList.remove('visible')
+      currentResizePanel = null
+    }
+
+    document.querySelectorAll('.size-option').forEach(opt => {
+      opt.addEventListener('click', () => {
+        if (!currentResizePanel) return
+
+        const newSize = opt.dataset.size
+        const sizeConfig = PANEL_SIZES[newSize]
+
+        // Update panel element
+        currentResizePanel.className = `panel size-${newSize}`
+        currentResizePanel.dataset.size = newSize
+
+        // Update size badge
+        const badge = currentResizePanel.querySelector('.panel-size-badge')
+        if (badge) {
+          badge.textContent = `${sizeConfig.cols}×${sizeConfig.rows}`
+        }
+
+        // Update panel data
+        const panelData = panels.find(p => p.id === currentResizePanel.id)
+        if (panelData) {
+          panelData.size = newSize
+        }
+
+        hideSizePicker()
+      })
+    })
+
+    // Close size picker when clicking outside
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.size-picker') && !e.target.closest('.resize-handle')) {
+        hideSizePicker()
+      }
+    })
+
+    // =========================================================================
+    // Controls
+    // =========================================================================
+    let gridVisible = false
+
+    toggleGridBtn.addEventListener('click', () => {
+      gridVisible = !gridVisible
+      gridOverlay.classList.toggle('visible', gridVisible)
+      toggleGridBtn.classList.toggle('active', gridVisible)
+      toggleGridBtn.textContent = gridVisible ? 'Hide Grid' : 'Show Grid'
+    })
+
+    resetLayoutBtn.addEventListener('click', () => {
+      panels = [...initialPanels]
+      renderPanels()
+    })
+
+    addPanelBtn.addEventListener('click', () => {
+      const newPanel = {
+        id: `panel-${panelIdCounter++}`,
+        title: `Panel ${panelIdCounter - 1}`,
+        icon: ['📊', '📈', '🎯', '💡', '🔔'][Math.floor(Math.random() * 5)],
+        color: ['#ef4444', '#6366f1', '#10b981', '#f59e0b', '#8b5cf6'][Math.floor(Math.random() * 5)],
+        size: 'medium',
+        gridX: 1,
+        gridY: 4 + Math.floor(panels.length / 3),
+      }
+      panels.push(newPanel)
+      const el = createPanelElement(newPanel)
+      canvasInner.appendChild(el)
+    })
+
+    // =========================================================================
+    // Initialize
+    // =========================================================================
+    setupGrid()
+    renderPanels()
+  </script>
+</body>
+</html>
