@@ -33,6 +33,10 @@ type WorkspaceToggleMenuProps = {
   entryId?: string
   /** When true, hides the header bar (trigger button) - used when controlled by dock button */
   hideHeader?: boolean
+  /** When true, renders as full-height right-edge sidebar instead of popup */
+  sidebarMode?: boolean
+  /** Entry name to display in sidebar header */
+  entryName?: string
 }
 
 export const WorkspaceToggleMenu = forwardRef<HTMLDivElement, WorkspaceToggleMenuProps>(
@@ -55,6 +59,8 @@ export const WorkspaceToggleMenu = forwardRef<HTMLDivElement, WorkspaceToggleMen
       onRenameWorkspace,
       entryId,
       hideHeader = false,
+      sidebarMode = false,
+      entryName,
     },
     ref,
   ) {
@@ -115,18 +121,45 @@ export const WorkspaceToggleMenu = forwardRef<HTMLDivElement, WorkspaceToggleMen
 
         {isOpen && (
           <div className={[
-            "w-72 rounded-2xl border border-white/10 bg-slate-950/95 p-2 shadow-2xl backdrop-blur-xl z-[100]",
-            hideHeader ? "" : "absolute top-full left-1/2 -translate-x-1/2 mt-2"
+            sidebarMode
+              ? "flex flex-col h-full w-full bg-slate-950/98 backdrop-blur-xl"
+              : "w-72 rounded-2xl border border-white/10 bg-slate-950/95 p-2 shadow-2xl backdrop-blur-xl z-[100]",
+            !sidebarMode && hideHeader ? "" : !sidebarMode ? "absolute top-full left-1/2 -translate-x-1/2 mt-2" : ""
           ].filter(Boolean).join(" ")}>
+            {/* Sidebar Header */}
+            {sidebarMode && (
+              <div className="flex items-center justify-between px-4 py-3 border-b border-white/6 flex-shrink-0">
+                <div>
+                  <h2 className="text-sm font-semibold text-white">Workspaces</h2>
+                  {entryName && (
+                    <p className="text-[11px] text-white/50 mt-0.5">{entryName}</p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={onToggleMenu}
+                  className="flex items-center justify-center w-7 h-7 rounded-md text-white/60 hover:text-white hover:bg-white/8 transition-colors"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18 6L6 18M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            )}
             {isListLoading ? (
-              <div className="py-6 text-center text-sm text-white/60">Loading workspaces...</div>
+              <div className={sidebarMode ? "flex-1 flex items-center justify-center" : "py-6 text-center text-sm text-white/60"}>
+                <div className="text-sm text-white/60">Loading workspaces...</div>
+              </div>
             ) : workspaces.length === 0 ? (
-              <div className="py-6 px-4 text-center text-sm text-white/60">
-                No saved workspaces yet. Use the + button to snapshot this layout.
+              <div className={sidebarMode ? "flex-1 flex items-center justify-center" : "py-6 px-4 text-center text-sm text-white/60"}>
+                <div className="text-center text-sm text-white/60">
+                  No saved workspaces yet. Use the + button to snapshot this layout.
+                </div>
               </div>
             ) : (
               <>
-                <ul className="flex max-h-64 flex-col gap-1 overflow-y-auto">
+                <div className={sidebarMode ? "flex-1 overflow-y-auto p-3" : ""}>
+                  <ul className={sidebarMode ? "flex flex-col gap-2" : "flex max-h-64 flex-col gap-1 overflow-y-auto"}>
                   {workspaces.map((workspace) => {
                     const isActive = workspace.id === currentWorkspaceId
                     const isDeleting = deletingWorkspaceId === workspace.id
@@ -242,19 +275,28 @@ export const WorkspaceToggleMenu = forwardRef<HTMLDivElement, WorkspaceToggleMen
                     )
                   })}
                 </ul>
-                {/* Footer */}
-                <div className="flex items-center justify-between border-t border-white/10 mt-2 pt-2 px-1">
+              </div>
+              {/* Footer */}
+              <div className={sidebarMode
+                ? "flex-shrink-0 p-3 border-t border-white/6"
+                : "flex items-center justify-between border-t border-white/10 mt-2 pt-2 px-1"
+              }>
+                {!sidebarMode && (
                   <span className="text-[11px] text-white/50">
                     Click to switch workspace
                   </span>
-                  <button
-                    type="button"
-                    onClick={onCreateWorkspace}
-                    disabled={disableCreate}
-                    className="flex items-center gap-1 rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-1 text-[11px] font-medium text-indigo-300 transition-colors hover:border-indigo-500/50 hover:bg-indigo-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Plus className="h-3 w-3" />
-                    New Workspace
+                )}
+                <button
+                  type="button"
+                  onClick={onCreateWorkspace}
+                  disabled={disableCreate}
+                  className={sidebarMode
+                    ? "flex items-center justify-center gap-2 w-full rounded-lg border border-indigo-500/30 bg-indigo-500/15 px-3 py-2.5 text-sm font-medium text-indigo-300 transition-colors hover:border-indigo-500/50 hover:bg-indigo-500/25 disabled:opacity-50 disabled:cursor-not-allowed"
+                    : "flex items-center gap-1 rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-1 text-[11px] font-medium text-indigo-300 transition-colors hover:border-indigo-500/50 hover:bg-indigo-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                  }
+                >
+                  <Plus className={sidebarMode ? "h-4 w-4" : "h-3 w-3"} />
+                  New Workspace
                   </button>
                 </div>
               </>

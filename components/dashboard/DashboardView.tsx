@@ -10,6 +10,7 @@
 
 import React, { useEffect, useState, useCallback, useRef, useMemo } from "react"
 import { DashboardPanelRenderer } from "./DashboardPanelRenderer"
+import { PanelSizePicker } from "./PanelSizePicker"
 import { DashboardWelcomeTooltip, useDashboardWelcome } from "./DashboardWelcomeTooltip"
 import { AddPanelButton, PanelCatalog } from "./PanelCatalog"
 import { DashboardBreadcrumb } from "./DashboardBreadcrumb"
@@ -21,6 +22,7 @@ import { setActiveWorkspaceContext, subscribeToWorkspaceListRefresh, requestWork
 import { useChatNavigationContext } from "@/lib/chat"
 import { requestDashboardPanelRefresh } from "@/lib/dashboard/category-store"
 import type { WorkspacePanel, PanelConfig } from "@/lib/dashboard/panel-registry"
+import { snapToGrid, GRID_CELL_SIZE, GRID_GAP, GRID_OFFSET } from "@/lib/dashboard/grid-snap"
 import { cn } from "@/lib/utils"
 import { debugLog } from "@/lib/utils/debug-logger"
 import { RefreshCw, ChevronRight, LayoutDashboard, Loader2 } from "lucide-react"
@@ -171,6 +173,14 @@ export function DashboardView({
   const [draggingPanelId, setDraggingPanelId] = useState<string | null>(null)
   const [activePanelId, setActivePanelId] = useState<string | null>(null)
   const dragStartRef = useRef<{ x: number; y: number; panelX: number; panelY: number } | null>(null)
+
+  // Snap-to-grid placeholder state
+  const [snapPlaceholder, setSnapPlaceholder] = useState<{
+    x: number
+    y: number
+    width: number
+    height: number
+  } | null>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
   const dashboardContainerRef = useRef<HTMLDivElement>(null)
 
@@ -982,6 +992,36 @@ export function DashboardView({
     []
   )
 
+  // Handle panel size change (from size picker)
+  const handleSizeChange = useCallback(
+    async (panelId: string, width: number, height: number) => {
+      try {
+        // Update local state immediately for responsive UI
+        setPanels((prev) =>
+          prev.map((p) =>
+            p.id === panelId ? { ...p, width, height } : p
+          )
+        )
+
+        // Persist to server
+        await fetch(`/api/dashboard/panels/${panelId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ width, height }),
+        })
+
+        void debugLog({
+          component: "DashboardView",
+          action: "panel_size_changed",
+          metadata: { panelId, width, height },
+        })
+      } catch (err) {
+        console.error("[DashboardView] Failed to update panel size:", err)
+      }
+    },
+    []
+  )
+
   // Drag handlers
   const handleDragStart = useCallback(
     (e: React.MouseEvent, panel: WorkspacePanel) => {
@@ -1014,6 +1054,18 @@ export function DashboardView({
       const deltaY = e.clientY - dragStartRef.current.y
       const newX = Math.max(0, Math.round(dragStartRef.current.panelX + deltaX))
       const newY = Math.max(0, Math.round(dragStartRef.current.panelY + deltaY))
+
+      // Calculate snap-to-grid placeholder position
+      const snappedPos = snapToGrid(newX, newY)
+      const draggingPanel = panels.find(p => p.id === draggingPanelId)
+      if (draggingPanel) {
+        setSnapPlaceholder({
+          x: snappedPos.x,
+          y: snappedPos.y,
+          width: draggingPanel.width,
+          height: draggingPanel.height,
+        })
+      }
 
       setPanels((prev) =>
         prev.map((p) =>
@@ -1063,14 +1115,27 @@ export function DashboardView({
         checkAutoScroll(e.clientX, e.clientY)
       }
     },
-    [draggingPanelId, checkAutoScroll]
+    [draggingPanelId, checkAutoScroll, panels]
   )
 
   const handleDragEnd = useCallback(() => {
     if (draggingPanelId && dragStartRef.current) {
       const panel = panels.find((p) => p.id === draggingPanelId)
       if (panel) {
-        handlePositionChange(panel.id, panel.positionX, panel.positionY)
+        // Snap to grid position
+        const snappedPos = snapToGrid(panel.positionX, panel.positionY)
+
+        // Update local state with snapped position
+        setPanels((prev) =>
+          prev.map((p) =>
+            p.id === draggingPanelId
+              ? { ...p, positionX: snappedPos.x, positionY: snappedPos.y }
+              : p
+          )
+        )
+
+        // Persist snapped position to server
+        handlePositionChange(panel.id, snappedPos.x, snappedPos.y)
       }
     }
     setDraggingPanelId(null)
@@ -1078,6 +1143,8 @@ export function DashboardView({
     stopAutoScroll()
     // Reset drag expand buffer after drag ends
     setDragExpandBuffer({ x: 0, y: 0 })
+    // Clear snap placeholder
+    setSnapPlaceholder(null)
   }, [draggingPanelId, panels, handlePositionChange, stopAutoScroll])
 
   // Attach global mouse listeners for dragging
@@ -1654,6 +1721,49 @@ export function DashboardView({
             </div>
           ) : (
             <>
+              {/* Grid overlay - shows during drag */}
+              {draggingPanelId && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    pointerEvents: 'none',
+                    zIndex: 1,
+                    backgroundImage: `
+                      linear-gradient(to right, rgba(99, 102, 241, 0.1) 1px, transparent 1px),
+                      linear-gradient(to bottom, rgba(99, 102, 241, 0.1) 1px, transparent 1px)
+                    `,
+                    backgroundSize: `${GRID_CELL_SIZE}px ${GRID_CELL_SIZE}px`,
+                    backgroundPosition: `${GRID_OFFSET}px ${GRID_OFFSET}px`,
+                    opacity: 0.6,
+                    transition: 'opacity 150ms ease-out',
+                  }}
+                />
+              )}
+
+              {/* Snap placeholder - shows where panel will snap to */}
+              {snapPlaceholder && draggingPanelId && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: snapPlaceholder.x,
+                    top: snapPlaceholder.y,
+                    width: snapPlaceholder.width,
+                    height: snapPlaceholder.height,
+                    borderRadius: 12,
+                    border: '2px dashed rgba(99, 102, 241, 0.6)',
+                    background: 'rgba(99, 102, 241, 0.08)',
+                    pointerEvents: 'none',
+                    zIndex: 2,
+                    transition: 'all 100ms ease-out',
+                    boxShadow: '0 0 20px rgba(99, 102, 241, 0.2)',
+                  }}
+                />
+              )}
+
               {panels.map((panel) => (
                 <div
                   key={panel.id}
@@ -1683,6 +1793,22 @@ export function DashboardView({
                       zIndex: 1,
                     }}
                   />
+                  {/* Size picker button - positioned at lower-right corner */}
+                  <div
+                    style={{
+                      position: 'absolute',
+                      bottom: 8,
+                      right: 8,
+                      zIndex: 10,
+                    }}
+                  >
+                    <PanelSizePicker
+                      currentWidth={panel.width}
+                      currentHeight={panel.height}
+                      onSizeChange={(_, width, height) => handleSizeChange(panel.id, width, height)}
+                      disabled={draggingPanelId === panel.id}
+                    />
+                  </div>
                   <DashboardPanelRenderer
                     panel={panel}
                     onClose={() => handlePanelClose(panel.id)}
@@ -1762,37 +1888,56 @@ export function DashboardView({
             currentWorkspaceId={activeWorkspaceId ?? undefined}
           />
 
-          {/* Workspace Panel - appears above dock when workspace button clicked */}
-          {workspaceMenuOpen && (
-        <div
-          ref={workspacePanelRef}
-          style={{
-            position: 'fixed',
-            bottom: 100,
-            left: '50%',
-            transform: 'translateX(-50%)',
-            zIndex: 99998,
-          }}
-        >
-          <WorkspaceToggleMenu
-            hideHeader
-            labelTitle="NOTE WORKSPACE"
-            statusLabel={workspaces.find(ws => ws.isDefault)?.name || "Workspace"}
-            isOpen={workspaceMenuOpen}
-            onToggleMenu={() => setWorkspaceMenuOpen(prev => !prev)}
-            onCreateWorkspace={handleCreateWorkspace}
-            disableCreate={isWorkspacesLoading}
-            isListLoading={isWorkspacesLoading}
-            workspaces={workspaces}
-            currentWorkspaceId={null}
-            deletingWorkspaceId={deletingWorkspaceId}
-            onSelectWorkspace={handleWorkspaceSelectById}
-            onDeleteWorkspace={handleDeleteWorkspace}
-            onRenameWorkspace={handleRenameWorkspace}
-            entryId={entryId}
+          {/* Workspace Sidebar - slides in from right when workspace button clicked */}
+          {/* Backdrop - subtle dim without blur (panel has its own backdrop-blur) */}
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(0, 0, 0, 0.2)',
+              zIndex: 99997,
+              opacity: workspaceMenuOpen ? 1 : 0,
+              pointerEvents: workspaceMenuOpen ? 'auto' : 'none',
+              transition: 'opacity 200ms ease-out',
+            }}
+            onClick={() => setWorkspaceMenuOpen(false)}
           />
+          {/* Sidebar Panel */}
+          <div
+            ref={workspacePanelRef}
+            style={{
+              position: 'fixed',
+              top: 0,
+              right: 0,
+              bottom: 0,
+              width: 320,
+              borderLeft: '1px solid rgba(255, 255, 255, 0.08)',
+              boxShadow: '-8px 0 32px rgba(0, 0, 0, 0.4)',
+              zIndex: 99998,
+              transform: workspaceMenuOpen ? 'translateX(0)' : 'translateX(100%)',
+              transition: 'transform 250ms cubic-bezier(0.4, 0, 0.2, 1)',
+            }}
+          >
+            <WorkspaceToggleMenu
+              hideHeader
+              sidebarMode
+              labelTitle="NOTE WORKSPACE"
+              statusLabel={workspaces.find(ws => ws.isDefault)?.name || "Workspace"}
+              isOpen={workspaceMenuOpen}
+              onToggleMenu={() => setWorkspaceMenuOpen(prev => !prev)}
+              onCreateWorkspace={handleCreateWorkspace}
+              disableCreate={isWorkspacesLoading}
+              isListLoading={isWorkspacesLoading}
+              workspaces={workspaces}
+              currentWorkspaceId={null}
+              deletingWorkspaceId={deletingWorkspaceId}
+              onSelectWorkspace={handleWorkspaceSelectById}
+              onDeleteWorkspace={handleDeleteWorkspace}
+              onRenameWorkspace={handleRenameWorkspace}
+              entryId={entryId}
+              entryName={entryName}
+            />
           </div>
-          )}
 
           {/* Panel Catalog - appears above dock when add panel button clicked */}
           {isPanelCatalogOpen && (

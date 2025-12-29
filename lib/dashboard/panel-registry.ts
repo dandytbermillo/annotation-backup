@@ -4,9 +4,12 @@
  *
  * Defines the registry system for panel types used in the dashboard and workspaces.
  * Each panel type has: render component reference, default size, config schema, and persistence behavior.
+ *
+ * Panel sizes are aligned to a grid system for consistent snap-to-grid positioning.
  */
 
 import type { ComponentType } from 'react'
+import { PANEL_SIZES, type PanelSizeKey } from './grid-snap'
 
 // Panel type identifiers matching the database schema
 export type PanelTypeId = 'note' | 'navigator' | 'recent' | 'continue' | 'quick_capture' | 'links_note' | 'links_note_tiptap' | 'category' | 'category_navigator'
@@ -100,6 +103,8 @@ export interface PanelTypeDefinition {
   name: string
   description: string
   icon: string
+  /** Default grid size key for this panel type */
+  defaultGridSize: PanelSizeKey
   defaultSize: { width: number; height: number }
   minSize: { width: number; height: number }
   maxSize: { width: number; height: number }
@@ -107,16 +112,18 @@ export interface PanelTypeDefinition {
   // Component is registered separately to avoid circular imports
 }
 
-// Registry of all panel types
+// Registry of all panel types with grid-aligned sizes
+// Sizes: small=154×154, medium=324×154, tall=154×324, large=324×324, wide=494×154, xlarge=494×324
 export const panelTypeRegistry: Record<PanelTypeId, PanelTypeDefinition> = {
   note: {
     id: 'note',
     name: 'Note',
     description: 'Text note with workspace links',
     icon: '📝',
-    defaultSize: { width: 320, height: 320 },
-    minSize: { width: 200, height: 100 },
-    maxSize: { width: 600, height: 800 },
+    defaultGridSize: 'large',
+    defaultSize: { width: PANEL_SIZES.large.width, height: PANEL_SIZES.large.height },
+    minSize: { width: PANEL_SIZES.small.width, height: PANEL_SIZES.small.height },
+    maxSize: { width: PANEL_SIZES.xlarge.width, height: PANEL_SIZES.xlarge.height },
     defaultConfig: { content: '' },
   },
   continue: {
@@ -124,9 +131,10 @@ export const panelTypeRegistry: Record<PanelTypeId, PanelTypeDefinition> = {
     name: 'Continue',
     description: 'Resume last workspace',
     icon: '▶',
-    defaultSize: { width: 320, height: 140 },
-    minSize: { width: 280, height: 100 },
-    maxSize: { width: 400, height: 200 },
+    defaultGridSize: 'medium',
+    defaultSize: { width: PANEL_SIZES.medium.width, height: PANEL_SIZES.medium.height },
+    minSize: { width: PANEL_SIZES.medium.width, height: PANEL_SIZES.small.height },
+    maxSize: { width: PANEL_SIZES.wide.width, height: PANEL_SIZES.medium.height },
     defaultConfig: {},
   },
   navigator: {
@@ -134,9 +142,10 @@ export const panelTypeRegistry: Record<PanelTypeId, PanelTypeDefinition> = {
     name: 'Entry Navigator',
     description: 'Browse entries and workspaces',
     icon: '📁',
-    defaultSize: { width: 280, height: 320 },
-    minSize: { width: 220, height: 200 },
-    maxSize: { width: 400, height: 600 },
+    defaultGridSize: 'tall',
+    defaultSize: { width: PANEL_SIZES.tall.width, height: PANEL_SIZES.tall.height },
+    minSize: { width: PANEL_SIZES.small.width, height: PANEL_SIZES.medium.height },
+    maxSize: { width: PANEL_SIZES.large.width, height: PANEL_SIZES.xlarge.height },
     defaultConfig: { expandedEntries: [] },
   },
   recent: {
@@ -144,9 +153,10 @@ export const panelTypeRegistry: Record<PanelTypeId, PanelTypeDefinition> = {
     name: 'Recent',
     description: 'Recently visited workspaces',
     icon: '🕐',
-    defaultSize: { width: 280, height: 220 },
-    minSize: { width: 220, height: 150 },
-    maxSize: { width: 350, height: 400 },
+    defaultGridSize: 'medium',
+    defaultSize: { width: PANEL_SIZES.medium.width, height: PANEL_SIZES.medium.height },
+    minSize: { width: PANEL_SIZES.small.width, height: PANEL_SIZES.small.height },
+    maxSize: { width: PANEL_SIZES.large.width, height: PANEL_SIZES.large.height },
     defaultConfig: { limit: 10 },
   },
   quick_capture: {
@@ -154,9 +164,10 @@ export const panelTypeRegistry: Record<PanelTypeId, PanelTypeDefinition> = {
     name: 'Quick Capture',
     description: 'Capture quick notes',
     icon: '✏️',
-    defaultSize: { width: 280, height: 180 },
-    minSize: { width: 250, height: 150 },
-    maxSize: { width: 400, height: 300 },
+    defaultGridSize: 'medium',
+    defaultSize: { width: PANEL_SIZES.medium.width, height: PANEL_SIZES.medium.height },
+    minSize: { width: PANEL_SIZES.medium.width, height: PANEL_SIZES.small.height },
+    maxSize: { width: PANEL_SIZES.wide.width, height: PANEL_SIZES.large.height },
     defaultConfig: {},
   },
   links_note: {
@@ -164,9 +175,10 @@ export const panelTypeRegistry: Record<PanelTypeId, PanelTypeDefinition> = {
     name: 'Quick Links',
     description: 'Note with workspace links',
     icon: '🔗',
-    defaultSize: { width: 320, height: 320 },
-    minSize: { width: 250, height: 200 },
-    maxSize: { width: 500, height: 600 },
+    defaultGridSize: 'large',
+    defaultSize: { width: PANEL_SIZES.large.width, height: PANEL_SIZES.large.height },
+    minSize: { width: PANEL_SIZES.medium.width, height: PANEL_SIZES.medium.height },
+    maxSize: { width: PANEL_SIZES.xlarge.width, height: PANEL_SIZES.xlarge.height },
     defaultConfig: { content: '' },
   },
   links_note_tiptap: {
@@ -174,9 +186,10 @@ export const panelTypeRegistry: Record<PanelTypeId, PanelTypeDefinition> = {
     name: 'Quick Links (TipTap)',
     description: 'Note with workspace links using TipTap editor',
     icon: '🔗',
-    defaultSize: { width: 320, height: 320 },
-    minSize: { width: 250, height: 200 },
-    maxSize: { width: 500, height: 600 },
+    defaultGridSize: 'large',
+    defaultSize: { width: PANEL_SIZES.large.width, height: PANEL_SIZES.large.height },
+    minSize: { width: PANEL_SIZES.medium.width, height: PANEL_SIZES.medium.height },
+    maxSize: { width: PANEL_SIZES.xlarge.width, height: PANEL_SIZES.xlarge.height },
     defaultConfig: { content: '' },
   },
   category: {
@@ -184,9 +197,10 @@ export const panelTypeRegistry: Record<PanelTypeId, PanelTypeDefinition> = {
     name: 'Category',
     description: 'Organize entries by category',
     icon: '📂',
-    defaultSize: { width: 280, height: 280 },
-    minSize: { width: 220, height: 180 },
-    maxSize: { width: 400, height: 500 },
+    defaultGridSize: 'large',
+    defaultSize: { width: PANEL_SIZES.large.width, height: PANEL_SIZES.large.height },
+    minSize: { width: PANEL_SIZES.small.width, height: PANEL_SIZES.small.height },
+    maxSize: { width: PANEL_SIZES.xlarge.width, height: PANEL_SIZES.xlarge.height },
     defaultConfig: { categoryIcon: '📂', entryIds: [], categoryVisible: true },
   },
   category_navigator: {
@@ -194,9 +208,10 @@ export const panelTypeRegistry: Record<PanelTypeId, PanelTypeDefinition> = {
     name: 'Links Overview',
     description: 'View all links from Quick Links panels',
     icon: '🔗',
-    defaultSize: { width: 300, height: 400 },
-    minSize: { width: 250, height: 300 },
-    maxSize: { width: 450, height: 600 },
+    defaultGridSize: 'tall',
+    defaultSize: { width: PANEL_SIZES.tall.width, height: PANEL_SIZES.tall.height },
+    minSize: { width: PANEL_SIZES.small.width, height: PANEL_SIZES.tall.height },
+    maxSize: { width: PANEL_SIZES.large.width, height: PANEL_SIZES.xlarge.height },
     defaultConfig: { expandedPanels: [] },
   },
 }

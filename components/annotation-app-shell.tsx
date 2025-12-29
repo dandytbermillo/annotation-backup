@@ -1762,39 +1762,67 @@ const initialWorkspaceSyncRef = useRef(false)
 
   // Note workspace toggle - panel only (header hidden), positioned above dock
   // The dock 🗂️ button controls noteWorkspaceMenuOpen state
-  const noteWorkspaceToggleNode = noteWorkspaceState.featureEnabled && noteWorkspaceMenuOpen ? (
-    <div
-      ref={noteWorkspacePanelRef}
-      className="fixed left-1/2 -translate-x-1/2 flex justify-center"
-      style={{ bottom: 100, zIndex: Z_INDEX.DROPDOWN + 11, pointerEvents: 'auto' }}
-    >
-      <WorkspaceToggleMenu
-        hideHeader
-        labelTitle="Note Workspace"
-        statusLabel={noteWorkspaceStatusLabel}
-        statusHelperText={noteWorkspaceState.statusHelperText}
-        isOpen={noteWorkspaceMenuOpen}
-        onToggleMenu={() => setNoteWorkspaceMenuOpen(prev => !prev)}
-        onCreateWorkspace={noteWorkspaceState.createWorkspace}
-        disableCreate={noteWorkspaceState.isLoading}
-        isListLoading={noteWorkspaceState.isLoading}
-        workspaces={noteWorkspaceState.workspacesForCurrentEntry}
-        currentWorkspaceId={noteWorkspaceState.currentWorkspaceId}
-        deletingWorkspaceId={null}
-        onSelectWorkspace={(workspaceId) => {
-          debugLog({
-            component: "AnnotationApp",
-            action: "workspace_select_clicked",
-            metadata: { workspaceId },
-          })
-          noteWorkspaceState.selectWorkspace(workspaceId)
-          // Notify parent (DashboardView) so it can sync its controlled state
-          onWorkspaceChange?.(workspaceId)
+  const noteWorkspaceToggleNode = noteWorkspaceState.featureEnabled ? (
+    <>
+      {/* Backdrop - subtle dim without blur (panel has its own backdrop-blur) */}
+      <div
+        style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0, 0, 0, 0.2)',
+          zIndex: Z_INDEX.DROPDOWN + 10,
+          opacity: noteWorkspaceMenuOpen ? 1 : 0,
+          pointerEvents: noteWorkspaceMenuOpen ? 'auto' : 'none',
+          transition: 'opacity 200ms ease-out',
         }}
-        onDeleteWorkspace={noteWorkspaceState.deleteWorkspace}
-        onRenameWorkspace={noteWorkspaceState.renameWorkspace}
+        onClick={() => setNoteWorkspaceMenuOpen(false)}
       />
-    </div>
+      {/* Sidebar Panel */}
+      <div
+        ref={noteWorkspacePanelRef}
+        style={{
+          position: 'fixed',
+          top: 0,
+          right: 0,
+          bottom: 0,
+          width: 320,
+          borderLeft: '1px solid rgba(255, 255, 255, 0.08)',
+          boxShadow: '-8px 0 32px rgba(0, 0, 0, 0.4)',
+          zIndex: Z_INDEX.DROPDOWN + 11,
+          transform: noteWorkspaceMenuOpen ? 'translateX(0)' : 'translateX(100%)',
+          transition: 'transform 250ms cubic-bezier(0.4, 0, 0.2, 1)',
+          pointerEvents: 'auto',
+        }}
+      >
+        <WorkspaceToggleMenu
+          hideHeader
+          sidebarMode
+          labelTitle="Note Workspace"
+          statusLabel={noteWorkspaceStatusLabel}
+          statusHelperText={noteWorkspaceState.statusHelperText}
+          isOpen={noteWorkspaceMenuOpen}
+          onToggleMenu={() => setNoteWorkspaceMenuOpen(prev => !prev)}
+          onCreateWorkspace={noteWorkspaceState.createWorkspace}
+          disableCreate={noteWorkspaceState.isLoading}
+          isListLoading={noteWorkspaceState.isLoading}
+          workspaces={noteWorkspaceState.workspacesForCurrentEntry}
+          currentWorkspaceId={noteWorkspaceState.currentWorkspaceId}
+          deletingWorkspaceId={null}
+          onSelectWorkspace={(workspaceId) => {
+            debugLog({
+              component: "AnnotationApp",
+              action: "workspace_select_clicked",
+              metadata: { workspaceId },
+            })
+            noteWorkspaceState.selectWorkspace(workspaceId)
+            // Notify parent (DashboardView) so it can sync its controlled state
+            onWorkspaceChange?.(workspaceId)
+          }}
+          onDeleteWorkspace={noteWorkspaceState.deleteWorkspace}
+          onRenameWorkspace={noteWorkspaceState.renameWorkspace}
+        />
+      </div>
+    </>
   ) : null
 
   // Overlay workspace toggle - hidden when hideWorkspaceToggle is true (parent provides workspace switching)
