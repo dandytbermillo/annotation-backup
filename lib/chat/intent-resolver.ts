@@ -1137,7 +1137,7 @@ async function resolveShowQuickLinks(
     success: true,
     action: 'show_view_panel',
     viewPanelContent,
-    showInViewPanel: true,
+    showInViewPanel: false,  // Don't auto-open; user clicks "Show all" to open
     previewItems,
     totalCount: viewItems.length,
     message: `Found ${viewItems.length} items in Quick Links ${panel.badge || ''}`,

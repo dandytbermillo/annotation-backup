@@ -24,7 +24,7 @@ export function MessageResultPreview({
   totalCount,
   fullContent,
 }: MessageResultPreviewProps) {
-  const { openPanel } = useViewPanel()
+  const { togglePanel } = useViewPanel()
   const moreCount = totalCount - previewItems.length
 
   return (
@@ -47,7 +47,7 @@ export function MessageResultPreview({
       </div>
 
       <button
-        onClick={() => openPanel(fullContent)}
+        onClick={() => togglePanel(fullContent)}
         className="
           flex items-center justify-center gap-1.5 w-full
           mt-2.5 py-2 px-3.5 rounded-lg
@@ -72,8 +72,25 @@ function PreviewItem({ item }: PreviewItemProps) {
   const isNote = item.type === 'note'
   const Icon = getIconForType(item.type)
 
+  const handleClick = () => {
+    // Don't navigate for plain text notes
+    if (isNote) return
+
+    // Navigate to entry/workspace using chat-navigate-note event
+    if (item.entryId || item.workspaceId) {
+      window.dispatchEvent(new CustomEvent('chat-navigate-note', {
+        detail: {
+          noteId: item.entryId || item.id, // Use entryId if available, otherwise item id
+          workspaceId: item.workspaceId,
+          entryId: item.entryId,
+        }
+      }))
+    }
+  }
+
   return (
     <div
+      onClick={handleClick}
       className={`
         flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs
         ${isNote

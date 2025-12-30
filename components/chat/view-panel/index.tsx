@@ -48,7 +48,7 @@ export function ViewPanel() {
       {/* Backdrop */}
       <div
         className={`
-          fixed inset-0 bg-black/20 z-[300]
+          fixed inset-0 bg-black/20 z-[9998]
           transition-opacity duration-200 ease-out
           ${isOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}
         `}
@@ -60,15 +60,19 @@ export function ViewPanel() {
       <div
         className={`
           fixed top-0 right-0 bottom-0
-          w-[30%] min-w-[320px] max-w-[560px]
           bg-slate-950/98 backdrop-blur-xl
           border-l border-white/8
           shadow-[-8px_0_32px_rgba(0,0,0,0.4)]
-          z-[400]
           flex flex-col
           transition-transform duration-[250ms] ease-[cubic-bezier(0.4,0,0.2,1)]
-          ${isOpen ? 'translate-x-0' : 'translate-x-full'}
         `}
+        style={{
+          width: '30%',
+          minWidth: '360px',
+          maxWidth: '800px',
+          zIndex: 9999,
+          transform: isOpen ? 'translateX(0)' : 'translateX(100%)',
+        }}
         data-testid="view-panel"
       >
         <ViewPanelHeader />

@@ -58,6 +58,24 @@ export function ViewPanelProvider({ children }: { children: ReactNode }) {
     setState(prev => ({ ...prev, isOpen: false }))
   }, [])
 
+  // Toggle panel: close if same content is open, open otherwise
+  const togglePanel = useCallback((content: ViewPanelContent) => {
+    setState(prev => {
+      // If panel is open and showing the same content (by title), close it
+      if (prev.isOpen && prev.content?.title === content.title) {
+        return { ...prev, isOpen: false }
+      }
+      // Otherwise, open with new content
+      return {
+        isOpen: true,
+        content,
+        selectedItems: new Set(),
+        zoom: 100,
+        searchQuery: '',
+      }
+    })
+  }, [])
+
   // Update content (for async content updates like file preview)
   const updateContent = useCallback((content: ViewPanelContent) => {
     setState(prev => ({ ...prev, content }))
@@ -107,6 +125,7 @@ export function ViewPanelProvider({ children }: { children: ReactNode }) {
         state,
         openPanel,
         closePanel,
+        togglePanel,
         updateContent,
         toggleItemSelection,
         clearSelection,

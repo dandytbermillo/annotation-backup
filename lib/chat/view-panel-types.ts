@@ -120,6 +120,7 @@ export interface ViewPanelContextValue {
   // Actions
   openPanel: (content: ViewPanelContent) => void
   closePanel: () => void
+  togglePanel: (content: ViewPanelContent) => void  // Toggle: close if same content, open otherwise
   updateContent: (content: ViewPanelContent) => void  // For async content updates
   toggleItemSelection: (itemId: string) => void
   clearSelection: () => void
