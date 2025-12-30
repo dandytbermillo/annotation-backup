@@ -245,8 +245,9 @@ export function LinksNotePanelTiptap({
       })
     },
     onUpdate: ({ editor }) => {
-      // Get current content
+      // Get current content in both formats
       const html = editor.getHTML()
+      const json = editor.getJSON()
 
       // Skip if content hasn't changed (prevents infinite loop)
       if (html === lastSavedContentRef.current) {
@@ -261,7 +262,7 @@ export function LinksNotePanelTiptap({
       void debugLog({
         component: 'LinksNotePanelTiptap',
         action: 'onUpdate_processing',
-        metadata: { htmlLength: html.length },
+        metadata: { htmlLength: html.length, hasJson: !!json },
       })
 
       // Track deleted links
@@ -304,6 +305,7 @@ export function LinksNotePanelTiptap({
       })
 
       // Save content - use ref to call current callback
+      // Save both HTML (for display) and JSON (for server-side parsing without DOM)
       if (deletedInThisEdit.length > 0) {
         const merged = [...currentDeletedLinks]
         for (const newDel of deletedInThisEdit) {
@@ -311,9 +313,9 @@ export function LinksNotePanelTiptap({
             merged.push(newDel)
           }
         }
-        onConfigChangeRef.current?.({ content: html, deletedLinks: merged })
+        onConfigChangeRef.current?.({ content: html, contentJson: json, deletedLinks: merged })
       } else {
-        onConfigChangeRef.current?.({ content: html })
+        onConfigChangeRef.current?.({ content: html, contentJson: json })
       }
 
       void debugLog({

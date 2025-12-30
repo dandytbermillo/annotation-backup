@@ -486,9 +486,9 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
 
   const selectOption = useCallback(
     async (option: {
-      type: 'workspace' | 'note' | 'confirm_delete'
+      type: 'workspace' | 'note' | 'confirm_delete' | 'quick_links_panel'
       id: string
-      data: WorkspaceMatch | NoteMatch | (WorkspaceMatch & { pendingDelete?: boolean; pendingNewName?: string })
+      data: WorkspaceMatch | NoteMatch | (WorkspaceMatch & { pendingDelete?: boolean; pendingNewName?: string }) | { panelId: string; badge: string; panelType: 'quick_links' }
     }): Promise<ChatNavigationResult> => {
       switch (option.type) {
         case 'workspace':
@@ -519,6 +519,20 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
           // User confirmed deletion - execute delete
           const workspace = option.data as WorkspaceMatch
           return deleteWorkspace(workspace.id, workspace.name)
+        case 'quick_links_panel':
+          // User selected a Quick Links panel from disambiguation
+          // Dispatch event for chat to re-resolve with specific badge
+          const panelData = option.data as { panelId: string; badge: string; panelType: 'quick_links' }
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('chat-select-quick-links-panel', {
+              detail: { panelId: panelData.panelId, badge: panelData.badge },
+            }))
+          }
+          return {
+            success: true,
+            message: `Loading Quick Links ${panelData.badge}...`,
+            action: 'selected',
+          }
         default:
           return {
             success: false,

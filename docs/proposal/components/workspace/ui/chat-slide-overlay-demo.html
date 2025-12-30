@@ -1,0 +1,1757 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chat + Universal View Panel Demo</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f0f23 100%);
+      min-height: 100vh;
+      color: #fff;
+      overflow: hidden;
+    }
+
+    /* Simulated Dashboard Background */
+    .dashboard-bg {
+      position: fixed;
+      inset: 0;
+      padding: 60px 20px 20px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      grid-template-rows: repeat(2, 1fr);
+      gap: 16px;
+      opacity: 0.4;
+    }
+
+    .fake-panel {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 12px;
+      padding: 16px;
+    }
+
+    .fake-panel-header {
+      font-size: 12px;
+      font-weight: 600;
+      color: #6b7280;
+      margin-bottom: 12px;
+    }
+
+    .fake-panel-content {
+      height: 60px;
+      background: rgba(255, 255, 255, 0.02);
+      border-radius: 8px;
+    }
+
+    /* Header */
+    .app-header {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 48px;
+      background: rgba(10, 12, 16, 0.9);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      z-index: 100;
+      backdrop-filter: blur(10px);
+    }
+
+    .app-header-title {
+      font-size: 13px;
+      color: #9ca3af;
+    }
+
+    /* Chat Panel - Fixed Position, Never Moves */
+    .chat-panel {
+      position: fixed;
+      top: 60px;
+      left: 20px;
+      bottom: 20px;
+      /* Percentage-based width with bounds */
+      width: 25%;
+      min-width: 300px;
+      max-width: 400px;
+      background: rgba(15, 17, 23, 0.98);
+      border-radius: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+      z-index: 200;
+    }
+
+    .chat-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      background: rgba(0, 0, 0, 0.3);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 16px 16px 0 0;
+      flex-shrink: 0;
+    }
+
+    .chat-header-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .chat-header h2 {
+      font-size: 14px;
+      font-weight: 600;
+      color: #f0f0f0;
+    }
+
+    .chat-header-icon {
+      width: 20px;
+      height: 20px;
+      color: #818cf8;
+    }
+
+    .header-btn {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      border: none;
+      background: transparent;
+      color: #6b7280;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s;
+    }
+
+    .header-btn:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: #f0f0f0;
+    }
+
+    .messages-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .chat-input-area {
+      padding: 12px 16px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 0 0 16px 16px;
+      flex-shrink: 0;
+    }
+
+    .chat-input-wrapper {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 8px 12px;
+    }
+
+    .chat-input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: #f0f0f0;
+      font-size: 13px;
+    }
+
+    .chat-input::placeholder {
+      color: #6b7280;
+    }
+
+    .chat-send-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      border: none;
+      background: rgba(99, 102, 241, 0.8);
+      color: white;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s;
+    }
+
+    .chat-send-btn:hover {
+      background: rgba(99, 102, 241, 1);
+    }
+
+    /* Message Bubbles */
+    .message {
+      max-width: 100%;
+    }
+
+    .message-user {
+      align-self: flex-end;
+    }
+
+    .message-assistant {
+      align-self: flex-start;
+    }
+
+    .message-bubble {
+      padding: 10px 14px;
+      border-radius: 12px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .message-user .message-bubble {
+      background: rgba(99, 102, 241, 0.2);
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      color: #e0e7ff;
+    }
+
+    .message-assistant .message-bubble {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: #e5e7eb;
+    }
+
+    /* Result Preview in Chat */
+    .result-preview {
+      margin-top: 10px;
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 10px;
+      padding: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .result-header {
+      font-size: 12px;
+      font-weight: 600;
+      color: #a5b4fc;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .result-items {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .result-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      background: rgba(255, 255, 255, 0.04);
+      border-radius: 6px;
+      font-size: 12px;
+      color: #d1d5db;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .result-item:hover {
+      background: rgba(99, 102, 241, 0.15);
+      color: #e0e7ff;
+    }
+
+    .result-item-icon {
+      width: 14px;
+      height: 14px;
+      color: #6b7280;
+      flex-shrink: 0;
+    }
+
+    .result-item.note-item {
+      cursor: default;
+      opacity: 0.8;
+    }
+
+    .result-item.note-item:hover {
+      background: rgba(255, 255, 255, 0.04);
+      color: #d1d5db;
+    }
+
+    .result-more {
+      color: #6b7280;
+      font-size: 11px;
+      padding: 4px 0;
+    }
+
+    /* Show More Button */
+    .show-more-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 10px;
+      padding: 8px 14px;
+      background: rgba(99, 102, 241, 0.15);
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      border-radius: 8px;
+      color: #a5b4fc;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+      width: 100%;
+      justify-content: center;
+    }
+
+    .show-more-btn:hover {
+      background: rgba(99, 102, 241, 0.25);
+      border-color: rgba(99, 102, 241, 0.5);
+    }
+
+    .show-more-btn svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    /* ============================================
+       SLIDE-IN OVERLAY - Universal View Panel
+       ============================================ */
+
+    /* Backdrop */
+    .view-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.2);
+      z-index: 300;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 200ms ease-out;
+    }
+
+    .view-backdrop.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    /* Slide-in View Panel */
+    .view-panel {
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      /* Percentage-based width with bounds */
+      width: 30%;
+      min-width: 320px;
+      max-width: 560px;
+      background: rgba(10, 12, 16, 0.98);
+      backdrop-filter: blur(20px);
+      border-left: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: -8px 0 32px rgba(0, 0, 0, 0.4);
+      z-index: 400;
+      display: flex;
+      flex-direction: column;
+      transform: translateX(100%);
+      transition: transform 250ms cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .view-panel.open {
+      transform: translateX(0);
+    }
+
+    .view-panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      flex-shrink: 0;
+    }
+
+    .view-panel-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #f0f0f0;
+    }
+
+    .view-panel-title svg {
+      width: 18px;
+      height: 18px;
+      color: #818cf8;
+    }
+
+    .view-panel-subtitle {
+      font-size: 11px;
+      color: #6b7280;
+      margin-top: 2px;
+    }
+
+    .view-panel-close {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      border: none;
+      background: transparent;
+      color: #6b7280;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s;
+    }
+
+    .view-panel-close:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: #f0f0f0;
+    }
+
+    /* Toolbar for documents */
+    .view-toolbar {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 16px;
+      background: rgba(0, 0, 0, 0.2);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      flex-shrink: 0;
+    }
+
+    .view-toolbar.visible {
+      display: flex;
+    }
+
+    .toolbar-group {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .toolbar-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: rgba(255, 255, 255, 0.04);
+      color: #9ca3af;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s;
+    }
+
+    .toolbar-btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: #f0f0f0;
+    }
+
+    .toolbar-btn svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    .toolbar-divider {
+      width: 1px;
+      height: 20px;
+      background: rgba(255, 255, 255, 0.1);
+      margin: 0 8px;
+    }
+
+    .zoom-display {
+      font-size: 12px;
+      color: #9ca3af;
+      padding: 0 8px;
+      min-width: 50px;
+      text-align: center;
+    }
+
+    /* Search in View Panel */
+    .view-search {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 12px 16px;
+      padding: 10px 14px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      flex-shrink: 0;
+    }
+
+    .view-search.hidden {
+      display: none;
+    }
+
+    .view-search-icon {
+      width: 16px;
+      height: 16px;
+      color: #6b7280;
+      flex-shrink: 0;
+    }
+
+    .view-search input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: #f0f0f0;
+      font-size: 13px;
+    }
+
+    .view-search input::placeholder {
+      color: #6b7280;
+    }
+
+    /* Stats bar */
+    .view-stats {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 16px;
+      font-size: 12px;
+      color: #6b7280;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      flex-shrink: 0;
+    }
+
+    .view-stats.hidden {
+      display: none;
+    }
+
+    .view-panel-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 16px;
+    }
+
+    .view-panel-footer {
+      padding: 12px 16px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .view-footer-btn {
+      flex: 1;
+      padding: 10px 14px;
+      border-radius: 8px;
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      background: rgba(99, 102, 241, 0.1);
+      color: #a5b4fc;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .view-footer-btn:hover {
+      background: rgba(99, 102, 241, 0.2);
+      border-color: rgba(99, 102, 241, 0.5);
+    }
+
+    .view-footer-btn.primary {
+      background: rgba(99, 102, 241, 0.8);
+      border-color: transparent;
+      color: white;
+    }
+
+    .view-footer-btn.primary:hover {
+      background: rgba(99, 102, 241, 1);
+    }
+
+    /* View List Items */
+    .view-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .view-list-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .view-list-item:hover {
+      background: rgba(99, 102, 241, 0.1);
+      border-color: rgba(99, 102, 241, 0.3);
+    }
+
+    .view-list-item.selected {
+      background: rgba(99, 102, 241, 0.15);
+      border-color: rgba(99, 102, 241, 0.4);
+    }
+
+    /* Plain text items (not clickable links) */
+    .view-list-item.text-note {
+      cursor: default;
+      border-left: 3px solid rgba(251, 191, 36, 0.5);
+    }
+
+    .view-list-item.text-note:hover {
+      background: rgba(251, 191, 36, 0.08);
+      border-color: rgba(251, 191, 36, 0.3);
+      border-left-color: rgba(251, 191, 36, 0.7);
+    }
+
+    .view-list-item.text-note .view-item-arrow {
+      display: none;
+    }
+
+    .view-item-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .view-item-checkbox {
+      width: 18px;
+      height: 18px;
+      border-radius: 5px;
+      border: 2px solid rgba(255, 255, 255, 0.2);
+      background: transparent;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: all 0.15s;
+    }
+
+    .view-list-item.selected .view-item-checkbox {
+      background: #818cf8;
+      border-color: #818cf8;
+    }
+
+    .view-item-icon {
+      width: 18px;
+      height: 18px;
+      color: #6b7280;
+      flex-shrink: 0;
+    }
+
+    .view-list-item.text-note .view-item-icon {
+      color: #fbbf24;
+    }
+
+    .view-item-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .view-item-name {
+      font-size: 13px;
+      font-weight: 500;
+      color: #e5e7eb;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .view-item-meta {
+      font-size: 11px;
+      color: #6b7280;
+    }
+
+    .view-item-arrow {
+      width: 16px;
+      height: 16px;
+      color: #4b5563;
+      transition: all 0.15s;
+      flex-shrink: 0;
+    }
+
+    .view-list-item:hover .view-item-arrow {
+      transform: translateX(2px);
+      color: #818cf8;
+    }
+
+    /* ============================================
+       DOCUMENT VIEWER STYLES
+       ============================================ */
+
+    .document-viewer {
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 8px;
+      padding: 20px;
+      font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      color: #e5e7eb;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .document-viewer.code {
+      background: rgba(0, 0, 0, 0.4);
+    }
+
+    .document-viewer .line-numbers {
+      float: left;
+      padding-right: 16px;
+      margin-right: 16px;
+      border-right: 1px solid rgba(255, 255, 255, 0.1);
+      color: #6b7280;
+      user-select: none;
+      text-align: right;
+    }
+
+    /* Code syntax highlighting (simplified) */
+    .code .keyword { color: #c084fc; }
+    .code .string { color: #86efac; }
+    .code .comment { color: #6b7280; font-style: italic; }
+    .code .function { color: #60a5fa; }
+    .code .number { color: #fbbf24; }
+
+    /* PDF Viewer placeholder */
+    .pdf-viewer {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      padding: 8px 0;
+    }
+
+    .pdf-page {
+      background: #fff;
+      border-radius: 4px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+      padding: 24px;
+      min-height: 300px;
+      color: #1f2937;
+      font-size: 13px;
+      line-height: 1.8;
+    }
+
+    .pdf-page-header {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+
+    .pdf-page-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: #111827;
+    }
+
+    .pdf-page-number {
+      font-size: 11px;
+      color: #9ca3af;
+    }
+
+    .pdf-page p {
+      margin-bottom: 12px;
+    }
+
+    /* Rich text note preview */
+    .note-preview {
+      background: rgba(255, 255, 255, 0.02);
+      border-radius: 8px;
+      padding: 20px;
+      font-size: 14px;
+      line-height: 1.7;
+      color: #e5e7eb;
+    }
+
+    .note-preview h1 {
+      font-size: 20px;
+      font-weight: 600;
+      color: #f0f0f0;
+      margin-bottom: 16px;
+    }
+
+    .note-preview h2 {
+      font-size: 16px;
+      font-weight: 600;
+      color: #e5e7eb;
+      margin: 20px 0 12px;
+    }
+
+    .note-preview p {
+      margin-bottom: 12px;
+    }
+
+    .note-preview ul {
+      margin: 12px 0;
+      padding-left: 24px;
+    }
+
+    .note-preview li {
+      margin-bottom: 6px;
+    }
+
+    .note-preview .highlight {
+      background: rgba(251, 191, 36, 0.2);
+      padding: 2px 4px;
+      border-radius: 3px;
+    }
+
+    /* Demo indicator */
+    .demo-indicator {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(99, 102, 241, 0.9);
+      color: white;
+      padding: 10px 20px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 500;
+      z-index: 500;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      text-align: center;
+    }
+
+    .demo-indicator svg {
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+    }
+
+    /* Toast notification */
+    .toast {
+      position: fixed;
+      bottom: 70px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: rgba(34, 197, 94, 0.95);
+      color: white;
+      padding: 12px 24px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 500;
+      opacity: 0;
+      transition: all 0.3s;
+      z-index: 1000;
+      box-shadow: 0 4px 20px rgba(34, 197, 94, 0.3);
+    }
+
+    .toast.show {
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 3px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    /* Keyboard hint */
+    .kbd {
+      display: inline-block;
+      padding: 2px 6px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+      font-size: 11px;
+      font-family: monospace;
+      color: #9ca3af;
+    }
+
+    /* Type badge */
+    .type-badge {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .type-badge.link {
+      background: rgba(99, 102, 241, 0.2);
+      color: #a5b4fc;
+    }
+
+    .type-badge.note {
+      background: rgba(251, 191, 36, 0.2);
+      color: #fbbf24;
+    }
+  </style>
+</head>
+<body>
+  <!-- Simulated Dashboard Background -->
+  <div class="dashboard-bg">
+    <div class="fake-panel">
+      <div class="fake-panel-header">Continue</div>
+      <div class="fake-panel-content"></div>
+    </div>
+    <div class="fake-panel">
+      <div class="fake-panel-header">Quick Capture</div>
+      <div class="fake-panel-content"></div>
+    </div>
+    <div class="fake-panel">
+      <div class="fake-panel-header">Recent</div>
+      <div class="fake-panel-content"></div>
+    </div>
+    <div class="fake-panel">
+      <div class="fake-panel-header">Quick Links A</div>
+      <div class="fake-panel-content"></div>
+    </div>
+    <div class="fake-panel">
+      <div class="fake-panel-header">Quick Links B</div>
+      <div class="fake-panel-content"></div>
+    </div>
+    <div class="fake-panel">
+      <div class="fake-panel-header">Links Overview</div>
+      <div class="fake-panel-content"></div>
+    </div>
+  </div>
+
+  <!-- Header -->
+  <div class="app-header">
+    <span class="app-header-title">Dashboard • Home Entry</span>
+  </div>
+
+  <!-- Chat Panel - FIXED, NEVER MOVES -->
+  <div class="chat-panel">
+    <div class="chat-header">
+      <div class="chat-header-left">
+        <svg class="chat-header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+        <h2>Navigate</h2>
+      </div>
+      <button class="header-btn" title="Close">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M18 6L6 18M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="messages-list" id="messagesList">
+      <!-- Messages will be inserted here -->
+    </div>
+
+    <div class="chat-input-area">
+      <div class="chat-input-wrapper">
+        <input type="text" class="chat-input" placeholder="Try: 'show readme', 'open budget.pdf', 'links A'" id="chatInput" onkeypress="handleKeyPress(event)">
+        <button class="chat-send-btn" onclick="sendMessage()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Backdrop for View Panel -->
+  <div class="view-backdrop" id="viewBackdrop" onclick="closeViewPanel()"></div>
+
+  <!-- Slide-in View Panel -->
+  <div class="view-panel" id="viewPanel">
+    <div class="view-panel-header">
+      <div>
+        <div class="view-panel-title" id="viewPanelTitle">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/>
+            <path d="M21 21l-4.35-4.35"/>
+          </svg>
+          Results
+        </div>
+        <div class="view-panel-subtitle" id="viewPanelSubtitle">Click any item to navigate</div>
+      </div>
+      <button class="view-panel-close" onclick="closeViewPanel()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M18 6L6 18M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Toolbar for documents -->
+    <div class="view-toolbar" id="viewToolbar">
+      <div class="toolbar-group">
+        <button class="toolbar-btn" title="Zoom out" onclick="zoom(-1)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35M8 11h6"/>
+          </svg>
+        </button>
+        <span class="zoom-display" id="zoomDisplay">100%</span>
+        <button class="toolbar-btn" title="Zoom in" onclick="zoom(1)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35M11 8v6M8 11h6"/>
+          </svg>
+        </button>
+      </div>
+      <div class="toolbar-group">
+        <button class="toolbar-btn" title="Download">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+          </svg>
+        </button>
+        <button class="toolbar-btn" title="Print">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="view-search" id="viewSearch">
+      <svg class="view-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="11" cy="11" r="8"/>
+        <path d="M21 21l-4.35-4.35"/>
+      </svg>
+      <input type="text" placeholder="Filter results..." id="viewSearchInput" oninput="filterResults()">
+    </div>
+
+    <div class="view-stats" id="viewStats">
+      <span>0 results</span>
+      <span>Press <span class="kbd">Esc</span> to close</span>
+    </div>
+
+    <div class="view-panel-content" id="viewPanelContent">
+      <!-- Content will be inserted here -->
+    </div>
+
+    <div class="view-panel-footer" id="viewPanelFooter">
+      <button class="view-footer-btn" onclick="closeViewPanel()">Cancel</button>
+      <button class="view-footer-btn primary" onclick="openSelected()">Open Selected</button>
+    </div>
+  </div>
+
+  <!-- Demo Indicator -->
+  <div class="demo-indicator">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="12" cy="12" r="10"/>
+      <path d="M12 16v-4M12 8h.01"/>
+    </svg>
+    Try: "show readme" (text) • "open budget.pdf" (PDF) • "links A" (mixed list) • "preview notes" (rich text)
+  </div>
+
+  <div class="toast" id="toast">Navigating...</div>
+
+  <script>
+    // Content type enum
+    const ContentType = {
+      LIST: 'list',
+      MIXED_LIST: 'mixed_list',  // Links + plain text notes
+      TEXT: 'text',
+      CODE: 'code',
+      PDF: 'pdf',
+      NOTE: 'note'
+    };
+
+    // Sample data for different content types
+    const sampleData = {
+      sprints: {
+        type: ContentType.LIST,
+        items: [
+          { name: 'Sprint 14', entry: 'Project Alpha', date: '2 hours ago' },
+          { name: 'Sprint Planning', entry: 'Project Alpha', date: '1 day ago' },
+          { name: 'Sprint 6', entry: 'Project Beta', date: '3 days ago' },
+          { name: 'Sprint Review', entry: 'Project Beta', date: '5 days ago' },
+          { name: 'Sprint Retro', entry: 'Project Alpha', date: '1 week ago' },
+          { name: 'Sprint 3 Archive', entry: 'Archive', date: '2 weeks ago' },
+        ]
+      },
+      quickLinksA: {
+        type: ContentType.MIXED_LIST,
+        items: [
+          { name: 'testing006', workspace: 'Workspace 2', isLink: true },
+          { name: 'Remember: update API keys before deploy', isLink: false },
+          { name: 'Budget 2024', workspace: 'Finance', isLink: true },
+          { name: 'Call John about the new requirements', isLink: false },
+          { name: 'Team Notes', workspace: 'Workspace 6', isLink: true },
+          { name: 'TODO: Review sprint backlog', isLink: false },
+          { name: 'Design System', workspace: 'Workspace 2', isLink: true },
+          { name: 'Meeting notes from Monday', isLink: false },
+        ]
+      },
+      workspaces: {
+        type: ContentType.LIST,
+        items: [
+          { name: 'Workspace 2', notes: 3, date: '30 min ago' },
+          { name: 'Dashboard', notes: 0, date: '1 hour ago', isDefault: true },
+          { name: 'summary15', notes: 2, date: '2 hours ago' },
+          { name: 'Workspace 4', notes: 5, date: '3 hours ago' },
+          { name: 'Workspace 6', notes: 1, date: '5 hours ago' },
+        ]
+      },
+      readme: {
+        type: ContentType.TEXT,
+        filename: 'README.md',
+        content: `# Project Documentation
+
+## Overview
+This is the main documentation file for the annotation project.
+It contains setup instructions and usage guidelines.
+
+## Getting Started
+
+1. Clone the repository
+2. Run \`npm install\` to install dependencies
+3. Copy \`.env.example\` to \`.env.local\`
+4. Run \`npm run dev\` to start development server
+
+## Features
+
+- Canvas-based annotation system
+- Workspace management
+- Quick Links panels
+- Chat navigation interface
+
+## Configuration
+
+See \`config/settings.ts\` for available options.
+
+## License
+
+MIT License - See LICENSE file for details.`
+      },
+      codeFile: {
+        type: ContentType.CODE,
+        filename: 'utils/helpers.ts',
+        language: 'typescript',
+        content: `<span class="comment">// Helper utilities for workspace management</span>
+
+<span class="keyword">export function</span> <span class="function">formatDate</span>(date: Date): <span class="keyword">string</span> {
+  <span class="keyword">const</span> now = <span class="keyword">new</span> Date();
+  <span class="keyword">const</span> diff = now.getTime() - date.getTime();
+
+  <span class="keyword">if</span> (diff < <span class="number">3600000</span>) {
+    <span class="keyword">return</span> <span class="string">\`\${Math.floor(diff / 60000)}m ago\`</span>;
+  }
+  <span class="keyword">if</span> (diff < <span class="number">86400000</span>) {
+    <span class="keyword">return</span> <span class="string">\`\${Math.floor(diff / 3600000)}h ago\`</span>;
+  }
+  <span class="keyword">return</span> <span class="string">\`\${Math.floor(diff / 86400000)}d ago\`</span>;
+}
+
+<span class="keyword">export interface</span> WorkspaceConfig {
+  id: <span class="keyword">string</span>;
+  name: <span class="keyword">string</span>;
+  isDefault?: <span class="keyword">boolean</span>;
+}`
+      },
+      budgetPdf: {
+        type: ContentType.PDF,
+        filename: 'budget-2024.pdf',
+        pages: 3,
+        content: [
+          {
+            title: 'Q1 Budget Report',
+            text: `Executive Summary
+
+The Q1 2024 budget allocation has been finalized with a total of $2.4M distributed across departments.
+
+Key Highlights:
+• Engineering: $1.2M (50%)
+• Marketing: $480K (20%)
+• Operations: $360K (15%)
+• R&D: $360K (15%)
+
+All departments are tracking within 5% of projected spending.`
+          },
+          {
+            title: 'Department Breakdown',
+            text: `Engineering Department
+
+Personnel: $800,000
+Infrastructure: $250,000
+Tools & Software: $100,000
+Training: $50,000
+
+Total: $1,200,000
+
+Notes: Cloud infrastructure costs increased by 12% due to scaling requirements. Approved additional headcount for Q2.`
+          }
+        ]
+      },
+      meetingNotes: {
+        type: ContentType.NOTE,
+        title: 'Sprint Planning Meeting',
+        content: `<h1>Sprint Planning Meeting</h1>
+<p><strong>Date:</strong> December 28, 2024<br><strong>Attendees:</strong> Team Alpha</p>
+
+<h2>Agenda Items</h2>
+<ul>
+  <li>Review previous sprint outcomes</li>
+  <li>Discuss <span class="highlight">priority items</span> for next sprint</li>
+  <li>Assign story points and owners</li>
+</ul>
+
+<h2>Key Decisions</h2>
+<p>The team agreed to focus on the <span class="highlight">chat navigation feature</span> as the primary deliverable. Secondary items include bug fixes and documentation updates.</p>
+
+<h2>Action Items</h2>
+<ul>
+  <li>@john - Complete API integration by Wednesday</li>
+  <li>@sarah - Review UI mockups</li>
+  <li>@mike - Update test coverage</li>
+</ul>
+
+<p>Next meeting scheduled for Monday 9am.</p>`
+      }
+    };
+
+    let currentData = null;
+    let currentType = null;
+    let selectedItems = new Set();
+    let currentZoom = 100;
+
+    // Close on Escape key
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeViewPanel();
+      }
+    });
+
+    function zoom(direction) {
+      currentZoom = Math.max(50, Math.min(200, currentZoom + direction * 25));
+      document.getElementById('zoomDisplay').textContent = currentZoom + '%';
+      const content = document.getElementById('viewPanelContent');
+      content.style.fontSize = (currentZoom / 100) + 'em';
+    }
+
+    function addMessage(content, isUser = false) {
+      const messagesList = document.getElementById('messagesList');
+      const message = document.createElement('div');
+      message.className = `message ${isUser ? 'message-user' : 'message-assistant'}`;
+      message.innerHTML = `<div class="message-bubble">${content}</div>`;
+      messagesList.appendChild(message);
+      messagesList.scrollTop = messagesList.scrollHeight;
+    }
+
+    function addResultMessage(summary, previewItems, totalCount, dataKey, title, contentType) {
+      const messagesList = document.getElementById('messagesList');
+      const message = document.createElement('div');
+      message.className = 'message message-assistant';
+
+      let previewHtml = previewItems.map(item => {
+        const isNote = item.isLink === false;
+        const icon = isNote
+          ? `<svg class="result-item-icon" style="color: #fbbf24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`
+          : `<svg class="result-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>`;
+
+        return `<div class="result-item ${isNote ? 'note-item' : ''}" ${!isNote ? `onclick="showToast('Opening: ${item.name}')"` : ''}>
+          ${icon}
+          ${item.name}
+        </div>`;
+      }).join('');
+
+      const moreCount = totalCount - previewItems.length;
+
+      message.innerHTML = `
+        <div class="message-bubble">
+          ${summary}
+          <div class="result-preview">
+            <div class="result-header">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"/>
+                <path d="M21 21l-4.35-4.35"/>
+              </svg>
+              ${contentType === ContentType.MIXED_LIST ? 'Links & Notes' : 'Top results'}
+            </div>
+            <div class="result-items">
+              ${previewHtml}
+              ${moreCount > 0 ? `<div class="result-more">...and ${moreCount} more</div>` : ''}
+            </div>
+            <button class="show-more-btn" onclick="openViewPanel('${dataKey}', '${title}')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="9 18 15 12 9 6"/>
+              </svg>
+              Show all ${totalCount} →
+            </button>
+          </div>
+        </div>
+      `;
+
+      messagesList.appendChild(message);
+      messagesList.scrollTop = messagesList.scrollHeight;
+    }
+
+    function addDocumentMessage(summary, filename, fileType, dataKey) {
+      const messagesList = document.getElementById('messagesList');
+      const message = document.createElement('div');
+      message.className = 'message message-assistant';
+
+      const icon = fileType === 'pdf'
+        ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15h6"/></svg>`
+        : fileType === 'code'
+        ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>`
+        : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>`;
+
+      message.innerHTML = `
+        <div class="message-bubble">
+          ${summary}
+          <div class="result-preview">
+            <div class="result-header">
+              ${icon}
+              ${filename}
+            </div>
+            <button class="show-more-btn" onclick="openViewPanel('${dataKey}', '${filename}')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="9 18 15 12 9 6"/>
+              </svg>
+              Open in view panel →
+            </button>
+          </div>
+        </div>
+      `;
+
+      messagesList.appendChild(message);
+      messagesList.scrollTop = messagesList.scrollHeight;
+    }
+
+    function openViewPanel(dataKey, title) {
+      const data = sampleData[dataKey];
+      if (!data) return;
+
+      currentData = data;
+      currentType = data.type;
+      selectedItems.clear();
+      currentZoom = 100;
+
+      // Reset zoom display
+      document.getElementById('zoomDisplay').textContent = '100%';
+      document.getElementById('viewPanelContent').style.fontSize = '1em';
+
+      // Configure panel based on content type
+      const isListType = data.type === ContentType.LIST || data.type === ContentType.MIXED_LIST;
+      const isDocType = data.type === ContentType.TEXT || data.type === ContentType.CODE ||
+                        data.type === ContentType.PDF || data.type === ContentType.NOTE;
+
+      // Show/hide elements based on type
+      document.getElementById('viewSearch').classList.toggle('hidden', !isListType);
+      document.getElementById('viewStats').classList.toggle('hidden', !isListType);
+      document.getElementById('viewToolbar').classList.toggle('visible', isDocType);
+
+      // Update header
+      const icon = getIconForType(data.type);
+      document.getElementById('viewPanelTitle').innerHTML = `${icon} ${title}`;
+      document.getElementById('viewPanelSubtitle').textContent = getSubtitleForType(data);
+      document.getElementById('viewSearchInput').value = '';
+
+      // Update footer buttons
+      updateFooterButtons(data.type);
+
+      // Render content
+      renderContent(data);
+
+      // Open panel
+      document.getElementById('viewBackdrop').classList.add('open');
+      document.getElementById('viewPanel').classList.add('open');
+    }
+
+    function getIconForType(type) {
+      switch(type) {
+        case ContentType.PDF:
+          return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #ef4444"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
+        case ContentType.CODE:
+          return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #60a5fa"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>`;
+        case ContentType.TEXT:
+          return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>`;
+        case ContentType.NOTE:
+          return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #a78bfa"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
+        case ContentType.MIXED_LIST:
+          return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #fbbf24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>`;
+        default:
+          return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>`;
+      }
+    }
+
+    function getSubtitleForType(data) {
+      switch(data.type) {
+        case ContentType.PDF:
+          return `PDF • ${data.pages} pages`;
+        case ContentType.CODE:
+          return `${data.language} • ${data.filename}`;
+        case ContentType.TEXT:
+          return `Text file • ${data.content.split('\n').length} lines`;
+        case ContentType.NOTE:
+          return 'Rich text note';
+        case ContentType.MIXED_LIST:
+          const links = data.items.filter(i => i.isLink !== false).length;
+          const notes = data.items.filter(i => i.isLink === false).length;
+          return `${links} links • ${notes} notes`;
+        default:
+          return `${data.items?.length || 0} items`;
+      }
+    }
+
+    function updateFooterButtons(type) {
+      const footer = document.getElementById('viewPanelFooter');
+
+      switch(type) {
+        case ContentType.PDF:
+          footer.innerHTML = `
+            <button class="view-footer-btn" onclick="showToast('Downloading...')">Download</button>
+            <button class="view-footer-btn primary" onclick="showToast('Opening in new tab...')">Open Full</button>
+          `;
+          break;
+        case ContentType.CODE:
+        case ContentType.TEXT:
+          footer.innerHTML = `
+            <button class="view-footer-btn" onclick="showToast('Copied to clipboard!')">Copy All</button>
+            <button class="view-footer-btn primary" onclick="showToast('Opening in editor...')">Edit</button>
+          `;
+          break;
+        case ContentType.NOTE:
+          footer.innerHTML = `
+            <button class="view-footer-btn" onclick="closeViewPanel()">Close</button>
+            <button class="view-footer-btn primary" onclick="showToast('Opening note...')">Open Note</button>
+          `;
+          break;
+        case ContentType.MIXED_LIST:
+          footer.innerHTML = `
+            <button class="view-footer-btn" onclick="closeViewPanel()">Cancel</button>
+            <button class="view-footer-btn primary" onclick="openSelectedLinks()">Open Links</button>
+          `;
+          break;
+        default:
+          footer.innerHTML = `
+            <button class="view-footer-btn" onclick="closeViewPanel()">Cancel</button>
+            <button class="view-footer-btn primary" onclick="openSelected()">Open Selected</button>
+          `;
+      }
+    }
+
+    function renderContent(data) {
+      const content = document.getElementById('viewPanelContent');
+
+      switch(data.type) {
+        case ContentType.LIST:
+          renderList(data.items, false);
+          updateStats(data.items.length);
+          break;
+        case ContentType.MIXED_LIST:
+          renderMixedList(data.items);
+          updateStats(data.items.length);
+          break;
+        case ContentType.TEXT:
+          content.innerHTML = `<div class="document-viewer">${escapeHtml(data.content)}</div>`;
+          break;
+        case ContentType.CODE:
+          const lines = data.content.split('\n');
+          const lineNums = lines.map((_, i) => i + 1).join('\n');
+          content.innerHTML = `<div class="document-viewer code"><span class="line-numbers">${lineNums}</span>${data.content}</div>`;
+          break;
+        case ContentType.PDF:
+          let pdfHtml = '<div class="pdf-viewer">';
+          data.content.forEach((page, i) => {
+            pdfHtml += `
+              <div class="pdf-page">
+                <div class="pdf-page-header">
+                  <span class="pdf-page-title">${page.title}</span>
+                  <span class="pdf-page-number">Page ${i + 1} of ${data.pages}</span>
+                </div>
+                <p>${page.text.replace(/\n/g, '</p><p>')}</p>
+              </div>
+            `;
+          });
+          pdfHtml += '</div>';
+          content.innerHTML = pdfHtml;
+          break;
+        case ContentType.NOTE:
+          content.innerHTML = `<div class="note-preview">${data.content}</div>`;
+          break;
+      }
+    }
+
+    function escapeHtml(text) {
+      return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function renderList(items, isMixed) {
+      const content = document.getElementById('viewPanelContent');
+      let html = '<div class="view-list">';
+
+      items.forEach((item, i) => {
+        const meta = item.entry ? `${item.entry} • ${item.date || item.workspace}` :
+                     item.workspace ? item.workspace :
+                     item.time ? `${item.entry} • ${item.time}` :
+                     item.notes !== undefined ? `${item.notes} notes • ${item.date}` : '';
+
+        html += `
+          <div class="view-list-item ${selectedItems.has(i) ? 'selected' : ''}" onclick="toggleSelect(${i}, this)" data-name="${item.name.toLowerCase()}">
+            <div class="view-item-left">
+              <div class="view-item-checkbox">
+                ${selectedItems.has(i) ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
+              </div>
+              <svg class="view-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>
+                <polyline points="13 2 13 9 20 9"/>
+              </svg>
+              <div class="view-item-info">
+                <div class="view-item-name">${item.name}</div>
+                ${meta ? `<div class="view-item-meta">${meta}</div>` : ''}
+              </div>
+            </div>
+            <svg class="view-item-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          </div>
+        `;
+      });
+
+      html += '</div>';
+      content.innerHTML = html;
+    }
+
+    function renderMixedList(items) {
+      const content = document.getElementById('viewPanelContent');
+      let html = '<div class="view-list">';
+
+      items.forEach((item, i) => {
+        const isNote = item.isLink === false;
+        const meta = item.workspace || '';
+
+        if (isNote) {
+          html += `
+            <div class="view-list-item text-note" data-name="${item.name.toLowerCase()}" data-type="note">
+              <div class="view-item-left">
+                <svg class="view-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                </svg>
+                <div class="view-item-info">
+                  <div class="view-item-name">${item.name}</div>
+                  <div class="view-item-meta"><span class="type-badge note">Note</span></div>
+                </div>
+              </div>
+              <svg class="view-item-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="9 18 15 12 9 6"/>
+              </svg>
+            </div>
+          `;
+        } else {
+          html += `
+            <div class="view-list-item ${selectedItems.has(i) ? 'selected' : ''}" onclick="toggleSelect(${i}, this)" data-name="${item.name.toLowerCase()}" data-type="link">
+              <div class="view-item-left">
+                <div class="view-item-checkbox">
+                  ${selectedItems.has(i) ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
+                </div>
+                <svg class="view-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>
+                  <polyline points="13 2 13 9 20 9"/>
+                </svg>
+                <div class="view-item-info">
+                  <div class="view-item-name">${item.name}</div>
+                  <div class="view-item-meta"><span class="type-badge link">Link</span> ${meta}</div>
+                </div>
+              </div>
+              <svg class="view-item-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="9 18 15 12 9 6"/>
+              </svg>
+            </div>
+          `;
+        }
+      });
+
+      html += '</div>';
+      content.innerHTML = html;
+    }
+
+    function updateStats(count) {
+      document.getElementById('viewStats').innerHTML = `
+        <span>${count} items</span>
+        <span>Press <span class="kbd">Esc</span> to close</span>
+      `;
+    }
+
+    function closeViewPanel() {
+      document.getElementById('viewBackdrop').classList.remove('open');
+      document.getElementById('viewPanel').classList.remove('open');
+      selectedItems.clear();
+    }
+
+    function toggleSelect(index, element) {
+      // Don't select note items
+      if (element.dataset.type === 'note') return;
+
+      if (selectedItems.has(index)) {
+        selectedItems.delete(index);
+        element.classList.remove('selected');
+      } else {
+        selectedItems.add(index);
+        element.classList.add('selected');
+      }
+
+      const checkbox = element.querySelector('.view-item-checkbox');
+      if (checkbox) {
+        checkbox.innerHTML = selectedItems.has(index) ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>' : '';
+      }
+    }
+
+    function filterResults() {
+      const query = document.getElementById('viewSearchInput').value.toLowerCase();
+      const items = document.querySelectorAll('.view-list-item');
+      let visibleCount = 0;
+
+      items.forEach(item => {
+        const name = item.dataset.name;
+        if (name.includes(query)) {
+          item.style.display = 'flex';
+          visibleCount++;
+        } else {
+          item.style.display = 'none';
+        }
+      });
+
+      document.getElementById('viewStats').innerHTML = `
+        <span>${visibleCount} items${query ? ` matching "${query}"` : ''}</span>
+        <span>Press <span class="kbd">Esc</span> to close</span>
+      `;
+    }
+
+    function openSelected() {
+      if (selectedItems.size === 0) {
+        showToast('Select items first');
+      } else if (selectedItems.size === 1) {
+        const index = Array.from(selectedItems)[0];
+        showToast(`Opening: ${currentData.items[index].name}`);
+        closeViewPanel();
+      } else {
+        showToast(`Opening ${selectedItems.size} items...`);
+        closeViewPanel();
+      }
+    }
+
+    function openSelectedLinks() {
+      const linkItems = currentData.items.filter((item, i) => item.isLink !== false && selectedItems.has(i));
+      if (linkItems.length === 0) {
+        showToast('Select link items first');
+      } else if (linkItems.length === 1) {
+        showToast(`Opening: ${linkItems[0].name}`);
+        closeViewPanel();
+      } else {
+        showToast(`Opening ${linkItems.length} links...`);
+        closeViewPanel();
+      }
+    }
+
+    function sendMessage() {
+      const input = document.getElementById('chatInput');
+      const query = input.value.trim().toLowerCase();
+      if (!query) return;
+
+      addMessage(input.value, true);
+      input.value = '';
+
+      setTimeout(() => {
+        if (query.includes('sprint')) {
+          addResultMessage(
+            'Found 6 results matching "sprint":',
+            sampleData.sprints.items.slice(0, 3),
+            6,
+            'sprints',
+            'Results: "sprint"',
+            ContentType.LIST
+          );
+        } else if (query.includes('links a') || query.includes('quick links a')) {
+          addResultMessage(
+            'Quick Links A contains links and notes:',
+            sampleData.quickLinksA.items.slice(0, 4),
+            8,
+            'quickLinksA',
+            'Quick Links A',
+            ContentType.MIXED_LIST
+          );
+        } else if (query.includes('workspace') || query.includes('list workspace')) {
+          addResultMessage(
+            'Found 5 workspaces:',
+            sampleData.workspaces.items.slice(0, 3),
+            5,
+            'workspaces',
+            'Workspaces',
+            ContentType.LIST
+          );
+        } else if (query.includes('readme') || query.includes('show readme')) {
+          addDocumentMessage(
+            'Here\'s the README file:',
+            'README.md',
+            'text',
+            'readme'
+          );
+        } else if (query.includes('code') || query.includes('helper') || query.includes('utils')) {
+          addDocumentMessage(
+            'Found the helper utilities file:',
+            'utils/helpers.ts',
+            'code',
+            'codeFile'
+          );
+        } else if (query.includes('pdf') || query.includes('budget')) {
+          addDocumentMessage(
+            'Here\'s the budget report:',
+            'budget-2024.pdf',
+            'pdf',
+            'budgetPdf'
+          );
+        } else if (query.includes('note') || query.includes('meeting') || query.includes('preview')) {
+          addDocumentMessage(
+            'Here\'s the meeting notes:',
+            'Sprint Planning Meeting',
+            'note',
+            'meetingNotes'
+          );
+        } else {
+          addMessage(`I can help you view different content types:<br><br>
+            • <strong>"show readme"</strong> - Text file<br>
+            • <strong>"open budget.pdf"</strong> - PDF document<br>
+            • <strong>"show code"</strong> - Code file<br>
+            • <strong>"links A"</strong> - Mixed list (links + notes)<br>
+            • <strong>"preview notes"</strong> - Rich text note<br>
+            • <strong>"find sprints"</strong> - Search results`);
+        }
+      }, 300);
+    }
+
+    function handleKeyPress(event) {
+      if (event.key === 'Enter') {
+        sendMessage();
+      }
+    }
+
+    function showToast(message) {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 2000);
+    }
+
+    // Initial message
+    addMessage('Hi! I can show different content in the view panel. Try:<br>• "show readme" (text file)<br>• "open budget.pdf" (PDF)<br>• "links A" (mixed list)<br>• "preview notes" (rich text)');
+  </script>
+</body>
+</html>

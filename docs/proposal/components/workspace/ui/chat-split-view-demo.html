@@ -1,0 +1,1193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chat Split View Demo - View Area for Long Content</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f0f23 100%);
+      min-height: 100vh;
+      padding: 20px;
+      color: #fff;
+    }
+
+    .demo-container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      text-align: center;
+      margin-bottom: 8px;
+      font-size: 24px;
+      color: #a5b4fc;
+    }
+
+    .subtitle {
+      text-align: center;
+      color: #6b7280;
+      font-size: 14px;
+      margin-bottom: 24px;
+    }
+
+    /* Chat Panel */
+    .chat-panel {
+      background: rgba(15, 17, 23, 0.95);
+      border-radius: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      overflow: hidden;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    }
+
+    .chat-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      background: rgba(0, 0, 0, 0.3);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .chat-header-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .chat-header h2 {
+      font-size: 14px;
+      font-weight: 600;
+      color: #f0f0f0;
+    }
+
+    .chat-header-icon {
+      width: 20px;
+      height: 20px;
+      color: #818cf8;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .header-btn {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      border: none;
+      background: transparent;
+      color: #6b7280;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s;
+    }
+
+    .header-btn:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: #f0f0f0;
+    }
+
+    /* Split Content Area */
+    .chat-content {
+      display: flex;
+      height: 500px;
+    }
+
+    /* Messages Area */
+    .messages-area {
+      flex: 1;
+      min-width: 280px;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .messages-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    /* View Area */
+    .view-area {
+      width: 0;
+      overflow: hidden;
+      transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      background: rgba(0, 0, 0, 0.2);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .view-area.open {
+      width: 320px;
+    }
+
+    .view-area-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      flex-shrink: 0;
+    }
+
+    .view-area-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #a5b4fc;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .view-area-close {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      border: none;
+      background: transparent;
+      color: #6b7280;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s;
+    }
+
+    .view-area-close:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: #f0f0f0;
+    }
+
+    .view-area-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+    }
+
+    .view-area-footer {
+      padding: 12px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .view-footer-btn {
+      flex: 1;
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      background: rgba(99, 102, 241, 0.1);
+      color: #a5b4fc;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .view-footer-btn:hover {
+      background: rgba(99, 102, 241, 0.2);
+      border-color: rgba(99, 102, 241, 0.5);
+    }
+
+    /* Message Bubbles */
+    .message {
+      max-width: 100%;
+    }
+
+    .message-user {
+      align-self: flex-end;
+    }
+
+    .message-assistant {
+      align-self: flex-start;
+    }
+
+    .message-bubble {
+      padding: 10px 14px;
+      border-radius: 12px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .message-user .message-bubble {
+      background: rgba(99, 102, 241, 0.2);
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      color: #e0e7ff;
+    }
+
+    .message-assistant .message-bubble {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: #e5e7eb;
+    }
+
+    /* Result Preview in Chat */
+    .result-preview {
+      margin-top: 10px;
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 10px;
+      padding: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .result-header {
+      font-size: 12px;
+      font-weight: 600;
+      color: #a5b4fc;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .result-items {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .result-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      background: rgba(255, 255, 255, 0.04);
+      border-radius: 6px;
+      font-size: 12px;
+      color: #d1d5db;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .result-item:hover {
+      background: rgba(99, 102, 241, 0.15);
+      color: #e0e7ff;
+    }
+
+    .result-item-icon {
+      width: 14px;
+      height: 14px;
+      color: #6b7280;
+    }
+
+    .result-more {
+      color: #6b7280;
+      font-size: 11px;
+      padding: 4px 0;
+    }
+
+    /* Show More Button */
+    .show-more-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 10px;
+      padding: 8px 14px;
+      background: rgba(99, 102, 241, 0.15);
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      border-radius: 8px;
+      color: #a5b4fc;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+      width: 100%;
+      justify-content: center;
+    }
+
+    .show-more-btn:hover {
+      background: rgba(99, 102, 241, 0.25);
+      border-color: rgba(99, 102, 241, 0.5);
+    }
+
+    .show-more-btn svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    /* View Area List Items */
+    .view-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .view-list-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      background: rgba(255, 255, 255, 0.04);
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .view-list-item:hover {
+      background: rgba(99, 102, 241, 0.15);
+      border-color: rgba(99, 102, 241, 0.3);
+    }
+
+    .view-list-item.selected {
+      background: rgba(99, 102, 241, 0.2);
+      border-color: rgba(99, 102, 241, 0.4);
+    }
+
+    .view-item-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .view-item-checkbox {
+      width: 16px;
+      height: 16px;
+      border-radius: 4px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: transparent;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .view-list-item.selected .view-item-checkbox {
+      background: #818cf8;
+      border-color: #818cf8;
+    }
+
+    .view-item-icon {
+      width: 16px;
+      height: 16px;
+      color: #6b7280;
+    }
+
+    .view-item-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .view-item-name {
+      font-size: 13px;
+      font-weight: 500;
+      color: #e5e7eb;
+    }
+
+    .view-item-meta {
+      font-size: 11px;
+      color: #6b7280;
+    }
+
+    .view-item-arrow {
+      width: 16px;
+      height: 16px;
+      color: #4b5563;
+      transition: transform 0.15s;
+    }
+
+    .view-list-item:hover .view-item-arrow {
+      transform: translateX(2px);
+      color: #818cf8;
+    }
+
+    /* Quick Links Section in View */
+    .view-section {
+      margin-bottom: 16px;
+    }
+
+    .view-section-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 0;
+      font-size: 12px;
+      font-weight: 600;
+      color: #9ca3af;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      margin-bottom: 8px;
+    }
+
+    .view-section-badge {
+      width: 20px;
+      height: 20px;
+      border-radius: 4px;
+      background: rgba(99, 102, 241, 0.2);
+      color: #a5b4fc;
+      font-size: 10px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Input Area */
+    .chat-input-area {
+      padding: 12px 16px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      background: rgba(0, 0, 0, 0.2);
+    }
+
+    .chat-input-wrapper {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 8px 12px;
+    }
+
+    .chat-input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: #f0f0f0;
+      font-size: 13px;
+    }
+
+    .chat-input::placeholder {
+      color: #6b7280;
+    }
+
+    .chat-send-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      border: none;
+      background: rgba(99, 102, 241, 0.8);
+      color: white;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s;
+    }
+
+    .chat-send-btn:hover {
+      background: rgba(99, 102, 241, 1);
+    }
+
+    /* Search in View Area */
+    .view-search {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 8px;
+      margin-bottom: 12px;
+    }
+
+    .view-search-icon {
+      width: 14px;
+      height: 14px;
+      color: #6b7280;
+    }
+
+    .view-search input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: #f0f0f0;
+      font-size: 12px;
+    }
+
+    .view-search input::placeholder {
+      color: #6b7280;
+    }
+
+    /* Stats bar */
+    .view-stats {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 0;
+      font-size: 11px;
+      color: #6b7280;
+      margin-bottom: 8px;
+    }
+
+    /* Demo Controls */
+    .demo-controls {
+      margin-top: 24px;
+      padding: 16px;
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .demo-controls h3 {
+      font-size: 14px;
+      color: #a5b4fc;
+      margin-bottom: 12px;
+    }
+
+    .demo-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .demo-btn {
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: rgba(255, 255, 255, 0.05);
+      color: #d1d5db;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .demo-btn:hover {
+      background: rgba(99, 102, 241, 0.15);
+      border-color: rgba(99, 102, 241, 0.3);
+      color: #e0e7ff;
+    }
+
+    /* Empty State */
+    .view-empty {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: #6b7280;
+      text-align: center;
+      padding: 20px;
+    }
+
+    .view-empty-icon {
+      width: 48px;
+      height: 48px;
+      color: #4b5563;
+      margin-bottom: 12px;
+    }
+
+    .view-empty-text {
+      font-size: 13px;
+    }
+
+    .view-empty-hint {
+      font-size: 11px;
+      margin-top: 4px;
+      color: #4b5563;
+    }
+
+    /* Toast notification */
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: rgba(34, 197, 94, 0.9);
+      color: white;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      opacity: 0;
+      transition: all 0.3s;
+      z-index: 1000;
+    }
+
+    .toast.show {
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 3px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+  </style>
+</head>
+<body>
+  <div class="demo-container">
+    <h1>Chat with View Area Demo</h1>
+    <p class="subtitle">Split-pane chat: compact messages + dedicated content viewer</p>
+
+    <div class="chat-panel">
+      <!-- Header -->
+      <div class="chat-header">
+        <div class="chat-header-left">
+          <svg class="chat-header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+          </svg>
+          <h2>Navigate</h2>
+        </div>
+        <div class="header-actions">
+          <button class="header-btn" title="Toggle view area" onclick="toggleViewArea()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2"/>
+              <path d="M12 3v18"/>
+            </svg>
+          </button>
+          <button class="header-btn" title="Close">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 6L6 18M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Split Content -->
+      <div class="chat-content">
+        <!-- Messages Area -->
+        <div class="messages-area">
+          <div class="messages-list" id="messagesList">
+            <!-- Messages will be inserted here -->
+          </div>
+
+          <!-- Input -->
+          <div class="chat-input-area">
+            <div class="chat-input-wrapper">
+              <input type="text" class="chat-input" placeholder="Try: 'find all sprints' or 'show quick links A'" id="chatInput" onkeypress="handleKeyPress(event)">
+              <button class="chat-send-btn" onclick="sendMessage()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- View Area -->
+        <div class="view-area" id="viewArea">
+          <div class="view-area-header">
+            <span class="view-area-title" id="viewAreaTitle">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"/>
+                <path d="M21 21l-4.35-4.35"/>
+              </svg>
+              Content View
+            </span>
+            <button class="view-area-close" onclick="closeViewArea()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M18 6L6 18M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+          <div class="view-area-content" id="viewAreaContent">
+            <!-- Content will be inserted here -->
+            <div class="view-empty">
+              <svg class="view-empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                <path d="M12 3v18"/>
+              </svg>
+              <div class="view-empty-text">View area ready</div>
+              <div class="view-empty-hint">Click "Show all" on any result to view details here</div>
+            </div>
+          </div>
+          <div class="view-area-footer" id="viewAreaFooter" style="display: none;">
+            <button class="view-footer-btn" onclick="openSelected()">Open Selected</button>
+            <button class="view-footer-btn" onclick="selectAll()">Select All</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Demo Controls -->
+    <div class="demo-controls">
+      <h3>Try these commands:</h3>
+      <div class="demo-buttons">
+        <button class="demo-btn" onclick="simulateQuery('find all sprints')">find all sprints</button>
+        <button class="demo-btn" onclick="simulateQuery('show quick links A')">show quick links A</button>
+        <button class="demo-btn" onclick="simulateQuery('list all workspaces')">list all workspaces</button>
+        <button class="demo-btn" onclick="simulateQuery('show recent')">show recent</button>
+        <button class="demo-btn" onclick="simulateQuery('search budget')">search budget</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast">Navigating to workspace...</div>
+
+  <script>
+    // Sample data
+    const sampleData = {
+      sprints: [
+        { name: 'Sprint 14', entry: 'Project Alpha', date: '2 hours ago' },
+        { name: 'Sprint Planning', entry: 'Project Alpha', date: '1 day ago' },
+        { name: 'Sprint 6', entry: 'Project Beta', date: '3 days ago' },
+        { name: 'Sprint Review', entry: 'Project Beta', date: '5 days ago' },
+        { name: 'Sprint Retro', entry: 'Project Alpha', date: '1 week ago' },
+        { name: 'Sprint 3 Archive', entry: 'Archive', date: '2 weeks ago' },
+        { name: 'Sprint Goals 2024', entry: 'Planning', date: '3 weeks ago' },
+        { name: 'Sprint 2', entry: 'Project Beta', date: '1 month ago' },
+        { name: 'Sprint Kickoff', entry: 'Onboarding', date: '1 month ago' },
+        { name: 'Sprint Demo', entry: 'Project Alpha', date: '2 months ago' },
+        { name: 'Sprint Notes', entry: 'Documentation', date: '2 months ago' },
+        { name: 'Sprint Template', entry: 'Templates', date: '3 months ago' },
+        { name: 'Sprint 1', entry: 'Project Alpha', date: '3 months ago' },
+        { name: 'Sprint Velocity', entry: 'Metrics', date: '4 months ago' },
+        { name: 'Sprint History', entry: 'Archive', date: '6 months ago' },
+      ],
+      quickLinksA: [
+        { name: 'testing006', workspace: 'Workspace 2' },
+        { name: 'testing007', workspace: 'Workspace 4' },
+        { name: 'sample A', workspace: 'Dashboard' },
+        { name: 'Budget 2024', workspace: 'Finance' },
+        { name: 'Team Notes', workspace: 'Workspace 6' },
+        { name: 'Roadmap Q1', workspace: 'Planning' },
+        { name: 'Design System', workspace: 'Workspace 2' },
+      ],
+      workspaces: [
+        { name: 'Workspace 2', notes: 3, date: '30 min ago' },
+        { name: 'Dashboard', notes: 0, date: '1 hour ago' },
+        { name: 'summary15', notes: 2, date: '2 hours ago', isDefault: true },
+        { name: 'Workspace 4', notes: 5, date: '3 hours ago' },
+        { name: 'Workspace 6', notes: 1, date: '5 hours ago' },
+        { name: 'sprint14', notes: 8, date: '1 day ago' },
+        { name: 'workspace7', notes: 0, date: '2 days ago' },
+        { name: 'test1', notes: 0, date: '3 days ago' },
+      ],
+      recent: [
+        { name: 'workspace33', entry: 'summary14 C', time: '55m ago' },
+        { name: 'Workspace 4', entry: 'summary14 C', time: '2h ago' },
+        { name: 'Workspace 2', entry: 'summary15 C', time: '2h ago' },
+        { name: 'summary14', entry: 'summary14 C', time: '16h ago' },
+        { name: 'workspace7', entry: 'summary14 C', time: '22h ago' },
+      ],
+      budget: [
+        { name: 'Budget 2024', entry: 'Finance', workspace: 'Planning' },
+        { name: 'Budget Review', entry: 'Project Alpha', workspace: 'Workspace 2' },
+        { name: 'Budget Template', entry: 'Templates', workspace: 'Dashboard' },
+        { name: 'Q1 Budget Analysis', entry: 'Reports', workspace: 'Analytics' },
+      ]
+    };
+
+    let selectedItems = new Set();
+
+    function addMessage(content, isUser = false) {
+      const messagesList = document.getElementById('messagesList');
+      const message = document.createElement('div');
+      message.className = `message ${isUser ? 'message-user' : 'message-assistant'}`;
+      message.innerHTML = `<div class="message-bubble">${content}</div>`;
+      messagesList.appendChild(message);
+      messagesList.scrollTop = messagesList.scrollHeight;
+    }
+
+    function addResultMessage(summary, previewItems, totalCount, showMoreAction) {
+      const messagesList = document.getElementById('messagesList');
+      const message = document.createElement('div');
+      message.className = 'message message-assistant';
+
+      let previewHtml = previewItems.map(item => `
+        <div class="result-item" onclick="showToast('Opening: ${item.name}')">
+          <svg class="result-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>
+            <polyline points="13 2 13 9 20 9"/>
+          </svg>
+          ${item.name}
+        </div>
+      `).join('');
+
+      const moreCount = totalCount - previewItems.length;
+
+      message.innerHTML = `
+        <div class="message-bubble">
+          ${summary}
+          <div class="result-preview">
+            <div class="result-header">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"/>
+                <path d="M21 21l-4.35-4.35"/>
+              </svg>
+              Top results
+            </div>
+            <div class="result-items">
+              ${previewHtml}
+              ${moreCount > 0 ? `<div class="result-more">...and ${moreCount} more</div>` : ''}
+            </div>
+            <button class="show-more-btn" onclick="${showMoreAction}">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                <path d="M12 3v18"/>
+              </svg>
+              Show all ${totalCount} in view area
+            </button>
+          </div>
+        </div>
+      `;
+
+      messagesList.appendChild(message);
+      messagesList.scrollTop = messagesList.scrollHeight;
+    }
+
+    function openViewArea() {
+      document.getElementById('viewArea').classList.add('open');
+    }
+
+    function closeViewArea() {
+      document.getElementById('viewArea').classList.remove('open');
+      selectedItems.clear();
+    }
+
+    function toggleViewArea() {
+      document.getElementById('viewArea').classList.toggle('open');
+    }
+
+    function showSprintsInView() {
+      openViewArea();
+      document.getElementById('viewAreaTitle').innerHTML = `
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/>
+          <path d="M21 21l-4.35-4.35"/>
+        </svg>
+        Results: "sprint" (15)
+      `;
+
+      let html = `
+        <div class="view-search">
+          <svg class="view-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/>
+            <path d="M21 21l-4.35-4.35"/>
+          </svg>
+          <input type="text" placeholder="Filter results...">
+        </div>
+        <div class="view-stats">
+          <span>15 results</span>
+          <span>${selectedItems.size} selected</span>
+        </div>
+        <div class="view-list">
+      `;
+
+      sampleData.sprints.forEach((item, i) => {
+        html += `
+          <div class="view-list-item ${selectedItems.has(i) ? 'selected' : ''}" onclick="toggleSelect(${i}, this)">
+            <div class="view-item-left">
+              <div class="view-item-checkbox">
+                ${selectedItems.has(i) ? '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
+              </div>
+              <svg class="view-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>
+                <polyline points="13 2 13 9 20 9"/>
+              </svg>
+              <div class="view-item-info">
+                <div class="view-item-name">${item.name}</div>
+                <div class="view-item-meta">${item.entry} • ${item.date}</div>
+              </div>
+            </div>
+            <svg class="view-item-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          </div>
+        `;
+      });
+
+      html += '</div>';
+
+      document.getElementById('viewAreaContent').innerHTML = html;
+      document.getElementById('viewAreaFooter').style.display = 'flex';
+    }
+
+    function showQuickLinksInView() {
+      openViewArea();
+      document.getElementById('viewAreaTitle').innerHTML = `
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+        </svg>
+        Quick Links A (7)
+      `;
+
+      let html = `
+        <div class="view-section">
+          <div class="view-section-header">
+            <div class="view-section-badge">A</div>
+            Quick Links (TipTap)
+          </div>
+          <div class="view-list">
+      `;
+
+      sampleData.quickLinksA.forEach((item, i) => {
+        html += `
+          <div class="view-list-item" onclick="showToast('Opening: ${item.name}')">
+            <div class="view-item-left">
+              <svg class="view-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+              </svg>
+              <div class="view-item-info">
+                <div class="view-item-name">${item.name}</div>
+                <div class="view-item-meta">${item.workspace}</div>
+              </div>
+            </div>
+            <svg class="view-item-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          </div>
+        `;
+      });
+
+      html += '</div></div>';
+
+      document.getElementById('viewAreaContent').innerHTML = html;
+      document.getElementById('viewAreaFooter').style.display = 'none';
+    }
+
+    function showWorkspacesInView() {
+      openViewArea();
+      document.getElementById('viewAreaTitle').innerHTML = `
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+        </svg>
+        Workspaces (8)
+      `;
+
+      let html = `
+        <div class="view-search">
+          <svg class="view-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/>
+            <path d="M21 21l-4.35-4.35"/>
+          </svg>
+          <input type="text" placeholder="Filter workspaces...">
+        </div>
+        <div class="view-list">
+      `;
+
+      sampleData.workspaces.forEach((item) => {
+        html += `
+          <div class="view-list-item" onclick="showToast('Opening: ${item.name}')">
+            <div class="view-item-left">
+              <svg class="view-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+              </svg>
+              <div class="view-item-info">
+                <div class="view-item-name">${item.name} ${item.isDefault ? '<span style="color:#6b7280;font-size:10px">(Default)</span>' : ''}</div>
+                <div class="view-item-meta">${item.notes} notes • ${item.date}</div>
+              </div>
+            </div>
+            <svg class="view-item-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          </div>
+        `;
+      });
+
+      html += '</div>';
+
+      document.getElementById('viewAreaContent').innerHTML = html;
+      document.getElementById('viewAreaFooter').style.display = 'none';
+    }
+
+    function showRecentInView() {
+      openViewArea();
+      document.getElementById('viewAreaTitle').innerHTML = `
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <polyline points="12 6 12 12 16 14"/>
+        </svg>
+        Recent (5)
+      `;
+
+      let html = '<div class="view-list">';
+
+      sampleData.recent.forEach((item) => {
+        html += `
+          <div class="view-list-item" onclick="showToast('Opening: ${item.name}')">
+            <div class="view-item-left">
+              <svg class="view-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/>
+                <polyline points="12 6 12 12 16 14"/>
+              </svg>
+              <div class="view-item-info">
+                <div class="view-item-name">${item.name}</div>
+                <div class="view-item-meta">${item.entry} • ${item.time}</div>
+              </div>
+            </div>
+            <svg class="view-item-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          </div>
+        `;
+      });
+
+      html += '</div>';
+
+      document.getElementById('viewAreaContent').innerHTML = html;
+      document.getElementById('viewAreaFooter').style.display = 'none';
+    }
+
+    function showBudgetInView() {
+      openViewArea();
+      document.getElementById('viewAreaTitle').innerHTML = `
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/>
+          <path d="M21 21l-4.35-4.35"/>
+        </svg>
+        Results: "budget" (4)
+      `;
+
+      let html = '<div class="view-list">';
+
+      sampleData.budget.forEach((item) => {
+        html += `
+          <div class="view-list-item" onclick="showToast('Opening: ${item.name}')">
+            <div class="view-item-left">
+              <svg class="view-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>
+                <polyline points="13 2 13 9 20 9"/>
+              </svg>
+              <div class="view-item-info">
+                <div class="view-item-name">${item.name}</div>
+                <div class="view-item-meta">${item.entry} • ${item.workspace}</div>
+              </div>
+            </div>
+            <svg class="view-item-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          </div>
+        `;
+      });
+
+      html += '</div>';
+
+      document.getElementById('viewAreaContent').innerHTML = html;
+      document.getElementById('viewAreaFooter').style.display = 'none';
+    }
+
+    function toggleSelect(index, element) {
+      if (selectedItems.has(index)) {
+        selectedItems.delete(index);
+        element.classList.remove('selected');
+      } else {
+        selectedItems.add(index);
+        element.classList.add('selected');
+      }
+      // Update stats
+      const stats = document.querySelector('.view-stats span:last-child');
+      if (stats) stats.textContent = `${selectedItems.size} selected`;
+
+      // Update checkbox
+      const checkbox = element.querySelector('.view-item-checkbox');
+      checkbox.innerHTML = selectedItems.has(index) ? '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>' : '';
+    }
+
+    function selectAll() {
+      const items = document.querySelectorAll('.view-list-item');
+      items.forEach((item, i) => {
+        selectedItems.add(i);
+        item.classList.add('selected');
+        const checkbox = item.querySelector('.view-item-checkbox');
+        if (checkbox) checkbox.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+      });
+      const stats = document.querySelector('.view-stats span:last-child');
+      if (stats) stats.textContent = `${selectedItems.size} selected`;
+    }
+
+    function openSelected() {
+      if (selectedItems.size === 0) {
+        showToast('No items selected');
+      } else {
+        showToast(`Opening ${selectedItems.size} items...`);
+      }
+    }
+
+    function simulateQuery(query) {
+      document.getElementById('chatInput').value = query;
+      sendMessage();
+    }
+
+    function sendMessage() {
+      const input = document.getElementById('chatInput');
+      const query = input.value.trim().toLowerCase();
+      if (!query) return;
+
+      addMessage(input.value, true);
+      input.value = '';
+
+      setTimeout(() => {
+        if (query.includes('sprint')) {
+          addResultMessage(
+            'Found 15 workspaces/entries matching "sprint":',
+            sampleData.sprints.slice(0, 3),
+            15,
+            'showSprintsInView()'
+          );
+        } else if (query.includes('quick links a') || query.includes('links a')) {
+          addResultMessage(
+            'Here are the links in Quick Links A:',
+            sampleData.quickLinksA.slice(0, 3),
+            7,
+            'showQuickLinksInView()'
+          );
+        } else if (query.includes('workspace')) {
+          addResultMessage(
+            'Found 8 workspaces in current entry:',
+            sampleData.workspaces.slice(0, 3).map(w => ({ name: w.name })),
+            8,
+            'showWorkspacesInView()'
+          );
+        } else if (query.includes('recent')) {
+          addResultMessage(
+            'Your recent workspaces:',
+            sampleData.recent.slice(0, 3).map(r => ({ name: r.name })),
+            5,
+            'showRecentInView()'
+          );
+        } else if (query.includes('budget')) {
+          addResultMessage(
+            'Found 4 results for "budget":',
+            sampleData.budget.slice(0, 3),
+            4,
+            'showBudgetInView()'
+          );
+        } else {
+          addMessage('I can help you find workspaces, entries, and links. Try: "find all sprints", "show quick links A", or "list workspaces".');
+        }
+      }, 300);
+    }
+
+    function handleKeyPress(event) {
+      if (event.key === 'Enter') {
+        sendMessage();
+      }
+    }
+
+    function showToast(message) {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 2000);
+    }
+
+    // Initial demo message
+    addMessage('Hi! I can help you navigate. Ask me to find workspaces, show Quick Links, or search across entries. Try the example queries below!');
+  </script>
+</body>
+</html>

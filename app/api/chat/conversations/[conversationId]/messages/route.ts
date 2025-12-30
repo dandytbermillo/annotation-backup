@@ -91,10 +91,11 @@ export async function GET(
     }))
 
     // Build next cursor from the oldest message in this batch
+    // Note: createdAt is already a string (pg type parser returns timestamps as strings)
     let nextCursor: string | null = null
     if (hasMore && messages.length > 0) {
       const oldest = messages[messages.length - 1]
-      nextCursor = `${oldest.createdAt.toISOString()},${oldest.id}`
+      nextCursor = `${oldest.createdAt},${oldest.id}`
     }
 
     // Reverse to return chronological order (oldest first in the batch)

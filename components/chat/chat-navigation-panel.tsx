@@ -19,11 +19,17 @@ import { cn } from '@/lib/utils'
 import {
   useChatNavigation,
   useChatNavigationContext,
+  ViewPanelProvider,
+  useViewPanel,
   type IntentResolutionResult,
   type ChatMessage,
   type SelectionOption,
   type WorkspaceMatch,
+  type ViewPanelContent,
+  type ViewListItem,
 } from '@/lib/chat'
+import { ViewPanel } from './view-panel'
+import { MessageResultPreview } from './message-result-preview'
 import { getActiveEntryContext } from '@/lib/entry/entry-context'
 import { getActiveWorkspaceContext } from '@/lib/note-workspaces/state'
 
@@ -143,7 +149,16 @@ function buildContextPayload(
 // Component
 // =============================================================================
 
-export function ChatNavigationPanel({
+export function ChatNavigationPanel(props: ChatNavigationPanelProps) {
+  // Wrap with ViewPanelProvider so inner component can use useViewPanel
+  return (
+    <ViewPanelProvider>
+      <ChatNavigationPanelContent {...props} />
+    </ViewPanelProvider>
+  )
+}
+
+function ChatNavigationPanelContent({
   currentEntryId,
   currentWorkspaceId,
   onNavigationComplete,
@@ -155,6 +170,9 @@ export function ChatNavigationPanel({
   const [isLoading, setIsLoading] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  // View panel hook (for opening view panel with content)
+  const { openPanel } = useViewPanel()
 
   // Use shared context for messages, input, and open state (persists across mode switches)
   const {
@@ -222,6 +240,70 @@ export function ChatNavigationPanel({
 
     prevMessageCountRef.current = currentCount
   }, [messages])
+
+  // Handle Quick Links panel selection (from disambiguation)
+  useEffect(() => {
+    const handleQuickLinksSelection = async (event: CustomEvent<{ panelId: string; badge: string }>) => {
+      const { badge } = event.detail
+
+      setIsLoading(true)
+      try {
+        const entryId = currentEntryId ?? getActiveEntryContext() ?? undefined
+        const workspaceId = currentWorkspaceId ?? getActiveWorkspaceContext() ?? undefined
+
+        const response = await fetch('/api/chat/navigate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: `show quick links ${badge}`,
+            currentEntryId: entryId,
+            currentWorkspaceId: workspaceId,
+            context: { sessionState },
+          }),
+        })
+
+        if (!response.ok) throw new Error('Failed to load Quick Links')
+
+        const { resolution } = await response.json() as { resolution: IntentResolutionResult }
+
+        // Execute the action (should open view panel)
+        const result = await executeAction(resolution)
+
+        const assistantMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: result.message,
+          timestamp: new Date(),
+          isError: !result.success,
+          viewPanelContent: resolution.viewPanelContent,
+          previewItems: resolution.previewItems,
+          totalCount: resolution.totalCount,
+        }
+        addMessage(assistantMessage)
+
+        // Open view panel if content available
+        if (resolution.showInViewPanel && resolution.viewPanelContent) {
+          openPanel(resolution.viewPanelContent)
+        }
+      } catch (error) {
+        const errorMessage: ChatMessage = {
+          id: `error-${Date.now()}`,
+          role: 'assistant',
+          content: 'Failed to load Quick Links.',
+          timestamp: new Date(),
+          isError: true,
+        }
+        addMessage(errorMessage)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    window.addEventListener('chat-select-quick-links-panel', handleQuickLinksSelection as unknown as EventListener)
+    return () => {
+      window.removeEventListener('chat-select-quick-links-panel', handleQuickLinksSelection as unknown as EventListener)
+    }
+  }, [currentEntryId, currentWorkspaceId, sessionState, executeAction, addMessage, openPanel])
 
   // ---------------------------------------------------------------------------
   // Send Message
@@ -351,8 +433,17 @@ export function ChatNavigationPanel({
                 data: opt.data,
               }))
             : undefined,
+        // View panel content for "Show all" preview
+        viewPanelContent: resolution.viewPanelContent,
+        previewItems: resolution.previewItems,
+        totalCount: resolution.totalCount,
       }
       addMessage(assistantMessage)
+
+      // Open view panel if content is available
+      if (resolution.showInViewPanel && resolution.viewPanelContent) {
+        openPanel(resolution.viewPanelContent)
+      }
     } catch (error) {
       const errorMessage: ChatMessage = {
         id: `error-${Date.now()}`,
@@ -365,7 +456,7 @@ export function ChatNavigationPanel({
     } finally {
       setIsLoading(false)
     }
-  }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction, messages, addMessage, setInput, sessionState, setLastAction])
+  }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction, messages, addMessage, setInput, sessionState, setLastAction, openPanel, conversationSummary])
 
   // ---------------------------------------------------------------------------
   // Handle Selection
@@ -511,6 +602,9 @@ export function ChatNavigationPanel({
       {/* Trigger button (only when showTrigger is true) */}
       {triggerButton}
 
+      {/* View Panel - slides in from right for displaying content */}
+      <ViewPanel />
+
       {/* Left-side overlay panel */}
       {isOpen && (
         <>
@@ -630,6 +724,16 @@ export function ChatNavigationPanel({
                       >
                         {message.content}
                       </div>
+
+                      {/* Message Result Preview (for "Show all" view panel content) */}
+                      {message.previewItems && message.previewItems.length > 0 && message.viewPanelContent && (
+                        <MessageResultPreview
+                          title={message.viewPanelContent.title}
+                          previewItems={message.previewItems}
+                          totalCount={message.totalCount ?? message.previewItems.length}
+                          fullContent={message.viewPanelContent}
+                        />
+                      )}
 
                       {/* Selection Pills */}
                       {message.options && message.options.length > 0 && (

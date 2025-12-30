@@ -26,6 +26,9 @@ export const IntentType = z.enum([
   'last_action',
   'session_stats',
   'verify_action',
+  // Phase 3: View Panel Content Intents
+  'show_quick_links',
+  'preview_file',
   'unsupported',
 ])
 
@@ -59,6 +62,13 @@ export const IntentArgs = z.object({
   verifyWorkspaceName: z.string().optional(),  // workspace name to verify
   verifyFromName: z.string().optional(),       // for rename: original name
   verifyToName: z.string().optional(),         // for rename: new name
+
+  // For show_quick_links: panel badge (A, B, C, etc.) or panel title
+  quickLinksPanelBadge: z.string().optional(),
+  quickLinksPanelTitle: z.string().optional(),
+
+  // For preview_file: file path to preview
+  filePath: z.string().optional(),
 
   // For unsupported: brief reason why the request is not supported
   reason: z.string().optional(),
@@ -117,6 +127,8 @@ export const SUPPORTED_ACTIONS = [
   'ask what I just did',
   'ask session stats',
   'verify recent action',
+  'show quick links',
+  'preview file',
 ] as const
 
 export const SUPPORTED_ACTIONS_TEXT = SUPPORTED_ACTIONS.join(', ')

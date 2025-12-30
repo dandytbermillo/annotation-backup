@@ -12,6 +12,8 @@ import type {
   ResolutionContext,
   WorkspaceMatch,
 } from './resolution-types'
+import type { ViewPanelContent, ViewListItem } from './view-panel-types'
+import { ViewContentType } from './view-panel-types'
 import {
   resolveWorkspace,
   resolveRecentWorkspace,
@@ -21,6 +23,7 @@ import {
 } from './workspace-resolver'
 import { resolveNote } from './note-resolver'
 import { serverPool } from '@/lib/db/pool'
+import { buildQuickLinksViewItems } from './parse-quick-links'
 
 // =============================================================================
 // Resolution Result
@@ -39,6 +42,7 @@ export interface IntentResolutionResult {
     | 'delete_workspace'
     | 'select'
     | 'inform'
+    | 'show_view_panel'
     | 'error'
 
   // For navigate_workspace
@@ -73,12 +77,20 @@ export interface IntentResolutionResult {
 
   // For select (multiple matches) and list_workspaces
   options?: Array<{
-    type: 'workspace' | 'note' | 'confirm_delete'
+    type: 'workspace' | 'note' | 'confirm_delete' | 'quick_links_panel'
     id: string
     label: string
     sublabel?: string
     data: any
   }>
+
+  // For show_view_panel: content to display in the view panel
+  viewPanelContent?: ViewPanelContent
+  showInViewPanel?: boolean
+
+  // For inline message preview (first few items before "Show all")
+  previewItems?: ViewListItem[]
+  totalCount?: number
 
   // Message to display
   message: string
@@ -133,6 +145,13 @@ export async function resolveIntent(
 
     case 'verify_action':
       return resolveVerifyAction(intent, context)
+
+    // Phase 3: View Panel Content Intents
+    case 'show_quick_links':
+      return resolveShowQuickLinks(intent, context)
+
+    case 'preview_file':
+      return resolvePreviewFile(intent, context)
 
     case 'unsupported':
     default:
@@ -988,5 +1007,196 @@ function formatLastActionSummary(lastAction: NonNullable<ResolutionContext['sess
       return 'returning to the dashboard'
     default:
       return 'an unknown action'
+  }
+}
+
+// =============================================================================
+// Phase 3: View Panel Content Intent Handlers
+// =============================================================================
+
+/**
+ * Resolve show_quick_links intent - display Quick Links panel content in view panel
+ */
+async function resolveShowQuickLinks(
+  intent: IntentResponse,
+  context: ResolutionContext
+): Promise<IntentResolutionResult> {
+  const { quickLinksPanelBadge, quickLinksPanelTitle } = intent.args
+
+  if (!context.currentEntryId) {
+    return {
+      success: false,
+      action: 'error',
+      message: 'Please open an entry first to view Quick Links.',
+    }
+  }
+
+  // Find the Quick Links panel(s) in the current entry's dashboard workspace
+  // First, get the dashboard workspace for this entry
+  const dashboardResult = await serverPool.query(
+    `SELECT id FROM note_workspaces
+     WHERE item_id = $1 AND user_id = $2 AND is_default = true
+     LIMIT 1`,
+    [context.currentEntryId, context.userId]
+  )
+
+  if (dashboardResult.rows.length === 0) {
+    return {
+      success: false,
+      action: 'error',
+      message: 'No dashboard found for this entry.',
+    }
+  }
+
+  const dashboardWorkspaceId = dashboardResult.rows[0].id
+
+  // Query Quick Links panels (links_note or links_note_tiptap)
+  let panelQuery = `
+    SELECT id, panel_type, title, config, badge
+    FROM workspace_panels
+    WHERE workspace_id = $1
+      AND panel_type IN ('links_note', 'links_note_tiptap')
+      AND deleted_at IS NULL
+  `
+  const params: (string | undefined)[] = [dashboardWorkspaceId]
+
+  // Filter by badge if specified
+  if (quickLinksPanelBadge) {
+    panelQuery += ` AND UPPER(badge) = UPPER($2)`
+    params.push(quickLinksPanelBadge)
+  }
+
+  panelQuery += ` ORDER BY badge ASC, created_at ASC`
+
+  const panelsResult = await serverPool.query(panelQuery, params)
+
+  if (panelsResult.rows.length === 0) {
+    if (quickLinksPanelBadge) {
+      return {
+        success: false,
+        action: 'error',
+        message: `No Quick Links panel with badge "${quickLinksPanelBadge.toUpperCase()}" found.`,
+      }
+    }
+    return {
+      success: false,
+      action: 'error',
+      message: 'No Quick Links panels found in this entry.',
+    }
+  }
+
+  // If multiple panels and no specific badge requested, list them
+  if (panelsResult.rows.length > 1 && !quickLinksPanelBadge) {
+    const panels = panelsResult.rows
+    return {
+      success: true,
+      action: 'select',
+      options: panels.map((p) => ({
+        type: 'quick_links_panel' as const,
+        id: p.id,
+        label: `Quick Links ${p.badge || ''}`.trim(),
+        sublabel: p.title || undefined,
+        data: { panelId: p.id, badge: p.badge || '', panelType: 'quick_links' as const },
+      })),
+      message: `Found ${panels.length} Quick Links panels. Which one would you like to see?`,
+    }
+  }
+
+  // Single panel found - build view content
+  const panel = panelsResult.rows[0]
+
+  // Require contentJson (annotation-style JSON parsing)
+  // HTML fallback was removed - panels must have contentJson
+  const contentJson = panel.config?.contentJson
+  if (!contentJson) {
+    return {
+      success: false,
+      action: 'error',
+      message: `Quick Links panel ${panel.badge || ''} needs to be re-saved. Please open the panel in the editor and save it.`.trim(),
+    }
+  }
+
+  // Parse the Quick Links content to extract items
+  const viewItems = buildQuickLinksViewItems(panel.id, contentJson)
+
+  const linkCount = viewItems.filter((i) => i.type === 'link').length
+  const noteCount = viewItems.filter((i) => i.type === 'note').length
+
+  const viewPanelContent: ViewPanelContent = {
+    type: ViewContentType.MIXED_LIST,
+    title: `Quick Links ${panel.badge || ''}`.trim(),
+    subtitle: `${linkCount} link${linkCount !== 1 ? 's' : ''} · ${noteCount} note${noteCount !== 1 ? 's' : ''}`,
+    items: viewItems,
+    sourceIntent: 'show_quick_links',
+  }
+
+  // Prepare preview items (first 3)
+  const previewItems = viewItems.slice(0, 3)
+
+  return {
+    success: true,
+    action: 'show_view_panel',
+    viewPanelContent,
+    showInViewPanel: true,
+    previewItems,
+    totalCount: viewItems.length,
+    message: `Found ${viewItems.length} items in Quick Links ${panel.badge || ''}`,
+  }
+}
+
+/**
+ * Resolve preview_file intent - preview a file in the view panel
+ */
+async function resolvePreviewFile(
+  intent: IntentResponse,
+  context: ResolutionContext
+): Promise<IntentResolutionResult> {
+  const { filePath } = intent.args
+
+  if (!filePath) {
+    return {
+      success: false,
+      action: 'error',
+      message: 'Please specify a file path to preview.',
+    }
+  }
+
+  // File preview is handled client-side via the file preview API
+  // Here we just validate and prepare the view panel content structure
+
+  const filename = filePath.split('/').pop() || filePath
+  const ext = filename.split('.').pop()?.toLowerCase() || ''
+
+  // Determine content type based on extension
+  let contentType: ViewContentType
+  let language: string | undefined
+
+  if (['ts', 'tsx', 'js', 'jsx', 'py', 'go', 'rs', 'java', 'c', 'cpp'].includes(ext)) {
+    contentType = ViewContentType.CODE
+    language = ext
+  } else if (ext === 'pdf') {
+    contentType = ViewContentType.PDF
+  } else if (['md', 'txt', 'json', 'yaml', 'yml'].includes(ext)) {
+    contentType = ViewContentType.TEXT
+  } else {
+    contentType = ViewContentType.TEXT
+  }
+
+  const viewPanelContent: ViewPanelContent = {
+    type: contentType,
+    title: filename,
+    subtitle: contentType === ViewContentType.CODE ? language : undefined,
+    filename: filePath,
+    language,
+    sourceIntent: 'preview_file',
+    // content will be fetched client-side via /api/chat/preview/file
+  }
+
+  return {
+    success: true,
+    action: 'show_view_panel',
+    viewPanelContent,
+    showInViewPanel: true,
+    message: `Previewing ${filename}...`,
   }
 }

@@ -74,7 +74,20 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
       - verifyToName (optional): for rename - new name to verify
     IMPORTANT: Only use this for questions with "just", "last", or "previous". Compare against sessionState.lastAction only.
 
-13. **unsupported** - Request doesn't match any supported intent
+13. **show_quick_links** - User wants to see Quick Links from a specific panel
+    Examples: "show quick links", "show quick links A", "show quick links panel B", "what's in quick links C?"
+    Args:
+      - quickLinksPanelBadge (optional): panel badge letter (A, B, C, etc.)
+      - quickLinksPanelTitle (optional): panel title if mentioned
+    IMPORTANT: Panels are identified by badge letters (A, B, C, etc.) or by title.
+
+14. **preview_file** - User wants to preview a file
+    Examples: "preview file docs/README.md", "show file codex/guide.md", "open preview for docs/plan.md"
+    Args:
+      - filePath (required): the path to the file to preview
+    IMPORTANT: Only for files in docs/ or codex/ directories.
+
+15. **unsupported** - Request doesn't match any supported intent
     Args: reason (brief explanation)
 
 ## Intent Disambiguation Rules
@@ -209,7 +222,7 @@ export function buildIntentMessages(
       }
       if (ss.openCounts && Object.keys(ss.openCounts).length > 0) {
         contextBlock += `  openCounts:\n`
-        for (const [wsId, data] of Object.entries(ss.openCounts)) {
+        for (const [_wsId, data] of Object.entries(ss.openCounts)) {
           contextBlock += `    "${data.name}": ${data.count} times\n`
         }
       }

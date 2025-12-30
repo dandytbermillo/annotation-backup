@@ -52,3 +52,20 @@ export type { ChatMessage, SelectionOption, SessionState, LastAction } from './c
 
 // Schema utilities (for reference)
 export { SUPPORTED_ACTIONS_TEXT, parseIntentResponse } from './intent-schema'
+
+// View Panel (Universal View Panel for chat results)
+export { ViewPanelProvider, useViewPanel } from './view-panel-context'
+export { ViewContentType } from './view-panel-types'
+export type {
+  ViewPanelContent,
+  ViewListItem,
+  ViewPanelState,
+  ViewPanelContextValue,
+  QuickLinkItem,
+  QuickLinkAttributes,
+  FileContent,
+  PDFPage,
+} from './view-panel-types'
+
+// Quick Links parsing
+export { parseQuickLinksContent, buildQuickLinksViewItems } from './parse-quick-links'

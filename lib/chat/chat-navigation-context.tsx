@@ -15,17 +15,24 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
 import type { WorkspaceMatch, NoteMatch } from './resolution-types'
 import type { SessionState } from './intent-prompt'
+import type { ViewPanelContent, ViewListItem } from './view-panel-types'
 
 // =============================================================================
 // Types
 // =============================================================================
 
+export interface QuickLinksPanelData {
+  panelId: string
+  badge: string
+  panelType: 'quick_links'
+}
+
 export interface SelectionOption {
-  type: 'workspace' | 'note' | 'confirm_delete'
+  type: 'workspace' | 'note' | 'confirm_delete' | 'quick_links_panel'
   id: string
   label: string
   sublabel?: string
-  data: WorkspaceMatch | NoteMatch
+  data: WorkspaceMatch | NoteMatch | QuickLinksPanelData
 }
 
 export interface ChatMessage {
@@ -35,6 +42,10 @@ export interface ChatMessage {
   timestamp: Date
   options?: SelectionOption[]
   isError?: boolean
+  // View panel content (for "Show all" preview)
+  viewPanelContent?: ViewPanelContent
+  previewItems?: ViewListItem[]
+  totalCount?: number
 }
 
 // Re-export SessionState for convenience
