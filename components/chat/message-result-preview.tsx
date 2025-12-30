@@ -73,16 +73,19 @@ function PreviewItem({ item }: PreviewItemProps) {
   const Icon = getIconForType(item.type)
 
   const handleClick = () => {
-    // Don't navigate for plain text notes
+    // Don't navigate for plain text notes (type === 'note')
     if (isNote) return
 
-    // Navigate to entry/workspace using chat-navigate-note event
-    if (item.entryId || item.workspaceId) {
-      window.dispatchEvent(new CustomEvent('chat-navigate-note', {
+    // Navigate using chat-navigate-entry event
+    // - Entry links have dashboardId → opens entry's dashboard
+    // - Workspace links have only workspaceId → opens specific workspace
+    // See: docs/flow/entry/quick-links-entry-links.md
+    if (item.entryId) {
+      window.dispatchEvent(new CustomEvent('chat-navigate-entry', {
         detail: {
-          noteId: item.entryId || item.id, // Use entryId if available, otherwise item id
-          workspaceId: item.workspaceId,
           entryId: item.entryId,
+          workspaceId: item.workspaceId,
+          dashboardId: item.dashboardId,
         }
       }))
     }

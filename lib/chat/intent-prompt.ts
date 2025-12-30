@@ -37,35 +37,41 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
    Examples: "list workspaces", "show all workspaces", "what workspaces do I have?", "show workspaces"
    Args: none required
 
-6. **go_to_dashboard** - User wants to return to the entry dashboard (exit workspace view)
-   Examples: "go to dashboard", "back", "exit workspace", "dashboard", "home", "back to dashboard"
+6. **go_to_dashboard** - User wants to return to the CURRENT entry's dashboard (exit workspace view)
+   Examples: "go to dashboard", "back", "exit workspace", "dashboard", "back to dashboard", "return to dashboard"
    Args: none required
+   NOTE: This stays on the current entry. For navigating to the Home entry, use go_home.
 
-7. **rename_workspace** - User wants to rename a workspace
+7. **go_home** - User wants to navigate to the HOME ENTRY's dashboard (cross-entry navigation)
+   Examples: "home", "go home", "back home", "go back home", "take me home", "return home", "main dashboard"
+   Args: none required
+   NOTE: This navigates to the global Home entry, not the current entry's dashboard.
+
+8. **rename_workspace** - User wants to rename a workspace
    Examples: "rename workspace Sprint 5 to Sprint 6", "change workspace name to Research", "rename Research to Archive"
    Args: workspaceName (required - current name), newName (optional - new name)
 
-8. **delete_workspace** - User wants to delete a workspace
+9. **delete_workspace** - User wants to delete a workspace
    Examples: "delete workspace Sprint 5", "remove workspace Old", "delete Research workspace"
    IMPORTANT: This is destructive - only match if user explicitly says "delete" or "remove"
    Args: workspaceName (required - name of workspace to delete)
 
-9. **location_info** - User asks about their current location/context
-   Examples: "where am I?", "what workspace am I in?", "am I on the dashboard?", "current location", "what's open?"
-   Args: none required
-   IMPORTANT: Use sessionState to answer this question
+10. **location_info** - User asks about their current location/context
+    Examples: "where am I?", "what workspace am I in?", "am I on the dashboard?", "current location", "what's open?"
+    Args: none required
+    IMPORTANT: Use sessionState to answer this question
 
-10. **last_action** - User asks about the most recent action they performed
+11. **last_action** - User asks about the most recent action they performed
     Examples: "what did I just do?", "what did I just rename?", "is workspace77 the one I just renamed?", "what was the last thing I did?"
     Args: none required
     IMPORTANT: Use sessionState.lastAction to answer this question
 
-11. **session_stats** - User asks about session history (e.g., did they open a workspace, how many times)
+12. **session_stats** - User asks about session history (e.g., did they open a workspace, how many times)
     Examples: "how many times did I open workspace 3?", "did I open workspace77?", "have I used Research workspace?"
     Args: statsWorkspaceName (optional - specific workspace to query stats for)
     IMPORTANT: Use sessionState.openCounts to answer this question. Returns yes/no + count.
 
-12. **verify_action** - User asks to verify their LAST/MOST RECENT action specifically
+13. **verify_action** - User asks to verify their LAST/MOST RECENT action specifically
     Examples: "did you just rename Sprint 6 to Sprint 66?", "did I just open workspace77?", "was my last action opening X?"
     Args:
       - verifyActionType (required): "open_workspace" | "rename_workspace" | "delete_workspace" | "create_workspace" | "go_to_dashboard"
@@ -74,35 +80,40 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
       - verifyToName (optional): for rename - new name to verify
     IMPORTANT: Only use this for questions with "just", "last", or "previous". Compare against sessionState.lastAction only.
 
-13. **show_quick_links** - User wants to see Quick Links from a specific panel
+14. **show_quick_links** - User wants to see Quick Links from a specific panel
     Examples: "show quick links", "show quick links A", "show quick links panel B", "what's in quick links C?"
     Args:
       - quickLinksPanelBadge (optional): panel badge letter (A, B, C, etc.)
       - quickLinksPanelTitle (optional): panel title if mentioned
     IMPORTANT: Panels are identified by badge letters (A, B, C, etc.) or by title.
 
-14. **preview_file** - User wants to preview a file
+15. **preview_file** - User wants to preview a file
     Examples: "preview file docs/README.md", "show file codex/guide.md", "open preview for docs/plan.md"
     Args:
       - filePath (required): the path to the file to preview
     IMPORTANT: Only for files in docs/ or codex/ directories.
 
-15. **unsupported** - Request doesn't match any supported intent
+16. **unsupported** - Request doesn't match any supported intent
     Args: reason (brief explanation)
 
 ## Intent Disambiguation Rules
 
 - If message mentions "workspace" + a name/number WITHOUT "create", "new", or "make" → **open_workspace**
 - If message includes "create", "new", or "make" + workspace → **create_workspace**
+- **Verb-agnostic rule**: Any action verb (open, show, display, view, go to, switch to, navigate to, load, access, enter, visit, see, pull up, bring up, get) + workspace name → **open_workspace**
 - Examples:
   - "workspace 5" → open_workspace (workspaceName: "5")
   - "workspace workspace 7" → open_workspace (workspaceName: "workspace 7" or just "7")
+  - "display workspace 6" → open_workspace (workspaceName: "6")
+  - "show me workspace Research" → open_workspace (workspaceName: "Research")
+  - "view the Notes workspace" → open_workspace (workspaceName: "Notes")
   - "create workspace 5" → create_workspace (newWorkspaceName: "5")
   - "new workspace Research" → create_workspace (newWorkspaceName: "Research")
 
 ## Special Cases
 
-- "dashboard", "go to dashboard", "home", "back", "exit workspace" → **go_to_dashboard**
+- "dashboard", "go to dashboard", "back", "exit workspace", "return to dashboard" → **go_to_dashboard**
+- "home", "go home", "back home", "take me home", "return home", "main dashboard" → **go_home**
 - "list", "show workspaces", "what workspaces" → **list_workspaces**
 - "delete X", "remove X" (where X is a workspace name) → **delete_workspace**
 - "rename X to Y" → **rename_workspace**

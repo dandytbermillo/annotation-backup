@@ -73,7 +73,9 @@ import type { SessionState } from './intent-prompt'
 
 export interface ResolutionContext {
   currentEntryId?: string
+  currentEntryName?: string
   currentWorkspaceId?: string
+  homeEntryId?: string
   userId: string
   sessionState?: SessionState
 }

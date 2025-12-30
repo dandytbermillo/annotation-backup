@@ -35,6 +35,7 @@ export interface IntentResolutionResult {
     | 'navigate_workspace'
     | 'navigate_note'
     | 'navigate_dashboard'
+    | 'navigate_home'
     | 'create_workspace'
     | 'list_workspaces'
     | 'rename_workspace'
@@ -126,6 +127,9 @@ export async function resolveIntent(
 
     case 'go_to_dashboard':
       return resolveGoToDashboard(context)
+
+    case 'go_home':
+      return resolveGoHome(context)
 
     case 'rename_workspace':
       return resolveRenameWorkspace(intent, context)
@@ -427,10 +431,11 @@ async function resolveGoToDashboard(
 ): Promise<IntentResolutionResult> {
   // Check if user is in a workspace (has currentWorkspaceId)
   if (!context.currentWorkspaceId) {
+    const entryName = context.currentEntryName || 'current entry'
     return {
       success: false,
       action: 'error',
-      message: "You're already on the dashboard.",
+      message: `You're already on ${entryName}'s dashboard.`,
     }
   }
 
@@ -438,6 +443,29 @@ async function resolveGoToDashboard(
     success: true,
     action: 'navigate_dashboard',
     message: 'Returning to dashboard...',
+  }
+}
+
+async function resolveGoHome(
+  context: ResolutionContext
+): Promise<IntentResolutionResult> {
+  // Check if already on Home entry's dashboard
+  // homeEntryId should be available in context from DashboardInitializer
+  const isOnHomeEntry = context.homeEntryId && context.currentEntryId === context.homeEntryId
+  const isOnDashboard = !context.currentWorkspaceId
+
+  if (isOnHomeEntry && isOnDashboard) {
+    return {
+      success: false,
+      action: 'error',
+      message: "You're already on the Home dashboard.",
+    }
+  }
+
+  return {
+    success: true,
+    action: 'navigate_home',
+    message: 'Going home...',
   }
 }
 

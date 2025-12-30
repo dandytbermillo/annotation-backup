@@ -253,6 +253,56 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
   )
 
   // ---------------------------------------------------------------------------
+  // Go Home (navigate to Home entry's dashboard)
+  // ---------------------------------------------------------------------------
+
+  const goHome = useCallback(
+    async (): Promise<ChatNavigationResult> => {
+      try {
+        // Fetch the Home entry info from the dashboard API
+        const response = await fetch('/api/dashboard/info')
+        if (!response.ok) {
+          throw new Error('Failed to fetch Home entry info')
+        }
+        const { homeEntryId, dashboardWorkspaceId } = await response.json()
+
+        if (!homeEntryId || !dashboardWorkspaceId) {
+          throw new Error('Home entry not found')
+        }
+
+        // Dispatch chat-navigate-entry event to navigate to Home entry's dashboard
+        // DashboardInitializer listens for this event
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('chat-navigate-entry', {
+            detail: {
+              entryId: homeEntryId,
+              dashboardId: dashboardWorkspaceId,
+            },
+          }))
+        }
+
+        const result: ChatNavigationResult = {
+          success: true,
+          message: 'Going home...',
+          action: 'navigated',
+        }
+
+        onNavigationComplete?.(result)
+        return result
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error))
+        onError?.(err)
+        return {
+          success: false,
+          message: `Failed to navigate home: ${err.message}`,
+          action: 'error',
+        }
+      }
+    },
+    [onNavigationComplete, onError]
+  )
+
+  // ---------------------------------------------------------------------------
   // Rename Workspace
   // ---------------------------------------------------------------------------
 
@@ -423,6 +473,9 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
         case 'navigate_dashboard':
           return goToDashboard()
 
+        case 'navigate_home':
+          return goHome()
+
         case 'list_workspaces':
           // Workspace list is provided as options - return for UI to display as pills
           // Use 'selected' action so the UI renders the options as clickable pills
@@ -477,7 +530,7 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
           }
       }
     },
-    [navigateToWorkspace, navigateToNote, createWorkspace, goToDashboard]
+    [navigateToWorkspace, navigateToNote, createWorkspace, goToDashboard, goHome]
   )
 
   // ---------------------------------------------------------------------------
@@ -550,6 +603,7 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
     navigateToNote,
     createWorkspace,
     goToDashboard,
+    goHome,
     renameWorkspace,
     deleteWorkspace,
     selectOption,

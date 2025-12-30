@@ -160,12 +160,14 @@ export function DashboardView({
   // Chat Navigation: Update location tracking when view mode changes
   useEffect(() => {
     const currentWorkspace = workspaces.find(ws => ws.id === activeWorkspaceId)
+    // Only pass workspace ID when in workspace mode
+    // When in dashboard mode, workspace ID should be undefined for "already on dashboard" detection
     setCurrentLocation(
       viewMode,
       entryId,
       entryName,
-      activeWorkspaceId ?? undefined,
-      currentWorkspace?.name
+      viewMode === 'workspace' ? (activeWorkspaceId ?? undefined) : undefined,
+      viewMode === 'workspace' ? currentWorkspace?.name : undefined
     )
   }, [viewMode, entryId, entryName, activeWorkspaceId, workspaces, setCurrentLocation])
 
@@ -623,7 +625,14 @@ export function DashboardView({
     }, 300)
 
     setViewMode('dashboard')
-    // Note: We keep activeWorkspaceId so user can quickly return to the same workspace
+    // Note: We keep activeWorkspaceId (local state) so user can quickly return to the same workspace
+    // But we clear the module-level activeWorkspaceContext so chat navigation can detect "already on dashboard"
+    void debugLog({
+      component: 'DashboardView',
+      action: 'handleReturnToDashboard_clearing_context',
+      metadata: { previousWorkspaceId: activeWorkspaceId, entryId },
+    })
+    setActiveWorkspaceContext(null)
     // Phase 4: Notify parent for navigation tracking and URL updates
     onViewModeChange?.('dashboard')
   }, [activeWorkspaceId, entryId, onViewModeChange])

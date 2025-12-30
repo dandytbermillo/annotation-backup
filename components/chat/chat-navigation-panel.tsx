@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
+import { debugLog } from '@/lib/utils/debug-logger'
 import {
   useChatNavigation,
   useChatNavigationContext,
@@ -325,9 +326,18 @@ function ChatNavigationPanelContent({
     setIsLoading(true)
 
     try {
-      // Get context from props or fall back to module-level state
-      const entryId = currentEntryId ?? getActiveEntryContext() ?? undefined
-      const workspaceId = currentWorkspaceId ?? getActiveWorkspaceContext() ?? undefined
+      // Get context from props or fall back to session state (which tracks view mode properly)
+      // Use sessionState.currentWorkspaceId instead of getActiveWorkspaceContext() because:
+      // - sessionState is cleared when on dashboard (via setCurrentLocation)
+      // - getActiveWorkspaceContext() might retain stale workspace ID for quick-return feature
+      const entryId = currentEntryId ?? sessionState.currentEntryId ?? getActiveEntryContext() ?? undefined
+      const workspaceId = currentWorkspaceId ?? sessionState.currentWorkspaceId ?? undefined
+
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'sending_to_api',
+        metadata: { entryId, workspaceId, fromProps: !!currentWorkspaceId, fromSessionState: sessionState.currentWorkspaceId, viewMode: sessionState.currentViewMode },
+      })
 
       // Normalize the input message before sending to LLM
       const normalizedMessage = normalizeUserMessage(trimmedInput)

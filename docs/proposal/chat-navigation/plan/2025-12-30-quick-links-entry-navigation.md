@@ -2,7 +2,7 @@
 
 **Feature Slug:** `chat-navigation`
 **Date:** 2025-12-30
-**Status:** Planning
+**Status:** Implemented
 
 ---
 
@@ -292,12 +292,12 @@ handleDashboardNavigate(entryId, targetWorkspaceId)
 
 ## Acceptance Criteria
 
-- [ ] Entry links (with dashboardId) navigate to entry's Dashboard
-- [ ] Workspace links (with only workspaceId) navigate to specific workspace
-- [ ] Plain text "note" items remain non-clickable
-- [ ] Debug logs capture navigation events with link type
-- [ ] No TypeScript errors
-- [ ] No console errors during navigation
+- [x] Entry links (with dashboardId) navigate to entry's Dashboard
+- [x] Workspace links (with only workspaceId) navigate to specific workspace
+- [x] Plain text "note" items remain non-clickable
+- [x] Debug logs capture navigation events with link type
+- [x] No TypeScript errors
+- [ ] No console errors during navigation (requires manual testing)
 
 ---
 

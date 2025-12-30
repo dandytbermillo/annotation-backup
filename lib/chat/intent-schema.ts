@@ -19,6 +19,7 @@ export const IntentType = z.enum([
   // Phase 1: Workspace Operations (current entry only)
   'list_workspaces',
   'go_to_dashboard',
+  'go_home',  // Navigate to Home entry's dashboard (cross-entry)
   'rename_workspace',
   'delete_workspace',
   // Phase 2: Informational Intents (answer questions from session state)
@@ -121,6 +122,7 @@ export const SUPPORTED_ACTIONS = [
   'create workspace',
   'list workspaces',
   'go to dashboard',
+  'go home',
   'rename workspace',
   'delete workspace',
   'ask where I am',

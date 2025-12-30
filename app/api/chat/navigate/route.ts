@@ -4,6 +4,7 @@ import { readFileSync, existsSync } from 'fs'
 import { join } from 'path'
 
 import { debugLog } from '@/lib/utils/debug-logger'
+import { serverPool } from '@/lib/db/pool'
 import { buildIntentMessages, type ConversationContext, type SessionState } from '@/lib/chat/intent-prompt'
 import {
   parseIntentResponse,
@@ -65,6 +66,42 @@ const LLM_CONFIG = {
 }
 
 const TIMEOUT_MS = 8000
+
+// =============================================================================
+// Context Helpers
+// =============================================================================
+
+/**
+ * Fetch Home entry ID for the user (for "already on Home" detection)
+ */
+async function fetchHomeEntryId(userId: string): Promise<string | undefined> {
+  try {
+    const result = await serverPool.query(
+      `SELECT id FROM items
+       WHERE is_system = TRUE AND name = 'Home' AND user_id = $1 AND deleted_at IS NULL
+       LIMIT 1`,
+      [userId]
+    )
+    return result.rows[0]?.id
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Fetch entry name by ID (for better UX messages)
+ */
+async function fetchEntryName(entryId: string): Promise<string | undefined> {
+  try {
+    const result = await serverPool.query(
+      `SELECT name FROM items WHERE id = $1 AND deleted_at IS NULL LIMIT 1`,
+      [entryId]
+    )
+    return result.rows[0]?.name
+  } catch {
+    return undefined
+  }
+}
 
 // =============================================================================
 // POST /api/chat/navigate
@@ -175,10 +212,29 @@ export async function POST(request: NextRequest) {
     }
 
     // Step 2: Resolve intent to actionable data
+    // Conditional context fetch optimization: only fetch what the intent needs
+    // - go_home: needs homeEntryId (for "already on Home" detection)
+    // - go_to_dashboard: needs currentEntryName (for "already on X's dashboard" message)
+    // - All other intents: skip both lookups
+    const needsHomeEntry = intent.intent === 'go_home'
+    const needsEntryName = intent.intent === 'go_to_dashboard'
+
+    // Use sessionState.currentEntryName if available, otherwise fetch from DB
+    const sessionEntryName = conversationContext?.sessionState?.currentEntryName
+
+    const [homeEntryId, currentEntryName] = await Promise.all([
+      needsHomeEntry ? fetchHomeEntryId(userId) : Promise.resolve(undefined),
+      needsEntryName && !sessionEntryName && currentEntryId
+        ? fetchEntryName(currentEntryId)
+        : Promise.resolve(sessionEntryName),
+    ])
+
     const resolutionContext = {
       userId,
       currentEntryId: currentEntryId || undefined,
+      currentEntryName,
       currentWorkspaceId: currentWorkspaceId || undefined,
+      homeEntryId,
       sessionState: conversationContext?.sessionState,
     }
 

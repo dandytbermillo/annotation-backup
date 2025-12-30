@@ -437,6 +437,47 @@ export function DashboardInitializer({
     }
   }, [currentEntryInfo, currentDashboardWorkspaceId])
 
+  // Chat Navigation: Listen for chat-navigate-entry events
+  // Handles Quick Links navigation (both entry links and workspace links)
+  // See: docs/flow/entry/quick-links-entry-links.md
+  useEffect(() => {
+    const handleChatNavigateEntry = (event: CustomEvent<{
+      entryId: string
+      workspaceId?: string
+      dashboardId?: string
+    }>) => {
+      const { entryId, workspaceId, dashboardId } = event.detail
+
+      void debugLog({
+        component: "DashboardInitializer",
+        action: "chat_navigate_entry_received",
+        metadata: {
+          entryId,
+          workspaceId,
+          dashboardId,
+          linkType: dashboardId ? 'entry' : 'workspace'
+        },
+      })
+
+      if (!entryId) return
+
+      // Simple rule: dashboardId (entry link) takes priority over workspaceId (workspace link)
+      const targetWorkspaceId = dashboardId || workspaceId
+
+      if (targetWorkspaceId) {
+        handleDashboardNavigate(entryId, targetWorkspaceId)
+      } else {
+        // Neither dashboardId nor workspaceId - invalid link, log and no-op
+        console.warn("[DashboardInitializer] chat-navigate-entry: no target workspace", { entryId })
+      }
+    }
+
+    window.addEventListener('chat-navigate-entry', handleChatNavigateEntry as EventListener)
+    return () => {
+      window.removeEventListener('chat-navigate-entry', handleChatNavigateEntry as EventListener)
+    }
+  }, [handleDashboardNavigate])
+
   // Phase 4: Handle view mode changes from DashboardView (for navigation tracking and URL updates)
   const handleViewModeChange = useCallback((viewMode: 'dashboard' | 'workspace', activeWorkspaceId?: string) => {
     void debugLog({
