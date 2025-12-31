@@ -30,6 +30,8 @@ export const IntentType = z.enum([
   // Phase 3: View Panel Content Intents
   'show_quick_links',
   'preview_file',
+  // Phase 4: Hybrid Selection Follow-up
+  'select_option',  // User selects from pending options via natural language
   'unsupported',
 ])
 
@@ -70,6 +72,10 @@ export const IntentArgs = z.object({
 
   // For preview_file: file path to preview
   filePath: z.string().optional(),
+
+  // For select_option: select from pending disambiguation options
+  optionIndex: z.number().optional(),  // 1-based index of the option to select
+  optionLabel: z.string().optional(),  // label of the option to select (fallback)
 
   // For unsupported: brief reason why the request is not supported
   reason: z.string().optional(),
@@ -131,6 +137,7 @@ export const SUPPORTED_ACTIONS = [
   'verify recent action',
   'show quick links',
   'preview file',
+  'select from options',
 ] as const
 
 export const SUPPORTED_ACTIONS_TEXT = SUPPORTED_ACTIONS.join(', ')

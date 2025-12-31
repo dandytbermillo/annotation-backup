@@ -130,12 +130,13 @@ export async function POST(request: NextRequest) {
 
     const userMessage = message.trim()
 
-    // Extract conversation context (optional) and session state
+    // Extract conversation context (optional), session state, and pending options
     const conversationContext: ConversationContext | undefined = context ? {
       summary: context.summary,
       recentUserMessages: context.recentUserMessages,
       lastAssistantQuestion: context.lastAssistantQuestion,
       sessionState: context.sessionState,
+      pendingOptions: context.pendingOptions,
     } : undefined
 
     // Check if OpenAI is configured

@@ -93,7 +93,29 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
       - filePath (required): the path to the file to preview
     IMPORTANT: Only for files in docs/ or codex/ directories.
 
-16. **unsupported** - Request doesn't match any supported intent
+16. **select_option** - User wants to select from pending disambiguation options
+    Args:
+      - optionIndex (ALWAYS preferred): 1-based index of the option to select
+      - optionLabel (last resort): use ONLY if index truly cannot be inferred
+    RULES:
+      - ALWAYS return optionIndex when pendingOptions exist - map user's phrase to the correct index
+      - NEVER return the user's raw phrase as optionLabel
+      - If multiple options match equally (e.g., same sublabel), return the first match (lowest index)
+      - If no pending options exist, return unsupported
+
+    Examples (given pendingOptions):
+      Pending Options:
+        1. "Workspace 6" (summary14 C) [workspace]
+        2. "Sprint 66" (summary14 C) [workspace]
+
+      User: "first" → { "intent": "select_option", "args": { "optionIndex": 1 } }
+      User: "the second one" → { "intent": "select_option", "args": { "optionIndex": 2 } }
+      User: "Workspace 6" → { "intent": "select_option", "args": { "optionIndex": 1 } }
+      User: "the one from summary14 C" → { "intent": "select_option", "args": { "optionIndex": 1 } }
+      User: "Sprint 66" → { "intent": "select_option", "args": { "optionIndex": 2 } }
+      User: "last" → { "intent": "select_option", "args": { "optionIndex": 2 } }
+
+17. **unsupported** - Request doesn't match any supported intent
     Args: reason (brief explanation)
 
 ## Intent Disambiguation Rules
@@ -123,6 +145,8 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
 - "did I open X?" (without "just/last/previous") → **session_stats** (checks session history)
 - "did I just/last open X?", "was my last action X?" → **verify_action** (checks most recent action only)
 - "did you rename X to Y?" → **verify_action** (verifies specific action details)
+- "the first one", "second option", "last one" (when pendingOptions exists) → **select_option**
+- "the one from X", "the workspace with Y" (when pendingOptions exists) → **select_option**
 
 ## Response Format
 
@@ -140,6 +164,8 @@ Return ONLY a JSON object with this exact structure:
     "verifyWorkspaceName": "<string or omit - for verify_action>",
     "verifyFromName": "<string or omit - for verify_action rename>",
     "verifyToName": "<string or omit - for verify_action rename>",
+    "optionIndex": "<number or omit - for select_option>",
+    "optionLabel": "<string or omit - for select_option>",
     "reason": "<string or omit>"
   }
 }
@@ -175,6 +201,17 @@ export interface SessionState {
 }
 
 /**
+ * Pending option for selection follow-up
+ */
+export interface PendingOption {
+  index: number        // 1-based index
+  label: string        // option label
+  sublabel?: string    // optional sublabel (e.g., entry name)
+  type: string         // option type (workspace, note, etc.)
+  id: string           // option ID
+}
+
+/**
  * Context type for conversation history
  */
 export interface ConversationContext {
@@ -182,6 +219,7 @@ export interface ConversationContext {
   recentUserMessages?: string[]
   lastAssistantQuestion?: string
   sessionState?: SessionState
+  pendingOptions?: PendingOption[]  // options from last disambiguation
 }
 
 /**
@@ -201,7 +239,8 @@ export function buildIntentMessages(
     context.summary ||
     context.recentUserMessages?.length ||
     context.lastAssistantQuestion ||
-    context.sessionState
+    context.sessionState ||
+    context.pendingOptions?.length
   )
 
   if (hasContext) {
@@ -236,6 +275,15 @@ export function buildIntentMessages(
         for (const [_wsId, data] of Object.entries(ss.openCounts)) {
           contextBlock += `    "${data.name}": ${data.count} times\n`
         }
+      }
+    }
+
+    // Add pending options for selection follow-up
+    if (context.pendingOptions && context.pendingOptions.length > 0) {
+      contextBlock += '\nPending Options (user can select from these):\n'
+      for (const opt of context.pendingOptions) {
+        const sublabelPart = opt.sublabel ? ` (${opt.sublabel})` : ''
+        contextBlock += `  ${opt.index}. "${opt.label}"${sublabelPart} [${opt.type}]\n`
       }
     }
 

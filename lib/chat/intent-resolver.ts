@@ -42,6 +42,7 @@ export interface IntentResolutionResult {
     | 'confirm_delete'
     | 'delete_workspace'
     | 'select'
+    | 'select_option'  // Hybrid selection follow-up
     | 'inform'
     | 'show_view_panel'
     | 'error'
@@ -92,6 +93,10 @@ export interface IntentResolutionResult {
   // For inline message preview (first few items before "Show all")
   previewItems?: ViewListItem[]
   totalCount?: number
+
+  // For select_option (hybrid selection follow-up)
+  optionIndex?: number   // 1-based index from LLM
+  optionLabel?: string   // label from LLM for fuzzy matching
 
   // Message to display
   message: string
@@ -156,6 +161,10 @@ export async function resolveIntent(
 
     case 'preview_file':
       return resolvePreviewFile(intent, context)
+
+    // Phase 4: Hybrid Selection Follow-up
+    case 'select_option':
+      return resolveSelectOption(intent)
 
     case 'unsupported':
     default:
@@ -1226,5 +1235,36 @@ async function resolvePreviewFile(
     viewPanelContent,
     showInViewPanel: true,
     message: `Previewing ${filename}...`,
+  }
+}
+
+// =============================================================================
+// Phase 4: Hybrid Selection Follow-up Handlers
+// =============================================================================
+
+/**
+ * Resolve select_option intent - LLM determined user wants to select from pending options
+ * Returns optionIndex/optionLabel for client to map to pending options
+ */
+function resolveSelectOption(
+  intent: IntentResponse
+): IntentResolutionResult {
+  const { optionIndex, optionLabel } = intent.args
+
+  // At least one of optionIndex or optionLabel should be provided
+  if (optionIndex === undefined && !optionLabel) {
+    return {
+      success: false,
+      action: 'error',
+      message: "I couldn't determine which option you meant. Please try again or click a pill.",
+    }
+  }
+
+  return {
+    success: true,
+    action: 'select_option',
+    optionIndex,
+    optionLabel,
+    message: 'Selecting option...',
   }
 }

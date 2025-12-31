@@ -89,6 +89,93 @@ function normalizeUserMessage(input: string): string {
 const MAX_RECENT_USER_MESSAGES = 6
 const SUMMARY_MAX_CHARS = 400
 
+// =============================================================================
+// Ordinal Parser
+// =============================================================================
+
+/**
+ * Parse ordinal phrases to 1-based index.
+ * Returns the index if recognized, -1 for "last", or null if not an ordinal.
+ */
+function parseOrdinal(input: string): number | null {
+  const normalized = input.toLowerCase().trim()
+
+  // Simple ordinals
+  const ordinalMap: Record<string, number> = {
+    'first': 1, '1': 1, 'one': 1, 'the first': 1, 'first one': 1, 'the first one': 1,
+    'second': 2, '2': 2, 'two': 2, 'the second': 2, 'second one': 2, 'the second one': 2,
+    'third': 3, '3': 3, 'three': 3, 'the third': 3, 'third one': 3, 'the third one': 3,
+    'fourth': 4, '4': 4, 'four': 4, 'the fourth': 4, 'fourth one': 4, 'the fourth one': 4,
+    'fifth': 5, '5': 5, 'five': 5, 'the fifth': 5, 'fifth one': 5, 'the fifth one': 5,
+    'last': -1, 'the last': -1, 'last one': -1, 'the last one': -1,
+  }
+
+  // Check for exact match
+  if (ordinalMap[normalized] !== undefined) {
+    return ordinalMap[normalized]
+  }
+
+  // Check for patterns like "option 1", "option 2", etc.
+  const optionMatch = normalized.match(/^(?:option|number|#)\s*(\d+)$/i)
+  if (optionMatch) {
+    return parseInt(optionMatch[1], 10)
+  }
+
+  return null
+}
+
+/**
+ * Pending option stored in chat state
+ */
+interface PendingOptionState {
+  index: number
+  label: string
+  sublabel?: string
+  type: string
+  id: string
+  data: unknown
+}
+
+/**
+ * Check if input contains action verbs that should skip grace window.
+ * These are deliberate commands that shouldn't be intercepted.
+ */
+function hasActionVerb(input: string): boolean {
+  const actionVerbs = [
+    // Destructive actions
+    'create', 'new', 'make', 'rename', 'delete', 'remove',
+    // Navigation actions
+    'go to', 'back', 'home', 'dashboard', 'list',
+    // Explicit workspace commands
+    'open workspace', 'show workspace', 'view workspace',
+  ]
+  const normalized = input.toLowerCase()
+  return actionVerbs.some(verb => normalized.includes(verb))
+}
+
+/**
+ * Find exact match in pending options by label or sublabel.
+ * Returns the matched option or undefined if no exact match.
+ */
+function findExactOptionMatch(
+  input: string,
+  options: PendingOptionState[]
+): PendingOptionState | undefined {
+  const normalized = input.trim().toLowerCase()
+
+  // Try exact label match first
+  const labelMatch = options.find(opt => opt.label.toLowerCase() === normalized)
+  if (labelMatch) return labelMatch
+
+  // Try exact sublabel match
+  const sublabelMatch = options.find(
+    opt => opt.sublabel && opt.sublabel.toLowerCase() === normalized
+  )
+  if (sublabelMatch) return sublabelMatch
+
+  return undefined
+}
+
 /**
  * Create a compact summary from older user messages.
  */
@@ -171,6 +258,13 @@ function ChatNavigationPanelContent({
   const [isLoading, setIsLoading] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const scrollAnchorRef = useRef<HTMLDivElement>(null)
+
+  // Pending options for hybrid selection follow-up
+  const [pendingOptions, setPendingOptions] = useState<PendingOptionState[]>([])
+  const [pendingOptionsMessageId, setPendingOptionsMessageId] = useState<string | null>(null)
+  // Grace window: allow one extra turn after selection to reuse options
+  const [pendingOptionsGraceCount, setPendingOptionsGraceCount] = useState(0)
 
   // View panel hook (for opening view panel with content)
   const { openPanel } = useViewPanel()
@@ -226,16 +320,19 @@ function ChatNavigationPanelContent({
     const prevCount = prevMessageCountRef.current
     const currentCount = messages.length
 
-    if (currentCount > prevCount && scrollRef.current) {
+    if (currentCount > prevCount) {
       if (isLoadingOlderRef.current) {
         // Older messages were prepended - preserve scroll position
-        const scrollHeightAfter = scrollRef.current.scrollHeight
-        const addedHeight = scrollHeightAfter - scrollHeightBeforeRef.current
-        scrollRef.current.scrollTop = addedHeight
+        // Note: This is tricky with ScrollArea, but we try our best
+        if (scrollRef.current) {
+          const scrollHeightAfter = scrollRef.current.scrollHeight
+          const addedHeight = scrollHeightAfter - scrollHeightBeforeRef.current
+          scrollRef.current.scrollTop = addedHeight
+        }
         isLoadingOlderRef.current = false
       } else {
-        // New messages added at the end - scroll to bottom
-        scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+        // New messages added at the end - scroll to bottom using anchor
+        scrollAnchorRef.current?.scrollIntoView({ behavior: 'smooth' })
       }
     }
 
@@ -307,6 +404,107 @@ function ChatNavigationPanelContent({
   }, [currentEntryId, currentWorkspaceId, sessionState, executeAction, addMessage, openPanel])
 
   // ---------------------------------------------------------------------------
+  // Handle Selection (moved before sendMessage for hybrid selection)
+  // ---------------------------------------------------------------------------
+
+  const handleSelectOption = useCallback(
+    async (option: SelectionOption) => {
+      setIsLoading(true)
+
+      try {
+        // Check if this is a pending delete selection (disambiguation for delete)
+        const workspaceData = option.data as WorkspaceMatch & { pendingDelete?: boolean }
+        const isPendingDelete = option.type === 'workspace' && workspaceData.pendingDelete
+
+        const result = await selectOption({
+          type: option.type,
+          id: option.id,
+          data: option.data,
+        })
+
+        // Note: Don't clear pending options here - grace window logic handles clearing.
+        // This allows users to select another option within the grace window.
+
+        // Track successful actions for session state
+        if (result.success && result.action) {
+          const now = Date.now()
+          switch (result.action) {
+            case 'navigated':
+              if (option.type === 'workspace') {
+                setLastAction({
+                  type: 'open_workspace',
+                  workspaceId: workspaceData.id,
+                  workspaceName: workspaceData.name,
+                  timestamp: now,
+                })
+                // Note: incrementOpenCount is NOT called here - DashboardView.handleWorkspaceSelectById
+                // is the single source of truth for open counts (avoids double-counting)
+              }
+              break
+            case 'deleted':
+              if (option.type === 'confirm_delete') {
+                setLastAction({
+                  type: 'delete_workspace',
+                  workspaceId: workspaceData.id,
+                  workspaceName: workspaceData.name,
+                  timestamp: now,
+                })
+              }
+              break
+            case 'renamed':
+              const renameData = option.data as WorkspaceMatch & { pendingNewName?: string }
+              if (renameData.pendingNewName) {
+                setLastAction({
+                  type: 'rename_workspace',
+                  workspaceId: renameData.id,
+                  fromName: renameData.name,
+                  toName: renameData.pendingNewName,
+                  timestamp: now,
+                })
+              }
+              break
+          }
+        }
+
+        // If this was a pending delete, show confirmation pill
+        const confirmationOptions: SelectionOption[] | undefined = isPendingDelete
+          ? [
+              {
+                type: 'confirm_delete' as const,
+                id: option.id,
+                label: '🗑️ Confirm Delete',
+                sublabel: workspaceData.name,
+                data: workspaceData,
+              },
+            ]
+          : undefined
+
+        const assistantMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: result.message,
+          timestamp: new Date(),
+          isError: !result.success,
+          options: confirmationOptions,
+        }
+        addMessage(assistantMessage)
+      } catch {
+        const errorMessage: ChatMessage = {
+          id: `error-${Date.now()}`,
+          role: 'assistant',
+          content: 'Failed to navigate. Please try again.',
+          timestamp: new Date(),
+          isError: true,
+        }
+        addMessage(errorMessage)
+      } finally {
+        setIsLoading(false)
+      }
+    },
+    [selectOption, addMessage, setLastAction]
+  )
+
+  // ---------------------------------------------------------------------------
   // Send Message
   // ---------------------------------------------------------------------------
 
@@ -326,6 +524,101 @@ function ChatNavigationPanelContent({
     setIsLoading(true)
 
     try {
+      // ---------------------------------------------------------------------------
+      // Hybrid Selection: Check for ordinal/label match if pending options exist
+      // ---------------------------------------------------------------------------
+      if (pendingOptions.length > 0 && !hasActionVerb(trimmedInput)) {
+        // 1) Check ordinal first ("first", "second", "last", etc.)
+        const ordinalIndex = parseOrdinal(trimmedInput)
+
+        if (ordinalIndex !== null) {
+          // Resolve the actual index (handle "last" = -1)
+          const resolvedIndex = ordinalIndex === -1 ? pendingOptions.length : ordinalIndex
+
+          // Validate index is in range
+          if (resolvedIndex < 1 || resolvedIndex > pendingOptions.length) {
+            const assistantMessage: ChatMessage = {
+              id: `assistant-${Date.now()}`,
+              role: 'assistant',
+              content: `Please pick a number between 1 and ${pendingOptions.length}.`,
+              timestamp: new Date(),
+              isError: false,
+            }
+            addMessage(assistantMessage)
+            setIsLoading(false)
+            return
+          }
+
+          // Get the selected option
+          const selectedOption = pendingOptions[resolvedIndex - 1]
+
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'ordinal_selection',
+            metadata: { ordinalIndex, resolvedIndex, selectedLabel: selectedOption.label },
+          })
+
+          // Use grace window: keep options for one more turn
+          setPendingOptionsGraceCount(1)
+
+          // Execute the selection directly via handleSelectOption
+          const optionToSelect: SelectionOption = {
+            type: selectedOption.type as SelectionOption['type'],
+            id: selectedOption.id,
+            label: selectedOption.label,
+            sublabel: selectedOption.sublabel,
+            data: selectedOption.data as SelectionOption['data'],
+          }
+
+          // Call handleSelectOption but don't await here - let it update state
+          setIsLoading(false)
+          handleSelectOption(optionToSelect)
+          return
+        }
+
+        // 2) Check exact label/sublabel match (grace window feature)
+        const exactMatch = findExactOptionMatch(trimmedInput, pendingOptions)
+
+        if (exactMatch) {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'exact_label_match',
+            metadata: { input: trimmedInput, matchedLabel: exactMatch.label },
+          })
+
+          // Use grace window: keep options for one more turn
+          setPendingOptionsGraceCount(1)
+
+          // Execute the selection directly
+          const optionToSelect: SelectionOption = {
+            type: exactMatch.type as SelectionOption['type'],
+            id: exactMatch.id,
+            label: exactMatch.label,
+            sublabel: exactMatch.sublabel,
+            data: exactMatch.data as SelectionOption['data'],
+          }
+
+          setIsLoading(false)
+          handleSelectOption(optionToSelect)
+          return
+        }
+      }
+
+      // ---------------------------------------------------------------------------
+      // Grace window expiry: if we had pending options but no match, decrement grace
+      // ---------------------------------------------------------------------------
+      if (pendingOptions.length > 0 && pendingOptionsGraceCount > 0) {
+        // No match found, decrement grace count
+        setPendingOptionsGraceCount(0)
+        // Clear options after grace expires
+        setPendingOptions([])
+        setPendingOptionsMessageId(null)
+      }
+
+      // ---------------------------------------------------------------------------
+      // Normal flow: Call the LLM API
+      // ---------------------------------------------------------------------------
+
       // Get context from props or fall back to session state (which tracks view mode properly)
       // Use sessionState.currentWorkspaceId instead of getActiveWorkspaceContext() because:
       // - sessionState is cleared when on dashboard (via setCurrentLocation)
@@ -345,6 +638,16 @@ function ChatNavigationPanelContent({
       // Build conversation context from message history (use DB summary if available)
       const contextPayload = buildContextPayload(messages, conversationSummary)
 
+      // Build pending options for LLM context (for free-form selection fallback)
+      const pendingOptionsForContext = pendingOptions.length > 0
+        ? pendingOptions.map((opt) => ({
+            index: opt.index,
+            label: opt.label,
+            sublabel: opt.sublabel,
+            type: opt.type,
+          }))
+        : undefined
+
       // Call the navigate API with normalized message, context, and session state
       const response = await fetch('/api/chat/navigate', {
         method: 'POST',
@@ -356,6 +659,7 @@ function ChatNavigationPanelContent({
           context: {
             ...contextPayload,
             sessionState,
+            pendingOptions: pendingOptionsForContext,
           },
         }),
       })
@@ -368,8 +672,124 @@ function ChatNavigationPanelContent({
         resolution: IntentResolutionResult
       }
 
+      // ---------------------------------------------------------------------------
+      // Handle select_option action from LLM (free-form selection fallback)
+      // ---------------------------------------------------------------------------
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'llm_response',
+        metadata: {
+          action: resolution.action,
+          optionIndex: (resolution as any).optionIndex,
+          optionLabel: (resolution as any).optionLabel,
+          pendingOptionsCount: pendingOptions.length,
+        },
+      })
+
+      if (resolution.action === 'select_option' && pendingOptions.length > 0) {
+        // LLM returned select_option - map to pending options
+        // Resolution should have optionIndex or optionLabel from the resolver
+        const optionIndex = (resolution as any).optionIndex as number | undefined
+        const optionLabel = (resolution as any).optionLabel as string | undefined
+
+        let selectedOption: PendingOptionState | undefined
+
+        if (optionIndex !== undefined && optionIndex >= 1 && optionIndex <= pendingOptions.length) {
+          selectedOption = pendingOptions[optionIndex - 1]
+        } else if (optionLabel) {
+          // Safety net: Try to find by label (should rarely be used after prompt hardening)
+          // Normalize: strip common filler phrases
+          const normalizedLabel = optionLabel
+            .replace(/^(the one (from|called|named|with|in)|the|that)\s+/gi, '')
+            .replace(/\s+(one|option)$/gi, '')
+            .trim()
+            .toLowerCase()
+
+          selectedOption = pendingOptions.find(
+            (opt) =>
+              // Exact match
+              opt.label.toLowerCase() === normalizedLabel ||
+              // Label contains search term
+              opt.label.toLowerCase().includes(normalizedLabel) ||
+              // Search term contains label (e.g., "the Workspace 6 one" contains "Workspace 6")
+              normalizedLabel.includes(opt.label.toLowerCase()) ||
+              // Sublabel contains search term
+              (opt.sublabel && opt.sublabel.toLowerCase().includes(normalizedLabel)) ||
+              // Search term contains sublabel
+              (opt.sublabel && normalizedLabel.includes(opt.sublabel.toLowerCase()))
+          )
+        }
+
+        if (selectedOption) {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'llm_select_option',
+            metadata: { optionIndex, optionLabel, selectedLabel: selectedOption.label },
+          })
+
+          // Use grace window: keep options for one more turn
+          setPendingOptionsGraceCount(1)
+
+          // Execute the selection
+          const optionToSelect: SelectionOption = {
+            type: selectedOption.type as SelectionOption['type'],
+            id: selectedOption.id,
+            label: selectedOption.label,
+            sublabel: selectedOption.sublabel,
+            data: selectedOption.data as SelectionOption['data'],
+          }
+
+          setIsLoading(false)
+          handleSelectOption(optionToSelect)
+          return
+        } else {
+          // Could not match option - show clarification
+          const assistantMessage: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: "I couldn't tell which one you meant. Please click a pill or say 'first', 'second', or 'last'.",
+            timestamp: new Date(),
+            isError: false,
+          }
+          addMessage(assistantMessage)
+          setIsLoading(false)
+          return
+        }
+      }
+
       // Execute the action
       const result = await executeAction(resolution)
+
+      // ---------------------------------------------------------------------------
+      // Update pending options based on result
+      // ---------------------------------------------------------------------------
+      if (resolution.action === 'select' && resolution.options && resolution.options.length > 0) {
+        // Store new pending options for hybrid selection
+        const newPendingOptions: PendingOptionState[] = resolution.options.map((opt, idx) => ({
+          index: idx + 1,
+          label: opt.label,
+          sublabel: opt.sublabel,
+          type: opt.type,
+          id: opt.id,
+          data: opt.data,
+        }))
+        setPendingOptions(newPendingOptions)
+        setPendingOptionsMessageId(`assistant-${Date.now()}`)
+        setPendingOptionsGraceCount(0)  // Fresh options, no grace yet
+
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'stored_pending_options',
+          metadata: { count: newPendingOptions.length },
+        })
+      } else {
+        // Clear pending options for non-selection intents
+        if (pendingOptions.length > 0) {
+          setPendingOptions([])
+          setPendingOptionsMessageId(null)
+          setPendingOptionsGraceCount(0)
+        }
+      }
 
       // Track successful actions for session state
       if (result.success && result.action) {
@@ -466,105 +886,7 @@ function ChatNavigationPanelContent({
     } finally {
       setIsLoading(false)
     }
-  }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction, messages, addMessage, setInput, sessionState, setLastAction, openPanel, conversationSummary])
-
-  // ---------------------------------------------------------------------------
-  // Handle Selection
-  // ---------------------------------------------------------------------------
-
-  const handleSelectOption = useCallback(
-    async (option: SelectionOption) => {
-      setIsLoading(true)
-
-      try {
-        // Check if this is a pending delete selection (disambiguation for delete)
-        const workspaceData = option.data as WorkspaceMatch & { pendingDelete?: boolean }
-        const isPendingDelete = option.type === 'workspace' && workspaceData.pendingDelete
-
-        const result = await selectOption({
-          type: option.type,
-          id: option.id,
-          data: option.data,
-        })
-
-        // Track successful actions for session state
-        if (result.success && result.action) {
-          const now = Date.now()
-          switch (result.action) {
-            case 'navigated':
-              if (option.type === 'workspace') {
-                setLastAction({
-                  type: 'open_workspace',
-                  workspaceId: workspaceData.id,
-                  workspaceName: workspaceData.name,
-                  timestamp: now,
-                })
-                // Note: incrementOpenCount is NOT called here - DashboardView.handleWorkspaceSelectById
-                // is the single source of truth for open counts (avoids double-counting)
-              }
-              break
-            case 'deleted':
-              if (option.type === 'confirm_delete') {
-                setLastAction({
-                  type: 'delete_workspace',
-                  workspaceId: workspaceData.id,
-                  workspaceName: workspaceData.name,
-                  timestamp: now,
-                })
-              }
-              break
-            case 'renamed':
-              const renameData = option.data as WorkspaceMatch & { pendingNewName?: string }
-              if (renameData.pendingNewName) {
-                setLastAction({
-                  type: 'rename_workspace',
-                  workspaceId: renameData.id,
-                  fromName: renameData.name,
-                  toName: renameData.pendingNewName,
-                  timestamp: now,
-                })
-              }
-              break
-          }
-        }
-
-        // If this was a pending delete, show confirmation pill
-        const confirmationOptions: SelectionOption[] | undefined = isPendingDelete
-          ? [
-              {
-                type: 'confirm_delete' as const,
-                id: option.id,
-                label: '🗑️ Confirm Delete',
-                sublabel: workspaceData.name,
-                data: workspaceData,
-              },
-            ]
-          : undefined
-
-        const assistantMessage: ChatMessage = {
-          id: `assistant-${Date.now()}`,
-          role: 'assistant',
-          content: result.message,
-          timestamp: new Date(),
-          isError: !result.success,
-          options: confirmationOptions,
-        }
-        addMessage(assistantMessage)
-      } catch {
-        const errorMessage: ChatMessage = {
-          id: `error-${Date.now()}`,
-          role: 'assistant',
-          content: 'Failed to navigate. Please try again.',
-          timestamp: new Date(),
-          isError: true,
-        }
-        addMessage(errorMessage)
-      } finally {
-        setIsLoading(false)
-      }
-    },
-    [selectOption, addMessage, setLastAction]
-  )
+  }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction, messages, addMessage, setInput, sessionState, setLastAction, openPanel, conversationSummary, pendingOptions, pendingOptionsGraceCount, handleSelectOption])
 
   // ---------------------------------------------------------------------------
   // Handle Key Press
@@ -788,6 +1110,9 @@ function ChatNavigationPanelContent({
                     <span className="text-sm">Processing...</span>
                   </div>
                 )}
+
+                {/* Scroll anchor - always at bottom for auto-scroll */}
+                <div ref={scrollAnchorRef} aria-hidden="true" />
               </div>
             </ScrollArea>
 
