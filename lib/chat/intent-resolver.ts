@@ -750,6 +750,13 @@ function resolveLastAction(
         message: `You opened workspace "${lastAction.workspaceName}" ${timeAgo}.`,
       }
 
+    case 'open_entry':
+      return {
+        success: true,
+        action: 'inform',
+        message: `You opened entry "${lastAction.entryName}" ${timeAgo}.`,
+      }
+
     case 'rename_workspace':
       return {
         success: true,
@@ -778,6 +785,13 @@ function resolveLastAction(
         message: `You returned to the dashboard ${timeAgo}.`,
       }
 
+    case 'go_home':
+      return {
+        success: true,
+        action: 'inform',
+        message: `You went home ${timeAgo}.`,
+      }
+
     default:
       return {
         success: true,
@@ -790,6 +804,7 @@ function resolveLastAction(
 /**
  * Resolve session_stats intent - answer "did I open X?" or "how many times did I open X?"
  * Returns comprehensive response: session-level + last-action clarification per the plan.
+ * Now supports both entries and workspaces.
  */
 function resolveSessionStats(
   intent: IntentResponse,
@@ -799,7 +814,7 @@ function resolveSessionStats(
   const openCounts = ss?.openCounts
   const lastAction = ss?.lastAction
 
-  // If user asked about a specific workspace
+  // If user asked about a specific name (could be entry or workspace)
   const targetName = intent.args.statsWorkspaceName
   if (targetName) {
     // If no openCounts at all, the answer is no
@@ -811,70 +826,114 @@ function resolveSessionStats(
       }
     }
 
-    // Find by name (case-insensitive match)
-    const entry = Object.entries(openCounts).find(
-      ([_, data]) => data.name.toLowerCase() === targetName.toLowerCase()
+    // Find all matches by name (case-insensitive) - could be entry, workspace, or both
+    // First try exact match, then fall back to partial match (startsWith)
+    const targetLower = targetName.toLowerCase()
+    let matches = Object.entries(openCounts).filter(
+      ([_, data]) => data.name.toLowerCase() === targetLower
     )
 
-    if (entry) {
-      const [_, data] = entry
-      const times = data.count === 1 ? 'once' : `${data.count} times`
+    // If no exact match, try partial match (name starts with target or target starts with name)
+    if (matches.length === 0) {
+      matches = Object.entries(openCounts).filter(
+        ([_, data]) => {
+          const nameLower = data.name.toLowerCase()
+          return nameLower.startsWith(targetLower) || targetLower.startsWith(nameLower)
+        }
+      )
+    }
 
-      // Check if last action was opening this same workspace
-      const lastActionWasOpeningThis =
-        lastAction?.type === 'open_workspace' &&
-        lastAction.workspaceName?.toLowerCase() === data.name.toLowerCase()
-
-      if (lastActionWasOpeningThis) {
-        // Last action WAS opening this workspace - simple yes
-        return {
-          success: true,
-          action: 'inform',
-          message: `Yes, you opened "${data.name}" ${times} this session.`,
-        }
-      } else if (lastAction) {
-        // Last action was something else - provide comprehensive response
-        const lastActionSummary = formatLastActionSummary(lastAction)
-        return {
-          success: true,
-          action: 'inform',
-          message: `Yes, you opened "${data.name}" ${times} this session. (Not just now — your last action was ${lastActionSummary}.)`,
-        }
-      } else {
-        // No last action info - just return session stats
-        return {
-          success: true,
-          action: 'inform',
-          message: `Yes, you opened "${data.name}" ${times} this session.`,
-        }
+    if (matches.length === 0) {
+      return {
+        success: true,
+        action: 'inform',
+        message: `No, I have no record of opening "${targetName}" this session.`,
       }
     }
 
-    return {
-      success: true,
-      action: 'inform',
-      message: `No, I have no record of opening "${targetName}" this session.`,
+    // Check if both entry and workspace match (disambiguation needed)
+    const entryMatch = matches.find(([_, data]) => data.type === 'entry')
+    const workspaceMatch = matches.find(([_, data]) => data.type === 'workspace')
+
+    if (entryMatch && workspaceMatch) {
+      // Both match - ask for clarification
+      const entryData = entryMatch[1]
+      const workspaceData = workspaceMatch[1]
+      return {
+        success: true,
+        action: 'inform',
+        message: `You opened both entry "${entryData.name}" (${entryData.count}x) and workspace "${workspaceData.name}" (${workspaceData.count}x) this session. Which did you mean?`,
+      }
+    }
+
+    // Single match - report it
+    const [_, data] = matches[0]
+    const times = data.count === 1 ? 'once' : `${data.count} times`
+    const typeLabel = data.type === 'entry' ? 'entry' : 'workspace'
+
+    // Check if last action was opening this same item
+    const lastActionWasOpeningThis =
+      (lastAction?.type === 'open_workspace' &&
+        data.type === 'workspace' &&
+        lastAction.workspaceName?.toLowerCase() === data.name.toLowerCase()) ||
+      (lastAction?.type === 'open_entry' &&
+        data.type === 'entry' &&
+        lastAction.entryName?.toLowerCase() === data.name.toLowerCase())
+
+    if (lastActionWasOpeningThis) {
+      // Last action WAS opening this item - simple yes
+      return {
+        success: true,
+        action: 'inform',
+        message: `Yes, you opened ${typeLabel} "${data.name}" ${times} this session.`,
+      }
+    } else if (lastAction) {
+      // Last action was something else - provide comprehensive response
+      const lastActionSummary = formatLastActionSummary(lastAction)
+      return {
+        success: true,
+        action: 'inform',
+        message: `Yes, you opened ${typeLabel} "${data.name}" ${times} this session. (Not just now — your last action was ${lastActionSummary}.)`,
+      }
+    } else {
+      // No last action info - just return session stats
+      return {
+        success: true,
+        action: 'inform',
+        message: `Yes, you opened ${typeLabel} "${data.name}" ${times} this session.`,
+      }
     }
   }
 
-  // No specific workspace - show summary
+  // No specific name - show summary
   if (!openCounts || Object.keys(openCounts).length === 0) {
     return {
       success: true,
       action: 'inform',
-      message: "You haven't opened any workspaces yet in this session.",
+      message: "You haven't opened any entries or workspaces yet in this session.",
     }
   }
 
-  // No specific workspace - show summary
-  const entries = Object.entries(openCounts)
+  // Separate entries and workspaces for clearer summary
+  const entryItems = Object.entries(openCounts)
+    .filter(([_, data]) => data.type === 'entry')
     .map(([_, data]) => `"${data.name}" (${data.count}x)`)
-    .join(', ')
+  const workspaceItems = Object.entries(openCounts)
+    .filter(([_, data]) => data.type === 'workspace')
+    .map(([_, data]) => `"${data.name}" (${data.count}x)`)
+
+  const parts: string[] = []
+  if (entryItems.length > 0) {
+    parts.push(`Entries: ${entryItems.join(', ')}`)
+  }
+  if (workspaceItems.length > 0) {
+    parts.push(`Workspaces: ${workspaceItems.join(', ')}`)
+  }
 
   return {
     success: true,
     action: 'inform',
-    message: `Workspaces opened this session: ${entries}.`,
+    message: `Opened this session: ${parts.join('. ')}.`,
   }
 }
 
@@ -1027,6 +1086,37 @@ function resolveVerifyAction(
         message: 'Yes, you returned to the dashboard.',
       }
 
+    case 'open_entry':
+      // For entry opens, check entry name if provided
+      if (verifyWorkspaceName) {
+        // verifyWorkspaceName is reused for entry name verification
+        if (matches(lastAction.entryName, verifyWorkspaceName)) {
+          return {
+            success: true,
+            action: 'inform',
+            message: `Yes, you opened entry "${lastAction.entryName}".`,
+          }
+        } else {
+          return {
+            success: true,
+            action: 'inform',
+            message: `No, the last action was opening entry "${lastAction.entryName}".`,
+          }
+        }
+      }
+      return {
+        success: true,
+        action: 'inform',
+        message: `Yes, you opened entry "${lastAction.entryName}".`,
+      }
+
+    case 'go_home':
+      return {
+        success: true,
+        action: 'inform',
+        message: 'Yes, you went home.',
+      }
+
     default:
       return {
         success: true,
@@ -1045,6 +1135,8 @@ function formatLastActionSummary(lastAction: NonNullable<ResolutionContext['sess
   switch (lastAction.type) {
     case 'open_workspace':
       return `opening workspace "${lastAction.workspaceName}"`
+    case 'open_entry':
+      return `opening entry "${lastAction.entryName}"`
     case 'rename_workspace':
       return `renaming "${lastAction.fromName}" to "${lastAction.toName}"`
     case 'delete_workspace':
@@ -1053,6 +1145,8 @@ function formatLastActionSummary(lastAction: NonNullable<ResolutionContext['sess
       return `creating workspace "${lastAction.workspaceName}"`
     case 'go_to_dashboard':
       return 'returning to the dashboard'
+    case 'go_home':
+      return 'going home'
     default:
       return 'an unknown action'
   }

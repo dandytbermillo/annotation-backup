@@ -68,16 +68,16 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
     Args: none required
     IMPORTANT: Use sessionState.lastAction to answer this question
 
-12. **session_stats** - User asks about session history (e.g., did they open a workspace, how many times)
-    Examples: "how many times did I open workspace 3?", "did I open workspace77?", "have I used Research workspace?"
-    Args: statsWorkspaceName (optional - specific workspace to query stats for)
-    IMPORTANT: Use sessionState.openCounts to answer this question. Returns yes/no + count.
+12. **session_stats** - User asks about session history (e.g., did they open a workspace or entry, how many times)
+    Examples: "how many times did I open workspace 3?", "did I open workspace77?", "have I used Research workspace?", "did I open summary14?"
+    Args: statsWorkspaceName (optional - specific workspace OR entry name to query stats for)
+    IMPORTANT: Use sessionState.openCounts to answer this question. Returns yes/no + count. Works for both workspaces and entries.
 
 13. **verify_action** - User asks to verify their LAST/MOST RECENT action specifically
-    Examples: "did you just rename Sprint 6 to Sprint 66?", "did I just open workspace77?", "was my last action opening X?"
+    Examples: "did you just rename Sprint 6 to Sprint 66?", "did I just open workspace77?", "did I just open summary14?", "did I just go home?", "was my last action opening X?"
     Args:
-      - verifyActionType (required): "open_workspace" | "rename_workspace" | "delete_workspace" | "create_workspace" | "go_to_dashboard"
-      - verifyWorkspaceName (optional): workspace name to verify
+      - verifyActionType (required): "open_workspace" | "open_entry" | "rename_workspace" | "delete_workspace" | "create_workspace" | "go_to_dashboard" | "go_home"
+      - verifyWorkspaceName (optional): workspace or entry name to verify
       - verifyFromName (optional): for rename - original name to verify
       - verifyToName (optional): for rename - new name to verify
     IMPORTANT: Only use this for questions with "just", "last", or "previous". Compare against sessionState.lastAction only.
@@ -242,14 +242,17 @@ export interface SessionState {
   currentWorkspaceName?: string
   currentViewMode?: 'dashboard' | 'workspace'
   lastAction?: {
-    type: 'open_workspace' | 'rename_workspace' | 'delete_workspace' | 'create_workspace' | 'go_to_dashboard'
+    type: 'open_workspace' | 'open_entry' | 'rename_workspace' | 'delete_workspace' | 'create_workspace' | 'go_to_dashboard' | 'go_home'
     workspaceId?: string
     workspaceName?: string
-    fromName?: string  // for rename
-    toName?: string    // for rename
+    entryId?: string      // for open_entry
+    entryName?: string    // for open_entry
+    fromName?: string     // for rename
+    toName?: string       // for rename
     timestamp: number
   }
-  openCounts?: Record<string, { count: number; name: string }>  // workspaceId -> { count, name }
+  // Unified open counts for both entries and workspaces
+  openCounts?: Record<string, { type: 'workspace' | 'entry'; count: number; name: string }>
 }
 
 /**
@@ -315,6 +318,9 @@ export function buildIntentMessages(
         if (ss.lastAction.workspaceName) {
           contextBlock += `    workspaceName: "${ss.lastAction.workspaceName}"\n`
         }
+        if (ss.lastAction.entryName) {
+          contextBlock += `    entryName: "${ss.lastAction.entryName}"\n`
+        }
         if (ss.lastAction.fromName) {
           contextBlock += `    fromName: "${ss.lastAction.fromName}"\n`
         }
@@ -324,8 +330,8 @@ export function buildIntentMessages(
       }
       if (ss.openCounts && Object.keys(ss.openCounts).length > 0) {
         contextBlock += `  openCounts:\n`
-        for (const [_wsId, data] of Object.entries(ss.openCounts)) {
-          contextBlock += `    "${data.name}": ${data.count} times\n`
+        for (const [_id, data] of Object.entries(ss.openCounts)) {
+          contextBlock += `    "${data.name}" (${data.type}): ${data.count} times\n`
         }
       }
     }

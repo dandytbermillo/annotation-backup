@@ -63,8 +63,8 @@ export const IntentArgs = z.object({
   statsWorkspaceName: z.string().optional(),
 
   // For verify_action: verify if a specific action was performed
-  verifyActionType: z.enum(['open_workspace', 'rename_workspace', 'delete_workspace', 'create_workspace', 'go_to_dashboard']).optional(),
-  verifyWorkspaceName: z.string().optional(),  // workspace name to verify
+  verifyActionType: z.enum(['open_workspace', 'open_entry', 'rename_workspace', 'delete_workspace', 'create_workspace', 'go_to_dashboard', 'go_home']).optional(),
+  verifyWorkspaceName: z.string().optional(),  // workspace or entry name to verify
   verifyFromName: z.string().optional(),       // for rename: original name
   verifyToName: z.string().optional(),         // for rename: new name
 

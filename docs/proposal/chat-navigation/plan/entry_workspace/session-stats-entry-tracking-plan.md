@@ -1,4 +1,4 @@
-# Plan: Session Stats for Entry + Workspace Opens
+ex# Plan: Session Stats for Entry + Workspace Opens
 
 ## Purpose
 Ensure questions like “Did I open summary14?” return correct results when **summary14 is an entry**, not just a workspace. Use session state as the source of truth (never infer from chat transcript). Persist stats across reloads using a dedicated table.

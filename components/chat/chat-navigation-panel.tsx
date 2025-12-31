@@ -338,6 +338,7 @@ function ChatNavigationPanelContent({
     setOpen,
     sessionState,
     setLastAction,
+    incrementOpenCount,
     // Persistence
     isLoadingHistory,
     hasMoreMessages,
@@ -511,9 +512,18 @@ function ChatNavigationPanelContent({
                 // Note: incrementOpenCount is NOT called here - DashboardView.handleWorkspaceSelectById
                 // is the single source of truth for open counts (avoids double-counting)
               } else if (option.type === 'entry') {
-                const entryData = option.data as { name?: string }
-                if (entryData.name) {
+                const entryData = option.data as { id?: string; name?: string }
+                if (entryData.id && entryData.name) {
+                  setLastAction({
+                    type: 'open_entry',
+                    entryId: entryData.id,
+                    entryName: entryData.name,
+                    timestamp: now,
+                  })
                   showEntryOpenedToast(entryData.name)
+                  // Note: incrementOpenCount for entries is called here since chat is the navigation source
+                  // (unlike workspaces which are tracked in DashboardView)
+                  incrementOpenCount(entryData.id, entryData.name, 'entry')
                 }
               }
               break
@@ -967,9 +977,20 @@ function ChatNavigationPanelContent({
               })
               showDashboardToast()
             } else if (resolution.action === 'navigate_home') {
+              setLastAction({
+                type: 'go_home',
+                timestamp: now,
+              })
               showHomeToast()
             } else if (resolution.action === 'navigate_entry' && resolution.entry) {
+              setLastAction({
+                type: 'open_entry',
+                entryId: resolution.entry.id,
+                entryName: resolution.entry.name,
+                timestamp: now,
+              })
               showEntryOpenedToast(resolution.entry.name)
+              incrementOpenCount(resolution.entry.id, resolution.entry.name, 'entry')
             }
             break
           case 'created':

@@ -541,7 +541,7 @@ export function DashboardView({
     onViewModeChange?.('workspace', selectedWorkspaceId)
     // Chat Navigation: Track workspace open count for session stats
     if (ws) {
-      incrementOpenCount(selectedWorkspaceId, ws.name)
+      incrementOpenCount(selectedWorkspaceId, ws.name, 'workspace')
     }
   }, [entryId, workspaces, onViewModeChange, incrementOpenCount])
 
@@ -579,7 +579,7 @@ export function DashboardView({
     // Chat Navigation: Track workspace open count for session stats
     const ws = workspaces.find(w => w.id === workspaceId)
     if (ws) {
-      incrementOpenCount(workspaceId, ws.name)
+      incrementOpenCount(workspaceId, ws.name, 'workspace')
     }
   }, [activeWorkspaceId, entryId, onViewModeChange, workspaces, incrementOpenCount])
 

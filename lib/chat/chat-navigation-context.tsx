@@ -53,9 +53,11 @@ export type { SessionState }
 
 // Last action type for tracking
 export interface LastAction {
-  type: 'open_workspace' | 'rename_workspace' | 'delete_workspace' | 'create_workspace' | 'go_to_dashboard'
+  type: 'open_workspace' | 'open_entry' | 'rename_workspace' | 'delete_workspace' | 'create_workspace' | 'go_to_dashboard' | 'go_home'
   workspaceId?: string
   workspaceName?: string
+  entryId?: string
+  entryName?: string
   fromName?: string
   toName?: string
   timestamp: number
@@ -75,7 +77,7 @@ interface ChatNavigationContextValue {
   sessionState: SessionState
   setCurrentLocation: (viewMode: 'dashboard' | 'workspace', entryId?: string, entryName?: string, workspaceId?: string, workspaceName?: string) => void
   setLastAction: (action: LastAction) => void
-  incrementOpenCount: (workspaceId: string, workspaceName: string) => void
+  incrementOpenCount: (id: string, name: string, type: 'workspace' | 'entry') => void
   // Persistence
   conversationId: string | null
   isLoadingHistory: boolean
@@ -102,7 +104,12 @@ interface DbMessage {
   createdAt: string
 }
 
-async function getOrCreateConversation(): Promise<{ id: string; summary: string | null; lastAction: LastAction | null } | null> {
+async function getOrCreateConversation(): Promise<{
+  id: string
+  summary: string | null
+  lastAction: LastAction | null
+  sessionState: { openCounts?: SessionState['openCounts'] } | null
+} | null> {
   try {
     const response = await fetch('/api/chat/conversations', {
       method: 'POST',
@@ -115,6 +122,7 @@ async function getOrCreateConversation(): Promise<{ id: string; summary: string 
       id: data.conversation.id,
       summary: data.conversation.summary,
       lastAction: data.conversation.lastAction || null,
+      sessionState: data.conversation.sessionState || null,
     }
   } catch {
     return null
@@ -201,6 +209,22 @@ async function persistLastAction(conversationId: string, lastAction: LastAction 
   }
 }
 
+async function persistSessionState(
+  conversationId: string,
+  openCounts: SessionState['openCounts']
+): Promise<boolean> {
+  try {
+    const response = await fetch(`/api/chat/conversations/${conversationId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionState: { openCounts } }),
+    })
+    return response.ok
+  } catch {
+    return false
+  }
+}
+
 function dbMessageToChatMessage(dbMsg: DbMessage): ChatMessage {
   return {
     id: dbMsg.id,
@@ -256,11 +280,12 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         setConversationId(conv.id)
         setConversationSummary(conv.summary)
 
-        // Hydrate lastAction from persisted conversation data
-        if (conv.lastAction) {
+        // Hydrate lastAction and openCounts from persisted conversation data
+        if (conv.lastAction || conv.sessionState?.openCounts) {
           setSessionState((prev) => ({
             ...prev,
             lastAction: conv.lastAction ?? undefined,
+            openCounts: conv.sessionState?.openCounts ?? undefined,
           }))
         }
 
@@ -402,23 +427,33 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     }
   }, [conversationId])
 
-  // Increment open count for a workspace
-  const incrementOpenCount = useCallback((workspaceId: string, workspaceName: string) => {
+  // Increment open count for a workspace or entry
+  const incrementOpenCount = useCallback((id: string, name: string, type: 'workspace' | 'entry') => {
     setSessionState((prev) => {
       const prevCounts = prev.openCounts || {}
-      const prevData = prevCounts[workspaceId] || { count: 0, name: workspaceName }
-      return {
-        ...prev,
-        openCounts: {
-          ...prevCounts,
-          [workspaceId]: {
-            count: prevData.count + 1,
-            name: workspaceName,
-          },
+      const prevData = prevCounts[id] || { type, count: 0, name }
+      const newCounts = {
+        ...prevCounts,
+        [id]: {
+          type,
+          count: prevData.count + 1,
+          name,
         },
       }
+
+      // Persist to database (non-blocking)
+      if (conversationId) {
+        persistSessionState(conversationId, newCounts).catch((err) => {
+          console.warn('[ChatNavigation] Failed to persist session state:', err)
+        })
+      }
+
+      return {
+        ...prev,
+        openCounts: newCounts,
+      }
     })
-  }, [])
+  }, [conversationId])
 
   return (
     <ChatNavigationContext.Provider
