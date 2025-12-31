@@ -146,6 +146,52 @@ interface PendingOptionState {
 }
 
 /**
+ * Last preview state for "show all" shortcut
+ */
+interface LastPreviewState {
+  source: string
+  viewPanelContent: ViewPanelContent
+  totalCount: number
+  messageId: string
+  createdAt: number
+}
+
+/**
+ * Check if input matches "show all" keyword heuristic.
+ * Returns true if message appears to be asking to expand a preview list.
+ */
+function matchesShowAllHeuristic(input: string): boolean {
+  const normalized = input.toLowerCase().trim()
+
+  // Pattern 1: "all" + (items|list|results|entries|everything)
+  if (/\ball\b/.test(normalized) && /\b(items|list|results|entries)\b/.test(normalized)) {
+    return true
+  }
+
+  // Pattern 2: "full list" or "complete list"
+  if (/\b(full|complete)\s+list\b/.test(normalized)) {
+    return true
+  }
+
+  // Pattern 3: "all" + number (e.g., "all 14")
+  if (/\ball\s+\d+\b/.test(normalized)) {
+    return true
+  }
+
+  // Pattern 4: "everything" or "the rest"
+  if (/\b(everything|the\s+rest)\b/.test(normalized)) {
+    return true
+  }
+
+  // Pattern 5: "show more" / "see more"
+  if (/\b(show|see)\s+more\b/.test(normalized)) {
+    return true
+  }
+
+  return false
+}
+
+/**
  * Check if input contains action verbs that should skip grace window.
  * These are deliberate commands that shouldn't be intercepted.
  */
@@ -275,6 +321,9 @@ function ChatNavigationPanelContent({
   // Grace window: allow one extra turn after selection to reuse options
   const [pendingOptionsGraceCount, setPendingOptionsGraceCount] = useState(0)
 
+  // Last preview state for "show all" shortcut
+  const [lastPreview, setLastPreview] = useState<LastPreviewState | null>(null)
+
   // View panel hook (for opening view panel with content)
   const { openPanel } = useViewPanel()
 
@@ -388,6 +437,17 @@ function ChatNavigationPanelContent({
           totalCount: resolution.totalCount,
         }
         addMessage(assistantMessage)
+
+        // Store lastPreview for "show all" shortcut
+        if (resolution.viewPanelContent && resolution.previewItems && resolution.previewItems.length > 0) {
+          setLastPreview({
+            source: resolution.viewPanelContent.title || 'quick_links',
+            viewPanelContent: resolution.viewPanelContent,
+            totalCount: resolution.totalCount || resolution.previewItems.length,
+            messageId: assistantMessage.id,
+            createdAt: Date.now(),
+          })
+        }
 
         // Open view panel if content available
         if (resolution.showInViewPanel && resolution.viewPanelContent) {
@@ -542,6 +602,81 @@ function ChatNavigationPanelContent({
     setIsLoading(true)
 
     try {
+      // ---------------------------------------------------------------------------
+      // Preview Shortcut: Check for "show all" when a preview exists
+      // ---------------------------------------------------------------------------
+      const PREVIEW_TIMEOUT_MS = 2 * 60 * 1000 // 2 minutes
+      const previewIsRecent = lastPreview && (Date.now() - lastPreview.createdAt) < PREVIEW_TIMEOUT_MS
+
+      if (previewIsRecent && matchesShowAllHeuristic(trimmedInput)) {
+        // Keyword heuristic matched - open view panel directly
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'show_all_shortcut',
+          metadata: { source: lastPreview.source, totalCount: lastPreview.totalCount, method: 'heuristic' },
+        })
+
+        openPanel(lastPreview.viewPanelContent)
+
+        const assistantMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: `Opening full list for ${lastPreview.source}.`,
+          timestamp: new Date(),
+          isError: false,
+        }
+        addMessage(assistantMessage)
+        setIsLoading(false)
+        return
+      }
+
+      // Tiny LLM classifier fallback: if preview exists but heuristic didn't match,
+      // ask the LLM if user wants to expand the preview
+      if (previewIsRecent && !hasActionVerb(trimmedInput)) {
+        try {
+          const classifyResponse = await fetch('/api/chat/classify-expand', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userMessage: trimmedInput,
+              previewSource: lastPreview.source,
+              previewCount: lastPreview.totalCount,
+            }),
+          })
+
+          if (classifyResponse.ok) {
+            const { expand } = await classifyResponse.json()
+            if (expand) {
+              void debugLog({
+                component: 'ChatNavigation',
+                action: 'show_all_shortcut',
+                metadata: { source: lastPreview.source, totalCount: lastPreview.totalCount, method: 'classifier' },
+              })
+
+              openPanel(lastPreview.viewPanelContent)
+
+              const assistantMessage: ChatMessage = {
+                id: `assistant-${Date.now()}`,
+                role: 'assistant',
+                content: `Opening full list for ${lastPreview.source}.`,
+                timestamp: new Date(),
+                isError: false,
+              }
+              addMessage(assistantMessage)
+              setIsLoading(false)
+              return
+            }
+          }
+        } catch (classifyError) {
+          // Classifier failed - continue with normal intent parsing
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'classify_expand_error',
+            metadata: { error: String(classifyError) },
+          })
+        }
+      }
+
       // ---------------------------------------------------------------------------
       // Hybrid Selection: Check for ordinal/label match if pending options exist
       // ---------------------------------------------------------------------------
@@ -901,6 +1036,17 @@ function ChatNavigationPanelContent({
       }
       addMessage(assistantMessage)
 
+      // Store lastPreview for "show all" shortcut
+      if (resolution.viewPanelContent && resolution.previewItems && resolution.previewItems.length > 0) {
+        setLastPreview({
+          source: resolution.viewPanelContent.title || 'preview',
+          viewPanelContent: resolution.viewPanelContent,
+          totalCount: resolution.totalCount || resolution.previewItems.length,
+          messageId: assistantMessage.id,
+          createdAt: Date.now(),
+        })
+      }
+
       // Open view panel if content is available
       if (resolution.showInViewPanel && resolution.viewPanelContent) {
         openPanel(resolution.viewPanelContent)
@@ -917,7 +1063,7 @@ function ChatNavigationPanelContent({
     } finally {
       setIsLoading(false)
     }
-  }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction, messages, addMessage, setInput, sessionState, setLastAction, openPanel, conversationSummary, pendingOptions, pendingOptionsGraceCount, handleSelectOption])
+  }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction, messages, addMessage, setInput, sessionState, setLastAction, openPanel, conversationSummary, pendingOptions, pendingOptionsGraceCount, handleSelectOption, lastPreview])
 
   // ---------------------------------------------------------------------------
   // Handle Key Press
