@@ -33,6 +33,15 @@ import { ViewPanel } from './view-panel'
 import { MessageResultPreview } from './message-result-preview'
 import { getActiveEntryContext } from '@/lib/entry/entry-context'
 import { getActiveWorkspaceContext } from '@/lib/note-workspaces/state'
+import {
+  showWorkspaceOpenedToast,
+  showWorkspaceCreatedToast,
+  showWorkspaceRenamedToast,
+  showWorkspaceDeletedToast,
+  showDashboardToast,
+  showHomeToast,
+  showEntryOpenedToast,
+} from '@/lib/chat/navigation-toast'
 
 export interface ChatNavigationPanelProps {
   /** Current entry ID for context */
@@ -294,7 +303,8 @@ function ChatNavigationPanelContent({
     },
   })
 
-  // Auto-focus input when popover opens
+  // Auto-focus input when panel opens
+  // Note: Scroll position is naturally preserved because we use CSS hiding instead of unmounting
   useEffect(() => {
     if (isOpen) {
       setTimeout(() => inputRef.current?.focus(), 100)
@@ -425,7 +435,7 @@ function ChatNavigationPanelContent({
         // Note: Don't clear pending options here - grace window logic handles clearing.
         // This allows users to select another option within the grace window.
 
-        // Track successful actions for session state
+        // Track successful actions for session state and show toast
         if (result.success && result.action) {
           const now = Date.now()
           switch (result.action) {
@@ -437,8 +447,14 @@ function ChatNavigationPanelContent({
                   workspaceName: workspaceData.name,
                   timestamp: now,
                 })
+                showWorkspaceOpenedToast(workspaceData.name, workspaceData.entryName)
                 // Note: incrementOpenCount is NOT called here - DashboardView.handleWorkspaceSelectById
                 // is the single source of truth for open counts (avoids double-counting)
+              } else if (option.type === 'entry') {
+                const entryData = option.data as { name?: string }
+                if (entryData.name) {
+                  showEntryOpenedToast(entryData.name)
+                }
               }
               break
             case 'deleted':
@@ -449,6 +465,7 @@ function ChatNavigationPanelContent({
                   workspaceName: workspaceData.name,
                   timestamp: now,
                 })
+                showWorkspaceDeletedToast(workspaceData.name)
               }
               break
             case 'renamed':
@@ -461,6 +478,7 @@ function ChatNavigationPanelContent({
                   toName: renameData.pendingNewName,
                   timestamp: now,
                 })
+                showWorkspaceRenamedToast(renameData.name, renameData.pendingNewName)
               }
               break
           }
@@ -792,7 +810,7 @@ function ChatNavigationPanelContent({
         }
       }
 
-      // Track successful actions for session state
+      // Track successful actions for session state and show toast
       if (result.success && result.action) {
         const now = Date.now()
         switch (result.action) {
@@ -804,6 +822,7 @@ function ChatNavigationPanelContent({
                 workspaceName: resolution.workspace.name,
                 timestamp: now,
               })
+              showWorkspaceOpenedToast(resolution.workspace.name, resolution.workspace.entryName)
               // Note: incrementOpenCount is NOT called here - DashboardView.handleWorkspaceSelectById
               // is the single source of truth for open counts (avoids double-counting)
             } else if (resolution.action === 'navigate_dashboard') {
@@ -811,6 +830,11 @@ function ChatNavigationPanelContent({
                 type: 'go_to_dashboard',
                 timestamp: now,
               })
+              showDashboardToast()
+            } else if (resolution.action === 'navigate_home') {
+              showHomeToast()
+            } else if (resolution.action === 'navigate_entry' && resolution.entry) {
+              showEntryOpenedToast(resolution.entry.name)
             }
             break
           case 'created':
@@ -820,6 +844,7 @@ function ChatNavigationPanelContent({
                 workspaceName: resolution.newWorkspace.name,
                 timestamp: now,
               })
+              showWorkspaceCreatedToast(resolution.newWorkspace.name)
             }
             break
           case 'renamed':
@@ -832,6 +857,9 @@ function ChatNavigationPanelContent({
                 toName: resolution.renamedWorkspace.name,
                 timestamp: now,
               })
+              if (resolution.renamedFrom) {
+                showWorkspaceRenamedToast(resolution.renamedFrom, resolution.renamedWorkspace.name)
+              }
             }
             break
           case 'deleted':
@@ -842,6 +870,7 @@ function ChatNavigationPanelContent({
                 workspaceName: resolution.deleteTarget.name,
                 timestamp: now,
               })
+              showWorkspaceDeletedToast(resolution.deleteTarget.name)
             }
             break
         }
@@ -939,28 +968,31 @@ function ChatNavigationPanelContent({
       {/* View Panel - slides in from right for displaying content */}
       <ViewPanel />
 
-      {/* Left-side overlay panel */}
-      {isOpen && (
-        <>
-          {/* Backdrop - click to close */}
-          <div
-            className="fixed inset-0 bg-black/20 z-40"
-            onClick={() => setOpen(false)}
-            aria-hidden="true"
-          />
+      {/* Left-side overlay panel - uses CSS hiding to preserve scroll position */}
+      {/* Backdrop - click to close */}
+      <div
+        className="fixed inset-0 bg-black/20 z-40 transition-opacity duration-200"
+        onClick={() => setOpen(false)}
+        aria-hidden="true"
+        style={{
+          opacity: isOpen ? 1 : 0,
+          pointerEvents: isOpen ? 'auto' : 'none',
+        }}
+      />
 
-          {/* Panel - Glassmorphism effect */}
-          <div
-            className={cn(
-              'fixed left-0 top-0 z-50',
-              'h-screen',
-              'bg-background/80 backdrop-blur-xl border-r border-white/20 shadow-2xl',
-              'flex flex-col',
-              'animate-in slide-in-from-left duration-200',
-              className
-            )}
-            style={{ width: '25vw', minWidth: '320px' }}
-          >
+      {/* Panel - Glassmorphism effect */}
+      <div
+        className={cn(
+          'fixed left-0 top-0 z-50',
+          'h-screen',
+          'bg-background/80 backdrop-blur-xl border-r border-white/20 shadow-2xl',
+          'flex flex-col',
+          'transition-transform duration-200',
+          isOpen ? 'translate-x-0' : '-translate-x-full',
+          className
+        )}
+        style={{ width: '25vw', minWidth: '320px' }}
+      >
             {/* Header - high contrast for readability */}
             <div className="flex items-center justify-between border-b border-white/20 px-4 py-3 shrink-0 bg-white/90 backdrop-blur-md">
               <div className="flex items-center gap-2">
@@ -1147,8 +1179,6 @@ function ChatNavigationPanelContent({
               </div>
             </div>
           </div>
-        </>
-      )}
     </>
   )
 }

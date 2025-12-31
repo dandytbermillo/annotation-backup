@@ -3,6 +3,12 @@
  *
  * Resolves workspace names to IDs using existing APIs.
  * Used by the chat navigation feature.
+ *
+ * Matching Priority (per workspace-name-matching-plan.md):
+ * 1. Exact match (case-insensitive) - rank 0
+ * 2. Word-boundary match (whole token) - rank 1
+ * 3. Prefix match (starts with term) - rank 2
+ * 4. Substring match (contains term) - rank 3
  */
 
 import { serverPool } from '@/lib/db/pool'
@@ -11,6 +17,27 @@ import type {
   WorkspaceResolutionResult,
   ResolutionContext,
 } from './resolution-types'
+
+// =============================================================================
+// Utilities
+// =============================================================================
+
+/**
+ * Escape regex special characters for safe use in PostgreSQL ~ operator.
+ */
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * Filter matches to keep only the best (lowest) rank.
+ * This reduces noise by excluding weaker matches when stronger ones exist.
+ */
+function filterToBestRank<T extends { matchRank: number }>(matches: T[]): T[] {
+  if (matches.length === 0) return matches
+  const bestRank = Math.min(...matches.map((m) => m.matchRank))
+  return matches.filter((m) => m.matchRank === bestRank)
+}
 
 // =============================================================================
 // Workspace Resolution
@@ -45,6 +72,12 @@ export async function resolveWorkspace(
       let query: string
       let params: any[]
 
+      // Build term-specific patterns
+      const safeTermForQuery = escapeRegex(term)
+      const termWordBoundary = `\\y${safeTermForQuery}\\y`
+      const termPrefix = `${term}%`
+      const termSubstring = `%${term}%`
+
       if (entryName) {
         // Search within a specific entry (by name)
         query = `
@@ -54,23 +87,31 @@ export async function resolveWorkspace(
             nw.item_id as entry_id,
             nw.is_default,
             nw.updated_at,
-            i.name as entry_name
+            i.name as entry_name,
+            CASE
+              WHEN LOWER(nw.name) = $5 THEN 0
+              WHEN LOWER(nw.name) ~ $6 THEN 1
+              WHEN LOWER(nw.name) LIKE $7 THEN 2
+              ELSE 3
+            END AS match_rank
           FROM note_workspaces nw
           LEFT JOIN items i ON nw.item_id = i.id
           WHERE nw.user_id = $1
             AND LOWER(i.name) LIKE $2
             AND (LOWER(nw.name) LIKE $3 OR ($4 AND nw.is_default = true))
           ORDER BY
-            CASE WHEN LOWER(nw.name) = $5 THEN 0 ELSE 1 END,
+            match_rank ASC,
             nw.updated_at DESC NULLS LAST
           LIMIT 10
         `
         params = [
           context.userId,
           `%${entryName.toLowerCase()}%`,
-          `%${term}%`,
+          termSubstring,
           isDashboard,
           term,
+          termWordBoundary,
+          termPrefix,
         ]
       } else if (context.currentEntryId) {
         // Search within current entry first
@@ -81,23 +122,31 @@ export async function resolveWorkspace(
             nw.item_id as entry_id,
             nw.is_default,
             nw.updated_at,
-            i.name as entry_name
+            i.name as entry_name,
+            CASE
+              WHEN LOWER(nw.name) = $5 THEN 0
+              WHEN LOWER(nw.name) ~ $6 THEN 1
+              WHEN LOWER(nw.name) LIKE $7 THEN 2
+              ELSE 3
+            END AS match_rank
           FROM note_workspaces nw
           LEFT JOIN items i ON nw.item_id = i.id
           WHERE nw.user_id = $1
             AND nw.item_id = $2
             AND (LOWER(nw.name) LIKE $3 OR ($4 AND nw.is_default = true))
           ORDER BY
-            CASE WHEN LOWER(nw.name) = $5 THEN 0 ELSE 1 END,
+            match_rank ASC,
             nw.updated_at DESC NULLS LAST
           LIMIT 10
         `
         params = [
           context.userId,
           context.currentEntryId,
-          `%${term}%`,
+          termSubstring,
           isDashboard,
           term,
+          termWordBoundary,
+          termPrefix,
         ]
       } else {
         // Search across all entries
@@ -108,17 +157,30 @@ export async function resolveWorkspace(
             nw.item_id as entry_id,
             nw.is_default,
             nw.updated_at,
-            i.name as entry_name
+            i.name as entry_name,
+            CASE
+              WHEN LOWER(nw.name) = $4 THEN 0
+              WHEN LOWER(nw.name) ~ $5 THEN 1
+              WHEN LOWER(nw.name) LIKE $6 THEN 2
+              ELSE 3
+            END AS match_rank
           FROM note_workspaces nw
           LEFT JOIN items i ON nw.item_id = i.id
           WHERE nw.user_id = $1
             AND (LOWER(nw.name) LIKE $2 OR ($3 AND nw.is_default = true))
           ORDER BY
-            CASE WHEN LOWER(nw.name) = $4 THEN 0 ELSE 1 END,
+            match_rank ASC,
             nw.updated_at DESC NULLS LAST
           LIMIT 10
         `
-        params = [context.userId, `%${term}%`, isDashboard, term]
+        params = [
+          context.userId,
+          termSubstring,
+          isDashboard,
+          term,
+          termWordBoundary,
+          termPrefix,
+        ]
       }
 
       return { query, params }
@@ -127,36 +189,47 @@ export async function resolveWorkspace(
     const primary = buildQuery(searchTerm)
     const primaryResult = await serverPool.query(primary.query, primary.params)
 
-    let matches: WorkspaceMatch[] = primaryResult.rows.map((row) => ({
+    // Map results with matchRank for filtering
+    type MatchWithRank = WorkspaceMatch & { matchRank: number }
+    let matchesWithRank: MatchWithRank[] = primaryResult.rows.map((row) => ({
       id: row.id,
       name: row.name,
       entryId: row.entry_id,
       entryName: row.entry_name || 'Unknown',
       isDefault: row.is_default || false,
       updatedAt: row.updated_at,
+      matchRank: row.match_rank,
     }))
 
     // If "workspace X" could also mean "X", search the alternate term and merge
     if (altSearchTerm) {
       const alt = buildQuery(altSearchTerm)
       const altResult = await serverPool.query(alt.query, alt.params)
-      const altMatches: WorkspaceMatch[] = altResult.rows.map((row) => ({
+      const altMatchesWithRank: MatchWithRank[] = altResult.rows.map((row) => ({
         id: row.id,
         name: row.name,
         entryId: row.entry_id,
         entryName: row.entry_name || 'Unknown',
         isDefault: row.is_default || false,
         updatedAt: row.updated_at,
+        matchRank: row.match_rank,
       }))
 
-      const seen = new Set(matches.map((m) => m.id))
-      for (const m of altMatches) {
+      const seen = new Set(matchesWithRank.map((m) => m.id))
+      for (const m of altMatchesWithRank) {
         if (!seen.has(m.id)) {
-          matches.push(m)
+          matchesWithRank.push(m)
           seen.add(m.id)
         }
       }
     }
+
+    // Filter to keep only the best (lowest) rank matches
+    // This prevents "summary14" from appearing when "Workspace 4" is a better match
+    matchesWithRank = filterToBestRank(matchesWithRank)
+
+    // Convert to WorkspaceMatch (drop matchRank)
+    let matches: WorkspaceMatch[] = matchesWithRank.map(({ matchRank, ...rest }) => rest)
 
     if (matches.length === 0) {
       return {

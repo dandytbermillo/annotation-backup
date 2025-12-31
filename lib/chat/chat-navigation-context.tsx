@@ -102,7 +102,7 @@ interface DbMessage {
   createdAt: string
 }
 
-async function getOrCreateConversation(): Promise<{ id: string; summary: string | null } | null> {
+async function getOrCreateConversation(): Promise<{ id: string; summary: string | null; lastAction: LastAction | null } | null> {
   try {
     const response = await fetch('/api/chat/conversations', {
       method: 'POST',
@@ -111,7 +111,11 @@ async function getOrCreateConversation(): Promise<{ id: string; summary: string 
     })
     if (!response.ok) return null
     const data = await response.json()
-    return { id: data.conversation.id, summary: data.conversation.summary }
+    return {
+      id: data.conversation.id,
+      summary: data.conversation.summary,
+      lastAction: data.conversation.lastAction || null,
+    }
   } catch {
     return null
   }
@@ -184,6 +188,19 @@ async function clearConversation(conversationId: string): Promise<boolean> {
   }
 }
 
+async function persistLastAction(conversationId: string, lastAction: LastAction | null): Promise<boolean> {
+  try {
+    const response = await fetch(`/api/chat/conversations/${conversationId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lastAction }),
+    })
+    return response.ok
+  } catch {
+    return false
+  }
+}
+
 function dbMessageToChatMessage(dbMsg: DbMessage): ChatMessage {
   return {
     id: dbMsg.id,
@@ -218,7 +235,8 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const initRef = useRef(false)
 
-  // Session state for informational intents (session-only, not persisted)
+  // Session state for informational intents
+  // Note: lastAction is persisted to DB and hydrated on init; other fields are session-only
   const [sessionState, setSessionState] = useState<SessionState>({})
 
   // Initialize: get or create conversation and load recent messages
@@ -237,6 +255,14 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
 
         setConversationId(conv.id)
         setConversationSummary(conv.summary)
+
+        // Hydrate lastAction from persisted conversation data
+        if (conv.lastAction) {
+          setSessionState((prev) => ({
+            ...prev,
+            lastAction: conv.lastAction ?? undefined,
+          }))
+        }
 
         const result = await fetchMessages(conv.id)
         if (result) {
@@ -361,12 +387,20 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
   }, [])
 
   // Record last action (called after navigation/operation completes)
+  // Also persists to database for cross-reload continuity
   const setLastAction = useCallback((action: LastAction) => {
     setSessionState((prev) => ({
       ...prev,
       lastAction: action,
     }))
-  }, [])
+
+    // Persist to database (non-blocking)
+    if (conversationId) {
+      persistLastAction(conversationId, action).catch((err) => {
+        console.warn('[ChatNavigation] Failed to persist lastAction:', err)
+      })
+    }
+  }, [conversationId])
 
   // Increment open count for a workspace
   const incrementOpenCount = useCallback((workspaceId: string, workspaceName: string) => {

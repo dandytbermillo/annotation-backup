@@ -61,11 +61,24 @@ This prevents `summary14` from appearing when `Workspace 4` is present.
 For a search term `term`:
 
 - `$term` = lowercased term (e.g., `4`, `workspace 4`)
-- `$wordBoundary` = `\\y${term}\\y`
+- `$wordBoundary` = `\\y${safeTerm}\\y`
   - For numeric-only input, `\\y` ensures `4` does not match `14`.
 - `$prefix` = `${term}%`
 
 All patterns should be parameterized (no string interpolation).
+
+### Regex Escaping (Required)
+
+If `term` includes regex meta-characters (., *, +, ?, (, ), [, ], etc.),
+escape before building `$wordBoundary`:
+
+```
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+const safeTerm = escapeRegex(term)
+const wordBoundary = `\\\\y${safeTerm}\\\\y`
+```
 
 ## Where to Apply
 
@@ -118,7 +131,7 @@ recent action improves continuity without storing full activity logs.
 ### Safe Storage Options
 
 Option A (preferred): Extend existing chat persistence:
-- Add `last_action` JSON column to `chat_conversations`.
+- Add `last_action` JSON column to `chat_conversations` (migration).
 - Update on every action (open/rename/delete/create/go_to_dashboard).
 - Load into `sessionState.lastAction` on chat initialization.
 
@@ -130,6 +143,39 @@ Future-proof (near future):
 - If you decide to persist more than just the last action, migrate to a single
   `session_state` JSON column on `chat_conversations` and store additional
   ephemeral fields there (e.g., `openCounts`, `currentLocation`).
+
+### Persistence Implementation Details (Last Action)
+
+#### Migration
+- Add migration file:
+  - `migrations/055_add_last_action_to_conversations.up.sql`
+  - `migrations/055_add_last_action_to_conversations.down.sql`
+- SQL:
+  - `ALTER TABLE chat_conversations ADD COLUMN last_action jsonb NULL;`
+
+#### API Updates
+- Extend existing conversation endpoint:
+  - `app/api/chat/conversations/route.ts`
+  - Include `last_action` in responses for POST/GET.
+- Add update path (recommended):
+  - New PATCH handler in `app/api/chat/conversations/[conversationId]/route.ts`
+  - Body: `{ lastAction: {...} }`
+
+#### Client Hook
+- After `setLastAction(...)` in `components/chat/chat-navigation-panel.tsx`,
+  call the PATCH endpoint to persist `last_action`.
+- On chat init, load `last_action` from the conversation record and hydrate
+  `sessionState.lastAction`.
+
+#### Data Shape (JSON)
+```
+{
+  "type": "open_workspace",
+  "workspaceId": "uuid",
+  "workspaceName": "Sprint 66",
+  "timestamp": 1700000000000
+}
+```
 
 ### Restore Behavior
 

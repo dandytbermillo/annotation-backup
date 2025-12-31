@@ -50,21 +50,21 @@ export async function POST(request: NextRequest) {
 
     if (scope === 'global') {
       query = `
-        SELECT id, scope, summary, created_at, updated_at
+        SELECT id, scope, summary, last_action, created_at, updated_at
         FROM chat_conversations
         WHERE user_id = $1 AND scope = 'global' AND entry_id IS NULL AND workspace_id IS NULL
       `
       params = [userId]
     } else if (scope === 'entry') {
       query = `
-        SELECT id, scope, summary, created_at, updated_at
+        SELECT id, scope, summary, last_action, created_at, updated_at
         FROM chat_conversations
         WHERE user_id = $1 AND scope = 'entry' AND entry_id = $2 AND workspace_id IS NULL
       `
       params = [userId, entryId]
     } else {
       query = `
-        SELECT id, scope, summary, created_at, updated_at
+        SELECT id, scope, summary, last_action, created_at, updated_at
         FROM chat_conversations
         WHERE user_id = $1 AND scope = 'workspace' AND workspace_id = $2
       `
@@ -80,6 +80,7 @@ export async function POST(request: NextRequest) {
           id: row.id,
           scope: row.scope,
           summary: row.summary,
+          lastAction: row.last_action,
           createdAt: row.created_at,
           updatedAt: row.updated_at,
         },
@@ -94,21 +95,21 @@ export async function POST(request: NextRequest) {
       insertQuery = `
         INSERT INTO chat_conversations (user_id, scope, entry_id, workspace_id)
         VALUES ($1, 'global', NULL, NULL)
-        RETURNING id, scope, summary, created_at, updated_at
+        RETURNING id, scope, summary, last_action, created_at, updated_at
       `
       insertParams = [userId]
     } else if (scope === 'entry') {
       insertQuery = `
         INSERT INTO chat_conversations (user_id, scope, entry_id, workspace_id)
         VALUES ($1, 'entry', $2, NULL)
-        RETURNING id, scope, summary, created_at, updated_at
+        RETURNING id, scope, summary, last_action, created_at, updated_at
       `
       insertParams = [userId, entryId]
     } else {
       insertQuery = `
         INSERT INTO chat_conversations (user_id, scope, entry_id, workspace_id)
         VALUES ($1, 'workspace', $2, $3)
-        RETURNING id, scope, summary, created_at, updated_at
+        RETURNING id, scope, summary, last_action, created_at, updated_at
       `
       insertParams = [userId, entryId, workspaceId]
     }
@@ -121,6 +122,7 @@ export async function POST(request: NextRequest) {
         id: row.id,
         scope: row.scope,
         summary: row.summary,
+        lastAction: row.last_action,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
       },

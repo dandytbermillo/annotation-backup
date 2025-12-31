@@ -26,6 +26,8 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
 
 3. **open_note** - User wants to open/find a specific note
    Examples: "open note Project Plan", "find Roadmap note", "go to my meeting notes"
+   IMPORTANT: Only use this intent when the user explicitly says "note" or "notes".
+   Do NOT use for "open <name>" without the word "note" - use resolve_name instead.
    Args: noteTitle (required), entryName (optional)
 
 4. **create_workspace** - User wants to create a NEW workspace
@@ -115,14 +117,18 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
       User: "Sprint 66" → { "intent": "select_option", "args": { "optionIndex": 2 } }
       User: "last" → { "intent": "select_option", "args": { "optionIndex": 2 } }
 
-17. **resolve_name** - User typed a bare name without an explicit command verb
-    Use this when the input is JUST a name (no "open", "go to", "workspace", "entry", etc.)
+17. **resolve_name** - User wants to open something by name without specifying type
+    Use this when:
+    - Input is a bare name (e.g., "summary14")
+    - Input has "open" but no type keyword like "workspace" or "note" (e.g., "open summary14")
+    - Input explicitly says "entry" (e.g., "open entry summary14")
     Args:
-      - name (required): the bare name to resolve
+      - name (required): the name to resolve
     Examples:
       - "summary14" → { "intent": "resolve_name", "args": { "name": "summary14" } }
-      - "Sprint 66" → { "intent": "resolve_name", "args": { "name": "Sprint 66" } }
-      - "Research" → { "intent": "resolve_name", "args": { "name": "Research" } }
+      - "open summary14" → { "intent": "resolve_name", "args": { "name": "summary14" } }
+      - "open the entry Research" → { "intent": "resolve_name", "args": { "name": "Research" } }
+      - "go to Sprint 66" → { "intent": "resolve_name", "args": { "name": "Sprint 66" } }
     NOTE: The system will check if this name matches an entry, workspace, or both,
     and respond appropriately (open directly if single match, or ask for clarification).
 
@@ -147,7 +153,7 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
 
 - "dashboard", "go to dashboard", "back", "exit workspace", "return to dashboard" → **go_to_dashboard**
 - "home", "go home", "back home", "take me home", "return home", "main dashboard" → **go_home**
-- "list", "show workspaces", "what workspaces" → **list_workspaces**
+- "list", "workspaces", "my workspaces", "show workspaces", "show me my workspaces", "what workspaces", "open workspaces" → **list_workspaces**
 - "delete X", "remove X" (where X is a workspace name) → **delete_workspace**
 - "rename X to Y" → **rename_workspace**
 - "where am I", "current location", "what workspace", "am I on dashboard" → **location_info**
@@ -158,19 +164,40 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
 - "did you rename X to Y?" → **verify_action** (verifies specific action details)
 - "the first one", "second option", "last one" (when pendingOptions exists) → **select_option**
 - "the one from X", "the workspace with Y" (when pendingOptions exists) → **select_option**
+- "quick links", "my quick links", "show quick links", "view quick links", "display quick links" → **show_quick_links**
+
+## Typo Tolerance
+
+If command keywords contain minor typos (1-2 character differences), infer the intended command when unambiguous:
+- "quik links" → **show_quick_links**
+- "workspces" → **list_workspaces**
+- "dashbord" → **go_to_dashboard**
+- "recnt workspace" → **open_recent_workspace**
+
+Rules for typo correction:
+- Only correct typos in the **command slot** (action verbs and destination keywords at the start of the message)
+- Do NOT reinterpret words inside quotes (e.g., \`open "Quik Links"\` keeps "Quik Links" as-is)
+- Do NOT correct text after rename/delete targets (e.g., \`rename Quik Links to X\` keeps "Quik Links" as the entity name)
+- If correction is ambiguous, do NOT auto-correct; return unsupported
 
 ## Bare Name Rule (Hybrid Commands)
 
-When the user input is JUST a name with no command verb (no "open", "go to", "show", "workspace", "entry", etc.):
+When the user input is a name WITHOUT a type keyword ("workspace", "note", "entry"):
 - Use **resolve_name** intent with the name
-- Examples:
-  - "summary14" → resolve_name (bare name, no verb)
-  - "Sprint 66" → resolve_name (bare name, no verb)
-  - "Research" → resolve_name (bare name, no verb)
-- Counter-examples (these have verbs or type keywords):
-  - "open summary14" → open_workspace or open_note (has "open" verb)
+- This includes "open <name>" when no type keyword is present
+
+Examples that use resolve_name:
+  - "summary14" → resolve_name (bare name)
+  - "Sprint 66" → resolve_name (bare name)
+  - "open summary14" → resolve_name (no type keyword, just "open" + name)
+  - "open the entry summary14" → resolve_name (explicit "entry")
+  - "go to Research" → resolve_name (no type keyword)
+
+Counter-examples (these have explicit type keywords):
   - "workspace Sprint 66" → open_workspace (has "workspace" keyword)
-  - "go to Dashboard" → go_to_dashboard (has "go to" verb)
+  - "open workspace Research" → open_workspace (explicit "workspace")
+  - "open note Project Plan" → open_note (explicit "note")
+  - "go to Dashboard" → go_to_dashboard (special destination keyword)
 
 ## Response Format
 
