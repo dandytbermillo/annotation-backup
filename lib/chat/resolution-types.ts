@@ -55,7 +55,12 @@ export interface NoteResolutionResult {
 export interface EntryMatch {
   id: string
   name: string
+  path?: string
+  type?: 'folder' | 'note'
+  parentId?: string
+  parentName?: string
   isSystem: boolean
+  dashboardWorkspaceId?: string  // Default workspace for navigation
 }
 
 export interface EntryResolutionResult {

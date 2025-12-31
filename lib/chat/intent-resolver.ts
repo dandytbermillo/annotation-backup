@@ -11,6 +11,7 @@ import type {
   NoteResolutionResult,
   ResolutionContext,
   WorkspaceMatch,
+  EntryMatch,
 } from './resolution-types'
 import type { ViewPanelContent, ViewListItem } from './view-panel-types'
 import { ViewContentType } from './view-panel-types'
@@ -22,6 +23,7 @@ import {
   deleteWorkspace,
 } from './workspace-resolver'
 import { resolveNote } from './note-resolver'
+import { resolveEntry } from './entry-resolver'
 import { serverPool } from '@/lib/db/pool'
 import { buildQuickLinksViewItems } from './parse-quick-links'
 
@@ -34,6 +36,7 @@ export interface IntentResolutionResult {
   action?:
     | 'navigate_workspace'
     | 'navigate_note'
+    | 'navigate_entry'  // Navigate to entry's dashboard
     | 'navigate_dashboard'
     | 'navigate_home'
     | 'create_workspace'
@@ -43,12 +46,16 @@ export interface IntentResolutionResult {
     | 'delete_workspace'
     | 'select'
     | 'select_option'  // Hybrid selection follow-up
+    | 'clarify_type'   // Entry vs workspace type conflict
     | 'inform'
     | 'show_view_panel'
     | 'error'
 
   // For navigate_workspace
   workspace?: WorkspaceMatch
+
+  // For navigate_entry
+  entry?: EntryMatch
 
   // For navigate_note
   note?: {
@@ -79,7 +86,7 @@ export interface IntentResolutionResult {
 
   // For select (multiple matches) and list_workspaces
   options?: Array<{
-    type: 'workspace' | 'note' | 'confirm_delete' | 'quick_links_panel'
+    type: 'workspace' | 'note' | 'entry' | 'confirm_delete' | 'quick_links_panel'
     id: string
     label: string
     sublabel?: string
@@ -165,6 +172,10 @@ export async function resolveIntent(
     // Phase 4: Hybrid Selection Follow-up
     case 'select_option':
       return resolveSelectOption(intent)
+
+    // Phase 5: Hybrid Commands - bare name resolution
+    case 'resolve_name':
+      return resolveBareName(intent, context)
 
     case 'unsupported':
     default:
@@ -1266,5 +1277,172 @@ function resolveSelectOption(
     optionIndex,
     optionLabel,
     message: 'Selecting option...',
+  }
+}
+
+// =============================================================================
+// Phase 5: Hybrid Commands - Bare Name Resolution
+// =============================================================================
+
+/**
+ * Resolve bare name input - check both entries and workspaces
+ * Returns appropriate action based on matches:
+ * - Single workspace match → navigate_workspace
+ * - Single entry match → navigate_entry (to entry's dashboard)
+ * - Multiple of same type → select (disambiguation)
+ * - Both entry AND workspace → clarify_type (ask user)
+ */
+async function resolveBareName(
+  intent: IntentResponse,
+  context: ResolutionContext
+): Promise<IntentResolutionResult> {
+  const { name } = intent.args
+
+  if (!name) {
+    return {
+      success: false,
+      action: 'error',
+      message: 'Please specify a name to search for.',
+    }
+  }
+
+  // Search for workspaces matching the name
+  const workspaceResult = await resolveWorkspace(name, context)
+
+  // Search for entries matching the name (from items table)
+  const entryResult = await resolveEntry(name, context)
+
+  const hasWorkspaces = workspaceResult.status !== 'not_found'
+  const hasEntries = entryResult.status !== 'not_found'
+
+  // Case 1: No matches at all
+  if (!hasWorkspaces && !hasEntries) {
+    return {
+      success: false,
+      action: 'error',
+      message: `No entry or workspace found matching "${name}".`,
+    }
+  }
+
+  // Case 2: Only workspaces match
+  if (hasWorkspaces && !hasEntries) {
+    if (workspaceResult.status === 'found') {
+      // Single workspace match - open directly
+      return {
+        success: true,
+        action: 'navigate_workspace',
+        workspace: workspaceResult.workspace,
+        message: `Opening workspace "${workspaceResult.workspace!.name}"`,
+      }
+    } else {
+      // Multiple workspace matches - disambiguate
+      const matches = workspaceResult.matches!
+      return {
+        success: true,
+        action: 'select',
+        options: matches.map((w) => ({
+          type: 'workspace' as const,
+          id: w.id,
+          label: w.name,
+          sublabel: w.entryName,
+          data: w,
+        })),
+        message: `Found ${matches.length} workspaces matching "${name}". Which one?`,
+      }
+    }
+  }
+
+  // Case 3: Only entries match
+  if (!hasWorkspaces && hasEntries) {
+    if (entryResult.status === 'found') {
+      // Single entry match - navigate to entry's dashboard
+      const entry = entryResult.entry!
+      return {
+        success: true,
+        action: 'navigate_entry',
+        entry,
+        message: `Opening entry "${entry.name}"`,
+      }
+    } else {
+      // Multiple entry matches - disambiguate
+      const matches = entryResult.matches!
+      return {
+        success: true,
+        action: 'select',
+        options: matches.map((e) => ({
+          type: 'entry' as const,
+          id: e.id,
+          label: e.name,
+          sublabel: e.parentName,
+          data: e,
+        })),
+        message: `Found ${matches.length} entries matching "${name}". Which one?`,
+      }
+    }
+  }
+
+  // Case 4: Both entry AND workspace match - ask user to clarify
+  // Build options for the clarify_type action
+  const options: Array<{
+    type: 'workspace' | 'entry'
+    id: string
+    label: string
+    sublabel?: string
+    data: any
+  }> = []
+
+  // Add entry option(s)
+  if (entryResult.status === 'found') {
+    const entry = entryResult.entry!
+    options.push({
+      type: 'entry',
+      id: entry.id,
+      label: `Entry: ${entry.name}`,
+      sublabel: entry.parentName || undefined,
+      data: entry,
+    })
+  } else if (entryResult.matches) {
+    // Multiple entries - add first one with count indicator
+    const firstEntry = entryResult.matches[0]
+    options.push({
+      type: 'entry',
+      id: firstEntry.id,
+      label: `Entry: ${firstEntry.name}`,
+      sublabel: entryResult.matches.length > 1
+        ? `+${entryResult.matches.length - 1} more`
+        : firstEntry.parentName || undefined,
+      data: firstEntry,
+    })
+  }
+
+  // Add workspace option(s)
+  if (workspaceResult.status === 'found') {
+    const ws = workspaceResult.workspace!
+    options.push({
+      type: 'workspace',
+      id: ws.id,
+      label: `Workspace: ${ws.name}`,
+      sublabel: ws.entryName,
+      data: ws,
+    })
+  } else if (workspaceResult.matches) {
+    // Multiple workspaces - add first one with count indicator
+    const firstWs = workspaceResult.matches[0]
+    options.push({
+      type: 'workspace',
+      id: firstWs.id,
+      label: `Workspace: ${firstWs.name}`,
+      sublabel: workspaceResult.matches.length > 1
+        ? `+${workspaceResult.matches.length - 1} more`
+        : firstWs.entryName,
+      data: firstWs,
+    })
+  }
+
+  return {
+    success: true,
+    action: 'clarify_type',
+    options,
+    message: `Do you want the entry "${name}" or the workspace "${name}"?`,
   }
 }

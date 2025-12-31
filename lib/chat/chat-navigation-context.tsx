@@ -13,7 +13,7 @@
 'use client'
 
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
-import type { WorkspaceMatch, NoteMatch } from './resolution-types'
+import type { WorkspaceMatch, NoteMatch, EntryMatch } from './resolution-types'
 import type { SessionState } from './intent-prompt'
 import type { ViewPanelContent, ViewListItem } from './view-panel-types'
 
@@ -28,11 +28,11 @@ export interface QuickLinksPanelData {
 }
 
 export interface SelectionOption {
-  type: 'workspace' | 'note' | 'confirm_delete' | 'quick_links_panel'
+  type: 'workspace' | 'note' | 'entry' | 'confirm_delete' | 'quick_links_panel'
   id: string
   label: string
   sublabel?: string
-  data: WorkspaceMatch | NoteMatch | QuickLinksPanelData
+  data: WorkspaceMatch | NoteMatch | EntryMatch | QuickLinksPanelData
 }
 
 export interface ChatMessage {

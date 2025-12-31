@@ -32,6 +32,8 @@ export const IntentType = z.enum([
   'preview_file',
   // Phase 4: Hybrid Selection Follow-up
   'select_option',  // User selects from pending options via natural language
+  // Phase 5: Hybrid Commands - bare name resolution
+  'resolve_name',   // Bare name input - resolve to entry or workspace
   'unsupported',
 ])
 
@@ -76,6 +78,9 @@ export const IntentArgs = z.object({
   // For select_option: select from pending disambiguation options
   optionIndex: z.number().optional(),  // 1-based index of the option to select
   optionLabel: z.string().optional(),  // label of the option to select (fallback)
+
+  // For resolve_name: bare name to resolve (entry or workspace)
+  name: z.string().optional(),
 
   // For unsupported: brief reason why the request is not supported
   reason: z.string().optional(),
@@ -125,6 +130,7 @@ export const SUPPORTED_ACTIONS = [
   'open workspace by name',
   'open recent workspace',
   'open note by title',
+  'open entry or workspace by name',
   'create workspace',
   'list workspaces',
   'go to dashboard',

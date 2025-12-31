@@ -763,7 +763,8 @@ function ChatNavigationPanelContent({
       // ---------------------------------------------------------------------------
       // Update pending options based on result
       // ---------------------------------------------------------------------------
-      if (resolution.action === 'select' && resolution.options && resolution.options.length > 0) {
+      // Handle both 'select' (disambiguation) and 'clarify_type' (entry vs workspace conflict)
+      if ((resolution.action === 'select' || resolution.action === 'clarify_type') && resolution.options && resolution.options.length > 0) {
         // Store new pending options for hybrid selection
         const newPendingOptions: PendingOptionState[] = resolution.options.map((opt, idx) => ({
           index: idx + 1,
@@ -847,15 +848,16 @@ function ChatNavigationPanelContent({
       }
 
       // Create assistant message
+      // Include options for 'selected' (disambiguation pills) and 'clarify_type' (entry vs workspace)
+      const showOptions = (result.action === 'selected' || resolution.action === 'clarify_type') && resolution.options
       const assistantMessage: ChatMessage = {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
         content: result.message,
         timestamp: new Date(),
         isError: !result.success,
-        options:
-          result.action === 'selected' && resolution.options
-            ? resolution.options.map((opt) => ({
+        options: showOptions
+            ? resolution.options!.map((opt) => ({
                 type: opt.type,
                 id: opt.id,
                 label: opt.label,

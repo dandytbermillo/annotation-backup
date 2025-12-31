@@ -115,7 +115,18 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
       User: "Sprint 66" → { "intent": "select_option", "args": { "optionIndex": 2 } }
       User: "last" → { "intent": "select_option", "args": { "optionIndex": 2 } }
 
-17. **unsupported** - Request doesn't match any supported intent
+17. **resolve_name** - User typed a bare name without an explicit command verb
+    Use this when the input is JUST a name (no "open", "go to", "workspace", "entry", etc.)
+    Args:
+      - name (required): the bare name to resolve
+    Examples:
+      - "summary14" → { "intent": "resolve_name", "args": { "name": "summary14" } }
+      - "Sprint 66" → { "intent": "resolve_name", "args": { "name": "Sprint 66" } }
+      - "Research" → { "intent": "resolve_name", "args": { "name": "Research" } }
+    NOTE: The system will check if this name matches an entry, workspace, or both,
+    and respond appropriately (open directly if single match, or ask for clarification).
+
+18. **unsupported** - Request doesn't match any supported intent
     Args: reason (brief explanation)
 
 ## Intent Disambiguation Rules
@@ -148,6 +159,19 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
 - "the first one", "second option", "last one" (when pendingOptions exists) → **select_option**
 - "the one from X", "the workspace with Y" (when pendingOptions exists) → **select_option**
 
+## Bare Name Rule (Hybrid Commands)
+
+When the user input is JUST a name with no command verb (no "open", "go to", "show", "workspace", "entry", etc.):
+- Use **resolve_name** intent with the name
+- Examples:
+  - "summary14" → resolve_name (bare name, no verb)
+  - "Sprint 66" → resolve_name (bare name, no verb)
+  - "Research" → resolve_name (bare name, no verb)
+- Counter-examples (these have verbs or type keywords):
+  - "open summary14" → open_workspace or open_note (has "open" verb)
+  - "workspace Sprint 66" → open_workspace (has "workspace" keyword)
+  - "go to Dashboard" → go_to_dashboard (has "go to" verb)
+
 ## Response Format
 
 Return ONLY a JSON object with this exact structure:
@@ -166,6 +190,7 @@ Return ONLY a JSON object with this exact structure:
     "verifyToName": "<string or omit - for verify_action rename>",
     "optionIndex": "<number or omit - for select_option>",
     "optionLabel": "<string or omit - for select_option>",
+    "name": "<string or omit - for resolve_name>",
     "reason": "<string or omit>"
   }
 }

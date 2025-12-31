@@ -13,7 +13,7 @@ import { useCallback } from 'react'
 import { setActiveEntryContext } from '@/lib/entry/entry-context'
 import { setActiveWorkspaceContext, requestWorkspaceListRefresh } from '@/lib/note-workspaces/state'
 import type { IntentResolutionResult } from './intent-resolver'
-import type { WorkspaceMatch, NoteMatch } from './resolution-types'
+import type { WorkspaceMatch, NoteMatch, EntryMatch } from './resolution-types'
 
 // =============================================================================
 // Types
@@ -469,6 +469,46 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
             action: 'selected',
           }
 
+        case 'clarify_type':
+          // Entry vs workspace type conflict - return for UI to display type selection pills
+          return {
+            success: true,
+            message: resolution.message,
+            action: 'selected',
+          }
+
+        case 'navigate_entry':
+          // Navigate to entry's dashboard using chat-navigate-entry event
+          if (resolution.entry) {
+            if (!resolution.entry.dashboardWorkspaceId) {
+              return {
+                success: false,
+                message: `Entry "${resolution.entry.name}" has no dashboard workspace.`,
+                action: 'error',
+              }
+            }
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('chat-navigate-entry', {
+                detail: {
+                  entryId: resolution.entry.id,
+                  dashboardId: resolution.entry.dashboardWorkspaceId,
+                },
+              }))
+            }
+            const result: ChatNavigationResult = {
+              success: true,
+              message: `Opening entry "${resolution.entry.name}"`,
+              action: 'navigated',
+            }
+            onNavigationComplete?.(result)
+            return result
+          }
+          return {
+            success: false,
+            message: 'No entry to navigate to',
+            action: 'error',
+          }
+
         // Phase 1: Workspace Operations
         case 'navigate_dashboard':
           return goToDashboard()
@@ -539,9 +579,9 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
 
   const selectOption = useCallback(
     async (option: {
-      type: 'workspace' | 'note' | 'confirm_delete' | 'quick_links_panel'
+      type: 'workspace' | 'note' | 'entry' | 'confirm_delete' | 'quick_links_panel'
       id: string
-      data: WorkspaceMatch | NoteMatch | (WorkspaceMatch & { pendingDelete?: boolean; pendingNewName?: string }) | { panelId: string; badge: string; panelType: 'quick_links' }
+      data: WorkspaceMatch | NoteMatch | EntryMatch | (WorkspaceMatch & { pendingDelete?: boolean; pendingNewName?: string }) | { panelId: string; badge: string; panelType: 'quick_links' }
     }): Promise<ChatNavigationResult> => {
       switch (option.type) {
         case 'workspace':
@@ -568,6 +608,29 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
           return navigateToWorkspace(option.data as WorkspaceMatch)
         case 'note':
           return navigateToNote(option.data as NoteMatch)
+        case 'entry':
+          // Navigate to entry's dashboard using chat-navigate-entry event
+          const entryData = option.data as EntryMatch
+          if (!entryData.dashboardWorkspaceId) {
+            return {
+              success: false,
+              message: `Entry "${entryData.name}" has no dashboard workspace.`,
+              action: 'error',
+            }
+          }
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('chat-navigate-entry', {
+              detail: {
+                entryId: entryData.id,
+                dashboardId: entryData.dashboardWorkspaceId,
+              },
+            }))
+          }
+          return {
+            success: true,
+            message: `Opening entry "${entryData.name}"`,
+            action: 'navigated',
+          }
         case 'confirm_delete':
           // User confirmed deletion - execute delete
           const workspace = option.data as WorkspaceMatch
