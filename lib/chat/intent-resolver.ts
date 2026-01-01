@@ -26,6 +26,7 @@ import { resolveNote } from './note-resolver'
 import { resolveEntry } from './entry-resolver'
 import { serverPool } from '@/lib/db/pool'
 import { buildQuickLinksViewItems } from './parse-quick-links'
+import { executePanelIntent } from '@/lib/panels/panel-registry'
 
 // =============================================================================
 // Resolution Result
@@ -176,6 +177,10 @@ export async function resolveIntent(
     // Phase 5: Hybrid Commands - bare name resolution
     case 'resolve_name':
       return resolveBareName(intent, context)
+
+    // Phase 6: Panel Intent Registry
+    case 'panel_intent':
+      return resolvePanelIntent(intent, context)
 
     case 'unsupported':
     default:
@@ -1538,5 +1543,112 @@ async function resolveBareName(
     action: 'clarify_type',
     options,
     message: `Do you want the entry "${name}" or the workspace "${name}"?`,
+  }
+}
+
+// =============================================================================
+// Phase 6: Panel Intent Registry Handler
+// =============================================================================
+
+/**
+ * Resolve panel_intent - dispatch to panel-specific handler via manifest
+ */
+async function resolvePanelIntent(
+  intent: IntentResponse,
+  _context: ResolutionContext
+): Promise<IntentResolutionResult> {
+  const { panelId, intentName, params } = intent.args
+
+  if (!panelId || !intentName) {
+    return {
+      success: false,
+      action: 'error',
+      message: 'Missing panel ID or intent name.',
+    }
+  }
+
+  // Execute the panel intent via the registry
+  const result = await executePanelIntent({
+    panelId,
+    intentName,
+    params: params || {},
+  })
+
+  if (!result.success) {
+    return {
+      success: false,
+      action: 'error',
+      message: result.message || result.error || 'Panel action failed.',
+    }
+  }
+
+  // Handle different result types from panel handlers
+  if (result.items && Array.isArray(result.items)) {
+    // Transform panel items to ViewListItem format
+    const viewItems: ViewListItem[] = result.items.map(item => ({
+      id: item.id,
+      name: item.title || item.id,
+      type: (item.type === 'link' || item.type === 'note' || item.type === 'entry' ||
+             item.type === 'workspace' || item.type === 'file')
+        ? item.type
+        : 'note' as const,
+      meta: item.subtitle,
+    }))
+
+    // Panel returned a list of items - show in view panel
+    return {
+      success: true,
+      action: 'show_view_panel',
+      viewPanelContent: {
+        type: ViewContentType.MIXED_LIST,
+        title: result.title || `${panelId} results`,
+        subtitle: result.subtitle,
+        items: viewItems,
+        sourceIntent: 'panel_intent',
+      },
+      showInViewPanel: result.showInViewPanel ?? false,
+      previewItems: viewItems.slice(0, 3),
+      totalCount: viewItems.length,
+      message: result.message || `Found ${viewItems.length} items`,
+    }
+  }
+
+  if (result.navigateTo) {
+    // Panel wants to trigger navigation
+    const nav = result.navigateTo
+    if (nav.type === 'workspace') {
+      return {
+        success: true,
+        action: 'navigate_workspace',
+        workspace: {
+          id: nav.id,
+          name: nav.name,
+          entryId: nav.entryId || '',
+          entryName: nav.entryName || '',
+          isDefault: false,
+        },
+        message: result.message || `Opening ${nav.name}`,
+      }
+    } else if (nav.type === 'entry') {
+      return {
+        success: true,
+        action: 'navigate_entry',
+        entry: {
+          id: nav.id,
+          name: nav.name,
+          parentId: nav.parentId,
+          parentName: nav.parentName,
+          isSystem: false,
+        },
+        message: result.message || `Opening ${nav.name}`,
+      }
+    }
+  }
+
+  // Default: just inform
+  return {
+    success: true,
+    action: 'inform',
+    message: result.message || 'Action completed.',
   }
 }

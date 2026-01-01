@@ -5,6 +5,8 @@
  * the user's intent and return structured JSON.
  */
 
+import { panelRegistry } from '@/lib/panels/panel-registry'
+
 export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-taking application. Your ONLY job is to parse user requests and return a JSON object indicating their intent.
 
 ## Supported Intents
@@ -132,7 +134,18 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
     NOTE: The system will check if this name matches an entry, workspace, or both,
     and respond appropriately (open directly if single match, or ask for clarification).
 
-18. **unsupported** - Request doesn't match any supported intent
+18. **panel_intent** - User wants to interact with a specific panel (Recent, Quick Links, etc.)
+    Args:
+      - panelId (required): target panel ID (e.g., "recent", "quick-links-a")
+      - intentName (required): intent within the panel (e.g., "list_recent", "show_links")
+      - params (optional): additional parameters for the intent
+    Examples:
+      - "show recent" → { "intent": "panel_intent", "args": { "panelId": "recent", "intentName": "list_recent", "params": {} } }
+      - "list recent items" → { "intent": "panel_intent", "args": { "panelId": "recent", "intentName": "list_recent", "params": {} } }
+      - "what did I open recently?" → { "intent": "panel_intent", "args": { "panelId": "recent", "intentName": "list_recent", "params": {} } }
+    NOTE: See Panel Intents section below for all available panel commands.
+
+19. **unsupported** - Request doesn't match any supported intent
     Args: reason (brief explanation)
 
 ## Intent Disambiguation Rules
@@ -218,6 +231,9 @@ Return ONLY a JSON object with this exact structure:
     "optionIndex": "<number or omit - for select_option>",
     "optionLabel": "<string or omit - for select_option>",
     "name": "<string or omit - for resolve_name>",
+    "panelId": "<string or omit - for panel_intent>",
+    "intentName": "<string or omit - for panel_intent>",
+    "params": "<object or omit - for panel_intent>",
     "reason": "<string or omit>"
   }
 }
@@ -285,8 +301,14 @@ export function buildIntentMessages(
   userMessage: string,
   context?: ConversationContext
 ): Array<{ role: 'system' | 'user'; content: string }> {
+  // Build system prompt with panel intents
+  const panelIntentsSection = panelRegistry.buildPromptSection()
+  const systemPrompt = panelIntentsSection
+    ? `${INTENT_SYSTEM_PROMPT}\n\n${panelIntentsSection}`
+    : INTENT_SYSTEM_PROMPT
+
   const messages: Array<{ role: 'system' | 'user'; content: string }> = [
-    { role: 'system', content: INTENT_SYSTEM_PROMPT },
+    { role: 'system', content: systemPrompt },
   ]
 
   // Add context block if provided

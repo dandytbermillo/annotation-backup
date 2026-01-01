@@ -34,6 +34,8 @@ export const IntentType = z.enum([
   'select_option',  // User selects from pending options via natural language
   // Phase 5: Hybrid Commands - bare name resolution
   'resolve_name',   // Bare name input - resolve to entry or workspace
+  // Phase 6: Panel Intent Registry - extensible panel commands
+  'panel_intent',   // Dispatch to panel-specific handler via manifest
   'unsupported',
 ])
 
@@ -81,6 +83,11 @@ export const IntentArgs = z.object({
 
   // For resolve_name: bare name to resolve (entry or workspace)
   name: z.string().optional(),
+
+  // For panel_intent: extensible panel commands via manifest
+  panelId: z.string().optional(),      // Target panel ID (e.g., "recent", "quick-links-a")
+  intentName: z.string().optional(),   // Intent name within the panel (e.g., "list_recent")
+  params: z.record(z.unknown()).optional(), // Parameters for the intent
 
   // For unsupported: brief reason why the request is not supported
   reason: z.string().optional(),
@@ -144,6 +151,7 @@ export const SUPPORTED_ACTIONS = [
   'show quick links',
   'preview file',
   'select from options',
+  'panel commands (recent, quick links, etc.)',
 ] as const
 
 export const SUPPORTED_ACTIONS_TEXT = SUPPORTED_ACTIONS.join(', ')
