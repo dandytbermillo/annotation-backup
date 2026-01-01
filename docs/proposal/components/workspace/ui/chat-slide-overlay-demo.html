@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Chat + Universal View Panel Demo</title>
+  <title>Chat + Session Divider + Universal View Panel Demo</title>
   <style>
     * {
       margin: 0;
@@ -888,6 +888,124 @@
       color: #9ca3af;
     }
 
+    /* ============================================
+       OPTION 1: Session Divider (Simple)
+       ============================================ */
+    .session-divider {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 0;
+      margin: 8px 0;
+    }
+
+    .session-divider-line {
+      flex: 1;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.15), transparent);
+    }
+
+    .session-divider-text {
+      font-size: 11px;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .session-divider-icon {
+      width: 12px;
+      height: 12px;
+      opacity: 0.7;
+    }
+
+    /* Previous session messages - slightly faded */
+    .message.from-history .message-bubble {
+      opacity: 0.75;
+    }
+
+    /* ============================================
+       OPTION 2: Date Headers (Slack-style)
+       ============================================ */
+    .date-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 0;
+      margin: 4px 0;
+    }
+
+    .date-header-line {
+      flex: 1;
+      height: 1px;
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .date-header-badge {
+      font-size: 12px;
+      font-weight: 500;
+      color: #9ca3af;
+      background: rgba(255, 255, 255, 0.05);
+      padding: 4px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      white-space: nowrap;
+    }
+
+    .date-header-badge.today {
+      color: #a5b4fc;
+      background: rgba(99, 102, 241, 0.1);
+      border-color: rgba(99, 102, 241, 0.2);
+    }
+
+    /* ============================================
+       OPTION 3: Time-Gap Divider
+       ============================================ */
+    .time-gap-divider {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 0;
+      margin: 4px 0;
+    }
+
+    .time-gap-badge {
+      font-size: 10px;
+      color: #6b7280;
+      background: rgba(255, 255, 255, 0.03);
+      padding: 3px 10px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .time-gap-badge svg {
+      width: 10px;
+      height: 10px;
+      opacity: 0.6;
+    }
+
+    /* ============================================
+       Demo Section Labels
+       ============================================ */
+    .demo-section-label {
+      font-size: 10px;
+      font-weight: 600;
+      color: #818cf8;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      padding: 8px 12px;
+      margin: 16px 0 8px 0;
+      background: rgba(99, 102, 241, 0.1);
+      border-radius: 6px;
+      border-left: 3px solid #818cf8;
+    }
+
     /* Type badge */
     .type-badge {
       font-size: 10px;
@@ -1056,7 +1174,7 @@
       <circle cx="12" cy="12" r="10"/>
       <path d="M12 16v-4M12 8h.01"/>
     </svg>
-    Try: "show readme" (text) • "open budget.pdf" (PDF) • "links A" (mixed list) • "preview notes" (rich text)
+    3 Divider Styles: Session • Date Headers • Time-Gap • Scroll up to compare ↑
   </div>
 
   <div class="toast" id="toast">Navigating...</div>
@@ -1244,13 +1362,71 @@ Notes: Cloud infrastructure costs increased by 12% due to scaling requirements. 
       content.style.fontSize = (currentZoom / 100) + 'em';
     }
 
-    function addMessage(content, isUser = false) {
+    function addMessage(content, isUser = false, isFromHistory = false) {
       const messagesList = document.getElementById('messagesList');
       const message = document.createElement('div');
-      message.className = `message ${isUser ? 'message-user' : 'message-assistant'}`;
+      message.className = `message ${isUser ? 'message-user' : 'message-assistant'} ${isFromHistory ? 'from-history' : ''}`;
       message.innerHTML = `<div class="message-bubble">${content}</div>`;
       messagesList.appendChild(message);
       messagesList.scrollTop = messagesList.scrollHeight;
+    }
+
+    // OPTION 1: Simple session divider
+    function addSessionDivider() {
+      const messagesList = document.getElementById('messagesList');
+      const divider = document.createElement('div');
+      divider.className = 'session-divider';
+      divider.innerHTML = `
+        <div class="session-divider-line"></div>
+        <div class="session-divider-text">
+          <svg class="session-divider-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <polyline points="12 6 12 12 16 14"/>
+          </svg>
+          Previous session
+        </div>
+        <div class="session-divider-line"></div>
+      `;
+      messagesList.appendChild(divider);
+    }
+
+    // OPTION 2: Date header (Slack-style)
+    function addDateHeader(dateText, isToday = false) {
+      const messagesList = document.getElementById('messagesList');
+      const header = document.createElement('div');
+      header.className = 'date-header';
+      header.innerHTML = `
+        <div class="date-header-line"></div>
+        <div class="date-header-badge ${isToday ? 'today' : ''}">${dateText}</div>
+        <div class="date-header-line"></div>
+      `;
+      messagesList.appendChild(header);
+    }
+
+    // OPTION 3: Time-gap divider
+    function addTimeGapDivider(gapText) {
+      const messagesList = document.getElementById('messagesList');
+      const divider = document.createElement('div');
+      divider.className = 'time-gap-divider';
+      divider.innerHTML = `
+        <div class="time-gap-badge">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <polyline points="12 6 12 12 16 14"/>
+          </svg>
+          ${gapText}
+        </div>
+      `;
+      messagesList.appendChild(divider);
+    }
+
+    // Demo section label
+    function addDemoLabel(text) {
+      const messagesList = document.getElementById('messagesList');
+      const label = document.createElement('div');
+      label.className = 'demo-section-label';
+      label.textContent = text;
+      messagesList.appendChild(label);
     }
 
     function addResultMessage(summary, previewItems, totalCount, dataKey, title, contentType) {
@@ -1750,8 +1926,46 @@ Notes: Cloud infrastructure costs increased by 12% due to scaling requirements. 
       setTimeout(() => toast.classList.remove('show'), 2000);
     }
 
-    // Initial message
-    addMessage('Hi! I can show different content in the view panel. Try:<br>• "show readme" (text file)<br>• "open budget.pdf" (PDF)<br>• "links A" (mixed list)<br>• "preview notes" (rich text)');
+    // ============================================
+    // OPTION 1: Simple Session Divider
+    // ============================================
+    addDemoLabel('Option 1: Simple Session Divider');
+    addMessage('open workspace 2', true, true);
+    addMessage('Opening Workspace 2...', false, true);
+    addSessionDivider();
+    addMessage('What can you help with?', true);
+
+    // ============================================
+    // OPTION 2: Date Headers (Slack-style)
+    // ============================================
+    addDemoLabel('Option 2: Date Headers (Slack-style)');
+    addDateHeader('December 29, 2024');
+    addMessage('show me the budget', true, true);
+    addMessage('Here\'s the budget report...', false, true);
+    addDateHeader('Yesterday');
+    addMessage('did I open summary14?', true, true);
+    addMessage('Yes, you opened it 3 times.', false, true);
+    addDateHeader('Today', true);
+    addMessage('open workspace 6', true);
+
+    // ============================================
+    // OPTION 3: Time-Gap Based Dividers
+    // ============================================
+    addDemoLabel('Option 3: Time-Gap Based (auto-detect inactivity)');
+    addMessage('list workspaces', true, true);
+    addMessage('Found 5 workspaces...', false, true);
+    addTimeGapDivider('2 hours ago');
+    addMessage('open summary14', true, true);
+    addMessage('Opening summary14...', false, true);
+    addTimeGapDivider('45 min ago');
+    addMessage('go home', true);
+    addMessage('Navigating to Home...', false);
+
+    // ============================================
+    // Interactive demo prompt
+    // ============================================
+    addDemoLabel('Try the demo');
+    addMessage('Scroll up to compare all 3 divider styles! ↑<br><br>Try commands below:<br>• "show readme" • "links A" • "open budget.pdf"');
   </script>
 </body>
 </html>

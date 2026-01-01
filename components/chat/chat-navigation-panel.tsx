@@ -10,7 +10,7 @@
 'use client'
 
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { MessageSquare, Send, X, Loader2, ChevronRight, PanelLeftClose } from 'lucide-react'
+import { MessageSquare, Send, X, Loader2, ChevronRight, PanelLeftClose, Clock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -289,6 +289,70 @@ function buildContextPayload(
 }
 
 // =============================================================================
+// Session Divider Components
+// =============================================================================
+
+function SessionDivider() {
+  return (
+    <div className="flex items-center gap-3 py-4 my-2">
+      <div className="flex-1 h-px bg-gradient-to-r from-transparent via-zinc-400 to-transparent" />
+      <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-zinc-500 font-semibold bg-zinc-100 px-3 py-1 rounded-full border border-zinc-200 shadow-sm">
+        <Clock className="h-3.5 w-3.5" />
+        <span>Previous session</span>
+      </div>
+      <div className="flex-1 h-px bg-gradient-to-l from-transparent via-zinc-400 to-transparent" />
+    </div>
+  )
+}
+
+function DateHeader({ date, isToday }: { date: Date; isToday: boolean }) {
+  const formatDate = (d: Date): string => {
+    const now = new Date()
+    const yesterday = new Date(now)
+    yesterday.setDate(yesterday.getDate() - 1)
+
+    if (isToday) return 'Today'
+    if (d.toDateString() === yesterday.toDateString()) return 'Yesterday'
+
+    return d.toLocaleDateString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
+    })
+  }
+
+  return (
+    <div className="flex items-center gap-3 py-3 my-1">
+      <div className="flex-1 h-px bg-zinc-200" />
+      <div className={cn(
+        "text-[11px] font-medium px-3 py-1 rounded-full border shadow-sm",
+        isToday
+          ? "text-indigo-600 bg-indigo-50 border-indigo-200"
+          : "text-zinc-500 bg-zinc-50 border-zinc-200"
+      )}>
+        {formatDate(date)}
+      </div>
+      <div className="flex-1 h-px bg-zinc-200" />
+    </div>
+  )
+}
+
+/**
+ * Check if two dates are on different days
+ */
+function isDifferentDay(date1: Date, date2: Date): boolean {
+  return date1.toDateString() !== date2.toDateString()
+}
+
+/**
+ * Check if a date is today
+ */
+function isToday(date: Date): boolean {
+  return date.toDateString() === new Date().toDateString()
+}
+
+// =============================================================================
 // Component
 // =============================================================================
 
@@ -344,6 +408,8 @@ function ChatNavigationPanelContent({
     hasMoreMessages,
     loadOlderMessages,
     conversationSummary,
+    // Session divider
+    initialMessageCount,
   } = useChatNavigationContext()
 
   const { executeAction, selectOption } = useChatNavigation({
@@ -982,6 +1048,17 @@ function ChatNavigationPanelContent({
                 timestamp: now,
               })
               showHomeToast()
+              // Track Home entry open for session stats
+              // Fetch Home entry info and track it
+              fetch('/api/dashboard/info')
+                .then(res => res.ok ? res.json() : null)
+                .then(data => {
+                  if (data?.homeEntryId) {
+                    const homeEntryName = data.homeEntryName || 'Home'
+                    incrementOpenCount(data.homeEntryId, homeEntryName, 'entry')
+                  }
+                })
+                .catch(err => console.warn('[ChatNavigation] Failed to track Home entry:', err))
             } else if (resolution.action === 'navigate_entry' && resolution.entry) {
               setLastAction({
                 type: 'open_entry',
@@ -1237,71 +1314,94 @@ function ChatNavigationPanelContent({
                     <p className="italic text-zinc-600">&quot;what did I just do?&quot;</p>
                   </div>
                 ) : (
-                  messages.map((message) => (
-                    <div
-                      key={message.id}
-                      className={cn(
-                        'flex flex-col gap-1',
-                        message.role === 'user' ? 'items-end' : 'items-start'
+                  <>
+                  {messages.map((message, index) => {
+                    const prevMessage = index > 0 ? messages[index - 1] : null
+                    const showDateHeader = !prevMessage || isDifferentDay(message.timestamp, prevMessage.timestamp)
+                    const messageIsToday = isToday(message.timestamp)
+
+                    return (
+                    <div key={message.id}>
+                      {/* Date Header: show when day changes */}
+                      {showDateHeader && (
+                        <DateHeader date={message.timestamp} isToday={messageIsToday} />
                       )}
-                    >
+                      {/* Session Divider: show after history messages (before first new message) */}
+                      {index === initialMessageCount && initialMessageCount > 0 && (
+                        <SessionDivider />
+                      )}
                       <div
                         className={cn(
-                          'rounded-lg px-3 py-2 text-sm max-w-[90%] shadow-lg',
-                          message.role === 'user'
-                            ? 'bg-zinc-900/90 text-white backdrop-blur-xl border border-white/10'
-                            : message.isError
-                              ? 'bg-red-950/90 text-red-200 backdrop-blur-xl border border-red-500/20'
-                              : 'bg-white/90 text-indigo-900 backdrop-blur-xl border border-white/20'
+                          'flex flex-col gap-1',
+                          message.role === 'user' ? 'items-end' : 'items-start',
+                          // Slightly fade history messages
+                          index < initialMessageCount && 'opacity-75'
                         )}
                       >
-                        {message.content}
-                      </div>
-
-                      {/* Message Result Preview (for "Show all" view panel content) */}
-                      {message.previewItems && message.previewItems.length > 0 && message.viewPanelContent && (
-                        <MessageResultPreview
-                          title={message.viewPanelContent.title}
-                          previewItems={message.previewItems}
-                          totalCount={message.totalCount ?? message.previewItems.length}
-                          fullContent={message.viewPanelContent}
-                        />
-                      )}
-
-                      {/* Selection Pills */}
-                      {message.options && message.options.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5 mt-1.5">
-                          {message.options.map((option) => (
-                            <button
-                              key={option.id}
-                              onClick={() => handleSelectOption(option)}
-                              disabled={isLoading}
-                              className="group"
-                            >
-                              <Badge
-                                variant="secondary"
-                                className={cn(
-                                  'cursor-pointer transition-colors',
-                                  'hover:bg-primary hover:text-primary-foreground',
-                                  isLoading && 'opacity-50 cursor-not-allowed'
-                                )}
-                              >
-                                <span className="flex items-center gap-1">
-                                  {option.label}
-                                  {option.sublabel && (
-                                    <span className="text-xs opacity-70">
-                                      ({option.sublabel})
-                                    </span>
-                                  )}
-                                  <ChevronRight className="h-3 w-3 opacity-50 group-hover:opacity-100" />
-                                </span>
-                              </Badge>
-                            </button>
-                          ))}
+                        <div
+                          className={cn(
+                            'rounded-lg px-3 py-2 text-sm max-w-[90%] shadow-lg',
+                            message.role === 'user'
+                              ? 'bg-zinc-900/90 text-white backdrop-blur-xl border border-white/10'
+                              : message.isError
+                                ? 'bg-red-950/90 text-red-200 backdrop-blur-xl border border-red-500/20'
+                                : 'bg-white/90 text-indigo-900 backdrop-blur-xl border border-white/20'
+                          )}
+                        >
+                          {message.content}
                         </div>
-                      )}
+
+                        {/* Message Result Preview (for "Show all" view panel content) */}
+                        {message.previewItems && message.previewItems.length > 0 && message.viewPanelContent && (
+                          <MessageResultPreview
+                            title={message.viewPanelContent.title}
+                            previewItems={message.previewItems}
+                            totalCount={message.totalCount ?? message.previewItems.length}
+                            fullContent={message.viewPanelContent}
+                          />
+                        )}
+
+                        {/* Selection Pills */}
+                        {message.options && message.options.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 mt-1.5">
+                            {message.options.map((option) => (
+                              <button
+                                key={option.id}
+                                onClick={() => handleSelectOption(option)}
+                                disabled={isLoading}
+                                className="group"
+                              >
+                                <Badge
+                                  variant="secondary"
+                                  className={cn(
+                                    'cursor-pointer transition-colors',
+                                    'hover:bg-primary hover:text-primary-foreground',
+                                    isLoading && 'opacity-50 cursor-not-allowed'
+                                  )}
+                                >
+                                  <span className="flex items-center gap-1">
+                                    {option.label}
+                                    {option.sublabel && (
+                                      <span className="text-xs opacity-70">
+                                        ({option.sublabel})
+                                      </span>
+                                    )}
+                                    <ChevronRight className="h-3 w-3 opacity-50 group-hover:opacity-100" />
+                                  </span>
+                                </Badge>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  ))
+                    )
+                  })}
+                  {/* Session Divider at end: show after all history messages when no new messages yet */}
+                  {initialMessageCount > 0 && messages.length === initialMessageCount && (
+                    <SessionDivider />
+                  )}
+                  </>
                 )}
 
                 {/* Loading Indicator */}

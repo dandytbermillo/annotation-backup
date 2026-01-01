@@ -4,15 +4,17 @@ import { getChatUserId } from '@/app/api/chat/user-id'
 
 /**
  * PATCH /api/chat/conversations/[conversationId]
- * Update conversation metadata (last_action and/or session_state).
+ * Update conversation metadata (last_action).
+ *
+ * Note: session_state is now stored in dedicated chat_session_state table.
+ * Use /api/chat/session-state/[conversationId] for session state updates.
  *
  * Body:
  *   - lastAction: { type, workspaceId?, workspaceName?, entryId?, entryName?, fromName?, toName?, timestamp }
- *   - sessionState: { openCounts: { [id]: { type, name, count } } }
  *
  * Returns:
  *   - success: boolean
- *   - conversation: { id, lastAction, sessionState, updatedAt }
+ *   - conversation: { id, lastAction, updatedAt }
  */
 export async function PATCH(
   request: NextRequest,
@@ -30,7 +32,7 @@ export async function PATCH(
     }
 
     const body = await request.json()
-    const { lastAction, sessionState } = body
+    const { lastAction } = body
 
     // Validate lastAction structure if provided
     if (lastAction !== undefined && lastAction !== null) {
@@ -49,16 +51,6 @@ export async function PATCH(
       }
     }
 
-    // Validate sessionState structure if provided
-    if (sessionState !== undefined && sessionState !== null) {
-      if (typeof sessionState !== 'object') {
-        return NextResponse.json(
-          { error: 'sessionState must be an object' },
-          { status: 400 }
-        )
-      }
-    }
-
     // Build dynamic update query based on what's provided
     const updates: string[] = []
     const values: unknown[] = []
@@ -70,15 +62,9 @@ export async function PATCH(
       paramIndex++
     }
 
-    if (sessionState !== undefined) {
-      updates.push(`session_state = $${paramIndex}`)
-      values.push(sessionState ? JSON.stringify(sessionState) : null)
-      paramIndex++
-    }
-
     if (updates.length === 0) {
       return NextResponse.json(
-        { error: 'No update fields provided' },
+        { error: 'No update fields provided (lastAction required)' },
         { status: 400 }
       )
     }
@@ -93,7 +79,7 @@ export async function PATCH(
       UPDATE chat_conversations
       SET ${updates.join(', ')}
       WHERE id = $${paramIndex} AND user_id = $${paramIndex + 1}
-      RETURNING id, last_action, session_state, updated_at
+      RETURNING id, last_action, updated_at
     `
     const result = await serverPool.query(query, values)
 
@@ -110,7 +96,6 @@ export async function PATCH(
       conversation: {
         id: row.id,
         lastAction: row.last_action,
-        sessionState: row.session_state,
         updatedAt: row.updated_at,
       },
     })

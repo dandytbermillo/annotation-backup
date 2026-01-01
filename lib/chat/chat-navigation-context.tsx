@@ -84,6 +84,8 @@ interface ChatNavigationContextValue {
   hasMoreMessages: boolean
   loadOlderMessages: () => Promise<void>
   conversationSummary: string | null
+  // Session divider: count of messages loaded from history (for rendering divider)
+  initialMessageCount: number
 }
 
 // =============================================================================
@@ -108,7 +110,6 @@ async function getOrCreateConversation(): Promise<{
   id: string
   summary: string | null
   lastAction: LastAction | null
-  sessionState: { openCounts?: SessionState['openCounts'] } | null
 } | null> {
   try {
     const response = await fetch('/api/chat/conversations', {
@@ -122,7 +123,6 @@ async function getOrCreateConversation(): Promise<{
       id: data.conversation.id,
       summary: data.conversation.summary,
       lastAction: data.conversation.lastAction || null,
-      sessionState: data.conversation.sessionState || null,
     }
   } catch {
     return null
@@ -196,28 +196,32 @@ async function clearConversation(conversationId: string): Promise<boolean> {
   }
 }
 
-async function persistLastAction(conversationId: string, lastAction: LastAction | null): Promise<boolean> {
+// =============================================================================
+// Session State API Helpers (dedicated table)
+// =============================================================================
+
+async function fetchSessionState(
+  conversationId: string
+): Promise<{ openCounts?: SessionState['openCounts']; lastAction?: LastAction } | null> {
   try {
-    const response = await fetch(`/api/chat/conversations/${conversationId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lastAction }),
-    })
-    return response.ok
+    const response = await fetch(`/api/chat/session-state?conversationId=${conversationId}`)
+    if (!response.ok) return null
+    const data = await response.json()
+    return data.sessionState || null
   } catch {
-    return false
+    return null
   }
 }
 
 async function persistSessionState(
   conversationId: string,
-  openCounts: SessionState['openCounts']
+  sessionState: { openCounts?: SessionState['openCounts']; lastAction?: LastAction }
 ): Promise<boolean> {
   try {
-    const response = await fetch(`/api/chat/conversations/${conversationId}`, {
+    const response = await fetch(`/api/chat/session-state/${conversationId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionState: { openCounts } }),
+      body: JSON.stringify({ sessionState }),
     })
     return response.ok
   } catch {
@@ -259,11 +263,50 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const initRef = useRef(false)
 
+  // Session divider: track how many messages were loaded from history
+  const [initialMessageCount, setInitialMessageCount] = useState(0)
+
   // Session state for informational intents
-  // Note: lastAction is persisted to DB and hydrated on init; other fields are session-only
+  // Note: lastAction and openCounts are persisted to dedicated table and hydrated on init
   const [sessionState, setSessionState] = useState<SessionState>({})
 
-  // Initialize: get or create conversation and load recent messages
+  // Debounce refs for session state persistence
+  const DEBOUNCE_MS = 1000
+  const persistDebounceRef = useRef<NodeJS.Timeout | null>(null)
+  const pendingSessionStateRef = useRef<{ openCounts?: SessionState['openCounts']; lastAction?: LastAction } | null>(null)
+
+  // Flush pending session state (called on debounce timeout or unload)
+  const flushSessionState = useCallback(async (convId: string) => {
+    if (pendingSessionStateRef.current) {
+      const pending = pendingSessionStateRef.current
+      pendingSessionStateRef.current = null
+      await persistSessionState(convId, pending)
+    }
+  }, [])
+
+  // Debounced persist: batches rapid updates into single write
+  const debouncedPersistSessionState = useCallback((
+    convId: string,
+    newState: { openCounts?: SessionState['openCounts']; lastAction?: LastAction }
+  ) => {
+    // Merge with any pending state
+    pendingSessionStateRef.current = {
+      ...pendingSessionStateRef.current,
+      ...newState,
+    }
+
+    // Clear existing timeout
+    if (persistDebounceRef.current) {
+      clearTimeout(persistDebounceRef.current)
+    }
+
+    // Set new timeout
+    persistDebounceRef.current = setTimeout(() => {
+      flushSessionState(convId)
+    }, DEBOUNCE_MS)
+  }, [flushSessionState])
+
+  // Initialize: get or create conversation and load recent messages + session state
   useEffect(() => {
     if (initRef.current) return
     initRef.current = true
@@ -280,12 +323,13 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         setConversationId(conv.id)
         setConversationSummary(conv.summary)
 
-        // Hydrate lastAction and openCounts from persisted conversation data
-        if (conv.lastAction || conv.sessionState?.openCounts) {
+        // Fetch session state from dedicated table
+        const ssData = await fetchSessionState(conv.id)
+        if (ssData) {
           setSessionState((prev) => ({
             ...prev,
-            lastAction: conv.lastAction ?? undefined,
-            openCounts: conv.sessionState?.openCounts ?? undefined,
+            lastAction: ssData.lastAction ?? undefined,
+            openCounts: ssData.openCounts ?? undefined,
           }))
         }
 
@@ -297,6 +341,8 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
           setMessages(chatMessages)
           setNextCursor(result.nextCursor)
           setHasMoreMessages(!!result.nextCursor)
+          // Track initial message count for session divider
+          setInitialMessageCount(chatMessages.length)
         }
       } catch (err) {
         console.error('[ChatNavigation] Init error:', err)
@@ -307,6 +353,36 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
 
     init()
   }, [])
+
+  // Flush pending writes on unload (beforeunload + visibilitychange)
+  useEffect(() => {
+    const handleUnload = () => {
+      if (conversationId && pendingSessionStateRef.current) {
+        // Use sendBeacon for reliable delivery on page unload
+        const payload = JSON.stringify({ sessionState: pendingSessionStateRef.current })
+        navigator.sendBeacon(`/api/chat/session-state/${conversationId}`, payload)
+        pendingSessionStateRef.current = null
+      }
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden' && conversationId) {
+        flushSessionState(conversationId)
+      }
+    }
+
+    window.addEventListener('beforeunload', handleUnload)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      window.removeEventListener('beforeunload', handleUnload)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      // Flush on unmount
+      if (conversationId && pendingSessionStateRef.current) {
+        flushSessionState(conversationId)
+      }
+    }
+  }, [conversationId, flushSessionState])
 
   // Add message with persistence
   const addMessage = useCallback(
@@ -354,6 +430,7 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     setNextCursor(null)
     setHasMoreMessages(false)
     setConversationSummary(null)
+    setInitialMessageCount(0) // Reset session divider
 
     // Clear from database (create fresh conversation)
     if (conversationId) {
@@ -412,22 +489,21 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
   }, [])
 
   // Record last action (called after navigation/operation completes)
-  // Also persists to database for cross-reload continuity
+  // Uses debounced persistence for efficiency
   const setLastAction = useCallback((action: LastAction) => {
     setSessionState((prev) => ({
       ...prev,
       lastAction: action,
     }))
 
-    // Persist to database (non-blocking)
+    // Debounced persist to dedicated session-state table
     if (conversationId) {
-      persistLastAction(conversationId, action).catch((err) => {
-        console.warn('[ChatNavigation] Failed to persist lastAction:', err)
-      })
+      debouncedPersistSessionState(conversationId, { lastAction: action })
     }
-  }, [conversationId])
+  }, [conversationId, debouncedPersistSessionState])
 
   // Increment open count for a workspace or entry
+  // Uses debounced persistence for efficiency
   const incrementOpenCount = useCallback((id: string, name: string, type: 'workspace' | 'entry') => {
     setSessionState((prev) => {
       const prevCounts = prev.openCounts || {}
@@ -441,11 +517,9 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         },
       }
 
-      // Persist to database (non-blocking)
+      // Debounced persist to dedicated session-state table
       if (conversationId) {
-        persistSessionState(conversationId, newCounts).catch((err) => {
-          console.warn('[ChatNavigation] Failed to persist session state:', err)
-        })
+        debouncedPersistSessionState(conversationId, { openCounts: newCounts })
       }
 
       return {
@@ -453,7 +527,7 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         openCounts: newCounts,
       }
     })
-  }, [conversationId])
+  }, [conversationId, debouncedPersistSessionState])
 
   return (
     <ChatNavigationContext.Provider
@@ -476,6 +550,7 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         hasMoreMessages,
         loadOlderMessages,
         conversationSummary,
+        initialMessageCount,
       }}
     >
       {children}

@@ -36,6 +36,7 @@ import {
 } from "@/lib/workspace/store-runtime-bridge"
 import { handleEvictionBlockedToast } from "@/lib/workspace/eviction-toast"
 import { DashboardView } from "./DashboardView"
+import { useChatNavigationContext } from "@/lib/chat/chat-navigation-context"
 
 // Context for navigation handler
 interface DashboardNavigationContextType {
@@ -90,6 +91,9 @@ export function DashboardInitializer({
 
   // Pinned entries state (for keeping entry dashboards mounted when switching)
   const pinnedEntriesState = usePinnedEntriesState()
+
+  // Chat navigation context for tracking entry opens (UI + chat unified tracking)
+  const { setLastAction, incrementOpenCount } = useChatNavigationContext()
 
   // Layer 2: Sync pinned workspace IDs to RuntimeManager for eviction protection
   // When pinned entries change, update the runtime manager so it knows which
@@ -315,6 +319,15 @@ export function DashboardInitializer({
               dashboardWorkspaceId: workspaceId,
               workspaceName: "Dashboard",
             })
+
+            // Track entry open for session stats (unified UI + chat tracking)
+            setLastAction({
+              type: 'open_entry',
+              entryId,
+              entryName,
+              timestamp: Date.now(),
+            })
+            incrementOpenCount(entryId, entryName, 'entry')
           }
 
           // Track the visit
@@ -417,7 +430,7 @@ export function DashboardInitializer({
     // Call optional callbacks
     onNavigateToWorkspace?.(entryId, workspaceId)
     onWorkspaceActivate?.(workspaceId)
-  }, [onNavigateToWorkspace, onWorkspaceActivate])
+  }, [onNavigateToWorkspace, onWorkspaceActivate, setLastAction, incrementOpenCount])
 
   // Show dashboard for current entry (go back to dashboard from workspace)
   const handleShowDashboard = useCallback(() => {
