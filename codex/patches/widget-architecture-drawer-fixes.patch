@@ -1,0 +1,88 @@
+diff --git a/docs/proposal/chat-navigation/plan/panels/widget-architecture-implementation-plan.md b/docs/proposal/chat-navigation/plan/panels/widget-architecture-implementation-plan.md
+index 0000000..0000000 100644
+--- a/docs/proposal/chat-navigation/plan/panels/widget-architecture-implementation-plan.md
++++ b/docs/proposal/chat-navigation/plan/panels/widget-architecture-implementation-plan.md
+@@ -6,7 +6,7 @@
+ Transform the dashboard from full-panel rendering to a macOS-style widget architecture where:
+ - **Widgets** (NEW): Compact, read-only summaries displayed on the dashboard
+-- **Full Panels** (REUSE): Existing panel components opened in modal/overlay on double-click
++- **Full Panels** (REUSE): Existing panel components opened in a right-side drawer on double-click
+@@ -52,7 +52,7 @@
+ │   ├── DashboardWidgetRenderer.tsx (NEW)                     │
+ │   │     └── BaseWidget (NEW - no header, pure content)      │
+ │   │           └── RecentWidget / QuickLinksWidget (NEW)     │
+ │   │               (compact, read-only summary)              │
+ │   │                                                         │
+-│   └── FullPanelModal.tsx (NEW)                              │
++│   └── FullPanelDrawer.tsx (NEW)                             │
+ │         └── BaseDashboardPanel (existing)                   │
+ │               └── RecentPanel / LinksNotePanelTiptap        │
+ │                   (full interactive component - REUSED)     │
+@@ -64,7 +64,7 @@
+ 1) `DashboardView` maps over `panels` array
+ 2) Each panel renders via `DashboardWidgetRenderer` (NEW)
+ 3) Widget renders as compact, headerless card
+-4) Double-click opens `FullPanelModal` with existing full panel component
++4) Double-click opens `FullPanelDrawer` with existing full panel component
+@@ -176,13 +176,16 @@
+ **IMPORTANT:** This is a right-side drawer, NOT a full-screen modal.
+ - Widgets remain visible on the left
+ - Chat remains accessible
+ - Similar to existing ViewPanel pattern
++
++**Backdrop choice (decide one):**
++- **Interactive widgets:** use a dim layer with `pointer-events: none`
++- **Non-interactive widgets:** keep `pointer-events: auto` and close on click
+@@ -193,7 +196,7 @@
+   {isOpen && (
+     <div
+       className="drawer-backdrop"
+       onClick={onClose}
+       style={{
+@@ -201,7 +204,7 @@
+         right: DRAWER_WIDTH,  // Don't cover drawer area
+         bottom: 0,
+         background: 'rgba(0, 0, 0, 0.2)',
+         zIndex: 99990,
+-        pointerEvents: 'auto',  // Clickable to close
++        pointerEvents: 'auto',  // Change to 'none' if widgets should stay interactive
+       }}
+     />
+   )}
+@@ -341,16 +344,20 @@
+ Chat commands should be able to open the full panel drawer:
+ 
+ ```typescript
+-// In chat intent resolver
+-case 'show_quick_links':
+-  // Dispatch event to open drawer
+-  window.dispatchEvent(new CustomEvent('open-panel-drawer', {
+-    detail: { panelId: quickLinksPanelId }
+-  }))
+-  return { action: 'navigate', message: 'Opening Quick Links...' }
++// In chat intent resolver (server-side)
++// Return an action to the client instead of dispatching DOM events
++case 'show_quick_links':
++  return {
++    action: 'open_panel_drawer',
++    panelId: quickLinksPanelId,
++    message: 'Opening Quick Links...'
++  }
+ ```
+ 
+ ```typescript
+-// In DashboardView
++// In client chat handler (use-chat-navigation.ts) -> dispatch event
++// Then in DashboardView:
+ useEffect(() => {
+   const handleOpenDrawer = (e: CustomEvent) => {
+     const panel = panels.find(p => p.id === e.detail.panelId)
+     if (panel) setDrawerPanel(panel)
+@@ -429,7 +436,7 @@
+ - This plan preserves all existing panel functionality
+ - Full panels are REUSED, not rewritten
+ - Widgets are NEW components, purpose-built for dashboard summary view
+-- Modal system is generic and can be extended for other use cases
+-- Chat integration opens panels via modal (not direct navigation)
++- Drawer system is generic and can be extended for other use cases
++- Chat integration opens panels via drawer (not direct navigation)

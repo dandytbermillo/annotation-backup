@@ -677,6 +677,37 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
     [navigateToWorkspace, navigateToNote, deleteWorkspace, renameWorkspace]
   )
 
+  // ---------------------------------------------------------------------------
+  // Open Panel Drawer (Widget Architecture)
+  // ---------------------------------------------------------------------------
+
+  const openPanelDrawer = useCallback(
+    (panelId: string): ChatNavigationResult => {
+      try {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('open-panel-drawer', {
+            detail: { panelId },
+          }))
+        }
+
+        return {
+          success: true,
+          message: 'Opening panel...',
+          action: 'navigated',
+        }
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error))
+        onError?.(err)
+        return {
+          success: false,
+          message: `Failed to open panel: ${err.message}`,
+          action: 'error',
+        }
+      }
+    },
+    [onError]
+  )
+
   return {
     executeAction,
     navigateToWorkspace,
@@ -687,6 +718,7 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
     renameWorkspace,
     deleteWorkspace,
     selectOption,
+    openPanelDrawer,
   }
 }
 

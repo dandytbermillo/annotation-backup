@@ -10,6 +10,8 @@
 
 import React, { useEffect, useState, useCallback, useRef, useMemo } from "react"
 import { DashboardPanelRenderer } from "./DashboardPanelRenderer"
+import { DashboardWidgetRenderer } from "./DashboardWidgetRenderer"
+import { FullPanelDrawer } from "./FullPanelDrawer"
 import { PanelSizePicker } from "./PanelSizePicker"
 import { DashboardWelcomeTooltip, useDashboardWelcome } from "./DashboardWelcomeTooltip"
 import { AddPanelButton, PanelCatalog } from "./PanelCatalog"
@@ -99,6 +101,10 @@ export function DashboardView({
   // Highlighted panel state (for glow effect when clicking Eye icon in Links Overview)
   const [highlightedPanelId, setHighlightedPanelId] = useState<string | null>(null)
   const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Widget Architecture: Full panel drawer state
+  const [drawerPanel, setDrawerPanel] = useState<WorkspacePanel | null>(null)
+  const isDrawerOpen = drawerPanel !== null
 
   // Chat Navigation: Get functions to track view mode and workspace opens
   const { setCurrentLocation, incrementOpenCount } = useChatNavigationContext()
@@ -896,6 +902,44 @@ export function DashboardView({
     },
     [workspaceId]
   )
+
+  // Widget Architecture: Handle widget double-click to open drawer
+  const handleWidgetDoubleClick = useCallback((panel: WorkspacePanel) => {
+    setDrawerPanel(panel)
+    void debugLog({
+      component: "DashboardView",
+      action: "drawer_opened",
+      metadata: { panelId: panel.id, panelType: panel.panelType },
+    })
+  }, [])
+
+  // Widget Architecture: Handle drawer close
+  const handleDrawerClose = useCallback(() => {
+    setDrawerPanel(null)
+    void debugLog({
+      component: "DashboardView",
+      action: "drawer_closed",
+      metadata: {},
+    })
+  }, [])
+
+  // Widget Architecture: Listen for 'open-panel-drawer' events from chat
+  useEffect(() => {
+    const handleOpenDrawer = (e: CustomEvent<{ panelId: string }>) => {
+      const panel = panels.find(p => p.id === e.detail.panelId)
+      if (panel) {
+        setDrawerPanel(panel)
+        void debugLog({
+          component: "DashboardView",
+          action: "drawer_opened_from_chat",
+          metadata: { panelId: panel.id, panelType: panel.panelType },
+        })
+      }
+    }
+
+    window.addEventListener('open-panel-drawer', handleOpenDrawer as EventListener)
+    return () => window.removeEventListener('open-panel-drawer', handleOpenDrawer as EventListener)
+  }, [panels])
 
   // Handle panel config change
   const handleConfigChange = useCallback(
@@ -1784,23 +1828,18 @@ export function DashboardView({
                     top: panel.positionY,
                     width: panel.width,
                     height: panel.height,
-                    zIndex: highlightedPanelId === panel.id ? 9999 : panel.zIndex, // Bring to front when highlighted
+                    zIndex: highlightedPanelId === panel.id ? 9999 : panel.zIndex,
                     cursor: draggingPanelId === panel.id ? 'grabbing' : 'default',
                   }}
                   onClick={() => setActivePanelId(panel.id)}
                 >
-                  {/* Drag handle - the panel header (excluding buttons on right) */}
-                  <div
+                  {/* Widget Architecture: Render widget with drag via onMouseDown */}
+                  <DashboardWidgetRenderer
+                    panel={panel}
+                    onDoubleClick={handleWidgetDoubleClick}
+                    isActive={activePanelId === panel.id}
                     onMouseDown={(e) => handleDragStart(e, panel)}
-                    style={{
-                      position: 'absolute',
-                      top: 0,
-                      left: 0,
-                      right: 60, // Leave space for header action buttons (close, etc.)
-                      height: 40,
-                      cursor: draggingPanelId === panel.id ? 'grabbing' : 'grab',
-                      zIndex: 1,
-                    }}
+                    onConfigChange={(config) => handleConfigChange(panel.id, config)}
                   />
                   {/* Size picker button - positioned at lower-right corner */}
                   <div
@@ -1818,16 +1857,6 @@ export function DashboardView({
                       disabled={draggingPanelId === panel.id}
                     />
                   </div>
-                  <DashboardPanelRenderer
-                    panel={panel}
-                    onClose={() => handlePanelClose(panel.id)}
-                    onDelete={() => handlePanelDelete(panel.id)}
-                    onConfigChange={(config) => handleConfigChange(panel.id, config)}
-                    onTitleChange={(newTitle) => handleTitleChange(panel.id, newTitle)}
-                    onNavigate={onNavigate}
-                    onOpenWorkspace={handleWorkspaceSelectById}
-                    isActive={activePanelId === panel.id}
-                  />
                 </div>
               ))}
             </>
@@ -1970,6 +1999,18 @@ export function DashboardView({
               />
             </div>
           )}
+
+          {/* Widget Architecture: Full Panel Drawer */}
+          <FullPanelDrawer
+            isOpen={isDrawerOpen}
+            onClose={handleDrawerClose}
+            panel={drawerPanel}
+            onConfigChange={(panelId, config) => handleConfigChange(panelId, config)}
+            onTitleChange={(panelId, newTitle) => handleTitleChange(panelId, newTitle)}
+            onNavigate={onNavigate}
+            onOpenWorkspace={handleWorkspaceSelectById}
+            onDelete={(panelId) => handlePanelDelete(panelId)}
+          />
         </>
       )}
     </div>

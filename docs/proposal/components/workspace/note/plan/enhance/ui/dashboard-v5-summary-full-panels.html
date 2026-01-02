@@ -213,60 +213,58 @@
       grid-column: span 2;
     }
 
-    /* ========== FULL PANEL MODAL ========== */
-    .modal-overlay {
+    /* ========== FULL PANEL DRAWER (Right-Side, NOT Modal) ========== */
+
+    /* Backdrop - only covers LEFT side, keeps widgets visible but dimmed */
+    .drawer-backdrop {
       position: fixed;
-      inset: 0;
-      background: var(--bg-modal);
-      backdrop-filter: blur(4px);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 1000;
+      top: 0;
+      left: 0;
+      right: 420px;  /* Don't cover drawer area */
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.2);
+      z-index: 999;
       opacity: 0;
       pointer-events: none;
-      transition: opacity 0.2s ease;
+      transition: opacity 0.3s ease;
     }
 
-    .modal-overlay.active {
+    .drawer-backdrop.active {
       opacity: 1;
       pointer-events: all;
     }
 
-    .full-panel {
+    /* Right-side drawer panel */
+    .full-panel-drawer {
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 420px;
       background: var(--bg-panel);
-      border: 1px solid var(--border-panel);
-      border-radius: 16px;
-      width: 90%;
-      max-width: 600px;
-      max-height: 80vh;
-      overflow: hidden;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
-      transform: scale(0.95);
-      transition: transform 0.2s ease;
+      border-left: 1px solid var(--border-panel);
+      box-shadow: -4px 0 24px rgba(0,0,0,0.4);
+      display: flex;
+      flex-direction: column;
+      z-index: 1000;
+      transform: translateX(100%);
+      transition: transform 0.3s ease;
     }
 
-    .modal-overlay.active .full-panel {
-      transform: scale(1);
+    .full-panel-drawer.active {
+      transform: translateX(0);
     }
 
-    .full-panel-header {
+    .drawer-header {
       padding: 16px 20px;
       border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
-      justify-content: space-between;
+      gap: 12px;
+      flex-shrink: 0;
     }
 
-    .full-panel-title {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      font-size: 16px;
-      font-weight: 600;
-    }
-
-    .full-panel-close {
+    .drawer-close {
       width: 32px;
       height: 32px;
       background: transparent;
@@ -278,23 +276,30 @@
       transition: all 0.15s;
     }
 
-    .full-panel-close:hover {
+    .drawer-close:hover {
       background: var(--bg-hover);
       color: var(--text-primary);
     }
 
-    .full-panel-content {
-      padding: 20px;
-      max-height: calc(80vh - 140px);
-      overflow-y: auto;
+    .drawer-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-primary);
     }
 
-    .full-panel-footer {
+    .drawer-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+    }
+
+    .drawer-footer {
       padding: 14px 20px;
       border-top: 1px solid var(--border);
       display: flex;
       justify-content: flex-end;
       gap: 10px;
+      flex-shrink: 0;
     }
 
     /* ========== FULL PANEL: QUICK LINKS SPECIFIC ========== */
@@ -762,8 +767,8 @@
     <!-- Demo Info Bar -->
     <div class="demo-info">
       <div class="demo-info-text">
-        <strong>Widget Demo:</strong>
-        Double-click any widget to open the full interactive panel.
+        <strong>Widget + Drawer Demo:</strong>
+        Double-click any widget to open the right-side drawer. Widgets stay visible!
       </div>
       <div class="demo-info-actions">
         <button class="demo-btn secondary" onclick="showHelp()">?</button>
@@ -771,11 +776,12 @@
     </div>
   </div>
 
-  <!-- Modal Overlay -->
-  <div class="modal-overlay" id="modal-overlay" onclick="closeFullPanel()">
-    <div class="full-panel" id="full-panel-content" onclick="event.stopPropagation()">
-      <!-- Content injected by JS -->
-    </div>
+  <!-- Drawer Backdrop (left side only - widgets stay visible) -->
+  <div class="drawer-backdrop" id="drawer-backdrop" onclick="closeDrawer()"></div>
+
+  <!-- Right-Side Drawer (NOT full-screen modal) -->
+  <div class="full-panel-drawer" id="full-panel-drawer">
+    <!-- Content injected by JS -->
   </div>
 
   <script>
@@ -1003,25 +1009,32 @@
       const template = fullPanelTemplates[panelId];
       if (!template) return;
 
-      const panel = document.getElementById('full-panel-content');
-      panel.innerHTML = `
-        <div class="full-panel-header">
-          <div class="full-panel-title">${template.title}</div>
-          <button class="full-panel-close" onclick="closeFullPanel()">×</button>
+      const drawer = document.getElementById('full-panel-drawer');
+      drawer.innerHTML = `
+        <div class="drawer-header">
+          <button class="drawer-close" onclick="closeDrawer()">×</button>
+          <span class="drawer-title">${template.title}</span>
         </div>
-        <div class="full-panel-content">
+        <div class="drawer-body">
           ${template.content}
         </div>
-        ${template.footer ? `<div class="full-panel-footer">${template.footer}</div>` : ''}
+        ${template.footer ? `<div class="drawer-footer">${template.footer}</div>` : ''}
       `;
 
-      document.getElementById('modal-overlay').classList.add('active');
+      document.getElementById('drawer-backdrop').classList.add('active');
+      document.getElementById('full-panel-drawer').classList.add('active');
       showPicker = false;
     }
 
-    function closeFullPanel() {
-      document.getElementById('modal-overlay').classList.remove('active');
+    function closeDrawer() {
+      document.getElementById('drawer-backdrop').classList.remove('active');
+      document.getElementById('full-panel-drawer').classList.remove('active');
       showPicker = false;
+    }
+
+    // Alias for backward compatibility
+    function closeFullPanel() {
+      closeDrawer();
     }
 
     function togglePicker() {
@@ -1055,13 +1068,12 @@
     }
 
     function showHelp() {
-      alert(`Widget Architecture Demo (macOS-style)
+      alert(`Widget + Drawer Architecture Demo
 
 DESIGN PRINCIPLES:
-• No window chrome - widgets are pure content
-• Content IS the widget - no headers/footers
-• Labels integrated into content flow
-• Double-click to expand (no explicit buttons)
+• Widgets: No window chrome, pure content (macOS-style)
+• Drawer: Right-side panel, keeps widgets visible
+• Chat stays accessible when drawer is open
 
 WIDGET TYPES:
 • Stat widgets: Big number + label (Recent, Reminders)
@@ -1070,21 +1082,27 @@ WIDGET TYPES:
 • Date widgets: Calendar-style (Calendar)
 
 INTERACTION:
-• Double-click any widget → opens full panel
-• Full panel has interactive features
-• Press Escape or click outside to close
+• Double-click widget → opens RIGHT-SIDE drawer
+• Widgets remain visible (dimmed) on left
+• Press Escape or click backdrop to close
+
+KEY DIFFERENCE FROM MODAL:
+• NOT full-screen overlay
+• Drawer slides in from right (420px wide)
+• Dashboard widgets stay visible
+• Chat would float above drawer (z-index)
 
 CHAT INTEGRATION:
 Commands like "add link to quick links A" can:
-1. Open the full Quick Links A panel
-2. Show the workspace picker
-3. User selects which workspace to link`);
+1. Open Quick Links A in the drawer
+2. Show workspace picker inside drawer
+3. User selects workspace while seeing dashboard`);
     }
 
-    // Close modal on Escape
+    // Close drawer on Escape
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
-        closeFullPanel();
+        closeDrawer();
       }
     });
   </script>
