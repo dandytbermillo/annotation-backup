@@ -130,13 +130,16 @@ export async function POST(request: NextRequest) {
 
     const userMessage = message.trim()
 
-    // Extract conversation context (optional), session state, and pending options
+    // Extract conversation context (optional), session state, pending options, and visibility
     const conversationContext: ConversationContext | undefined = context ? {
       summary: context.summary,
       recentUserMessages: context.recentUserMessages,
       lastAssistantQuestion: context.lastAssistantQuestion,
       sessionState: context.sessionState,
       pendingOptions: context.pendingOptions,
+      // Panel visibility context (from client)
+      visiblePanels: context.visiblePanels,
+      focusedPanelId: context.focusedPanelId,
     } : undefined
 
     // Check if OpenAI is configured
@@ -237,6 +240,9 @@ export async function POST(request: NextRequest) {
       currentWorkspaceId: currentWorkspaceId || undefined,
       homeEntryId,
       sessionState: conversationContext?.sessionState,
+      // Panel write confirmation bypass (from confirm_panel_write flow)
+      bypassPanelWriteConfirmation: context?.bypassPanelWriteConfirmation,
+      pendingPanelIntent: context?.pendingPanelIntent,
     }
 
     const resolution = await resolveIntent(intent, resolutionContext)

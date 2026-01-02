@@ -1,0 +1,42 @@
+*** Begin Patch
+*** Update File: lib/chat/intent-resolver.ts
+@@
+-      return {
+-        success: true,
+-        action: 'confirm_panel_write',
+-        pendingPanelIntent: {
+-          panelId,
+-          intentName,
+-          params: params || {},
+-        },
+-        options: [
+-          {
+-            type: 'confirm_delete' as const, // Reuse confirm_delete styling
+-            id: 'confirm',
+-            label: ' Confirm',
+-            sublabel: match.intent.description,
+-            data: { panelId, intentName, params: params || {} },
+-          },
+-        ],
+-        message: `This action will modify data: "${match.intent.description}". Continue?`,
+-      }
++      return {
++        success: true,
++        action: 'confirm_panel_write',
++        pendingPanelIntent: {
++          panelId,
++          intentName,
++          params: params || {},
++        },
++        options: [
++          {
++            type: 'confirm_panel_write' as const,
++            id: 'confirm',
++            label: ' Confirm',
++            sublabel: match.intent.description,
++            data: { panelId, intentName, params: params || {} },
++          },
++        ],
++        message: `This action will modify data: "${match.intent.description}". Continue?`,
++      }
+*** End Patch

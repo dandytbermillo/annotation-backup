@@ -26,7 +26,7 @@ import { resolveNote } from './note-resolver'
 import { resolveEntry } from './entry-resolver'
 import { serverPool } from '@/lib/db/pool'
 import { buildQuickLinksViewItems } from './parse-quick-links'
-import { executePanelIntent } from '@/lib/panels/panel-registry'
+import { executePanelIntent, panelRegistry } from '@/lib/panels/panel-registry'
 
 // =============================================================================
 // Resolution Result
@@ -45,6 +45,7 @@ export interface IntentResolutionResult {
     | 'rename_workspace'
     | 'confirm_delete'
     | 'delete_workspace'
+    | 'confirm_panel_write'  // Confirm before executing write panel intent
     | 'select'
     | 'select_option'  // Hybrid selection follow-up
     | 'clarify_type'   // Entry vs workspace type conflict
@@ -87,7 +88,7 @@ export interface IntentResolutionResult {
 
   // For select (multiple matches) and list_workspaces
   options?: Array<{
-    type: 'workspace' | 'note' | 'entry' | 'confirm_delete' | 'quick_links_panel'
+    type: 'workspace' | 'note' | 'entry' | 'confirm_delete' | 'quick_links_panel' | 'confirm_panel_write'
     id: string
     label: string
     sublabel?: string
@@ -105,6 +106,13 @@ export interface IntentResolutionResult {
   // For select_option (hybrid selection follow-up)
   optionIndex?: number   // 1-based index from LLM
   optionLabel?: string   // label from LLM for fuzzy matching
+
+  // For confirm_panel_write (pending panel intent awaiting confirmation)
+  pendingPanelIntent?: {
+    panelId: string
+    intentName: string
+    params: Record<string, unknown>
+  }
 
   // Message to display
   message: string
@@ -1163,12 +1171,41 @@ function formatLastActionSummary(lastAction: NonNullable<ResolutionContext['sess
 
 /**
  * Resolve show_quick_links intent - display Quick Links panel content in view panel
+ *
+ * Gap 3 Reroute: When a badge is specified, reroute to panel_intent for consistency.
+ * This ensures all Quick Links operations go through the panel manifest system.
  */
 async function resolveShowQuickLinks(
   intent: IntentResponse,
   context: ResolutionContext
 ): Promise<IntentResolutionResult> {
   const { quickLinksPanelBadge, quickLinksPanelTitle } = intent.args
+
+  // Gap 3: Reroute to panel_intent when badge is specified
+  // This ensures consistency with the panel manifest system
+  if (quickLinksPanelBadge) {
+    const badge = quickLinksPanelBadge.toLowerCase()
+    // Only reroute for valid badges (a, b, c, d)
+    if (['a', 'b', 'c', 'd'].includes(badge)) {
+      const panelId = `quick-links-${badge}`
+      // Check if this panel has a 'show_links' intent registered (matches manifest)
+      const match = panelRegistry.findIntent({ panelId, intentName: 'show_links', params: {} })
+      if (match) {
+        // Reroute to panel_intent
+        return resolvePanelIntent(
+          {
+            intent: 'panel_intent',
+            args: {
+              panelId,
+              intentName: 'show_links',
+              params: {},
+            },
+          },
+          context
+        )
+      }
+    }
+  }
 
   if (!context.currentEntryId) {
     return {
@@ -1555,7 +1592,7 @@ async function resolveBareName(
  */
 async function resolvePanelIntent(
   intent: IntentResponse,
-  _context: ResolutionContext
+  context: ResolutionContext
 ): Promise<IntentResolutionResult> {
   const { panelId, intentName, params } = intent.args
 
@@ -1564,6 +1601,39 @@ async function resolvePanelIntent(
       success: false,
       action: 'error',
       message: 'Missing panel ID or intent name.',
+    }
+  }
+
+  // Check if this is a write intent that needs confirmation
+  const match = panelRegistry.findIntent({ panelId, intentName, params: params || {} })
+
+  if (match && match.intent.permission === 'write') {
+    // Check if confirmation is bypassed (user already confirmed)
+    const isBypassed = context.bypassPanelWriteConfirmation &&
+      context.pendingPanelIntent?.panelId === panelId &&
+      context.pendingPanelIntent?.intentName === intentName
+
+    if (!isBypassed) {
+      // Return confirmation request
+      return {
+        success: true,
+        action: 'confirm_panel_write',
+        pendingPanelIntent: {
+          panelId,
+          intentName,
+          params: params || {},
+        },
+        options: [
+          {
+            type: 'confirm_panel_write' as const,
+            id: 'confirm',
+            label: '✓ Confirm',
+            sublabel: match.intent.description,
+            data: { panelId, intentName, params: params || {} },
+          },
+        ],
+        message: `This action will modify data: "${match.intent.description}". Continue?`,
+      }
     }
   }
 

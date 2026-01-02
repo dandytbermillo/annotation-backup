@@ -58,6 +58,7 @@ export interface ChatNavigationPanelProps {
   showTrigger?: boolean
   /** Optional override for the hidden anchor position */
   anchorClassName?: string
+  // Note: visiblePanels and focusedPanelId are now read from ChatNavigationContext (Gap 2)
 }
 
 // =============================================================================
@@ -373,6 +374,7 @@ function ChatNavigationPanelContent({
   className,
   showTrigger = true,
   // anchorClassName is no longer used (was for Popover positioning)
+  // visiblePanels and focusedPanelId are now read from context (Gap 2)
 }: ChatNavigationPanelProps) {
   const [isLoading, setIsLoading] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -410,6 +412,9 @@ function ChatNavigationPanelContent({
     conversationSummary,
     // Session divider
     initialMessageCount,
+    // Panel visibility (Gap 2) - read from context instead of props
+    visiblePanels,
+    focusedPanelId,
   } = useChatNavigationContext()
 
   const { executeAction, selectOption } = useChatNavigation({
@@ -537,6 +542,76 @@ function ChatNavigationPanelContent({
     window.addEventListener('chat-select-quick-links-panel', handleQuickLinksSelection as unknown as EventListener)
     return () => {
       window.removeEventListener('chat-select-quick-links-panel', handleQuickLinksSelection as unknown as EventListener)
+    }
+  }, [currentEntryId, currentWorkspaceId, sessionState, executeAction, addMessage, openPanel])
+
+  // Handle panel write confirmation (from confirm_panel_write pill)
+  useEffect(() => {
+    const handlePanelWriteConfirmation = async (event: CustomEvent<{
+      panelId: string
+      intentName: string
+      params: Record<string, unknown>
+    }>) => {
+      const { panelId, intentName, params } = event.detail
+
+      setIsLoading(true)
+      try {
+        const entryId = currentEntryId ?? getActiveEntryContext() ?? undefined
+        const workspaceId = currentWorkspaceId ?? getActiveWorkspaceContext() ?? undefined
+
+        // Re-call the API with bypassPanelWriteConfirmation flag
+        const response = await fetch('/api/chat/navigate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: `execute panel intent ${intentName} on ${panelId}`,
+            currentEntryId: entryId,
+            currentWorkspaceId: workspaceId,
+            context: {
+              sessionState,
+              bypassPanelWriteConfirmation: true,
+              pendingPanelIntent: { panelId, intentName, params },
+            },
+          }),
+        })
+
+        if (!response.ok) throw new Error('Failed to execute panel action')
+
+        const { resolution } = await response.json() as { resolution: IntentResolutionResult }
+
+        // Execute the action
+        const result = await executeAction(resolution)
+
+        const assistantMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: result.message,
+          timestamp: new Date(),
+          isError: !result.success,
+        }
+        addMessage(assistantMessage)
+
+        // Open view panel if content available
+        if (resolution.showInViewPanel && resolution.viewPanelContent) {
+          openPanel(resolution.viewPanelContent)
+        }
+      } catch (error) {
+        const errorMessage: ChatMessage = {
+          id: `error-${Date.now()}`,
+          role: 'assistant',
+          content: 'Failed to execute action.',
+          timestamp: new Date(),
+          isError: true,
+        }
+        addMessage(errorMessage)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    window.addEventListener('chat-confirm-panel-write', handlePanelWriteConfirmation as unknown as EventListener)
+    return () => {
+      window.removeEventListener('chat-confirm-panel-write', handlePanelWriteConfirmation as unknown as EventListener)
     }
   }, [currentEntryId, currentWorkspaceId, sessionState, executeAction, addMessage, openPanel])
 
@@ -889,6 +964,9 @@ function ChatNavigationPanelContent({
             ...contextPayload,
             sessionState,
             pendingOptions: pendingOptionsForContext,
+            // Panel visibility context for intent prioritization
+            visiblePanels,
+            focusedPanelId,
           },
         }),
       })
@@ -1110,8 +1188,14 @@ function ChatNavigationPanelContent({
       }
 
       // Create assistant message
-      // Include options for 'selected' (disambiguation pills) and 'clarify_type' (entry vs workspace)
-      const showOptions = (result.action === 'selected' || resolution.action === 'clarify_type') && resolution.options
+      // Include options for 'selected' (disambiguation pills), 'clarify_type' (entry vs workspace),
+      // and confirmation dialogs (confirm_delete, confirm_panel_write)
+      const showOptions = (
+        result.action === 'selected' ||
+        resolution.action === 'clarify_type' ||
+        resolution.action === 'confirm_delete' ||
+        resolution.action === 'confirm_panel_write'
+      ) && resolution.options
       const assistantMessage: ChatMessage = {
         id: `assistant-${Date.now()}`,
         role: 'assistant',

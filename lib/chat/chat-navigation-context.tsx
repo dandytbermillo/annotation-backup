@@ -27,12 +27,18 @@ export interface QuickLinksPanelData {
   panelType: 'quick_links'
 }
 
+export interface PanelIntentData {
+  panelId: string
+  intentName: string
+  params: Record<string, unknown>
+}
+
 export interface SelectionOption {
-  type: 'workspace' | 'note' | 'entry' | 'confirm_delete' | 'quick_links_panel'
+  type: 'workspace' | 'note' | 'entry' | 'confirm_delete' | 'quick_links_panel' | 'confirm_panel_write'
   id: string
   label: string
   sublabel?: string
-  data: WorkspaceMatch | NoteMatch | EntryMatch | QuickLinksPanelData
+  data: WorkspaceMatch | NoteMatch | EntryMatch | QuickLinksPanelData | PanelIntentData
 }
 
 export interface ChatMessage {
@@ -86,6 +92,13 @@ interface ChatNavigationContextValue {
   conversationSummary: string | null
   // Session divider: count of messages loaded from history (for rendering divider)
   initialMessageCount: number
+  // Panel visibility for intent prioritization (Gap 2)
+  visiblePanels: string[]
+  focusedPanelId: string | null
+  setVisiblePanels: (panelIds: string[]) => void
+  setFocusedPanelId: (panelId: string | null) => void
+  registerVisiblePanel: (panelId: string) => void
+  unregisterVisiblePanel: (panelId: string) => void
 }
 
 // =============================================================================
@@ -269,6 +282,10 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
   // Session state for informational intents
   // Note: lastAction and openCounts are persisted to dedicated table and hydrated on init
   const [sessionState, setSessionState] = useState<SessionState>({})
+
+  // Panel visibility state for intent prioritization (Gap 2)
+  const [visiblePanels, setVisiblePanelsState] = useState<string[]>([])
+  const [focusedPanelId, setFocusedPanelIdState] = useState<string | null>(null)
 
   // Debounce refs for session state persistence
   const DEBOUNCE_MS = 1000
@@ -464,6 +481,8 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
 
   const openChat = useCallback(() => {
     setOpen(true)
+    // Reset focused panel when chat opens (Gap 2: prevents stale focus priority)
+    setFocusedPanelIdState(null)
   }, [])
 
   const closeChat = useCallback(() => {
@@ -529,6 +548,29 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     })
   }, [conversationId, debouncedPersistSessionState])
 
+  // Panel visibility setters (Gap 2)
+  const setVisiblePanels = useCallback((panelIds: string[]) => {
+    setVisiblePanelsState(panelIds)
+  }, [])
+
+  const setFocusedPanelId = useCallback((panelId: string | null) => {
+    setFocusedPanelIdState(panelId)
+  }, [])
+
+  // Register/unregister individual panels (for use in panel mount/unmount effects)
+  const registerVisiblePanel = useCallback((panelId: string) => {
+    setVisiblePanelsState((prev) => {
+      if (prev.includes(panelId)) return prev
+      return [...prev, panelId]
+    })
+  }, [])
+
+  const unregisterVisiblePanel = useCallback((panelId: string) => {
+    setVisiblePanelsState((prev) => prev.filter((id) => id !== panelId))
+    // Also clear focus if this panel was focused
+    setFocusedPanelIdState((prev) => (prev === panelId ? null : prev))
+  }, [])
+
   return (
     <ChatNavigationContext.Provider
       value={{
@@ -551,6 +593,13 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         loadOlderMessages,
         conversationSummary,
         initialMessageCount,
+        // Panel visibility (Gap 2)
+        visiblePanels,
+        focusedPanelId,
+        setVisiblePanels,
+        setFocusedPanelId,
+        registerVisiblePanel,
+        unregisterVisiblePanel,
       }}
     >
       {children}

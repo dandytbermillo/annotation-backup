@@ -14,6 +14,7 @@ import { panelTypeRegistry } from '@/lib/dashboard/panel-registry'
 import type { BasePanelProps, PanelConfig } from '@/lib/dashboard/panel-registry'
 import { cn } from '@/lib/utils'
 import { setActiveWorkspaceContext } from '@/lib/note-workspaces/state'
+import { useChatNavigationContext } from '@/lib/chat/chat-navigation-context'
 
 interface RecentConfig extends PanelConfig {
   limit?: number
@@ -35,6 +36,23 @@ export function RecentPanel({ panel, onClose, onTitleChange, onNavigate, onDelet
   const [workspaces, setWorkspaces] = useState<RecentWorkspace[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  // Chat visibility tracking (Gap 2)
+  const { registerVisiblePanel, unregisterVisiblePanel, setFocusedPanelId } = useChatNavigationContext()
+  const CHAT_PANEL_ID = 'recent' // Matches chat panel manifest ID
+
+  // Register panel visibility on mount
+  useEffect(() => {
+    registerVisiblePanel(CHAT_PANEL_ID)
+    return () => unregisterVisiblePanel(CHAT_PANEL_ID)
+  }, [registerVisiblePanel, unregisterVisiblePanel])
+
+  // Update focused panel when isActive changes
+  useEffect(() => {
+    if (isActive) {
+      setFocusedPanelId(CHAT_PANEL_ID)
+    }
+  }, [isActive, setFocusedPanelId])
 
   const fetchRecentWorkspaces = async () => {
     try {

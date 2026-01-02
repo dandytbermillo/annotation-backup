@@ -22,6 +22,7 @@ import { Link2, Search, X, Plus, Loader2, Trash2, RotateCcw } from 'lucide-react
 import { BaseDashboardPanel, type CustomMenuItem } from './BaseDashboardPanel'
 import { getPanelType, type BasePanelProps, type DeletedLink, type PanelConfig } from '@/lib/dashboard/panel-registry'
 import { requestWorkspaceListRefresh } from '@/lib/note-workspaces/state'
+import { useChatNavigationContext } from '@/lib/chat/chat-navigation-context'
 import {
   setActiveEntryContext,
   getActiveEntryContext,
@@ -50,6 +51,23 @@ interface WorkspaceOption {
 
 // Auto-purge links older than 30 days
 const PURGE_DAYS = 30
+
+/**
+ * Derive the chat panel ID from the panel title.
+ * Maps "Quick Links A" → "quick-links-a", etc.
+ * Returns null if badge cannot be determined.
+ */
+function deriveChatPanelId(panelTitle: string | null | undefined): string | null {
+  if (!panelTitle) return null
+  // Match "Quick Links X" where X is A/B/C/D (case insensitive)
+  const match = panelTitle.match(/quick\s*links?\s*([a-d])/i)
+  if (match) {
+    const badge = match[1].toLowerCase()
+    return `quick-links-${badge}`
+  }
+  return null
+}
+
 function purgeOldDeletedLinks(deletedLinks: DeletedLink[]): DeletedLink[] {
   const cutoffDate = new Date()
   cutoffDate.setDate(cutoffDate.getDate() - PURGE_DAYS)
@@ -91,6 +109,25 @@ export function LinksNotePanelTiptap({
   // Get deleted links from config (with auto-purge)
   const config = panel.config as PanelConfig & { deletedLinks?: DeletedLink[] }
   const deletedLinks = config.deletedLinks || []
+
+  // Chat visibility tracking (Gap 2)
+  const { registerVisiblePanel, unregisterVisiblePanel, setFocusedPanelId } = useChatNavigationContext()
+  const chatPanelId = deriveChatPanelId(panel.title)
+
+  // Register panel visibility on mount
+  useEffect(() => {
+    if (chatPanelId) {
+      registerVisiblePanel(chatPanelId)
+      return () => unregisterVisiblePanel(chatPanelId)
+    }
+  }, [chatPanelId, registerVisiblePanel, unregisterVisiblePanel])
+
+  // Update focused panel when isActive changes
+  useEffect(() => {
+    if (isActive && chatPanelId) {
+      setFocusedPanelId(chatPanelId)
+    }
+  }, [isActive, chatPanelId, setFocusedPanelId])
 
   // Current entry ID ref for the extension
   const currentEntryIdRef = useRef<string | null>(null)

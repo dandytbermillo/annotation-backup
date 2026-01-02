@@ -1,0 +1,1092 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard v5 - Summary/Full Panel Architecture Demo</title>
+  <style>
+    :root {
+      --bg-dark: #0f1117;
+      --bg-card: #1a1d24;
+      --bg-panel: #1e222a;
+      --bg-hover: #252830;
+      --bg-canvas: #0a0c10;
+      --bg-input: #12141a;
+      --bg-modal: rgba(0,0,0,0.7);
+      --border: rgba(255,255,255,0.08);
+      --border-panel: rgba(255,255,255,0.1);
+      --border-focus: rgba(99,102,241,0.5);
+      --text-primary: #f0f0f0;
+      --text-secondary: #8b8fa3;
+      --text-muted: #5c6070;
+      --accent: #6366f1;
+      --accent-hover: #818cf8;
+      --accent-dim: rgba(99,102,241,0.15);
+      --accent-glow: rgba(99,102,241,0.3);
+      --success: #22c55e;
+      --success-dim: rgba(34,197,94,0.15);
+      --warning: #f59e0b;
+      --panel-shadow: 0 4px 24px rgba(0,0,0,0.4);
+      --panel-shadow-hover: 0 8px 32px rgba(0,0,0,0.5);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg-canvas);
+      color: var(--text-primary);
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ========== LAYOUT ========== */
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    .topbar {
+      height: 52px;
+      background: rgba(15,17,23,0.95);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+      flex-shrink: 0;
+    }
+
+    .topbar-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .topbar-badge {
+      padding: 4px 10px;
+      background: var(--accent-dim);
+      border: 1px solid rgba(99,102,241,0.3);
+      border-radius: 6px;
+      font-size: 11px;
+      color: var(--accent);
+    }
+
+    .canvas-area {
+      flex: 1;
+      position: relative;
+      overflow: auto;
+      padding: 30px;
+    }
+
+    .panel-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 20px;
+      max-width: 1200px;
+    }
+
+    /* ========== SUMMARY WIDGET (macOS Widget Style - No Chrome) ========== */
+    .summary-widget {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-panel);
+      border-radius: 20px;
+      overflow: hidden;
+      transition: all 0.2s ease;
+      cursor: pointer;
+      padding: 16px;
+    }
+
+    .summary-widget:hover {
+      border-color: var(--border-focus);
+      box-shadow: var(--panel-shadow-hover);
+      transform: scale(1.02);
+    }
+
+    .summary-widget:active {
+      transform: scale(0.98);
+    }
+
+    /* Widget type label - integrated into content */
+    .widget-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+
+    /* Widget primary value/stat */
+    .widget-value {
+      font-size: 32px;
+      font-weight: 700;
+      color: var(--text-primary);
+      line-height: 1.1;
+    }
+
+    .widget-value-unit {
+      font-size: 18px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      margin-left: 4px;
+    }
+
+    /* Widget subtitle */
+    .widget-subtitle {
+      font-size: 13px;
+      color: var(--accent);
+      margin-top: 4px;
+    }
+
+    /* Widget icon (inline with content) */
+    .widget-icon {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, var(--accent) 0%, #8b5cf6 100%);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      margin-bottom: 12px;
+    }
+
+    /* Widget content area */
+    .widget-content {
+      margin-top: 12px;
+    }
+
+    /* ========== WIDGET LIST STYLES ========== */
+    .widget-list {
+      list-style: none;
+    }
+
+    .widget-list-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 0;
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    .widget-list-icon {
+      width: 24px;
+      height: 24px;
+      background: var(--bg-hover);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+
+    .widget-list-text {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .widget-empty {
+      font-size: 13px;
+      color: var(--text-muted);
+      text-align: center;
+      padding: 20px 0;
+    }
+
+    /* Widget sizes */
+    .widget-small {
+      min-height: 120px;
+    }
+
+    .widget-medium {
+      min-height: 160px;
+    }
+
+    .widget-large {
+      min-height: 220px;
+      grid-column: span 2;
+    }
+
+    /* ========== FULL PANEL MODAL ========== */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: var(--bg-modal);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+
+    .modal-overlay.active {
+      opacity: 1;
+      pointer-events: all;
+    }
+
+    .full-panel {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-panel);
+      border-radius: 16px;
+      width: 90%;
+      max-width: 600px;
+      max-height: 80vh;
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+      transform: scale(0.95);
+      transition: transform 0.2s ease;
+    }
+
+    .modal-overlay.active .full-panel {
+      transform: scale(1);
+    }
+
+    .full-panel-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .full-panel-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .full-panel-close {
+      width: 32px;
+      height: 32px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-secondary);
+      font-size: 18px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .full-panel-close:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .full-panel-content {
+      padding: 20px;
+      max-height: calc(80vh - 140px);
+      overflow-y: auto;
+    }
+
+    .full-panel-footer {
+      padding: 14px 20px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    /* ========== FULL PANEL: QUICK LINKS SPECIFIC ========== */
+    .quick-links-editor {
+      min-height: 200px;
+      padding: 14px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 14px;
+      line-height: 1.7;
+      color: var(--text-secondary);
+    }
+
+    .quick-links-editor:focus {
+      outline: none;
+      border-color: var(--border-focus);
+    }
+
+    .quick-links-editor h3 {
+      font-size: 14px;
+      color: var(--text-primary);
+      margin: 0 0 8px 0;
+    }
+
+    .quick-links-editor p {
+      margin: 4px 0;
+    }
+
+    .workspace-link {
+      color: var(--accent);
+      text-decoration: underline;
+      cursor: pointer;
+    }
+
+    .workspace-link:hover {
+      color: var(--accent-hover);
+    }
+
+    .link-toolbar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .link-toolbar-btn {
+      padding: 8px 14px;
+      background: var(--accent-dim);
+      border: 1px solid rgba(99,102,241,0.3);
+      border-radius: 8px;
+      color: var(--accent);
+      font-size: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s;
+    }
+
+    .link-toolbar-btn:hover {
+      background: var(--accent);
+      color: white;
+    }
+
+    /* ========== WORKSPACE PICKER (inside full panel) ========== */
+    .workspace-picker {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      margin-top: 14px;
+      overflow: hidden;
+    }
+
+    .workspace-picker-header {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .workspace-picker-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--accent);
+    }
+
+    .workspace-picker-close {
+      width: 24px;
+      height: 24px;
+      background: transparent;
+      border: none;
+      border-radius: 4px;
+      color: var(--text-muted);
+      cursor: pointer;
+    }
+
+    .workspace-picker-close:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .workspace-picker-search {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .workspace-picker-search input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      font-size: 13px;
+      color: var(--text-primary);
+      outline: none;
+    }
+
+    .workspace-picker-search input::placeholder {
+      color: var(--text-muted);
+    }
+
+    .workspace-picker-tabs {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      gap: 6px;
+    }
+
+    .workspace-picker-tab {
+      padding: 6px 12px;
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      font-size: 12px;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .workspace-picker-tab.active {
+      background: var(--accent-dim);
+      border-color: rgba(99,102,241,0.3);
+      color: var(--accent);
+    }
+
+    .workspace-picker-create {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(99,102,241,0.05);
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .workspace-picker-create:hover {
+      background: rgba(99,102,241,0.1);
+    }
+
+    .workspace-picker-create-icon {
+      width: 28px;
+      height: 28px;
+      background: var(--accent-dim);
+      border: 1px dashed var(--accent);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--accent);
+      font-size: 14px;
+    }
+
+    .workspace-picker-create-text {
+      font-size: 13px;
+      color: var(--accent);
+    }
+
+    .workspace-picker-divider {
+      padding: 8px 14px;
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .workspace-picker-list {
+      max-height: 200px;
+      overflow-y: auto;
+      padding: 6px;
+    }
+
+    .workspace-picker-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .workspace-picker-item:hover {
+      background: var(--bg-hover);
+    }
+
+    .workspace-picker-item-icon {
+      width: 28px;
+      height: 28px;
+      background: rgba(99,102,241,0.15);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--accent);
+    }
+
+    .workspace-picker-item-name {
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .workspace-picker-item-entry {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* ========== FULL PANEL: RECENT SPECIFIC ========== */
+    .recent-list-full {
+      list-style: none;
+    }
+
+    .recent-list-full-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      margin: 0 -14px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .recent-list-full-item:hover {
+      background: var(--bg-hover);
+    }
+
+    .recent-list-full-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .recent-list-full-icon {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, var(--accent) 0%, #8b5cf6 100%);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 600;
+      color: white;
+    }
+
+    .recent-list-full-name {
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .recent-list-full-entry {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .recent-list-full-time {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .recent-clear-btn {
+      padding: 8px 16px;
+      background: transparent;
+      border: 1px solid rgba(239,68,68,0.3);
+      border-radius: 6px;
+      color: #ef4444;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .recent-clear-btn:hover {
+      background: rgba(239,68,68,0.1);
+    }
+
+    /* ========== DEMO INFO ========== */
+    .demo-info {
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      right: 20px;
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      z-index: 100;
+    }
+
+    .demo-info-text {
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    .demo-info-text strong {
+      color: var(--accent);
+    }
+
+    .demo-info-actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .demo-btn {
+      padding: 8px 16px;
+      background: var(--accent);
+      border: none;
+      border-radius: 6px;
+      color: white;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .demo-btn:hover {
+      background: var(--accent-hover);
+    }
+
+    .demo-btn.secondary {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+    }
+
+    .demo-btn.secondary:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <!-- Top Bar -->
+    <div class="topbar">
+      <div class="topbar-title">Dashboard - Summary/Full Panel Architecture</div>
+      <div class="topbar-badge">v5 Demo</div>
+    </div>
+
+    <!-- Canvas Area with Summary Panels -->
+    <div class="canvas-area">
+      <div class="panel-grid">
+
+        <!-- Recent Widget (macOS style - no chrome) -->
+        <div class="summary-widget widget-medium" ondblclick="openFullPanel('recent')">
+          <div class="widget-label">Recent</div>
+          <div class="widget-value">5<span class="widget-value-unit">items</span></div>
+          <div class="widget-content">
+            <ul class="widget-list">
+              <li class="widget-list-item">
+                <div class="widget-list-icon">W</div>
+                <span class="widget-list-text">workspace33</span>
+              </li>
+              <li class="widget-list-item">
+                <div class="widget-list-icon">P</div>
+                <span class="widget-list-text">Project Alpha</span>
+              </li>
+              <li class="widget-list-item">
+                <div class="widget-list-icon">D</div>
+                <span class="widget-list-text">Dashboard</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Quick Links A Widget -->
+        <div class="summary-widget widget-medium" ondblclick="openFullPanel('quick-links-a')">
+          <div class="widget-label">Quick Links A</div>
+          <ul class="widget-list">
+            <li class="widget-list-item">
+              <div class="widget-list-icon">📁</div>
+              <span class="widget-list-text">Project Alpha</span>
+            </li>
+            <li class="widget-list-item">
+              <div class="widget-list-icon">📁</div>
+              <span class="widget-list-text">Project Beta</span>
+            </li>
+            <li class="widget-list-item">
+              <div class="widget-list-icon">📝</div>
+              <span class="widget-list-text">Meeting Notes</span>
+            </li>
+            <li class="widget-list-item">
+              <div class="widget-list-icon">💡</div>
+              <span class="widget-list-text">Ideas</span>
+            </li>
+          </ul>
+        </div>
+
+        <!-- Quick Links B Widget -->
+        <div class="summary-widget widget-small" ondblclick="openFullPanel('quick-links-b')">
+          <div class="widget-label">Quick Links B</div>
+          <ul class="widget-list">
+            <li class="widget-list-item">
+              <div class="widget-list-icon">🏠</div>
+              <span class="widget-list-text">Home Dashboard</span>
+            </li>
+            <li class="widget-list-item">
+              <div class="widget-list-icon">⚙️</div>
+              <span class="widget-list-text">Settings</span>
+            </li>
+          </ul>
+        </div>
+
+        <!-- Reminders Widget (like macOS) -->
+        <div class="summary-widget widget-small" ondblclick="openFullPanel('reminders')">
+          <div class="widget-value">0</div>
+          <div class="widget-subtitle">Reminders</div>
+          <div class="widget-content">
+            <div class="widget-empty">All Completed</div>
+          </div>
+        </div>
+
+        <!-- Notes Widget -->
+        <div class="summary-widget widget-medium" ondblclick="openFullPanel('notes')">
+          <div class="widget-label">Notes</div>
+          <p style="font-size: 14px; color: var(--text-secondary); line-height: 1.6; margin-top: 8px;">
+            Meeting notes from today's standup. Need to follow up on the API integration timeline...
+          </p>
+        </div>
+
+        <!-- Calendar Widget (like macOS) -->
+        <div class="summary-widget widget-medium" ondblclick="openFullPanel('calendar')">
+          <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+            <div>
+              <div style="color: #ef4444; font-size: 11px; font-weight: 600; text-transform: uppercase;">January</div>
+              <div class="widget-value">1</div>
+              <div style="font-size: 12px; color: var(--text-muted);">Wednesday</div>
+            </div>
+            <div style="text-align: right;">
+              <div style="font-size: 12px; color: var(--text-muted);">2 events</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Demo Info Bar -->
+    <div class="demo-info">
+      <div class="demo-info-text">
+        <strong>Widget Demo:</strong>
+        Double-click any widget to open the full interactive panel.
+      </div>
+      <div class="demo-info-actions">
+        <button class="demo-btn secondary" onclick="showHelp()">?</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Overlay -->
+  <div class="modal-overlay" id="modal-overlay" onclick="closeFullPanel()">
+    <div class="full-panel" id="full-panel-content" onclick="event.stopPropagation()">
+      <!-- Content injected by JS -->
+    </div>
+  </div>
+
+  <script>
+    // ========== STATE ==========
+    let showPicker = false;
+
+    // ========== FULL PANEL TEMPLATES ==========
+    const fullPanelTemplates = {
+      'recent': {
+        title: '🕐 Recent',
+        content: `
+          <ul class="recent-list-full">
+            <li class="recent-list-full-item">
+              <div class="recent-list-full-left">
+                <div class="recent-list-full-icon">W</div>
+                <div>
+                  <div class="recent-list-full-name">workspace33</div>
+                  <div class="recent-list-full-entry">Home</div>
+                </div>
+              </div>
+              <span class="recent-list-full-time">2 min ago</span>
+            </li>
+            <li class="recent-list-full-item">
+              <div class="recent-list-full-left">
+                <div class="recent-list-full-icon">P</div>
+                <div>
+                  <div class="recent-list-full-name">Project Alpha</div>
+                  <div class="recent-list-full-entry">Projects</div>
+                </div>
+              </div>
+              <span class="recent-list-full-time">15 min ago</span>
+            </li>
+            <li class="recent-list-full-item">
+              <div class="recent-list-full-left">
+                <div class="recent-list-full-icon">D</div>
+                <div>
+                  <div class="recent-list-full-name">Dashboard</div>
+                  <div class="recent-list-full-entry">Home</div>
+                </div>
+              </div>
+              <span class="recent-list-full-time">1 hour ago</span>
+            </li>
+            <li class="recent-list-full-item">
+              <div class="recent-list-full-left">
+                <div class="recent-list-full-icon">M</div>
+                <div>
+                  <div class="recent-list-full-name">Meeting Notes</div>
+                  <div class="recent-list-full-entry">Work</div>
+                </div>
+              </div>
+              <span class="recent-list-full-time">2 hours ago</span>
+            </li>
+            <li class="recent-list-full-item">
+              <div class="recent-list-full-left">
+                <div class="recent-list-full-icon">S</div>
+                <div>
+                  <div class="recent-list-full-name">Settings</div>
+                  <div class="recent-list-full-entry">System</div>
+                </div>
+              </div>
+              <span class="recent-list-full-time">Yesterday</span>
+            </li>
+          </ul>
+        `,
+        footer: `<button class="recent-clear-btn" onclick="confirmClearRecent()">Clear History</button>`
+      },
+
+      'quick-links-a': {
+        title: '🔗 Quick Links A',
+        content: `
+          <div class="link-toolbar">
+            <button class="link-toolbar-btn" onclick="togglePicker()">
+              + Link to Workspace
+            </button>
+          </div>
+          <div class="quick-links-editor" contenteditable="true">
+            <h3>Projects</h3>
+            <p><span class="workspace-link">Project Alpha</span> - Main project workspace</p>
+            <p><span class="workspace-link">Project Beta</span> - Secondary project</p>
+            <h3>Notes</h3>
+            <p><span class="workspace-link">Meeting Notes</span> - Daily standups</p>
+            <p><span class="workspace-link">Ideas</span> - Brainstorming</p>
+          </div>
+          <div id="workspace-picker-container"></div>
+        `,
+        footer: ''
+      },
+
+      'quick-links-b': {
+        title: '🔗 Quick Links B',
+        content: `
+          <div class="link-toolbar">
+            <button class="link-toolbar-btn" onclick="togglePicker()">
+              + Link to Workspace
+            </button>
+          </div>
+          <div class="quick-links-editor" contenteditable="true">
+            <h3>Navigation</h3>
+            <p><span class="workspace-link">Home Dashboard</span></p>
+            <p><span class="workspace-link">Settings</span></p>
+          </div>
+          <div id="workspace-picker-container"></div>
+        `,
+        footer: ''
+      },
+
+      'notes': {
+        title: '📝 Notes',
+        content: `
+          <div class="quick-links-editor" contenteditable="true" style="min-height: 300px;">
+            <p>Meeting notes from today's standup. Need to follow up on the API integration timeline and coordinate with the backend team.</p>
+            <br>
+            <p><strong>Action Items:</strong></p>
+            <ul style="margin-left: 20px; color: var(--text-secondary);">
+              <li>Review PR #123</li>
+              <li>Update documentation</li>
+              <li>Schedule sync with design team</li>
+            </ul>
+          </div>
+        `,
+        footer: ''
+      },
+
+      'reminders': {
+        title: '✓ Reminders',
+        content: `
+          <div style="text-align: center; padding: 40px 0;">
+            <div style="font-size: 48px; font-weight: 700; color: var(--text-primary);">0</div>
+            <div style="font-size: 16px; color: var(--accent); margin-top: 8px;">Reminders</div>
+            <div style="font-size: 14px; color: var(--text-muted); margin-top: 20px;">All Reminders Completed</div>
+          </div>
+          <div style="border-top: 1px solid var(--border); padding-top: 16px; margin-top: 16px;">
+            <button class="link-toolbar-btn" style="width: 100%; justify-content: center;">
+              + New Reminder
+            </button>
+          </div>
+        `,
+        footer: ''
+      },
+
+      'calendar': {
+        title: '📅 Calendar',
+        content: `
+          <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
+            <div>
+              <div style="color: #ef4444; font-size: 12px; font-weight: 600; text-transform: uppercase;">January</div>
+              <div style="font-size: 48px; font-weight: 700;">1</div>
+              <div style="font-size: 14px; color: var(--text-muted);">Wednesday</div>
+            </div>
+            <div style="text-align: right;">
+              <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px;">Tomorrow</div>
+              <div style="font-size: 14px; color: var(--text-secondary);">2 events</div>
+            </div>
+          </div>
+          <div style="border-top: 1px solid var(--border); padding-top: 16px;">
+            <div style="padding: 12px; background: var(--bg-hover); border-radius: 8px; margin-bottom: 8px;">
+              <div style="font-size: 13px; font-weight: 500;">Team Standup</div>
+              <div style="font-size: 12px; color: var(--text-muted);">9:00 AM - 9:30 AM</div>
+            </div>
+            <div style="padding: 12px; background: var(--bg-hover); border-radius: 8px;">
+              <div style="font-size: 13px; font-weight: 500;">Project Review</div>
+              <div style="font-size: 12px; color: var(--text-muted);">2:00 PM - 3:00 PM</div>
+            </div>
+          </div>
+        `,
+        footer: ''
+      }
+    };
+
+    // ========== WORKSPACE PICKER TEMPLATE ==========
+    const workspacePickerHTML = `
+      <div class="workspace-picker">
+        <div class="workspace-picker-header">
+          <span class="workspace-picker-title">Link to Workspace</span>
+          <button class="workspace-picker-close" onclick="togglePicker()">×</button>
+        </div>
+        <div class="workspace-picker-search">
+          <span style="color: var(--text-muted)">🔍</span>
+          <input type="text" placeholder="Search workspaces..." id="picker-search">
+        </div>
+        <div class="workspace-picker-tabs">
+          <button class="workspace-picker-tab active">Current Entry</button>
+          <button class="workspace-picker-tab">All Entries</button>
+        </div>
+        <div class="workspace-picker-create" onclick="createWorkspace()">
+          <div class="workspace-picker-create-icon">+</div>
+          <span class="workspace-picker-create-text">Create "sample" workspace</span>
+        </div>
+        <div class="workspace-picker-divider">Or link to existing:</div>
+        <div class="workspace-picker-list">
+          <div class="workspace-picker-item" onclick="selectWorkspace('Dashboard')">
+            <div class="workspace-picker-item-icon">D</div>
+            <div>
+              <div class="workspace-picker-item-name">Dashboard</div>
+              <div class="workspace-picker-item-entry">Home</div>
+            </div>
+          </div>
+          <div class="workspace-picker-item" onclick="selectWorkspace('Project Alpha')">
+            <div class="workspace-picker-item-icon">P</div>
+            <div>
+              <div class="workspace-picker-item-name">Project Alpha</div>
+              <div class="workspace-picker-item-entry">Projects</div>
+            </div>
+          </div>
+          <div class="workspace-picker-item" onclick="selectWorkspace('Project Beta')">
+            <div class="workspace-picker-item-icon">P</div>
+            <div>
+              <div class="workspace-picker-item-name">Project Beta</div>
+              <div class="workspace-picker-item-entry">Projects</div>
+            </div>
+          </div>
+          <div class="workspace-picker-item" onclick="selectWorkspace('Meeting Notes')">
+            <div class="workspace-picker-item-icon">M</div>
+            <div>
+              <div class="workspace-picker-item-name">Meeting Notes</div>
+              <div class="workspace-picker-item-entry">Work</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // ========== FUNCTIONS ==========
+    function openFullPanel(panelId) {
+      const template = fullPanelTemplates[panelId];
+      if (!template) return;
+
+      const panel = document.getElementById('full-panel-content');
+      panel.innerHTML = `
+        <div class="full-panel-header">
+          <div class="full-panel-title">${template.title}</div>
+          <button class="full-panel-close" onclick="closeFullPanel()">×</button>
+        </div>
+        <div class="full-panel-content">
+          ${template.content}
+        </div>
+        ${template.footer ? `<div class="full-panel-footer">${template.footer}</div>` : ''}
+      `;
+
+      document.getElementById('modal-overlay').classList.add('active');
+      showPicker = false;
+    }
+
+    function closeFullPanel() {
+      document.getElementById('modal-overlay').classList.remove('active');
+      showPicker = false;
+    }
+
+    function togglePicker() {
+      showPicker = !showPicker;
+      const container = document.getElementById('workspace-picker-container');
+      if (container) {
+        container.innerHTML = showPicker ? workspacePickerHTML : '';
+        if (showPicker) {
+          setTimeout(() => {
+            const input = document.getElementById('picker-search');
+            if (input) input.focus();
+          }, 100);
+        }
+      }
+    }
+
+    function selectWorkspace(name) {
+      alert(`Selected workspace: ${name}\n\nIn the real app, this would insert a link to "${name}" in the editor.`);
+      togglePicker();
+    }
+
+    function createWorkspace() {
+      alert('Creating new workspace...\n\nIn the real app, this would:\n1. Create a new entry\n2. Insert a link to it\n3. Optionally navigate there');
+      togglePicker();
+    }
+
+    function confirmClearRecent() {
+      if (confirm('Clear all recent history?')) {
+        alert('Recent history cleared!\n\nIn the real app, this would clear the recent items list.');
+      }
+    }
+
+    function showHelp() {
+      alert(`Widget Architecture Demo (macOS-style)
+
+DESIGN PRINCIPLES:
+• No window chrome - widgets are pure content
+• Content IS the widget - no headers/footers
+• Labels integrated into content flow
+• Double-click to expand (no explicit buttons)
+
+WIDGET TYPES:
+• Stat widgets: Big number + label (Recent, Reminders)
+• List widgets: Compact item lists (Quick Links)
+• Content widgets: Text preview (Notes)
+• Date widgets: Calendar-style (Calendar)
+
+INTERACTION:
+• Double-click any widget → opens full panel
+• Full panel has interactive features
+• Press Escape or click outside to close
+
+CHAT INTEGRATION:
+Commands like "add link to quick links A" can:
+1. Open the full Quick Links A panel
+2. Show the workspace picker
+3. User selects which workspace to link`);
+    }
+
+    // Close modal on Escape
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeFullPanel();
+      }
+    });
+  </script>
+</body>
+</html>

@@ -95,13 +95,21 @@ class PanelIntentRegistry {
   }
 
   /**
-   * Get intents for visible panels (for LLM prompt)
+   * Get intents for panels (for LLM prompt)
+   * @param visiblePanelIds - If provided, only include these panels. If undefined, include all.
    */
-  getVisibleIntents(): Array<{ manifest: PanelChatManifest; intent: PanelIntent }> {
+  getVisibleIntents(visiblePanelIds?: string[]): Array<{ manifest: PanelChatManifest; intent: PanelIntent }> {
     const result: Array<{ manifest: PanelChatManifest; intent: PanelIntent }> = []
 
+    // Use provided visibility or fallback to all panels
+    const panelFilter = visiblePanelIds ? new Set(visiblePanelIds) : null
+
     for (const manifest of this.manifests.values()) {
-      // Include all registered panels for now (can filter by visibility later)
+      // Filter by visibility if provided
+      if (panelFilter && !panelFilter.has(manifest.panelId)) {
+        continue
+      }
+
       for (const intent of manifest.intents) {
         result.push({ manifest, intent })
       }
@@ -112,13 +120,18 @@ class PanelIntentRegistry {
 
   /**
    * Build LLM prompt section for panel intents
+   * @param visiblePanelIds - If provided, only include intents for these panels
+   * @param focusedPanelId - If provided, prioritize this panel in ambiguous cases
    */
-  buildPromptSection(): string {
-    const intents = this.getVisibleIntents()
+  buildPromptSection(visiblePanelIds?: string[], focusedPanelId?: string | null): string {
+    const intents = this.getVisibleIntents(visiblePanelIds)
 
     if (intents.length === 0) {
       return ''
     }
+
+    // Use parameter or fall back to instance state
+    const effectiveFocusedPanel = focusedPanelId ?? this.focusedPanelId
 
     let prompt = `
 ## Panel Intents
@@ -138,16 +151,28 @@ Available panel intents:
 `
 
     // Group by panel
-    const byPanel = new Map<string, { manifest: PanelChatManifest; intents: PanelIntent[] }>()
+    const byPanel = new Map<string, { manifest: PanelChatManifest; intents: PanelIntent[]; isFocused: boolean }>()
     for (const { manifest, intent } of intents) {
       if (!byPanel.has(manifest.panelId)) {
-        byPanel.set(manifest.panelId, { manifest, intents: [] })
+        byPanel.set(manifest.panelId, {
+          manifest,
+          intents: [],
+          isFocused: manifest.panelId === effectiveFocusedPanel,
+        })
       }
       byPanel.get(manifest.panelId)!.intents.push(intent)
     }
 
-    for (const [panelId, { manifest, intents: panelIntents }] of byPanel) {
-      prompt += `\n### ${manifest.title} (panelId: "${panelId}")\n`
+    // Sort: focused panel first
+    const sortedPanels = Array.from(byPanel.entries()).sort((a, b) => {
+      if (a[1].isFocused && !b[1].isFocused) return -1
+      if (!a[1].isFocused && b[1].isFocused) return 1
+      return 0
+    })
+
+    for (const [panelId, { manifest, intents: panelIntents, isFocused }] of sortedPanels) {
+      const focusMarker = isFocused ? ' [FOCUSED]' : ''
+      prompt += `\n### ${manifest.title} (panelId: "${panelId}")${focusMarker}\n`
 
       for (const intent of panelIntents) {
         prompt += `- **${intent.name}**: ${intent.description}\n`
@@ -162,7 +187,7 @@ Available panel intents:
     prompt += `
 ### Priority Rules
 1. If user explicitly mentions a panel name (e.g., "Quick Links A", "Recent"), use that panel.
-2. If ambiguous between panels, prefer the focused panel: ${this.focusedPanelId || 'none'}.
+2. If ambiguous between panels, prefer the panel marked [FOCUSED]: ${effectiveFocusedPanel || 'none'}.
 3. If still ambiguous, ask for clarification.
 `
 

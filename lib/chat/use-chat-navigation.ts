@@ -579,9 +579,9 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
 
   const selectOption = useCallback(
     async (option: {
-      type: 'workspace' | 'note' | 'entry' | 'confirm_delete' | 'quick_links_panel'
+      type: 'workspace' | 'note' | 'entry' | 'confirm_delete' | 'quick_links_panel' | 'confirm_panel_write'
       id: string
-      data: WorkspaceMatch | NoteMatch | EntryMatch | (WorkspaceMatch & { pendingDelete?: boolean; pendingNewName?: string }) | { panelId: string; badge: string; panelType: 'quick_links' }
+      data: WorkspaceMatch | NoteMatch | EntryMatch | (WorkspaceMatch & { pendingDelete?: boolean; pendingNewName?: string }) | { panelId: string; badge: string; panelType: 'quick_links' } | { panelId: string; intentName: string; params: Record<string, unknown> }
     }): Promise<ChatNavigationResult> => {
       switch (option.type) {
         case 'workspace':
@@ -647,6 +647,23 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
           return {
             success: true,
             message: `Loading Quick Links ${panelData.badge}...`,
+            action: 'selected',
+          }
+        case 'confirm_panel_write':
+          // User confirmed a write panel intent - dispatch event to re-execute with bypass
+          const panelIntentData = option.data as { panelId: string; intentName: string; params: Record<string, unknown> }
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('chat-confirm-panel-write', {
+              detail: {
+                panelId: panelIntentData.panelId,
+                intentName: panelIntentData.intentName,
+                params: panelIntentData.params,
+              },
+            }))
+          }
+          return {
+            success: true,
+            message: 'Executing action...',
             action: 'selected',
           }
         default:

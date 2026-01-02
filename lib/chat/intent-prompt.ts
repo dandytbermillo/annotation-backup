@@ -90,6 +90,9 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
       - quickLinksPanelBadge (optional): panel badge letter (A, B, C, etc.)
       - quickLinksPanelTitle (optional): panel title if mentioned
     IMPORTANT: Panels are identified by badge letters (A, B, C, etc.) or by title.
+    PRIORITY RULE: If user mentions a badge letter (A/B/C/D) AND wants to perform an ACTION
+    (e.g., "add link to quick links C", "clear recent from A"), prefer **panel_intent** instead.
+    Use show_quick_links only for viewing/listing Quick Links content.
 
 15. **preview_file** - User wants to preview a file
     Examples: "preview file docs/README.md", "show file codex/guide.md", "open preview for docs/plan.md"
@@ -291,6 +294,9 @@ export interface ConversationContext {
   lastAssistantQuestion?: string
   sessionState?: SessionState
   pendingOptions?: PendingOption[]  // options from last disambiguation
+  // Panel visibility context (client-side state passed to server)
+  visiblePanels?: string[]          // IDs of currently visible panels
+  focusedPanelId?: string | null    // ID of the focused panel (for priority)
 }
 
 /**
@@ -301,8 +307,11 @@ export function buildIntentMessages(
   userMessage: string,
   context?: ConversationContext
 ): Array<{ role: 'system' | 'user'; content: string }> {
-  // Build system prompt with panel intents
-  const panelIntentsSection = panelRegistry.buildPromptSection()
+  // Build system prompt with panel intents (pass visibility context if available)
+  const panelIntentsSection = panelRegistry.buildPromptSection(
+    context?.visiblePanels,
+    context?.focusedPanelId
+  )
   const systemPrompt = panelIntentsSection
     ? `${INTENT_SYSTEM_PROMPT}\n\n${panelIntentsSection}`
     : INTENT_SYSTEM_PROMPT

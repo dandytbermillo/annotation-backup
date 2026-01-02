@@ -83,4 +83,11 @@ export interface ResolutionContext {
   homeEntryId?: string
   userId: string
   sessionState?: SessionState
+  // For panel write confirmation bypass
+  bypassPanelWriteConfirmation?: boolean
+  pendingPanelIntent?: {
+    panelId: string
+    intentName: string
+    params: Record<string, unknown>
+  }
 }
