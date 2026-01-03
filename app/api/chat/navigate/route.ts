@@ -233,6 +233,13 @@ export async function POST(request: NextRequest) {
         : Promise.resolve(sessionEntryName),
     ])
 
+    // Deterministic fallback: detect preview keywords in raw input
+    // Per panel-intent-registry-plan.md "Routing Precedence":
+    // If raw input includes "list", "preview", "in the chatbox", or "in chat",
+    // force preview mode even if the LLM chose a drawer-style intent.
+    const PREVIEW_KEYWORDS_REGEX = /\b(list|preview)\b|in the chatbox|in chat/i
+    const forcePreviewMode = PREVIEW_KEYWORDS_REGEX.test(userMessage)
+
     const resolutionContext = {
       userId,
       currentEntryId: currentEntryId || undefined,
@@ -240,9 +247,12 @@ export async function POST(request: NextRequest) {
       currentWorkspaceId: currentWorkspaceId || undefined,
       homeEntryId,
       sessionState: conversationContext?.sessionState,
+      visiblePanels: context?.visiblePanels,
       // Panel write confirmation bypass (from confirm_panel_write flow)
       bypassPanelWriteConfirmation: context?.bypassPanelWriteConfirmation,
       pendingPanelIntent: context?.pendingPanelIntent,
+      // Deterministic preview mode fallback
+      forcePreviewMode,
     }
 
     const resolution = await resolveIntent(intent, resolutionContext)

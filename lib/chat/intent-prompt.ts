@@ -143,9 +143,14 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
       - intentName (required): intent within the panel (e.g., "list_recent", "show_links")
       - params (optional): additional parameters for the intent
     Examples:
-      - "show recent" → { "intent": "panel_intent", "args": { "panelId": "recent", "intentName": "list_recent", "params": {} } }
-      - "list recent items" → { "intent": "panel_intent", "args": { "panelId": "recent", "intentName": "list_recent", "params": {} } }
-      - "what did I open recently?" → { "intent": "panel_intent", "args": { "panelId": "recent", "intentName": "list_recent", "params": {} } }
+      - "show recent" → { "intent": "panel_intent", "args": { "panelId": "recent", "intentName": "list_recent", "params": { "mode": "drawer" } } }
+      - "list recent items" → { "intent": "panel_intent", "args": { "panelId": "recent", "intentName": "list_recent", "params": { "mode": "preview" } } }
+      - "list my quick links" → { "intent": "show_quick_links", "args": { } }
+      - "list quick links D" → { "intent": "panel_intent", "args": { "panelId": "quick-links-d", "intentName": "show_links", "params": { "mode": "preview" } } }
+      - "what did I open recently?" → { "intent": "panel_intent", "args": { "panelId": "recent", "intentName": "list_recent", "params": { "mode": "drawer" } } }
+    Routing:
+      - If user says **show/view/display/open + panel**, set params.mode = "drawer"
+      - If user says **preview/list/widget + panel**, set params.mode = "preview"
     NOTE: See Panel Intents section below for all available panel commands.
 
 19. **unsupported** - Request doesn't match any supported intent
@@ -180,7 +185,9 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
 - "did you rename X to Y?" → **verify_action** (verifies specific action details)
 - "the first one", "second option", "last one" (when pendingOptions exists) → **select_option**
 - "the one from X", "the workspace with Y" (when pendingOptions exists) → **select_option**
-- "quick links", "my quick links", "show quick links", "view quick links", "display quick links" → **show_quick_links**
+- "show/view/display/open quick links" → **show_quick_links**
+- "preview/list/widget quick links" → **show_quick_links** (no badge) so the system can disambiguate panels
+- "preview/list/widget quick links D" → **panel_intent** with intentName="show_links" and params.mode = "preview"
 
 ## Typo Tolerance
 
@@ -260,6 +267,8 @@ export interface SessionState {
   currentWorkspaceId?: string
   currentWorkspaceName?: string
   currentViewMode?: 'dashboard' | 'workspace'
+  // Last selected Quick Links badge (for default panel selection)
+  lastQuickLinksBadge?: string
   lastAction?: {
     type: 'open_workspace' | 'open_entry' | 'rename_workspace' | 'delete_workspace' | 'create_workspace' | 'go_to_dashboard' | 'go_home'
     workspaceId?: string

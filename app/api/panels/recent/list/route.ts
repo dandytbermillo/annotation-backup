@@ -15,6 +15,8 @@ interface RecentItem {
   name: string
   parentName?: string
   accessedAt: string
+  entryId?: string
+  dashboardId?: string
 }
 
 export async function POST(request: NextRequest) {
@@ -34,9 +36,13 @@ export async function POST(request: NextRequest) {
     // Query recent entries (from items table)
     if (typeFilter === 'all' || typeFilter === 'entry') {
       const entriesResult = await serverPool.query(
-        `SELECT i.id, i.name, i.last_accessed_at, p.name as parent_name
+        `SELECT i.id, i.name, i.last_accessed_at, p.name as parent_name, nw.id as dashboard_id
          FROM items i
          LEFT JOIN items p ON i.parent_id = p.id
+         LEFT JOIN note_workspaces nw
+           ON nw.item_id = i.id
+          AND nw.user_id = $1
+          AND nw.is_default = true
          WHERE i.user_id = $1
            AND i.type = 'note'
            AND i.deleted_at IS NULL
@@ -53,6 +59,8 @@ export async function POST(request: NextRequest) {
           name: row.name,
           parentName: row.parent_name || undefined,
           accessedAt: row.last_accessed_at,
+          entryId: row.id,
+          dashboardId: row.dashboard_id || undefined,
         })
       }
     }
@@ -60,7 +68,7 @@ export async function POST(request: NextRequest) {
     // Query recent workspaces (from note_workspaces table)
     if (typeFilter === 'all' || typeFilter === 'workspace') {
       const workspacesResult = await serverPool.query(
-        `SELECT nw.id, nw.name, nw.updated_at as accessed_at, i.name as entry_name
+        `SELECT nw.id, nw.name, nw.updated_at as accessed_at, i.name as entry_name, i.id as entry_id
          FROM note_workspaces nw
          JOIN items i ON nw.item_id = i.id
          WHERE nw.user_id = $1
@@ -78,6 +86,7 @@ export async function POST(request: NextRequest) {
           name: row.name,
           parentName: row.entry_name || undefined,
           accessedAt: row.accessed_at,
+          entryId: row.entry_id,
         })
       }
     }
@@ -94,9 +103,13 @@ export async function POST(request: NextRequest) {
       success: true,
       items: finalItems.map(item => ({
         id: item.id,
-        type: item.type === 'entry' ? 'note' : 'link',
+        type: item.type,
         title: item.name,
+        name: item.name,
         subtitle: item.parentName,
+        entryId: item.entryId,
+        workspaceId: item.type === 'workspace' ? item.id : undefined,
+        dashboardId: item.dashboardId,
         data: {
           itemType: item.type,
           id: item.id,

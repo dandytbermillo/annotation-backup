@@ -398,6 +398,37 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
   )
 
   // ---------------------------------------------------------------------------
+  // Open Panel Drawer (Widget Architecture)
+  // ---------------------------------------------------------------------------
+
+  const openPanelDrawer = useCallback(
+    (panelId: string): ChatNavigationResult => {
+      try {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('open-panel-drawer', {
+            detail: { panelId },
+          }))
+        }
+
+        return {
+          success: true,
+          message: 'Opening panel...',
+          action: 'navigated',
+        }
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error))
+        onError?.(err)
+        return {
+          success: false,
+          message: `Failed to open panel: ${err.message}`,
+          action: 'error',
+        }
+      }
+    },
+    [onError]
+  )
+
+  // ---------------------------------------------------------------------------
   // Execute Action (from resolution result)
   // ---------------------------------------------------------------------------
 
@@ -561,6 +592,17 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
             action: 'informed',
           }
 
+        // Widget Architecture: Open panel in drawer
+        case 'open_panel_drawer':
+          if (resolution.panelId) {
+            return openPanelDrawer(resolution.panelId)
+          }
+          return {
+            success: false,
+            message: 'No panel specified to open',
+            action: 'error',
+          }
+
         case 'error':
         default:
           return {
@@ -570,7 +612,7 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
           }
       }
     },
-    [navigateToWorkspace, navigateToNote, createWorkspace, goToDashboard, goHome]
+    [navigateToWorkspace, navigateToNote, createWorkspace, goToDashboard, goHome, openPanelDrawer]
   )
 
   // ---------------------------------------------------------------------------
@@ -675,37 +717,6 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
       }
     },
     [navigateToWorkspace, navigateToNote, deleteWorkspace, renameWorkspace]
-  )
-
-  // ---------------------------------------------------------------------------
-  // Open Panel Drawer (Widget Architecture)
-  // ---------------------------------------------------------------------------
-
-  const openPanelDrawer = useCallback(
-    (panelId: string): ChatNavigationResult => {
-      try {
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('open-panel-drawer', {
-            detail: { panelId },
-          }))
-        }
-
-        return {
-          success: true,
-          message: 'Opening panel...',
-          action: 'navigated',
-        }
-      } catch (error) {
-        const err = error instanceof Error ? error : new Error(String(error))
-        onError?.(err)
-        return {
-          success: false,
-          message: `Failed to open panel: ${err.message}`,
-          action: 'error',
-        }
-      }
-    },
-    [onError]
   )
 
   return {

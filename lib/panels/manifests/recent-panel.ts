@@ -27,6 +27,12 @@ export const recentPanelManifest: PanelChatManifest = {
         'my recent',
       ],
       paramsSchema: {
+        mode: {
+          type: 'string',
+          required: false,
+          description: 'Display mode: "drawer" or "preview"',
+          default: 'drawer',
+        },
         limit: {
           type: 'number',
           required: false,

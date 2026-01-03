@@ -83,6 +83,7 @@ export interface ResolutionContext {
   homeEntryId?: string
   userId: string
   sessionState?: SessionState
+  visiblePanels?: string[]
   // For panel write confirmation bypass
   bypassPanelWriteConfirmation?: boolean
   pendingPanelIntent?: {
@@ -90,4 +91,8 @@ export interface ResolutionContext {
     intentName: string
     params: Record<string, unknown>
   }
+  // Deterministic fallback: force preview mode when raw input contains
+  // "list", "preview", "in the chatbox", or "in chat" keywords
+  // (per panel-intent-registry-plan.md Routing Precedence)
+  forcePreviewMode?: boolean
 }

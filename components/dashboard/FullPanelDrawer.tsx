@@ -102,7 +102,7 @@ export function FullPanelDrawer({
   }, [panel, onDelete, onClose])
 
   // Get panel title for drawer header
-  const getPanelTitle = () => {
+  const getPanelTitle = (): React.ReactNode => {
     if (!panel) return 'Panel'
     if (panel.title) return panel.title
     // Generate title based on panel type
@@ -111,7 +111,9 @@ export function FullPanelDrawer({
         return 'Recent'
       case 'links_note':
       case 'links_note_tiptap':
-        return panel.badge ? `Quick Links ${panel.badge}` : 'Quick Links'
+        return panel.badge ? (
+          <>Quick Links <span className="text-indigo-400">{panel.badge}</span></>
+        ) : 'Quick Links'
       case 'continue':
         return 'Continue'
       case 'quick_capture':
@@ -189,6 +191,7 @@ export function FullPanelDrawer({
         <div className="flex-1 overflow-y-auto p-5">
           {panel && (
             <DashboardPanelRenderer
+              key={panel.id}
               panel={panel}
               onClose={onClose}
               onConfigChange={handleConfigChange}

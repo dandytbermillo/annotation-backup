@@ -92,7 +92,14 @@ export interface PanelIntentResult {
     id: string
     type: string
     title?: string
+    name?: string
     subtitle?: string
+    meta?: string
+    isSelectable?: boolean
+    entryId?: string
+    workspaceId?: string
+    dashboardId?: string
+    filePath?: string
     url?: string
     data?: Record<string, unknown>
   }>

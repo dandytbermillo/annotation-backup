@@ -95,9 +95,6 @@ export function QuickLinksWidget({
     return parseLinksFromContent(config.content)
   }, [config.content])
 
-  // Generate label
-  const label = badge ? `QUICK LINKS ${badge}` : 'QUICK LINKS'
-
   return (
     <BaseWidget
       panel={panel}
@@ -105,7 +102,9 @@ export function QuickLinksWidget({
       isActive={isActive}
       onMouseDown={onMouseDown}
     >
-      <WidgetLabel>{label}</WidgetLabel>
+      <WidgetLabel>
+        QUICK LINKS{badge && <span className="text-indigo-400 ml-1">{badge}</span>}
+      </WidgetLabel>
 
       {links.length === 0 ? (
         <WidgetEmpty>No links yet</WidgetEmpty>

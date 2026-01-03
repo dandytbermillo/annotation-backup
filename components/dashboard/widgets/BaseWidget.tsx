@@ -65,21 +65,17 @@ export const BaseWidget = forwardRef<HTMLDivElement, BaseWidgetProps>(
           // Base layout
           'relative w-full h-full rounded-2xl p-4 cursor-pointer select-none overflow-hidden',
           'transition-all duration-300 ease-out',
-          // Glassmorphism background with subtle gradient
-          'bg-gradient-to-br from-[#1c2028]/95 via-[#1e232b]/95 to-[#1a1e26]/95',
-          'backdrop-blur-xl',
-          // Border with top highlight (frosted glass effect)
-          'border border-white/[0.08]',
-          'before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-gradient-to-r',
-          'before:from-transparent before:via-white/20 before:to-transparent',
-          // Soft ambient shadow (always present)
-          'shadow-[0_4px_24px_rgba(0,0,0,0.25),0_1px_3px_rgba(0,0,0,0.15)]',
-          // Hover effects - subtle glow
-          'hover:border-white/[0.15]',
-          'hover:shadow-[0_8px_40px_rgba(99,102,241,0.12),0_4px_20px_rgba(0,0,0,0.3)]',
+          // Glassmorphism background
+          'bg-slate-800/90 backdrop-blur-xl',
+          // Border
+          'border border-white/10',
+          // Soft ambient shadow
+          'shadow-lg shadow-black/20',
+          // Hover effects
+          'hover:border-indigo-500/30 hover:shadow-xl hover:shadow-indigo-500/10',
           'hover:scale-[1.01]',
           // Active press effect
-          'active:scale-[0.99] active:shadow-[0_2px_16px_rgba(0,0,0,0.3)]',
+          'active:scale-[0.99]',
           // Active selection state
           isActive && 'ring-1 ring-indigo-500/40 border-indigo-500/30',
           // Size variant
@@ -90,6 +86,11 @@ export const BaseWidget = forwardRef<HTMLDivElement, BaseWidgetProps>(
         onMouseDown={onMouseDown}
         data-panel-id={panel.id}
         data-panel-type={panel.panelType}
+        style={{
+          // Fallback inline styles for gradient + top highlight
+          background: 'linear-gradient(135deg, rgba(30,34,43,0.95) 0%, rgba(26,30,38,0.95) 100%)',
+          boxShadow: '0 4px 24px rgba(0,0,0,0.25), 0 1px 3px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.06)',
+        }}
       >
         {/* Inner content wrapper for z-index stacking */}
         <div className="relative z-10 h-full flex flex-col">

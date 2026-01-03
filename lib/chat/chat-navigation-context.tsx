@@ -52,6 +52,9 @@ export interface ChatMessage {
   viewPanelContent?: ViewPanelContent
   previewItems?: ViewListItem[]
   totalCount?: number
+  // Drawer target for "Show all" when panel preview maps to a panel
+  drawerPanelId?: string
+  drawerPanelTitle?: string
 }
 
 // Re-export SessionState for convenience
@@ -84,6 +87,7 @@ interface ChatNavigationContextValue {
   setCurrentLocation: (viewMode: 'dashboard' | 'workspace', entryId?: string, entryName?: string, workspaceId?: string, workspaceName?: string) => void
   setLastAction: (action: LastAction) => void
   incrementOpenCount: (id: string, name: string, type: 'workspace' | 'entry') => void
+  setLastQuickLinksBadge: (badge: string) => void
   // Persistence
   conversationId: string | null
   isLoadingHistory: boolean
@@ -215,7 +219,11 @@ async function clearConversation(conversationId: string): Promise<boolean> {
 
 async function fetchSessionState(
   conversationId: string
-): Promise<{ openCounts?: SessionState['openCounts']; lastAction?: LastAction } | null> {
+): Promise<{
+  openCounts?: SessionState['openCounts']
+  lastAction?: LastAction
+  lastQuickLinksBadge?: SessionState['lastQuickLinksBadge']
+} | null> {
   try {
     const response = await fetch(`/api/chat/session-state?conversationId=${conversationId}`)
     if (!response.ok) return null
@@ -228,7 +236,11 @@ async function fetchSessionState(
 
 async function persistSessionState(
   conversationId: string,
-  sessionState: { openCounts?: SessionState['openCounts']; lastAction?: LastAction }
+  sessionState: {
+    openCounts?: SessionState['openCounts']
+    lastAction?: LastAction
+    lastQuickLinksBadge?: SessionState['lastQuickLinksBadge']
+  }
 ): Promise<boolean> {
   try {
     const response = await fetch(`/api/chat/session-state/${conversationId}`, {
@@ -290,7 +302,11 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
   // Debounce refs for session state persistence
   const DEBOUNCE_MS = 1000
   const persistDebounceRef = useRef<NodeJS.Timeout | null>(null)
-  const pendingSessionStateRef = useRef<{ openCounts?: SessionState['openCounts']; lastAction?: LastAction } | null>(null)
+  const pendingSessionStateRef = useRef<{
+    openCounts?: SessionState['openCounts']
+    lastAction?: LastAction
+    lastQuickLinksBadge?: SessionState['lastQuickLinksBadge']
+  } | null>(null)
 
   // Flush pending session state (called on debounce timeout or unload)
   const flushSessionState = useCallback(async (convId: string) => {
@@ -304,7 +320,11 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
   // Debounced persist: batches rapid updates into single write
   const debouncedPersistSessionState = useCallback((
     convId: string,
-    newState: { openCounts?: SessionState['openCounts']; lastAction?: LastAction }
+    newState: {
+      openCounts?: SessionState['openCounts']
+      lastAction?: LastAction
+      lastQuickLinksBadge?: SessionState['lastQuickLinksBadge']
+    }
   ) => {
     // Merge with any pending state
     pendingSessionStateRef.current = {
@@ -347,6 +367,7 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
             ...prev,
             lastAction: ssData.lastAction ?? undefined,
             openCounts: ssData.openCounts ?? undefined,
+            lastQuickLinksBadge: ssData.lastQuickLinksBadge ?? undefined,
           }))
         }
 
@@ -548,6 +569,18 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     })
   }, [conversationId, debouncedPersistSessionState])
 
+  const setLastQuickLinksBadge = useCallback((badge: string) => {
+    if (!badge) return
+    const normalizedBadge = badge.toLowerCase()
+    setSessionState((prev) => ({
+      ...prev,
+      lastQuickLinksBadge: normalizedBadge,
+    }))
+    if (conversationId) {
+      debouncedPersistSessionState(conversationId, { lastQuickLinksBadge: normalizedBadge })
+    }
+  }, [conversationId, debouncedPersistSessionState])
+
   // Panel visibility setters (Gap 2)
   const setVisiblePanels = useCallback((panelIds: string[]) => {
     setVisiblePanelsState(panelIds)
@@ -587,6 +620,7 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         setCurrentLocation,
         setLastAction,
         incrementOpenCount,
+        setLastQuickLinksBadge,
         conversationId,
         isLoadingHistory,
         hasMoreMessages,

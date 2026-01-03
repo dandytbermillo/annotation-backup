@@ -77,12 +77,74 @@ When user input could match core + panel intents:
 
 Core intents always remain available for non‑panel commands.
 
+### Quick Links Disambiguation
+- If the user asks for “quick links” **without a badge** and **multiple Quick Links panels are visible** (A/B/C/D), **ask which panel**.
+  - Example: “Which Quick Links panel do you want — A, B, C, or D?”
+- If **only one** Quick Links panel is visible, use it without asking.
+
+### Default Quick Links Panel (Persisted)
+- Remember the **last selected Quick Links badge** (A/B/C/D) and reuse it as the default for
+  “list my quick links” across reloads.
+- If the remembered badge is **not visible**, fall back to disambiguation.
+
+---
+
+## Routing Defaults (Drawer vs Chat Preview)
+To keep panel interactions consistent with the dashboard widgets:
+
+- **Default:** “show/view/display/open + panel name” → **open the panel drawer** (same as double‑clicking the widget).
+  - Examples: “show recents”, “show quick links D”, “view quick links”
+- **Explicit preview:** “preview/list/widget + panel name” → **chat preview** (summary/partial list).
+  - Examples: “preview recents”, “list quick links”, “show recents widget”
+- **Preview override (always wins):** if the user mentions **list / preview / in the chatbox / in chat**, force **preview mode** even if the message also includes “show/display/open”.
+- **Follow‑up:** “show all” after a preview → **open the panel drawer** for that panel.
+- **Pronoun follow‑up:** “display it in the chatbox” (or “show it in chat”) uses the **last panel preview/drawer** as the target.
+  - If no prior panel context exists, ask: “Which panel should I display in the chatbox — Recent or Quick Links?”
+
+This avoids two different “full list” experiences and keeps panel commands aligned with widget behavior.
+
+### Routing Precedence (Deterministic Fallback)
+- If raw input includes **list / preview / in the chatbox / in chat**, force `params.mode = "preview"` even if the LLM chose a drawer‑style intent.
+- “show/display/open” only route to drawer **when preview keywords are absent**.
+
+Examples:
+- “list quick links D” → `panel_intent` + `mode: "preview"`
+- “display the recent items list in the chatbox” → `panel_intent` + `mode: "preview"`
+- “show quick links D” → drawer
+
 ---
 
 ## Validation & Safety
 - Strict schema validation for `panel_intent` args.
 - Permission check before executing (`read` vs `write`).
 - If panel not found or intent unknown → return supported actions.
+
+---
+
+## Chat Output Contract (Required for Third‑Party Panels)
+To keep chat previews and actions consistent across all panels, panel handlers must return data in a uniform shape.
+
+### Required Fields (for list-style results)
+- `items[]`: array of list items with:
+  - `id` (string, stable)
+  - `name` (string, user‑friendly label)
+  - `type` (one of: `link`, `entry`, `workspace`, `note`, `file`)
+  - `meta` (optional subtitle text)
+  - `isSelectable` (optional, false for non-clickable items)
+  - Navigation fields (required for clickable items):
+    - `entryId` (string) when the item opens an entry dashboard
+    - `workspaceId` (string) when the item opens a workspace
+    - `dashboardId` (string) when the item is an entry link (dashboard workspace id)
+
+### Required Fields (for the response envelope)
+- `title`: string shown in the chat preview header
+- `subtitle`: optional string shown under the title
+- `message`: short summary line for the chat bubble
+
+### Behavior Rules
+- If an item is clickable, include the navigation fields so the chat preview can navigate.
+- Never substitute IDs for names; `name` must be user-friendly.
+- Non-list result types (text, note, file, etc.) must still include `title` and `message`.
 
 ---
 
@@ -133,6 +195,8 @@ Router → `api:/api/panels/taskboard/list_tasks` → returns viewPanelContent �
 - “show recents” routes to Recent panel intent when visible.
 - Two panels match → clarification.
 - Custom panel manifest rejected if version unsupported.
+- “display it in the chatbox” with prior panel context → preview for that panel.
+- “display it in the chatbox” with no context → clarification prompt.
 
 ---
 

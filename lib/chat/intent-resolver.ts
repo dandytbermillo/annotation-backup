@@ -51,6 +51,7 @@ export interface IntentResolutionResult {
     | 'clarify_type'   // Entry vs workspace type conflict
     | 'inform'
     | 'show_view_panel'
+    | 'open_panel_drawer'  // Open panel in right-side drawer (Widget Architecture)
     | 'error'
 
   // For navigate_workspace
@@ -113,6 +114,10 @@ export interface IntentResolutionResult {
     intentName: string
     params: Record<string, unknown>
   }
+
+  // For open_panel_drawer (Widget Architecture)
+  panelId?: string
+  panelTitle?: string
 
   // Message to display
   message: string
@@ -1170,42 +1175,22 @@ function formatLastActionSummary(lastAction: NonNullable<ResolutionContext['sess
 // =============================================================================
 
 /**
- * Resolve show_quick_links intent - display Quick Links panel content in view panel
+ * Resolve show_quick_links intent - open Quick Links panel in drawer
  *
- * Gap 3 Reroute: When a badge is specified, reroute to panel_intent for consistency.
- * This ensures all Quick Links operations go through the panel manifest system.
+ * Widget Architecture: Opens the panel drawer instead of view panel.
+ * This shows the full TipTap editor which displays correct workspace names.
+ *
+ * Exception: If forcePreviewMode is set (user said "list", "preview", etc.),
+ * redirect to panel_intent with mode='preview' to show chat preview instead.
  */
 async function resolveShowQuickLinks(
   intent: IntentResponse,
   context: ResolutionContext
 ): Promise<IntentResolutionResult> {
-  const { quickLinksPanelBadge, quickLinksPanelTitle } = intent.args
+  const { quickLinksPanelBadge } = intent.args
 
-  // Gap 3: Reroute to panel_intent when badge is specified
-  // This ensures consistency with the panel manifest system
-  if (quickLinksPanelBadge) {
-    const badge = quickLinksPanelBadge.toLowerCase()
-    // Only reroute for valid badges (a, b, c, d)
-    if (['a', 'b', 'c', 'd'].includes(badge)) {
-      const panelId = `quick-links-${badge}`
-      // Check if this panel has a 'show_links' intent registered (matches manifest)
-      const match = panelRegistry.findIntent({ panelId, intentName: 'show_links', params: {} })
-      if (match) {
-        // Reroute to panel_intent
-        return resolvePanelIntent(
-          {
-            intent: 'panel_intent',
-            args: {
-              panelId,
-              intentName: 'show_links',
-              params: {},
-            },
-          },
-          context
-        )
-      }
-    }
-  }
+  // Note: forcePreviewMode is applied AFTER disambiguation (at the end of this function)
+  // Per plan: "list my quick links" without badge should ask which panel when multiple exist
 
   if (!context.currentEntryId) {
     return {
@@ -1269,8 +1254,20 @@ async function resolveShowQuickLinks(
     }
   }
 
-  // If multiple panels and no specific badge requested, list them
-  if (panelsResult.rows.length > 1 && !quickLinksPanelBadge) {
+  // If multiple panels and no specific badge requested, prefer last-selected badge
+  let preferredPanel: typeof panelsResult.rows[0] | null = null
+  if (panelsResult.rows.length > 1 && !quickLinksPanelBadge && context.sessionState?.lastQuickLinksBadge) {
+    const preferredBadge = context.sessionState.lastQuickLinksBadge.toLowerCase()
+    const isVisible = !context.visiblePanels || context.visiblePanels.includes(`quick-links-${preferredBadge}`)
+    if (isVisible) {
+      preferredPanel = panelsResult.rows.find((p) =>
+        (p.badge || '').toLowerCase() === preferredBadge
+      ) || null
+    }
+  }
+
+  // If multiple panels and no preferred match, list them
+  if (panelsResult.rows.length > 1 && !quickLinksPanelBadge && !preferredPanel) {
     const panels = panelsResult.rows
     return {
       success: true,
@@ -1286,45 +1283,34 @@ async function resolveShowQuickLinks(
     }
   }
 
-  // Single panel found - build view content
-  const panel = panelsResult.rows[0]
+  // Single panel found (or preferred panel selected)
+  const panel = preferredPanel || panelsResult.rows[0]
+  const panelTitle = panel.badge ? `Quick Links ${panel.badge}` : 'Quick Links'
+  const badge = (panel.badge || 'a').toLowerCase()
 
-  // Require contentJson (annotation-style JSON parsing)
-  // HTML fallback was removed - panels must have contentJson
-  const contentJson = panel.config?.contentJson
-  if (!contentJson) {
-    return {
-      success: false,
-      action: 'error',
-      message: `Quick Links panel ${panel.badge || ''} needs to be re-saved. Please open the panel in the editor and save it.`.trim(),
-    }
+  // If forcePreviewMode is set (user said "list", "preview", etc.),
+  // redirect to panel_intent with mode='preview' for chat preview
+  if (context.forcePreviewMode) {
+    return resolvePanelIntent(
+      {
+        intent: 'panel_intent',
+        args: {
+          panelId: `quick-links-${badge}`,
+          intentName: 'show_links',
+          params: { mode: 'preview' },
+        },
+      },
+      context
+    )
   }
 
-  // Parse the Quick Links content to extract items
-  const viewItems = buildQuickLinksViewItems(panel.id, contentJson)
-
-  const linkCount = viewItems.filter((i) => i.type === 'link').length
-  const noteCount = viewItems.filter((i) => i.type === 'note').length
-
-  const viewPanelContent: ViewPanelContent = {
-    type: ViewContentType.MIXED_LIST,
-    title: `Quick Links ${panel.badge || ''}`.trim(),
-    subtitle: `${linkCount} link${linkCount !== 1 ? 's' : ''} · ${noteCount} note${noteCount !== 1 ? 's' : ''}`,
-    items: viewItems,
-    sourceIntent: 'show_quick_links',
-  }
-
-  // Prepare preview items (first 3)
-  const previewItems = viewItems.slice(0, 3)
-
+  // Default: open in drawer (Widget Architecture)
   return {
     success: true,
-    action: 'show_view_panel',
-    viewPanelContent,
-    showInViewPanel: false,  // Don't auto-open; user clicks "Show all" to open
-    previewItems,
-    totalCount: viewItems.length,
-    message: `Found ${viewItems.length} items in Quick Links ${panel.badge || ''}`,
+    action: 'open_panel_drawer',
+    panelId: panel.id,
+    panelTitle,
+    message: `Opening ${panelTitle}...`,
   }
 }
 
@@ -1604,8 +1590,113 @@ async function resolvePanelIntent(
     }
   }
 
+  let resolvedIntentName = intentName
+  let resolvedParams = params || {}
+
+  // Deterministic fallback: if user asked to list/preview quick links and the LLM
+  // returned an unknown intentName, coerce to show_links in preview mode.
+  if (context.forcePreviewMode && panelId.startsWith('quick-links-') && intentName !== 'show_links') {
+    resolvedIntentName = 'show_links'
+    resolvedParams = {
+      ...resolvedParams,
+      mode: 'preview',
+    }
+  }
+
+  const requestedMode = typeof resolvedParams?.mode === 'string' ? resolvedParams.mode : undefined
+  const isListDrawerCandidate =
+    (panelId === 'recent' && resolvedIntentName === 'list_recent') ||
+    (panelId.startsWith('quick-links-') && resolvedIntentName === 'show_links')
+
+  // Resolve panel instance for drawer usage (current entry dashboard)
+  const resolveDrawerPanelTarget = async (): Promise<{ panelId: string; panelTitle: string } | null> => {
+    if (!context.currentEntryId) return null
+
+    const dashboardResult = await serverPool.query(
+      `SELECT id FROM note_workspaces
+       WHERE item_id = $1 AND user_id = $2 AND is_default = true
+       LIMIT 1`,
+      [context.currentEntryId, context.userId]
+    )
+
+    if (dashboardResult.rows.length === 0) return null
+
+    const dashboardWorkspaceId = dashboardResult.rows[0].id
+
+    if (panelId === 'recent') {
+      const recentResult = await serverPool.query(
+        `SELECT id, title
+         FROM workspace_panels
+         WHERE workspace_id = $1
+           AND panel_type = 'recent'
+           AND deleted_at IS NULL
+         ORDER BY created_at ASC
+         LIMIT 1`,
+        [dashboardWorkspaceId]
+      )
+
+      if (recentResult.rows.length === 0) return null
+
+      return {
+        panelId: recentResult.rows[0].id,
+        panelTitle: recentResult.rows[0].title || 'Recent Items',
+      }
+    }
+
+    if (panelId.startsWith('quick-links-')) {
+      const badge = panelId.replace('quick-links-', '')
+      const quickLinksResult = await serverPool.query(
+        `SELECT id, title, badge
+         FROM workspace_panels
+         WHERE workspace_id = $1
+           AND panel_type IN ('links_note', 'links_note_tiptap')
+           AND UPPER(badge) = UPPER($2)
+           AND deleted_at IS NULL
+         ORDER BY created_at ASC
+         LIMIT 1`,
+        [dashboardWorkspaceId, badge]
+      )
+
+      if (quickLinksResult.rows.length === 0) return null
+
+      const row = quickLinksResult.rows[0]
+      const panelTitle = row.title || (row.badge ? `Quick Links ${row.badge}` : 'Quick Links')
+
+      return {
+        panelId: row.id,
+        panelTitle,
+      }
+    }
+
+    return null
+  }
+
+  // Default to drawer for list-style panel intents unless:
+  // - explicitly previewed (mode === 'preview'), OR
+  // - forcePreviewMode is set (user said "list", "preview", "in the chatbox", etc.)
+  const shouldOpenDrawer = isListDrawerCandidate &&
+    requestedMode !== 'preview' &&
+    !context.forcePreviewMode
+
+  if (shouldOpenDrawer) {
+    const drawerTarget = await resolveDrawerPanelTarget()
+    if (drawerTarget) {
+      return {
+        success: true,
+        action: 'open_panel_drawer',
+        panelId: drawerTarget.panelId,
+        panelTitle: drawerTarget.panelTitle,
+        message: `Opening ${drawerTarget.panelTitle}...`,
+      }
+    }
+  }
+
   // Check if this is a write intent that needs confirmation
-  const match = panelRegistry.findIntent({ panelId, intentName, params: params || {} })
+  const match = panelRegistry.findIntent({
+    panelId,
+    intentName: resolvedIntentName,
+    params: resolvedParams || {},
+  })
 
   if (match && match.intent.permission === 'write') {
     // Check if confirmation is bypassed (user already confirmed)
@@ -1618,30 +1709,30 @@ async function resolvePanelIntent(
       return {
         success: true,
         action: 'confirm_panel_write',
-        pendingPanelIntent: {
-          panelId,
-          intentName,
-          params: params || {},
+      pendingPanelIntent: {
+        panelId,
+        intentName: resolvedIntentName,
+        params: resolvedParams || {},
+      },
+      options: [
+        {
+          type: 'confirm_panel_write' as const,
+          id: 'confirm',
+          label: '✓ Confirm',
+          sublabel: match.intent.description,
+          data: { panelId, intentName: resolvedIntentName, params: resolvedParams || {} },
         },
-        options: [
-          {
-            type: 'confirm_panel_write' as const,
-            id: 'confirm',
-            label: '✓ Confirm',
-            sublabel: match.intent.description,
-            data: { panelId, intentName, params: params || {} },
-          },
-        ],
-        message: `This action will modify data: "${match.intent.description}". Continue?`,
-      }
+      ],
+      message: `This action will modify data: "${match.intent.description}". Continue?`,
     }
+  }
   }
 
   // Execute the panel intent via the registry
   const result = await executePanelIntent({
     panelId,
-    intentName,
-    params: params || {},
+    intentName: resolvedIntentName,
+    params: resolvedParams || {},
   })
 
   if (!result.success) {
@@ -1654,21 +1745,29 @@ async function resolvePanelIntent(
 
   // Handle different result types from panel handlers
   if (result.items && Array.isArray(result.items)) {
+    const drawerTarget = isListDrawerCandidate ? await resolveDrawerPanelTarget() : null
     // Transform panel items to ViewListItem format
     const viewItems: ViewListItem[] = result.items.map(item => ({
       id: item.id,
-      name: item.title || item.id,
+      name: item.title ?? item.name ?? item.id,
       type: (item.type === 'link' || item.type === 'note' || item.type === 'entry' ||
              item.type === 'workspace' || item.type === 'file')
         ? item.type
         : 'note' as const,
-      meta: item.subtitle,
+      meta: item.subtitle ?? item.meta,
+      isSelectable: item.isSelectable,
+      entryId: item.entryId,
+      workspaceId: item.workspaceId,
+      dashboardId: item.dashboardId,
+      filePath: item.filePath,
     }))
 
     // Panel returned a list of items - show in view panel
     return {
       success: true,
       action: 'show_view_panel',
+      panelId: drawerTarget?.panelId,
+      panelTitle: drawerTarget?.panelTitle,
       viewPanelContent: {
         type: ViewContentType.MIXED_LIST,
         title: result.title || `${panelId} results`,

@@ -134,6 +134,12 @@ function parseOrdinal(input: string): number | null {
   return null
 }
 
+function extractQuickLinksBadge(title?: string): string | null {
+  if (!title) return null
+  const match = title.match(/quick\s*links?\s*([a-z])/i)
+  return match ? match[1].toLowerCase() : null
+}
+
 /**
  * Pending option stored in chat state
  */
@@ -155,6 +161,8 @@ interface LastPreviewState {
   totalCount: number
   messageId: string
   createdAt: number
+  drawerPanelId?: string
+  drawerPanelTitle?: string
 }
 
 /**
@@ -405,6 +413,7 @@ function ChatNavigationPanelContent({
     sessionState,
     setLastAction,
     incrementOpenCount,
+    setLastQuickLinksBadge,
     // Persistence
     isLoadingHistory,
     hasMoreMessages,
@@ -417,7 +426,7 @@ function ChatNavigationPanelContent({
     focusedPanelId,
   } = useChatNavigationContext()
 
-  const { executeAction, selectOption } = useChatNavigation({
+  const { executeAction, selectOption, openPanelDrawer } = useChatNavigation({
     onNavigationComplete: () => {
       onNavigationComplete?.()
       setOpen(false)
@@ -477,6 +486,7 @@ function ChatNavigationPanelContent({
 
       setIsLoading(true)
       try {
+        setLastQuickLinksBadge(badge)
         const entryId = currentEntryId ?? getActiveEntryContext() ?? undefined
         const workspaceId = currentWorkspaceId ?? getActiveWorkspaceContext() ?? undefined
 
@@ -507,6 +517,8 @@ function ChatNavigationPanelContent({
           viewPanelContent: resolution.viewPanelContent,
           previewItems: resolution.previewItems,
           totalCount: resolution.totalCount,
+          drawerPanelId: resolution.panelId,
+          drawerPanelTitle: resolution.panelTitle,
         }
         addMessage(assistantMessage)
 
@@ -518,6 +530,8 @@ function ChatNavigationPanelContent({
             totalCount: resolution.totalCount || resolution.previewItems.length,
             messageId: assistantMessage.id,
             createdAt: Date.now(),
+            drawerPanelId: resolution.panelId,
+            drawerPanelTitle: resolution.panelTitle,
           })
         }
 
@@ -543,7 +557,7 @@ function ChatNavigationPanelContent({
     return () => {
       window.removeEventListener('chat-select-quick-links-panel', handleQuickLinksSelection as unknown as EventListener)
     }
-  }, [currentEntryId, currentWorkspaceId, sessionState, executeAction, addMessage, openPanel])
+  }, [currentEntryId, currentWorkspaceId, sessionState, executeAction, addMessage, openPanel, setLastQuickLinksBadge])
 
   // Handle panel write confirmation (from confirm_panel_write pill)
   useEffect(() => {
@@ -627,6 +641,13 @@ function ChatNavigationPanelContent({
         // Check if this is a pending delete selection (disambiguation for delete)
         const workspaceData = option.data as WorkspaceMatch & { pendingDelete?: boolean }
         const isPendingDelete = option.type === 'workspace' && workspaceData.pendingDelete
+
+        if (option.type === 'quick_links_panel') {
+          const panelData = option.data as { badge?: string }
+          if (panelData.badge) {
+            setLastQuickLinksBadge(panelData.badge)
+          }
+        }
 
         const result = await selectOption({
           type: option.type,
@@ -730,7 +751,7 @@ function ChatNavigationPanelContent({
         setIsLoading(false)
       }
     },
-    [selectOption, addMessage, setLastAction]
+    [selectOption, addMessage, setLastAction, setLastQuickLinksBadge]
   )
 
   // ---------------------------------------------------------------------------
@@ -767,7 +788,11 @@ function ChatNavigationPanelContent({
           metadata: { source: lastPreview.source, totalCount: lastPreview.totalCount, method: 'heuristic' },
         })
 
-        openPanel(lastPreview.viewPanelContent)
+        if (lastPreview.drawerPanelId) {
+          openPanelDrawer(lastPreview.drawerPanelId)
+        } else {
+          openPanel(lastPreview.viewPanelContent)
+        }
 
         const assistantMessage: ChatMessage = {
           id: `assistant-${Date.now()}`,
@@ -804,7 +829,11 @@ function ChatNavigationPanelContent({
                 metadata: { source: lastPreview.source, totalCount: lastPreview.totalCount, method: 'classifier' },
               })
 
-              openPanel(lastPreview.viewPanelContent)
+              if (lastPreview.drawerPanelId) {
+                openPanelDrawer(lastPreview.drawerPanelId)
+              } else {
+                openPanel(lastPreview.viewPanelContent)
+              }
 
               const assistantMessage: ChatMessage = {
                 id: `assistant-${Date.now()}`,
@@ -1187,6 +1216,15 @@ function ChatNavigationPanelContent({
         }
       }
 
+      if (result.success) {
+        const quickLinksBadge = extractQuickLinksBadge(
+          resolution.panelTitle || resolution.viewPanelContent?.title
+        )
+        if (quickLinksBadge) {
+          setLastQuickLinksBadge(quickLinksBadge)
+        }
+      }
+
       // Create assistant message
       // Include options for 'selected' (disambiguation pills), 'clarify_type' (entry vs workspace),
       // and confirmation dialogs (confirm_delete, confirm_panel_write)
@@ -1215,6 +1253,8 @@ function ChatNavigationPanelContent({
         viewPanelContent: resolution.viewPanelContent,
         previewItems: resolution.previewItems,
         totalCount: resolution.totalCount,
+        drawerPanelId: resolution.panelId,
+        drawerPanelTitle: resolution.panelTitle,
       }
       addMessage(assistantMessage)
 
@@ -1226,6 +1266,8 @@ function ChatNavigationPanelContent({
           totalCount: resolution.totalCount || resolution.previewItems.length,
           messageId: assistantMessage.id,
           createdAt: Date.now(),
+          drawerPanelId: resolution.panelId,
+          drawerPanelTitle: resolution.panelTitle,
         })
       }
 
@@ -1245,7 +1287,7 @@ function ChatNavigationPanelContent({
     } finally {
       setIsLoading(false)
     }
-  }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction, messages, addMessage, setInput, sessionState, setLastAction, openPanel, conversationSummary, pendingOptions, pendingOptionsGraceCount, handleSelectOption, lastPreview])
+  }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction, messages, addMessage, setInput, sessionState, setLastAction, setLastQuickLinksBadge, openPanel, openPanelDrawer, conversationSummary, pendingOptions, pendingOptionsGraceCount, handleSelectOption, lastPreview])
 
   // ---------------------------------------------------------------------------
   // Handle Key Press
@@ -1442,6 +1484,11 @@ function ChatNavigationPanelContent({
                             previewItems={message.previewItems}
                             totalCount={message.totalCount ?? message.previewItems.length}
                             fullContent={message.viewPanelContent}
+                            onShowAll={
+                              message.drawerPanelId
+                                ? () => openPanelDrawer(message.drawerPanelId!)
+                                : undefined
+                            }
                           />
                         )}
 

@@ -5,14 +5,14 @@ import { getChatUserId } from '@/app/api/chat/user-id'
 /**
  * PATCH /api/chat/session-state/[conversationId]
  * Update session state for a conversation.
- * Uses upsert to create if not exists.
+ * Uses upsert with shallow merge (new keys override, existing keys preserved).
  *
  * Body:
- *   - sessionState: { openCounts?, lastAction? }
+ *   - sessionState: { openCounts?, lastAction?, lastQuickLinksBadge? }
  *
  * Returns:
  *   - success: boolean
- *   - sessionState: the updated session state
+ *   - sessionState: the merged session state
  *   - updatedAt: timestamp
  */
 export async function PATCH(
@@ -48,13 +48,14 @@ export async function PATCH(
       )
     }
 
-    // Upsert: insert if not exists, update if exists
+    // Upsert: insert if not exists, merge if exists
+    // Uses jsonb || operator for shallow merge (new keys override, existing keys preserved)
     const result = await serverPool.query(
       `INSERT INTO chat_session_state (conversation_id, user_id, session_state, updated_at)
-       VALUES ($1, $2, $3, NOW())
+       VALUES ($1, $2, $3::jsonb, NOW())
        ON CONFLICT (conversation_id, user_id)
        DO UPDATE SET
-         session_state = $3,
+         session_state = COALESCE(chat_session_state.session_state, '{}'::jsonb) || $3::jsonb,
          updated_at = NOW()
        RETURNING session_state, updated_at`,
       [conversationId, userId, sessionState ? JSON.stringify(sessionState) : '{}']

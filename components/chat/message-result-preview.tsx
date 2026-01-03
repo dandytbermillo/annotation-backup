@@ -16,6 +16,7 @@ interface MessageResultPreviewProps {
   previewItems: ViewListItem[]
   totalCount: number
   fullContent: ViewPanelContent
+  onShowAll?: () => void
 }
 
 export function MessageResultPreview({
@@ -23,6 +24,7 @@ export function MessageResultPreview({
   previewItems,
   totalCount,
   fullContent,
+  onShowAll,
 }: MessageResultPreviewProps) {
   const { togglePanel } = useViewPanel()
   const moreCount = totalCount - previewItems.length
@@ -47,7 +49,7 @@ export function MessageResultPreview({
       </div>
 
       <button
-        onClick={() => togglePanel(fullContent)}
+        onClick={() => (onShowAll ? onShowAll() : togglePanel(fullContent))}
         className="
           flex items-center justify-center gap-1.5 w-full
           mt-2.5 py-2 px-3.5 rounded-lg
