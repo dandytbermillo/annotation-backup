@@ -7,6 +7,7 @@ import {
   SUPPORTED_ACTIONS_TEXT,
   type IntentResponse,
 } from '@/lib/chat/intent-schema'
+import { resolveNoteWorkspaceUserId } from '@/app/api/note-workspaces/user-id'
 
 // =============================================================================
 // OpenAI Client (lazy initialization)
@@ -44,9 +45,12 @@ const TIMEOUT_MS = 8000
 
 export async function POST(request: NextRequest) {
   try {
+    // Get user ID for DB manifest loading
+    const userId = resolveNoteWorkspaceUserId(request)
+
     // Parse request body
     const body = await request.json()
-    const { message } = body
+    const { message, context } = body
 
     if (!message || typeof message !== 'string' || message.trim().length === 0) {
       return NextResponse.json(
@@ -72,8 +76,13 @@ export async function POST(request: NextRequest) {
     }
 
     // Call OpenAI
+    // Pass userId to load DB manifests (widget manager widgets)
     const client = getOpenAIClient()
-    const messages = buildIntentMessages(userMessage)
+    const messages = await buildIntentMessages(
+      userMessage,
+      context,
+      userId === 'invalid' ? null : userId
+    )
 
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS)

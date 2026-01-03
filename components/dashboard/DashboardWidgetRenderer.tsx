@@ -12,6 +12,8 @@ import React from 'react'
 import type { WorkspacePanel, PanelConfig } from '@/lib/dashboard/panel-registry'
 import { RecentWidget } from './widgets/RecentWidget'
 import { QuickLinksWidget } from './widgets/QuickLinksWidget'
+import { DemoWidget } from './widgets/DemoWidget'
+import { WidgetManager } from './widgets/WidgetManager'
 import { BaseWidget, WidgetLabel, WidgetEmpty } from './widgets/BaseWidget'
 
 export interface DashboardWidgetRendererProps {
@@ -55,6 +57,26 @@ export function DashboardWidgetRenderer({
     case 'links_note_tiptap':
       return (
         <QuickLinksWidget
+          panel={panel}
+          onDoubleClick={handleDoubleClick}
+          isActive={isActive}
+          onMouseDown={onMouseDown}
+        />
+      )
+
+    case 'demo':
+      return (
+        <DemoWidget
+          panel={panel}
+          onDoubleClick={handleDoubleClick}
+          isActive={isActive}
+          onMouseDown={onMouseDown}
+        />
+      )
+
+    case 'widget_manager':
+      return (
+        <WidgetManager
           panel={panel}
           onDoubleClick={handleDoubleClick}
           isActive={isActive}

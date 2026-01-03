@@ -174,6 +174,11 @@ export function validateManifest(manifest: unknown): manifest is PanelChatManife
     if (typeof intent.description !== 'string') return false
     if (!Array.isArray(intent.examples)) return false
     if (typeof intent.handler !== 'string' || !intent.handler) return false
+    // Enforce API-only handlers (per widget-manager-plan.md)
+    if (!intent.handler.startsWith('api:')) {
+      console.warn(`[PanelManifest] Invalid handler format: ${intent.handler}. Must start with "api:"`)
+      return false
+    }
     if (!['read', 'write'].includes(intent.permission)) return false
   }
 

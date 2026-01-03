@@ -3,6 +3,11 @@
  *
  * Central registry for panel chat manifests.
  * Aggregates intents from all registered panels and builds LLM prompt sections.
+ *
+ * Architecture (from widget-manager-plan.md):
+ * - Built-in widgets remain code-registered (Option B)
+ * - Custom widgets are loaded from DB on server-side chat requests
+ * - Server is the source of truth for manifests (not client-side registration)
  */
 
 import {
@@ -16,6 +21,30 @@ import {
 // Import built-in manifests
 import { recentPanelManifest } from './manifests/recent-panel'
 import { quickLinksPanelManifests, createQuickLinksManifest } from './manifests/quick-links-panel'
+import { demoWidgetManifest } from './manifests/demo-widget-panel'
+
+// DB manifest loading (server-side only)
+// Dynamically imported to avoid client-side issues
+let getEnabledManifestsFromDB: ((userId: string | null) => Promise<PanelChatManifest[]>) | null = null
+
+async function loadDBManifestLoader() {
+  if (typeof window !== 'undefined') {
+    // Client-side: no DB access
+    return null
+  }
+  if (!getEnabledManifestsFromDB) {
+    try {
+      // Dynamic import using relative path (not @/ alias) to work with webpackIgnore
+      const widgetStore = await import('../widgets/widget-store')
+      getEnabledManifestsFromDB = widgetStore.getEnabledManifests
+    } catch (error) {
+      // DB not available (e.g., in edge runtime or when pg is not available)
+      console.error('[PanelRegistry] loadDBManifestLoader: import failed', error)
+      return null
+    }
+  }
+  return getEnabledManifestsFromDB
+}
 
 /**
  * Panel Intent Registry
@@ -24,6 +53,8 @@ class PanelIntentRegistry {
   private manifests: Map<string, PanelChatManifest> = new Map()
   private visiblePanels: Set<string> = new Set()
   private focusedPanelId: string | null = null
+  // Track which manifests came from DB (for pruning on reload)
+  private dbManifestIds: Set<string> = new Set()
 
   private ensureQuickLinksManifest(panelId: string) {
     if (this.manifests.has(panelId)) return
@@ -49,6 +80,9 @@ class PanelIntentRegistry {
     for (const manifest of quickLinksPanelManifests) {
       this.register(manifest)
     }
+
+    // Demo widget (for testing third-party widget integration)
+    this.register(demoWidgetManifest)
   }
 
   /**
@@ -130,6 +164,54 @@ class PanelIntentRegistry {
     }
 
     return result
+  }
+
+  /**
+   * Load enabled widget manifests from DB and register them
+   * Called server-side on each chat request to ensure fresh manifests
+   * @param userId - Current user ID (null for single-user mode)
+   */
+  async loadDBManifests(userId: string | null): Promise<void> {
+    const loader = await loadDBManifestLoader()
+    if (!loader) return
+
+    try {
+      // Step 1: Remove all previously loaded DB manifests (handles disabled widgets)
+      for (const panelId of this.dbManifestIds) {
+        this.manifests.delete(panelId)
+      }
+      this.dbManifestIds.clear()
+
+      // Step 2: Load fresh enabled manifests from DB
+      const dbManifests = await loader(userId)
+      for (const manifest of dbManifests) {
+        if (validateManifest(manifest)) {
+          this.manifests.set(manifest.panelId, manifest)
+          // Track this as a DB-loaded manifest for future pruning
+          this.dbManifestIds.add(manifest.panelId)
+        }
+      }
+    } catch (error) {
+      console.error('[PanelRegistry] Failed to load DB manifests:', error)
+    }
+  }
+
+  /**
+   * Build LLM prompt section with DB manifests loaded
+   * This is the main entry point for chat requests
+   * @param userId - Current user ID for DB manifest loading
+   * @param visiblePanelIds - If provided, only include intents for these panels
+   * @param focusedPanelId - If provided, prioritize this panel in ambiguous cases
+   */
+  async buildPromptSectionWithDB(
+    userId: string | null,
+    visiblePanelIds?: string[],
+    focusedPanelId?: string | null
+  ): Promise<string> {
+    // Load DB manifests first (server-side only)
+    await this.loadDBManifests(userId)
+    // Then build the prompt
+    return this.buildPromptSection(visiblePanelIds, focusedPanelId)
   }
 
   /**

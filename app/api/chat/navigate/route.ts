@@ -159,8 +159,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Step 1: Parse intent with LLM
+    // Pass userId to load DB widget manifests (server-side)
     const client = getOpenAIClient()
-    const messages = buildIntentMessages(userMessage, conversationContext)
+    const messages = await buildIntentMessages(userMessage, conversationContext, userId)
 
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS)

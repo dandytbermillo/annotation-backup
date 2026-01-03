@@ -17,8 +17,19 @@
  * - When isActive becomes true: sets panel as focused
  */
 
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useChatNavigationContext } from '@/lib/chat/chat-navigation-context'
+import type { PanelChatManifest } from '@/lib/panels/panel-manifest'
+import { registerPanelManifests } from '@/lib/panels/register-panel'
+import { debugLog } from '@/lib/utils/debug-logger'
+
+export interface PanelChatVisibilityOptions {
+  /**
+   * Optional manifest(s) to register for chat intent discovery.
+   * Allows third-party widgets to self-register without touching core code.
+   */
+  manifest?: PanelChatManifest | PanelChatManifest[]
+}
 
 /**
  * Hook to register a panel/widget with the chat visibility system.
@@ -28,13 +39,31 @@ import { useChatNavigationContext } from '@/lib/chat/chat-navigation-context'
  */
 export function usePanelChatVisibility(
   panelId: string | null | undefined,
-  isActive: boolean = false
+  isActive: boolean = false,
+  options?: PanelChatVisibilityOptions
 ): void {
   const {
     registerVisiblePanel,
     unregisterVisiblePanel,
     setFocusedPanelId,
   } = useChatNavigationContext()
+
+  const manifests = useMemo(() => {
+    if (!options?.manifest) return null
+    return Array.isArray(options.manifest) ? options.manifest : [options.manifest]
+  }, [options?.manifest])
+
+  // Register manifests once when provided
+  useEffect(() => {
+    if (!manifests || manifests.length === 0) return
+    debugLog({
+      component: 'usePanelChatVisibility',
+      action: 'register_manifests',
+      content_preview: `Registering ${manifests.length} manifests`,
+      metadata: { panelIds: manifests.map(m => m.panelId) }
+    })
+    registerPanelManifests(manifests)
+  }, [manifests])
 
   // Register/unregister visibility on mount/unmount
   useEffect(() => {

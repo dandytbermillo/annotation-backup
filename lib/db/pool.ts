@@ -18,9 +18,9 @@ let _serverPool: Pool | null = null;
  */
 export function getServerPool(): Pool {
   if (!_serverPool) {
-    const connectionString = process.env.DATABASE_URL || 
+    const connectionString = process.env.DATABASE_URL ||
       'postgresql://postgres:postgres@localhost:5432/annotation_dev';
-    
+
     _serverPool = new Pool({
       connectionString,
       max: 20, // Maximum number of clients in the pool
@@ -44,6 +44,27 @@ export function getServerPool(): Pool {
 }
 
 /**
- * Export as named export for convenience
+ * Close the server pool (for test cleanup)
  */
-export const serverPool = getServerPool();
+export async function closeServerPool(): Promise<void> {
+  if (_serverPool) {
+    await _serverPool.end();
+    _serverPool = null;
+  }
+}
+
+/**
+ * Proxy object that lazily initializes the pool on first access.
+ * This prevents pool creation on module import when tests skip DB operations.
+ */
+export const serverPool: Pool = new Proxy({} as Pool, {
+  get(_target, prop) {
+    const pool = getServerPool();
+    const value = pool[prop as keyof Pool];
+    // Bind methods to the pool instance
+    if (typeof value === 'function') {
+      return value.bind(pool);
+    }
+    return value;
+  },
+});

@@ -148,6 +148,75 @@ To keep chat previews and actions consistent across all panels, panel handlers m
 
 ---
 
+## Third‑Party Integration (One‑Line Wiring)
+To let a custom widget self‑register without touching core chat code:
+
+1) Export a manifest for the widget.
+2) Create API handlers for the intents.
+3) Call the visibility hook with the manifest.
+4) Mount the widget in the dashboard.
+
+Example:
+```
+import { usePanelChatVisibility } from '@/lib/hooks/use-panel-chat-visibility'
+import { createPanelManifest, createIntent } from '@/lib/panels/create-manifest'
+
+const taskBoardManifest = createPanelManifest({
+  panelId: 'taskboard',
+  panelType: 'custom',
+  title: 'Task Board',
+  intents: [
+    createIntent({
+      name: 'list_tasks',
+      description: 'Show all tasks',
+      examples: ['show tasks', 'list my tasks'],
+      handler: 'api:/api/panels/taskboard/list',
+    }),
+  ],
+})
+
+usePanelChatVisibility('taskboard', isActive, { manifest: taskBoardManifest })
+```
+
+This registers the manifest at runtime and makes the panel discoverable by the LLM.
+
+Minimal manifest template:
+```
+export const myWidgetManifest = createPanelManifest({
+  panelId: 'my-widget',
+  panelType: 'custom',
+  title: 'My Widget',
+  intents: [
+    createIntent({
+      name: 'list_items',
+      description: 'Show all items',
+      examples: ['show items', 'list items'],
+      handler: 'api:/api/panels/my-widget/list',
+    }),
+  ],
+})
+```
+
+Write intent example (requires confirmation):
+```
+createIntent({
+  name: 'add_item',
+  description: 'Add a new item',
+  examples: ['add item', 'create item'],
+  handler: 'api:/api/panels/my-widget/add',
+  permission: 'write',
+  paramsSchema: {
+    name: { type: 'string', required: true, description: 'Item name' },
+  },
+})
+```
+
+Note on `items[].type`:
+- Use the standard set: `link`, `entry`, `workspace`, `note`, `file`.
+- If you need a custom type (e.g., `task`), either extend the contract or map it to `note` and use `meta` to indicate the subtype.
+
+---
+
 ## Versioning Strategy
 - Manifest includes `version`.
 - Registry only accepts compatible versions.

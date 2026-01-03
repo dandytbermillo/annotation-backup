@@ -12,7 +12,7 @@ import type { ComponentType } from 'react'
 import { PANEL_SIZES, type PanelSizeKey } from './grid-snap'
 
 // Panel type identifiers matching the database schema
-export type PanelTypeId = 'note' | 'navigator' | 'recent' | 'continue' | 'quick_capture' | 'links_note' | 'links_note_tiptap' | 'category' | 'category_navigator'
+export type PanelTypeId = 'note' | 'navigator' | 'recent' | 'continue' | 'quick_capture' | 'links_note' | 'links_note_tiptap' | 'category' | 'category_navigator' | 'demo' | 'widget_manager'
 
 // Deleted link stored in Quick Links panel trash
 export interface DeletedLink {
@@ -213,6 +213,28 @@ export const panelTypeRegistry: Record<PanelTypeId, PanelTypeDefinition> = {
     minSize: { width: PANEL_SIZES.small.width, height: PANEL_SIZES.tall.height },
     maxSize: { width: PANEL_SIZES.large.width, height: PANEL_SIZES.xlarge.height },
     defaultConfig: { expandedPanels: [] },
+  },
+  demo: {
+    id: 'demo',
+    name: 'Demo Widget',
+    description: 'Example third-party widget for testing chat integration',
+    icon: '✨',
+    defaultGridSize: 'medium',
+    defaultSize: { width: PANEL_SIZES.medium.width, height: PANEL_SIZES.medium.height },
+    minSize: { width: PANEL_SIZES.small.width, height: PANEL_SIZES.small.height },
+    maxSize: { width: PANEL_SIZES.large.width, height: PANEL_SIZES.large.height },
+    defaultConfig: {},
+  },
+  widget_manager: {
+    id: 'widget_manager',
+    name: 'Widget Manager',
+    description: 'Manage installed widgets and their chat integration',
+    icon: '⚙️',
+    defaultGridSize: 'tall',
+    defaultSize: { width: PANEL_SIZES.tall.width, height: PANEL_SIZES.tall.height },
+    minSize: { width: PANEL_SIZES.small.width, height: PANEL_SIZES.medium.height },
+    maxSize: { width: PANEL_SIZES.large.width, height: PANEL_SIZES.xlarge.height },
+    defaultConfig: {},
   },
 }
 

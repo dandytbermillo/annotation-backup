@@ -313,16 +313,33 @@ export interface ConversationContext {
 /**
  * Build the messages array for OpenAI chat completion.
  * Optionally includes conversation context for better follow-up understanding.
+ *
+ * @param userMessage - The user's message
+ * @param context - Optional conversation context
+ * @param userId - Optional user ID for loading DB manifests (server-side only)
  */
-export function buildIntentMessages(
+export async function buildIntentMessages(
   userMessage: string,
-  context?: ConversationContext
-): Array<{ role: 'system' | 'user'; content: string }> {
+  context?: ConversationContext,
+  userId?: string | null
+): Promise<Array<{ role: 'system' | 'user'; content: string }>> {
   // Build system prompt with panel intents (pass visibility context if available)
-  const panelIntentsSection = panelRegistry.buildPromptSection(
-    context?.visiblePanels,
-    context?.focusedPanelId
-  )
+  // If userId is provided, load DB manifests (server-side)
+  let panelIntentsSection: string
+  if (userId !== undefined) {
+    // Server-side: load DB manifests
+    panelIntentsSection = await panelRegistry.buildPromptSectionWithDB(
+      userId,
+      context?.visiblePanels,
+      context?.focusedPanelId
+    )
+  } else {
+    // Client-side or no user context: use code-registered manifests only
+    panelIntentsSection = panelRegistry.buildPromptSection(
+      context?.visiblePanels,
+      context?.focusedPanelId
+    )
+  }
   const systemPrompt = panelIntentsSection
     ? `${INTENT_SYSTEM_PROMPT}\n\n${panelIntentsSection}`
     : INTENT_SYSTEM_PROMPT
