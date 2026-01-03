@@ -2,17 +2,17 @@
  * Recent Panel Manifest
  *
  * Chat capabilities for the Recent Items panel.
+ * Migrated to use createPanelManifest/createIntent helpers.
  */
 
-import { PanelChatManifest } from '../panel-manifest'
+import { createPanelManifest, createIntent } from '../create-manifest'
 
-export const recentPanelManifest: PanelChatManifest = {
+export const recentPanelManifest = createPanelManifest({
   panelId: 'recent',
   panelType: 'recent',
   title: 'Recent Items',
-  version: '1.0',
   intents: [
-    {
+    createIntent({
       name: 'list_recent',
       description: 'Show recently accessed entries and workspaces',
       examples: [
@@ -47,9 +47,9 @@ export const recentPanelManifest: PanelChatManifest = {
         },
       },
       handler: 'api:/api/panels/recent/list',
-      permission: 'read',
-    },
-    {
+      // permission defaults to 'read'
+    }),
+    createIntent({
       name: 'open_recent_item',
       description: 'Open a specific item from the recent list by position or name',
       examples: [
@@ -71,9 +71,9 @@ export const recentPanelManifest: PanelChatManifest = {
         },
       },
       handler: 'api:/api/panels/recent/open',
-      permission: 'read',
-    },
-    {
+      // permission defaults to 'read'
+    }),
+    createIntent({
       name: 'clear_recent',
       description: 'Clear the recent items history',
       examples: [
@@ -83,7 +83,7 @@ export const recentPanelManifest: PanelChatManifest = {
         'delete recent items',
       ],
       handler: 'api:/api/panels/recent/clear',
-      permission: 'write',
-    },
+      permission: 'write', // explicit: destructive action
+    }),
   ],
-}
+})

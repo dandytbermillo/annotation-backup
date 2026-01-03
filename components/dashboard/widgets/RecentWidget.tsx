@@ -12,6 +12,7 @@
 
 import React, { useEffect, useState } from 'react'
 import type { WorkspacePanel } from '@/lib/dashboard/panel-registry'
+import { usePanelChatVisibility } from '@/lib/hooks/use-panel-chat-visibility'
 import {
   BaseWidget,
   WidgetLabel,
@@ -24,6 +25,7 @@ import {
 
 /** Number of items to show in widget summary */
 const WIDGET_ITEM_LIMIT = 3
+const CHAT_PANEL_ID = 'recent'
 
 interface RecentWorkspace {
   id: string
@@ -53,6 +55,9 @@ export function RecentWidget({
   const [workspaces, setWorkspaces] = useState<RecentWorkspace[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  // Chat visibility integration (single hook replaces ~15 lines of boilerplate)
+  usePanelChatVisibility(CHAT_PANEL_ID, isActive)
 
   // Fetch recent workspaces (summary - just need top items)
   useEffect(() => {

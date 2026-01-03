@@ -90,6 +90,7 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
       - quickLinksPanelBadge (optional): panel badge letter (A, B, C, etc.)
       - quickLinksPanelTitle (optional): panel title if mentioned
     IMPORTANT: Panels are identified by badge letters (A, B, C, etc.) or by title.
+    Badges are not limited to A–D; use any letter the user mentions.
     PRIORITY RULE: If user mentions a badge letter (A/B/C/D) AND wants to perform an ACTION
     (e.g., "add link to quick links C", "clear recent from A"), prefer **panel_intent** instead.
     Use show_quick_links only for viewing/listing Quick Links content.
@@ -147,6 +148,7 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
       - "list recent items" → { "intent": "panel_intent", "args": { "panelId": "recent", "intentName": "list_recent", "params": { "mode": "preview" } } }
       - "list my quick links" → { "intent": "show_quick_links", "args": { } }
       - "list quick links D" → { "intent": "panel_intent", "args": { "panelId": "quick-links-d", "intentName": "show_links", "params": { "mode": "preview" } } }
+      - "open quick link D" → { "intent": "show_quick_links", "args": { "quickLinksPanelBadge": "D" } }
       - "what did I open recently?" → { "intent": "panel_intent", "args": { "panelId": "recent", "intentName": "list_recent", "params": { "mode": "drawer" } } }
     Routing:
       - If user says **show/view/display/open + panel**, set params.mode = "drawer"

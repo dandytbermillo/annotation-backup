@@ -1603,6 +1603,17 @@ async function resolvePanelIntent(
     }
   }
 
+  // If the LLM returned open_link without a target, treat it as opening the panel.
+  // This handles "open quick link <badge>" (singular) as panel open, not item open.
+  if (
+    panelId.startsWith('quick-links-') &&
+    intentName === 'open_link' &&
+    !resolvedParams?.name &&
+    !resolvedParams?.position
+  ) {
+    resolvedIntentName = 'show_links'
+  }
+
   const requestedMode = typeof resolvedParams?.mode === 'string' ? resolvedParams.mode : undefined
   const isListDrawerCandidate =
     (panelId === 'recent' && resolvedIntentName === 'list_recent') ||

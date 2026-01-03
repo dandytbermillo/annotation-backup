@@ -13,6 +13,7 @@
 import React, { useMemo } from 'react'
 import { Link2 } from 'lucide-react'
 import type { WorkspacePanel, PanelConfig } from '@/lib/dashboard/panel-registry'
+import { usePanelChatVisibility } from '@/lib/hooks/use-panel-chat-visibility'
 import {
   BaseWidget,
   WidgetLabel,
@@ -81,6 +82,18 @@ function getLinkIcon(name: string): string {
   return firstChar.toUpperCase()
 }
 
+function deriveChatPanelId(panel: WorkspacePanel): string | null {
+  if (panel.badge) {
+    return `quick-links-${panel.badge.toLowerCase()}`
+  }
+  const title = panel.title || ''
+  const match = title.match(/quick\s*links?\s*([a-z])/i)
+  if (match) {
+    return `quick-links-${match[1].toLowerCase()}`
+  }
+  return null
+}
+
 export function QuickLinksWidget({
   panel,
   onDoubleClick,
@@ -89,6 +102,10 @@ export function QuickLinksWidget({
 }: QuickLinksWidgetProps) {
   const config = panel.config as PanelConfig
   const badge = panel.badge
+  const chatPanelId = useMemo(() => deriveChatPanelId(panel), [panel])
+
+  // Chat visibility integration (single hook replaces ~15 lines of boilerplate)
+  usePanelChatVisibility(chatPanelId, isActive)
 
   // Parse links from content
   const links = useMemo(() => {

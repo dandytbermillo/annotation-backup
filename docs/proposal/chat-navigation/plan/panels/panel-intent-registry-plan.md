@@ -155,6 +155,19 @@ To keep chat previews and actions consistent across all panels, panel handlers m
 
 ---
 
+## Generalization Framework (Future Widgets)
+This pattern can apply to any widget type without special‑casing:
+
+- **Dynamic registration:** widgets advertise visibility so the prompt only includes on‑screen panels.
+- **Panel‑level aliases:** each widget declares its own synonyms (e.g., “tasks”, “to‑dos”, “task board”).
+- **Primary read‑only intent:** each widget should declare a safe default (e.g., `list_items`) used for list/preview requests.
+- **Instance disambiguation:** if multiple instances exist (e.g., Timer A, Timer B), ask which one unless a focused or last‑selected instance is present.
+- **Fallback coercion:** if the LLM returns an unknown intent name for a panel, coerce to the primary read‑only intent only when the user asked to list/preview (never for write actions).
+
+These rules prevent intent drift while keeping the system open to third‑party widgets.
+
+---
+
 ## Example: Task Board Panel
 User: “show my tasks”
 

@@ -1,31 +1,37 @@
 /**
  * Quick Links Panel Manifests
  *
- * Chat capabilities for Quick Links panels (A, B, C, D).
- * Each badge (A, B, C, D) is a separate panel instance.
+ * Chat capabilities for Quick Links panels (A, B, C, D, etc.).
+ * Each badge is a separate panel instance.
+ * Migrated to use createPanelManifest/createIntent helpers.
  */
 
-import { PanelChatManifest } from '../panel-manifest'
+import { createPanelManifest, createIntent } from '../create-manifest'
+import type { PanelChatManifest } from '../panel-manifest'
 
 /**
  * Create manifest for a Quick Links panel badge
  */
-function createQuickLinksManifest(badge: string): PanelChatManifest {
-  const badgeLower = badge.toLowerCase()
-  const badgeUpper = badge.toUpperCase()
+export function createQuickLinksManifest(badge: string): PanelChatManifest {
+  const badgeLower = badge.trim().toLowerCase()
+  const badgeUpper = badge.trim().toUpperCase()
 
-  return {
+  return createPanelManifest({
     panelId: `quick-links-${badgeLower}`,
     panelType: 'quick-links',
     title: `Quick Links ${badgeUpper}`,
-    version: '1.0',
+    // version defaults to '1.0'
     intents: [
-      {
+      createIntent({
         name: 'show_links',
         description: `Show all links in Quick Links ${badgeUpper} panel`,
         examples: [
           `show quick links ${badgeLower}`,
           `show quick links ${badgeUpper}`,
+          `open quick link ${badgeLower}`,
+          `open quick link ${badgeUpper}`,
+          `quick link ${badgeLower}`,
+          `quick link ${badgeUpper}`,
           `quick links ${badgeLower}`,
           `quick links ${badgeUpper}`,
           `links ${badgeLower}`,
@@ -45,9 +51,9 @@ function createQuickLinksManifest(badge: string): PanelChatManifest {
           },
         },
         handler: `api:/api/panels/quick-links/${badgeLower}/list`,
-        permission: 'read',
-      },
-      {
+        // permission defaults to 'read'
+      }),
+      createIntent({
         name: 'open_link',
         description: `Open a specific link from Quick Links ${badgeUpper}`,
         examples: [
@@ -67,9 +73,9 @@ function createQuickLinksManifest(badge: string): PanelChatManifest {
           },
         },
         handler: `api:/api/panels/quick-links/${badgeLower}/open`,
-        permission: 'read',
-      },
-      {
+        // permission defaults to 'read'
+      }),
+      createIntent({
         name: 'add_link',
         description: `Add a new link to Quick Links ${badgeUpper}`,
         examples: [
@@ -90,9 +96,9 @@ function createQuickLinksManifest(badge: string): PanelChatManifest {
           },
         },
         handler: `api:/api/panels/quick-links/${badgeLower}/add`,
-        permission: 'write',
-      },
-      {
+        permission: 'write', // explicit: destructive action
+      }),
+      createIntent({
         name: 'remove_link',
         description: `Remove a link from Quick Links ${badgeUpper}`,
         examples: [
@@ -112,10 +118,10 @@ function createQuickLinksManifest(badge: string): PanelChatManifest {
           },
         },
         handler: `api:/api/panels/quick-links/${badgeLower}/remove`,
-        permission: 'write',
-      },
+        permission: 'write', // explicit: destructive action
+      }),
     ],
-  }
+  })
 }
 
 // Export manifests for all Quick Links badges

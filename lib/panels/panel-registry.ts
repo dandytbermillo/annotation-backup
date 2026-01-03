@@ -15,7 +15,7 @@ import {
 
 // Import built-in manifests
 import { recentPanelManifest } from './manifests/recent-panel'
-import { quickLinksPanelManifests } from './manifests/quick-links-panel'
+import { quickLinksPanelManifests, createQuickLinksManifest } from './manifests/quick-links-panel'
 
 /**
  * Panel Intent Registry
@@ -24,6 +24,14 @@ class PanelIntentRegistry {
   private manifests: Map<string, PanelChatManifest> = new Map()
   private visiblePanels: Set<string> = new Set()
   private focusedPanelId: string | null = null
+
+  private ensureQuickLinksManifest(panelId: string) {
+    if (this.manifests.has(panelId)) return
+    const match = panelId.match(/^quick-links-([a-z])$/i)
+    if (!match) return
+    const badge = match[1]
+    this.register(createQuickLinksManifest(badge))
+  }
 
   constructor() {
     // Register built-in panels
@@ -103,6 +111,12 @@ class PanelIntentRegistry {
 
     // Use provided visibility or fallback to all panels
     const panelFilter = visiblePanelIds ? new Set(visiblePanelIds) : null
+
+    if (panelFilter) {
+      for (const panelId of panelFilter) {
+        this.ensureQuickLinksManifest(panelId)
+      }
+    }
 
     for (const manifest of this.manifests.values()) {
       // Filter by visibility if provided
@@ -198,6 +212,9 @@ Available panel intents:
    * Find matching intent for a panel_intent request
    */
   findIntent(args: PanelIntentArgs): { manifest: PanelChatManifest; intent: PanelIntent } | null {
+    if (!this.manifests.has(args.panelId)) {
+      this.ensureQuickLinksManifest(args.panelId)
+    }
     const manifest = this.manifests.get(args.panelId)
     if (!manifest) return null
 
@@ -211,6 +228,9 @@ Available panel intents:
    * Get supported actions for a panel (for error messages)
    */
   getSupportedActions(panelId: string): string[] {
+    if (!this.manifests.has(panelId)) {
+      this.ensureQuickLinksManifest(panelId)
+    }
     const manifest = this.manifests.get(panelId)
     if (!manifest) return []
     return manifest.intents.map(i => i.name)

@@ -60,7 +60,7 @@ const PURGE_DAYS = 30
 function deriveChatPanelId(panelTitle: string | null | undefined): string | null {
   if (!panelTitle) return null
   // Match "Quick Links X" where X is A/B/C/D (case insensitive)
-  const match = panelTitle.match(/quick\s*links?\s*([a-d])/i)
+  const match = panelTitle.match(/quick\s*links?\s*([a-z])/i)
   if (match) {
     const badge = match[1].toLowerCase()
     return `quick-links-${badge}`
