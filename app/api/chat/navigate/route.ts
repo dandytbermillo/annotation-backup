@@ -8,10 +8,10 @@ import { serverPool } from '@/lib/db/pool'
 import { buildIntentMessages, type ConversationContext, type SessionState } from '@/lib/chat/intent-prompt'
 import {
   parseIntentResponse,
-  SUPPORTED_ACTIONS_TEXT,
   type IntentResponse,
 } from '@/lib/chat/intent-schema'
 import { resolveIntent, type IntentResolutionResult } from '@/lib/chat/intent-resolver'
+import { getSuggestions, type SuggestionResult } from '@/lib/chat/typo-suggestions'
 import { resolveNoteWorkspaceUserId } from '@/app/api/note-workspaces/user-id'
 
 // =============================================================================
@@ -258,14 +258,50 @@ export async function POST(request: NextRequest) {
 
     const resolution = await resolveIntent(intent, resolutionContext)
 
-    // Add supported actions hint if unsupported
+    // Generate friendly suggestions for unsupported intents (typo fallback)
+    let suggestions: SuggestionResult | null = null
+    const normalizedInput = userMessage.toLowerCase().replace(/\s+/g, ' ').trim()
+    const VERB_REGEX = /\b(open|show|view|display|list|go|back|rename|delete|create|add|remove|close)\b/i
+    const hasVerb = VERB_REGEX.test(normalizedInput)
+
     if (!resolution.success && resolution.action === 'error') {
-      resolution.message += ` I can help with: ${SUPPORTED_ACTIONS_TEXT}.`
+      suggestions = getSuggestions(userMessage)
+      if (suggestions) {
+        // Replace generic error with friendly suggestion
+        resolution.message = suggestions.message
+      }
+    } else if (!hasVerb) {
+      // If the input has no verb, don't let the LLM guess.
+      // Only override when the input is not an exact match to a known command.
+      const typoSuggestion = getSuggestions(userMessage)
+      const topCandidate = typoSuggestion?.candidates[0]
+      const isExactMatch = Boolean(
+        topCandidate &&
+        topCandidate.score >= 0.99 &&
+        normalizedInput === topCandidate.command
+      )
+
+      if (typoSuggestion && !isExactMatch) {
+        suggestions = typoSuggestion
+        resolution.success = false
+        resolution.action = 'error'
+        resolution.message = typoSuggestion.message
+      }
     }
 
     return NextResponse.json({
       intent,
       resolution,
+      // Include suggestions for UI to render buttons
+      suggestions: suggestions?.showButtons ? {
+        type: suggestions.type,
+        candidates: suggestions.candidates.map(c => ({
+          label: c.label,
+          intentName: c.intentName,
+          panelId: c.panelId,
+          primaryAction: c.primaryAction,
+        })),
+      } : undefined,
     })
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)

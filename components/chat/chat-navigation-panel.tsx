@@ -28,6 +28,7 @@ import {
   type WorkspaceMatch,
   type ViewPanelContent,
   type ViewListItem,
+  type ChatSuggestions,
 } from '@/lib/chat'
 import { ViewPanel } from './view-panel'
 import { MessageResultPreview } from './message-result-preview'
@@ -755,6 +756,41 @@ function ChatNavigationPanelContent({
   )
 
   // ---------------------------------------------------------------------------
+  // Handle Suggestion Click (typo recovery)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Handle suggestion button click.
+   * @param suggestionLabel The command label (e.g., "Quick Links")
+   * @param actionMode 'open' sends label directly, 'list' triggers preview mode
+   */
+  const handleSuggestionClick = useCallback(
+    (suggestionLabel: string, actionMode: 'open' | 'list' = 'open') => {
+      // Build the message based on action mode
+      // 'list' mode adds "list ... in chat" to trigger forcePreviewMode in the API
+      const message = actionMode === 'list'
+        ? `list ${suggestionLabel.toLowerCase()} in chat`
+        : suggestionLabel.toLowerCase()
+
+      // Set input to suggestion and trigger send
+      setInput(message)
+      // Use setTimeout to ensure state is updated before triggering send
+      setTimeout(() => {
+        const inputEl = document.querySelector('input[placeholder*="Where would you like"]') as HTMLInputElement
+        if (inputEl) {
+          // Dispatch Enter key event to trigger send
+          const event = new KeyboardEvent('keydown', {
+            key: 'Enter',
+            bubbles: true,
+          })
+          inputEl.dispatchEvent(event)
+        }
+      }, 50)
+    },
+    [setInput]
+  )
+
+  // ---------------------------------------------------------------------------
   // Send Message
   // ---------------------------------------------------------------------------
 
@@ -1004,8 +1040,9 @@ function ChatNavigationPanelContent({
         throw new Error('Failed to process request')
       }
 
-      const { resolution } = (await response.json()) as {
+      const { resolution, suggestions } = (await response.json()) as {
         resolution: IntentResolutionResult
+        suggestions?: ChatSuggestions
       }
 
       // ---------------------------------------------------------------------------
@@ -1249,6 +1286,8 @@ function ChatNavigationPanelContent({
                 data: opt.data,
               }))
             : undefined,
+        // Typo recovery suggestions
+        suggestions: suggestions,
         // View panel content for "Show all" preview
         viewPanelContent: resolution.viewPanelContent,
         previewItems: resolution.previewItems,
@@ -1517,6 +1556,85 @@ function ChatNavigationPanelContent({
                                         ({option.sublabel})
                                       </span>
                                     )}
+                                    <ChevronRight className="h-3 w-3 opacity-50 group-hover:opacity-100" />
+                                  </span>
+                                </Badge>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Suggestion Pills (typo recovery) */}
+                        {message.suggestions && message.suggestions.candidates.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 mt-1.5">
+                            {/* Case A: High-confidence single match - show dual action buttons */}
+                            {message.suggestions.type === 'confirm_single' && message.suggestions.candidates.length === 1 && (
+                              <>
+                                {/* Open button - primary action */}
+                                <button
+                                  key={`suggestion-open-${message.suggestions.candidates[0].label}`}
+                                  onClick={() => handleSuggestionClick(message.suggestions!.candidates[0].label, 'open')}
+                                  disabled={isLoading}
+                                  className="group"
+                                >
+                                  <Badge
+                                    variant="secondary"
+                                    className={cn(
+                                      'cursor-pointer transition-colors',
+                                      'hover:bg-primary hover:text-primary-foreground',
+                                      isLoading && 'opacity-50 cursor-not-allowed'
+                                    )}
+                                  >
+                                    <span className="flex items-center gap-1">
+                                      Open {message.suggestions.candidates[0].label}
+                                      <ChevronRight className="h-3 w-3 opacity-50 group-hover:opacity-100" />
+                                    </span>
+                                  </Badge>
+                                </button>
+                                {/* List in chat button - preview action */}
+                                <button
+                                  key={`suggestion-list-${message.suggestions.candidates[0].label}`}
+                                  onClick={() => handleSuggestionClick(message.suggestions!.candidates[0].label, 'list')}
+                                  disabled={isLoading}
+                                  className="group"
+                                >
+                                  <Badge
+                                    variant="outline"
+                                    className={cn(
+                                      'cursor-pointer transition-colors',
+                                      'hover:bg-primary hover:text-primary-foreground',
+                                      'border-dashed',
+                                      isLoading && 'opacity-50 cursor-not-allowed'
+                                    )}
+                                  >
+                                    <span className="flex items-center gap-1">
+                                      List in chat
+                                      <ChevronRight className="h-3 w-3 opacity-50 group-hover:opacity-100" />
+                                    </span>
+                                  </Badge>
+                                </button>
+                              </>
+                            )}
+                            {/* Case B/C: Multiple matches or low confidence - show single button per candidate */}
+                            {(message.suggestions.type !== 'confirm_single' || message.suggestions.candidates.length > 1) &&
+                              message.suggestions.candidates.map((candidate, idx) => (
+                              <button
+                                key={`suggestion-${idx}-${candidate.label}`}
+                                onClick={() => handleSuggestionClick(candidate.label, 'open')}
+                                disabled={isLoading}
+                                className="group"
+                              >
+                                <Badge
+                                  variant="outline"
+                                  className={cn(
+                                    'cursor-pointer transition-colors',
+                                    'hover:bg-primary hover:text-primary-foreground',
+                                    'border-dashed',
+                                    isLoading && 'opacity-50 cursor-not-allowed'
+                                  )}
+                                >
+                                  <span className="flex items-center gap-1">
+                                    {candidate.label}
                                     <ChevronRight className="h-3 w-3 opacity-50 group-hover:opacity-100" />
                                   </span>
                                 </Badge>

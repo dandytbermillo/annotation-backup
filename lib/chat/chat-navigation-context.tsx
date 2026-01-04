@@ -41,6 +41,20 @@ export interface SelectionOption {
   data: WorkspaceMatch | NoteMatch | EntryMatch | QuickLinksPanelData | PanelIntentData
 }
 
+/** Suggestion candidate for typo fallback */
+export interface SuggestionCandidate {
+  label: string
+  intentName: string
+  panelId?: string
+  primaryAction: 'open' | 'list' | 'navigate' | 'create' | 'info'
+}
+
+/** Suggestions for typo recovery */
+export interface ChatSuggestions {
+  type: 'confirm_single' | 'choose_multiple' | 'low_confidence'
+  candidates: SuggestionCandidate[]
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
@@ -48,6 +62,8 @@ export interface ChatMessage {
   timestamp: Date
   options?: SelectionOption[]
   isError?: boolean
+  // Typo recovery suggestions (from typo-suggestions.ts)
+  suggestions?: ChatSuggestions
   // View panel content (for "Show all" preview)
   viewPanelContent?: ViewPanelContent
   previewItems?: ViewListItem[]
