@@ -35,7 +35,8 @@ async function loadDBManifestLoader() {
   if (!getEnabledManifestsFromDB) {
     try {
       // Dynamic import using relative path (not @/ alias) to work with webpackIgnore
-      const widgetStore = await import('../widgets/widget-store')
+      // webpackIgnore tells webpack not to bundle this module for client-side
+      const widgetStore = await import(/* webpackIgnore: true */ '../widgets/widget-store')
       getEnabledManifestsFromDB = widgetStore.getEnabledManifests
     } catch (error) {
       // DB not available (e.g., in edge runtime or when pg is not available)

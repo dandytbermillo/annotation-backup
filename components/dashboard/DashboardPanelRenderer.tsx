@@ -20,6 +20,7 @@ import { QuickCapturePanel } from './panels/QuickCapturePanel'
 // import { LinksNotePanel } from './panels/LinksNotePanel'
 import { CategoryPanel } from './panels/CategoryPanel'
 import { CategoryNavigatorPanel } from './panels/CategoryNavigatorPanel'
+import { WidgetManagerPanel } from './panels/WidgetManagerPanel'
 
 // Dynamic import for TipTap-based component to prevent SSR hydration issues
 // TipTap uses browser-specific APIs that cause hydration mismatches
@@ -103,6 +104,8 @@ export function DashboardPanelRenderer({
       return <CategoryPanel {...props} />
     case 'category_navigator':
       return <CategoryNavigatorPanel {...props} />
+    case 'widget_manager':
+      return <WidgetManagerPanel {...props} />
     case 'note':
       // Note panels are handled separately by the existing note panel system
       // This is just a placeholder - actual note panels use the existing canvas note rendering

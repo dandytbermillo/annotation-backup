@@ -24,8 +24,8 @@ const DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000000'
  * Add an installed widget to a dashboard/workspace
  *
  * Body: {
- *   widgetId: string,      // ID of the installed widget
- *   workspaceId?: string,  // Target workspace (optional)
+ *   widgetId: string,      // ID of the installed widget (required)
+ *   workspaceId: string,   // Target workspace (required - DB constraint)
  *   entryId?: string,      // Target entry (optional)
  *   panelId?: string,      // Custom panel ID (auto-generated if not provided)
  *   config?: object        // Widget-specific config (optional)
@@ -39,6 +39,13 @@ export async function POST(request: NextRequest) {
     if (!widgetId) {
       return NextResponse.json(
         { error: 'widgetId is required' },
+        { status: 400 }
+      )
+    }
+
+    if (!workspaceId) {
+      return NextResponse.json(
+        { error: 'workspaceId is required' },
         { status: 400 }
       )
     }

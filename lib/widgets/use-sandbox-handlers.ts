@@ -6,6 +6,13 @@
  *
  * Assembles bridge handlers from current UI state.
  * Designed to be used in the parent component that renders WidgetSandboxHost.
+ *
+ * KNOWN LIMITATION (Phase 3.2):
+ * - In dashboard mode, notes.getCurrentNote and notes.getNote return null
+ *   because there is no "current note" concept in the dashboard view.
+ * - Notes handlers will return real data when widgets are rendered in
+ *   workspace mode where a note is open (future integration).
+ * - Workspace handlers (getPanels, getActivePanel) work in both modes.
  */
 
 import { useMemo, useCallback } from 'react'

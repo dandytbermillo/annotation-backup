@@ -124,6 +124,10 @@ export function FullPanelDrawer({
         return 'Category'
       case 'category_navigator':
         return 'Categories'
+      case 'widget_manager':
+        return 'Widget Manager'
+      case 'demo':
+        return 'Demo Widget'
       default:
         return 'Panel'
     }
