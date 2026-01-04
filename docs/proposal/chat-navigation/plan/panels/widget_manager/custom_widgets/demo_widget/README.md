@@ -1,40 +1,35 @@
 # Demo Widget
 
-Example custom widget demonstrating task list functionality and chat integration.
+Example custom widget demonstrating chat integration.
 
-## Installation
+## Installation (From File)
 
-1. Open Widget Manager (via dashboard settings or floating toolbar)
-2. Paste URL: `http://localhost:3000/api/widgets/demo-manifest`
-3. Click Install
-
-## Features
-
-- **Visual UI**: Shows a task list with 3 demo items
-- **Chat Integration**: Responds to commands like "show demo", "list demo items"
+1. Open Widget Manager
+2. Click **From File**
+3. Select this file: `manifest.json`
+4. Widget will be installed and appear in CUSTOM WIDGETS list
 
 ## Chat Commands
 
 | Command | Description |
 |---------|-------------|
-| "show demo" | Opens the demo widget |
-| "list demo items" | Lists items in chat preview |
+| "show demo" | Shows demo items in chat |
+| "list demo items" | Lists all demo items |
 | "what is in demo" | Shows demo widget content |
+
+## How It Works
+
+1. `manifest.json` defines the widget metadata and chat intents
+2. When installed, manifest is stored in `installed_widgets` table
+3. Chat loads enabled widget manifests from DB
+4. LLM matches user input to widget intents
+5. Intent handler (`/api/panels/demo-widget/list`) returns data
 
 ## Files
 
-- `manifest.json` - Widget manifest (source of truth)
-- `README.md` - This file
+- `manifest.json` - Widget manifest (upload this to install)
+- `README.md` - This documentation
 
-## API Endpoints
+## Note
 
-- `GET /api/widgets/demo-manifest` - Returns manifest for installation
-- `GET /api/widgets/demo-sandbox` - Returns sandbox HTML for rendering
-- `POST /api/panels/demo-widget/list` - Chat intent handler
-
-## Development
-
-To modify this widget:
-1. Edit `manifest.json` for intent changes
-2. Edit `/api/widgets/demo-sandbox/route.ts` for UI changes
-3. Edit `/api/panels/demo-widget/list/route.ts` for chat response changes
+This is a **chat-only** widget (no sandbox UI). For widgets with visual UI, add a `sandbox` section to the manifest with an HTTPS entrypoint URL.

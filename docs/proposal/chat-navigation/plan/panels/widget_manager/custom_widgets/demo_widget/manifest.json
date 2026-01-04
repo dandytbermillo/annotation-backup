@@ -3,7 +3,7 @@
   "panelType": "demo",
   "title": "Demo Widget",
   "version": "1.0",
-  "description": "Example custom widget demonstrating task list functionality and chat integration",
+  "description": "Example custom widget demonstrating chat integration",
   "intents": [
     {
       "name": "list_items",
@@ -19,12 +19,5 @@
       "handler": "api:/api/panels/demo-widget/list",
       "permission": "read"
     }
-  ],
-  "sandbox": {
-    "entrypoint": "http://localhost:3000/api/widgets/demo-sandbox",
-    "permissions": ["read:workspace"],
-    "networkAllowlist": [],
-    "minSize": { "width": 280, "height": 200 },
-    "preferredSize": { "width": 320, "height": 280 }
-  }
+  ]
 }

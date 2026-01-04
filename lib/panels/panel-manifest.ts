@@ -257,11 +257,12 @@ export function validateSandboxConfig(sandbox: unknown): sandbox is SandboxConfi
     return false
   }
 
-  // Validate entrypoint is HTTPS URL
+  // Validate entrypoint is HTTPS URL (allow localhost for development)
   try {
     const url = new URL(s.entrypoint)
-    if (url.protocol !== 'https:') {
-      console.warn('[PanelManifest] sandbox.entrypoint must be HTTPS')
+    const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1'
+    if (url.protocol !== 'https:' && !isLocalhost) {
+      console.warn('[PanelManifest] sandbox.entrypoint must be HTTPS (localhost allowed for dev)')
       return false
     }
   } catch {

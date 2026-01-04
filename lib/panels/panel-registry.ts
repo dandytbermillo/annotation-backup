@@ -132,8 +132,12 @@ class PanelIntentRegistry {
     }
 
     for (const manifest of this.manifests.values()) {
-      // Filter by visibility if provided
-      if (panelFilter && !panelFilter.has(manifest.panelId)) {
+      // IMPORTANT: Always include DB-loaded manifests (custom widgets)
+      // They don't have physical panels on dashboard but should be available in chat
+      const isDBManifest = this.dbManifestIds.has(manifest.panelId)
+
+      // Filter by visibility if provided, but never filter out DB manifests
+      if (panelFilter && !panelFilter.has(manifest.panelId) && !isDBManifest) {
         continue
       }
 
