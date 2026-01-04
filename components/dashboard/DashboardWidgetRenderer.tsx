@@ -15,6 +15,9 @@ import { QuickLinksWidget } from './widgets/QuickLinksWidget'
 import { DemoWidget } from './widgets/DemoWidget'
 import { WidgetManager } from './widgets/WidgetManager'
 import { BaseWidget, WidgetLabel, WidgetEmpty } from './widgets/BaseWidget'
+import { SandboxWidgetPanel } from '@/components/widgets/SandboxWidgetPanel'
+import type { SandboxHandlerDependencies } from '@/lib/widgets/use-sandbox-handlers'
+import type { SandboxConfig } from '@/lib/panels/panel-manifest'
 
 export interface DashboardWidgetRendererProps {
   /** The panel data */
@@ -27,6 +30,10 @@ export interface DashboardWidgetRendererProps {
   onMouseDown?: (e: React.MouseEvent) => void
   /** Callback when panel config changes */
   onConfigChange?: (config: Partial<PanelConfig>) => void
+  /** All panels (for sandbox widget handlers) */
+  allPanels?: WorkspacePanel[]
+  /** Active panel ID (for sandbox widget handlers) */
+  activePanelId?: string | null
 }
 
 /**
@@ -39,8 +46,23 @@ export function DashboardWidgetRenderer({
   isActive = false,
   onMouseDown,
   onConfigChange,
+  allPanels = [],
+  activePanelId = null,
 }: DashboardWidgetRendererProps) {
   const handleDoubleClick = () => onDoubleClick(panel)
+
+  // Build sandbox handler dependencies from available state
+  // Phase 3.2: Read-only handlers only (notes.currentNote is null at dashboard level)
+  const sandboxDependencies: SandboxHandlerDependencies = {
+    workspace: {
+      panels: allPanels,
+      activePanelId,
+    },
+    notes: {
+      currentNote: null, // Dashboard doesn't have note context
+      getNoteById: undefined, // Could be wired up later if needed
+    },
+  }
 
   switch (panel.panelType) {
     case 'recent':
@@ -83,6 +105,50 @@ export function DashboardWidgetRenderer({
           onMouseDown={onMouseDown}
         />
       )
+
+    case 'sandbox_widget': {
+      // Sandbox widget requires widget metadata in panel config
+      const config = panel.config as {
+        widgetId?: string
+        instanceId?: string
+        sandbox?: SandboxConfig
+      }
+
+      if (!config.widgetId || !config.instanceId || !config.sandbox) {
+        // Missing required config - show error widget
+        return (
+          <BaseWidget
+            panel={panel}
+            onDoubleClick={handleDoubleClick}
+            isActive={isActive}
+            onMouseDown={onMouseDown}
+          >
+            <WidgetLabel>WIDGET ERROR</WidgetLabel>
+            <WidgetEmpty>
+              Missing widget configuration
+            </WidgetEmpty>
+          </BaseWidget>
+        )
+      }
+
+      return (
+        <BaseWidget
+          panel={panel}
+          onDoubleClick={handleDoubleClick}
+          isActive={isActive}
+          onMouseDown={onMouseDown}
+        >
+          <SandboxWidgetPanel
+            widgetId={config.widgetId}
+            widgetInstanceId={config.instanceId}
+            title={panel.title || 'Widget'}
+            sandbox={config.sandbox}
+            dependencies={sandboxDependencies}
+            className="w-full h-full"
+          />
+        </BaseWidget>
+      )
+    }
 
     // TODO: Add more widget types as they are created
     // case 'continue':

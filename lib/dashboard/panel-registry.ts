@@ -12,7 +12,7 @@ import type { ComponentType } from 'react'
 import { PANEL_SIZES, type PanelSizeKey } from './grid-snap'
 
 // Panel type identifiers matching the database schema
-export type PanelTypeId = 'note' | 'navigator' | 'recent' | 'continue' | 'quick_capture' | 'links_note' | 'links_note_tiptap' | 'category' | 'category_navigator' | 'demo' | 'widget_manager'
+export type PanelTypeId = 'note' | 'navigator' | 'recent' | 'continue' | 'quick_capture' | 'links_note' | 'links_note_tiptap' | 'category' | 'category_navigator' | 'demo' | 'widget_manager' | 'sandbox_widget'
 
 // Deleted link stored in Quick Links panel trash
 export interface DeletedLink {
@@ -234,6 +234,17 @@ export const panelTypeRegistry: Record<PanelTypeId, PanelTypeDefinition> = {
     defaultSize: { width: PANEL_SIZES.tall.width, height: PANEL_SIZES.tall.height },
     minSize: { width: PANEL_SIZES.small.width, height: PANEL_SIZES.medium.height },
     maxSize: { width: PANEL_SIZES.large.width, height: PANEL_SIZES.xlarge.height },
+    defaultConfig: {},
+  },
+  sandbox_widget: {
+    id: 'sandbox_widget',
+    name: 'Sandboxed Widget',
+    description: 'Third-party widget running in sandboxed iframe',
+    icon: '📦',
+    defaultGridSize: 'medium',
+    defaultSize: { width: PANEL_SIZES.medium.width, height: PANEL_SIZES.medium.height },
+    minSize: { width: PANEL_SIZES.small.width, height: PANEL_SIZES.small.height },
+    maxSize: { width: PANEL_SIZES.xlarge.width, height: PANEL_SIZES.xlarge.height },
     defaultConfig: {},
   },
 }

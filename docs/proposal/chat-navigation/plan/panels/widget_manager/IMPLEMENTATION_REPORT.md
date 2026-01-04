@@ -1,8 +1,8 @@
 # Widget Manager Implementation Report
 
 **Date:** 2026-01-03
-**Status:** Phase 1 + Phase 2 + Phase 2.5 Complete (with Hardening)
-**Reference:** widget-manager-plan.md
+**Status:** Phase 1 + Phase 2 + Phase 2.5 + Phase 3.1 + Phase 3.2 Complete
+**Reference:** widget-manager-plan.md, PHASE_3_SANDBOX_PLAN.md, PHASE_3_2_HANDLER_WIRING_PLAN.md
 
 ---
 
@@ -256,6 +256,281 @@ DATABASE_URL='postgresql://postgres:postgres@localhost:5432/annotation_dev' \
 
 ---
 
+## Phase 3.1: Sandbox Infrastructure
+
+### Overview
+Implemented secure sandbox infrastructure for running third-party widget code in isolated iframes. This enables widgets to execute custom JavaScript while maintaining strict security boundaries through CSP headers, origin validation, and a permission-gated bridge API.
+
+### Security Architecture
+
+#### 1. Iframe Sandbox Attributes
+```html
+<iframe sandbox="allow-scripts allow-forms" ...>
+```
+- `allow-scripts` - Execute widget code
+- `allow-forms` - Submit forms if needed
+- **Omitted**: `allow-same-origin` (isolates widget from host cookies/storage)
+
+#### 2. Content Security Policy (via HTTP Header)
+CSP is set via HTTP response header (not iframe attribute) for reliable enforcement:
+```
+default-src 'none';
+script-src 'unsafe-inline' {entrypoint-origin};
+style-src 'unsafe-inline';
+img-src data: https:;
+connect-src {networkAllowlist | 'none'};
+frame-ancestors 'self';
+```
+
+#### 3. Origin Validation (Both Directions)
+
+**Host validates widget messages:**
+```typescript
+// SandboxBridge.handleMessage()
+const allowedOrigins = new Set([window.location.origin, 'null'])
+if (!allowedOrigins.has(event.origin)) return  // reject
+if (event.source !== iframe.contentWindow) return  // reject
+if (data.channelId !== this.config.channelId) return  // reject
+```
+
+**Widget validates host messages:**
+```javascript
+// Widget SDK (injected into sandbox HTML)
+const HOST_ORIGIN = "${hostOrigin}";  // From server, not user input
+
+function handleHostMessage(event) {
+  if (event.source !== window.parent) return;
+  if (event.origin !== HOST_ORIGIN) return;  // CRITICAL
+  if (data.channelId !== CHANNEL_ID) return;
+  // ... process message
+}
+```
+
+#### 4. Channel ID Isolation
+Each widget instance gets a unique `channelId` (UUID) to prevent cross-widget message bleed:
+```typescript
+const [channelId] = useState(() => generateChannelId())  // crypto.randomUUID()
+```
+
+### Files Created
+
+#### Migration
+- `migrations/060_create_widget_permission_grants.up.sql` - Permission grants table:
+  ```sql
+  CREATE TABLE widget_permission_grants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    widget_instance_id UUID NOT NULL REFERENCES widget_instances(id) ON DELETE CASCADE,
+    user_id UUID,
+    permission TEXT NOT NULL,
+    allow_level TEXT NOT NULL CHECK (allow_level IN ('once', 'always', 'never')),
+    granted_at TIMESTAMPTZ DEFAULT now(),
+    expires_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(widget_instance_id, user_id, permission)
+  );
+  ```
+- `migrations/060_create_widget_permission_grants.down.sql` - Rollback
+
+#### Sandbox Permissions Module
+- `lib/widgets/sandbox-permissions.ts`:
+  - `WidgetPermission` type: `'read:workspace' | 'read:notes' | 'write:workspace' | 'write:notes' | 'write:chat' | 'network:fetch'`
+  - `PERMISSION_INFO` - Human-readable labels and descriptions
+  - `getMethodPermission(method)` - Maps API methods to required permissions
+  - `hasPermission(declared, required)` - Check if permission is declared
+  - `checkApprovalStatus()` - Combines session + persistent grants
+  - Session grant management (`recordSessionGrant`, `getSessionGrant`)
+
+#### Sandbox Wrapper Endpoint
+- `app/api/widgets/sandbox/route.ts` - Serves sandboxed widget HTML:
+  - Looks up widget from DB by `widgetId` (not entrypoint in URL)
+  - Validates HTTPS entrypoint
+  - Builds CSP header from `sandbox.networkAllowlist`
+  - Injects Widget Bridge SDK with `HOST_ORIGIN` for origin validation
+  - Security headers: `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`
+
+#### Host-Side Bridge
+- `lib/widgets/sandbox-bridge.ts`:
+  - `SandboxBridge` class - Manages postMessage communication
+  - `BridgeHandlers` interface - Typed API method handlers
+  - Origin + source + channelId validation
+  - Permission checking before handler execution
+  - `onPermissionRequest` callback for user approval flow
+
+#### React Component
+- `components/widgets/WidgetSandboxHost.tsx`:
+  - `WidgetSandboxHost` - Renders sandboxed iframe
+  - `PermissionDialog` - User approval UI for permission requests
+  - Loading/error state management
+  - Bridge lifecycle (init on mount, destroy on unmount)
+
+### Files Modified
+
+#### panel-manifest.ts Updates
+- Added `SandboxConfig` interface:
+  ```typescript
+  interface SandboxConfig {
+    entrypoint: string           // HTTPS URL to widget JS bundle
+    permissions: WidgetPermission[]
+    networkAllowlist?: string[]  // For connect-src CSP
+    minSize?: { width: number; height: number }
+    preferredSize?: { width: number; height: number }
+  }
+  ```
+- Added `validateSandboxConfig()` function:
+  - Validates HTTPS entrypoint URL
+  - Validates known permissions only
+  - Validates HTTPS network origins in allowlist
+
+### Widget Bridge API
+
+The injected Widget SDK provides these methods to widget code:
+
+```javascript
+// Exposed as window.WidgetBridge
+WidgetBridge.widgetId      // Widget identifier
+WidgetBridge.channelId     // Unique channel for this instance
+WidgetBridge.permissions   // Declared permissions array
+
+WidgetBridge.request(method, params)  // Generic API request
+
+// Convenience namespaces
+WidgetBridge.workspace.getPanels()
+WidgetBridge.workspace.getActivePanel()
+WidgetBridge.workspace.openPanel(panelId)
+WidgetBridge.workspace.closePanel(panelId)
+
+WidgetBridge.notes.getCurrentNote()
+WidgetBridge.notes.getNote(noteId)
+WidgetBridge.notes.updateNote(noteId, content)
+
+WidgetBridge.ui.showToast(message, type)
+WidgetBridge.ui.requestResize(width, height)
+
+WidgetBridge.storage.get(key)
+WidgetBridge.storage.set(key, value)
+
+WidgetBridge.ready()  // Signal widget is ready
+```
+
+### Phase 3.1 Checklist (All Complete)
+- [x] Migration for `widget_permission_grants` table
+- [x] `lib/widgets/sandbox-permissions.ts` - Permission types and checking
+- [x] `lib/panels/panel-manifest.ts` - SandboxConfig validation
+- [x] `app/api/widgets/sandbox/route.ts` - Wrapper endpoint with CSP header
+- [x] `lib/widgets/sandbox-bridge.ts` - Host-side bridge with origin validation
+- [x] `components/widgets/WidgetSandboxHost.tsx` - React component with permission dialog
+- [x] Widget-side origin validation (HOST_ORIGIN check in SDK)
+- [x] Channel ID isolation (crypto-random UUID per instance)
+
+### Phase 3.1 Security Guarantees
+1. **Widget isolation**: No access to host cookies, localStorage, or DOM
+2. **Origin validation**: Both host and widget validate message origins
+3. **Channel isolation**: Cross-widget message bleed prevented via channelId
+4. **Permission gating**: Write operations require explicit user approval
+5. **Network restriction**: External fetches limited to declared allowlist
+6. **CSP enforcement**: Via HTTP header (not bypassable by widget)
+
+---
+
+## Phase 3.2: Handler Wiring (Read-Only)
+
+### Overview
+Implemented read-only bridge handlers that allow sandboxed widgets to access workspace and note state. Handlers are pure functions that transform UI state into bridge responses.
+
+### Architecture
+
+```
+Widget iframe
+  → postMessage request: workspace.getPanels
+Host (SandboxBridge)
+  → Permission check (read:workspace) → auto-allow
+  → Handler executes against host state
+  → Response returned to widget
+```
+
+### Files Created
+
+#### Bridge API Handlers
+- `lib/widgets/bridge-api/workspace.ts` - Workspace handlers:
+  - `handleGetPanels(state)` → Returns list of visible panels with id, type, title, isActive
+  - `handleGetActivePanel(state)` → Returns the currently active/focused panel
+
+- `lib/widgets/bridge-api/notes.ts` - Notes handlers:
+  - `handleGetCurrentNote(state)` → Returns current note with preview (max 500 chars)
+  - `handleGetNote(state, { noteId })` → Returns note by ID with preview
+
+- `lib/widgets/bridge-api/index.ts` - Barrel export
+
+#### Handler Hook
+- `lib/widgets/use-sandbox-handlers.ts`:
+  - `useSandboxHandlers(options)` - Creates `BridgeHandlers` from dependencies
+  - `createEmptyDependencies()` - Factory for empty/null-safe state
+
+#### Integration Component
+- `components/widgets/SandboxWidgetPanel.tsx`:
+  - Wrapper that combines `WidgetSandboxHost` with `useSandboxHandlers`
+  - Manages widget resize requests
+  - Ready to use in DashboardWidgetRenderer
+
+### Payload Shapes
+
+**workspace.getPanels Response:**
+```typescript
+{
+  panels: [
+    { id: string, type: string, title: string | null, isActive: boolean }
+  ]
+}
+```
+
+**notes.getCurrentNote Response:**
+```typescript
+{
+  note: {
+    id: string,
+    title: string,
+    contentPreview: string,  // Max 500 chars
+    isTruncated: boolean
+  } | null
+}
+```
+
+### Handler Dependencies
+
+The hook accepts dependencies via props (dependency injection pattern):
+
+```typescript
+const handlers = useSandboxHandlers({
+  dependencies: {
+    workspace: {
+      panels: WorkspacePanel[],     // From dashboard state
+      activePanelId: string | null, // From dashboard state
+    },
+    notes: {
+      currentNote: { id, title, content } | null,
+      getNoteById: async (noteId) => note | null,
+    },
+  },
+  onResizeRequest: (width, height) => void,
+})
+```
+
+### Phase 3.2 Checklist (All Complete)
+- [x] `lib/widgets/bridge-api/workspace.ts` - Workspace read handlers
+- [x] `lib/widgets/bridge-api/notes.ts` - Notes read handlers
+- [x] `lib/widgets/bridge-api/index.ts` - Barrel export
+- [x] `lib/widgets/use-sandbox-handlers.ts` - Handler hook with dependencies
+- [x] `components/widgets/SandboxWidgetPanel.tsx` - Integration component
+- [x] Type-check passes
+
+### Phase 3.2 Scope Limits (By Design)
+- **Read-only**: No write handlers (Phase 3.3)
+- **No permission persistence**: "Always Allow" DB wiring (Phase 3.3)
+- **No storage handlers**: Widget storage API (Phase 3.3)
+- **Content preview only**: Full note content not exposed to reduce risk
+
+---
+
 ## All Affected Files Summary
 
 ### Created Files
@@ -263,7 +538,11 @@ DATABASE_URL='postgresql://postgres:postgres@localhost:5432/annotation_dev' \
 |------|---------|
 | `migrations/059_create_widget_manager_tables.up.sql` | DB schema |
 | `migrations/059_create_widget_manager_tables.down.sql` | Rollback |
+| `migrations/060_create_widget_permission_grants.up.sql` | Permission grants table (Phase 3.1) |
+| `migrations/060_create_widget_permission_grants.down.sql` | Rollback (Phase 3.1) |
 | `lib/widgets/widget-store.ts` | Server-side DB operations |
+| `lib/widgets/sandbox-permissions.ts` | Permission types and checking (Phase 3.1) |
+| `lib/widgets/sandbox-bridge.ts` | Host-side postMessage bridge (Phase 3.1) |
 | `app/api/widgets/list/route.ts` | List widgets API |
 | `app/api/widgets/enable/route.ts` | Enable/disable API |
 | `app/api/widgets/install/route.ts` | Install from URL API |
@@ -271,14 +550,21 @@ DATABASE_URL='postgresql://postgres:postgres@localhost:5432/annotation_dev' \
 | `app/api/widgets/uninstall/route.ts` | Uninstall API |
 | `app/api/widgets/instances/route.ts` | Widget instances CRUD |
 | `app/api/widgets/sample-manifest/route.ts` | Test manifest |
+| `app/api/widgets/sandbox/route.ts` | Sandbox wrapper with CSP (Phase 3.1) |
 | `components/dashboard/widgets/WidgetManager.tsx` | Manager UI |
+| `components/widgets/WidgetSandboxHost.tsx` | Sandbox host component (Phase 3.1) |
+| `components/widgets/SandboxWidgetPanel.tsx` | Integration wrapper (Phase 3.2) |
+| `lib/widgets/bridge-api/workspace.ts` | Workspace read handlers (Phase 3.2) |
+| `lib/widgets/bridge-api/notes.ts` | Notes read handlers (Phase 3.2) |
+| `lib/widgets/bridge-api/index.ts` | Barrel export (Phase 3.2) |
+| `lib/widgets/use-sandbox-handlers.ts` | Handler hook (Phase 3.2) |
 | `__tests__/unit/widgets/panel-manifest.test.ts` | Manifest tests (29 tests) |
 | `__tests__/integration/widgets/widget-store.test.ts` | Store tests (18 tests) |
 
 ### Modified Files
 | File | Changes |
 |------|---------|
-| `lib/panels/panel-manifest.ts` | Added api: handler validation (lines 177-181) |
+| `lib/panels/panel-manifest.ts` | Added api: handler validation, SandboxConfig interface, validateSandboxConfig() |
 | `lib/panels/panel-registry.ts` | Added DB manifest loading, dbManifestIds pruning |
 | `lib/db/pool.ts` | Lazy proxy initialization, `closeServerPool()` for test cleanup |
 
@@ -399,18 +685,30 @@ npm test
 
 ## Known Limitations
 
-1. **No widget code execution** - Widgets are data-driven (manifests only). Custom code sandboxing is Phase 3.
+1. **Permission persistence not wired** - Session grants work, but DB persistence for "Always Allow"/"Always Deny" not yet connected to UI (Phase 3.3).
 2. **Single-user mode** - Uses default user ID `00000000-0000-0000-0000-000000000000`.
 3. **File size limit** - File uploads limited to 100KB (sufficient for JSON manifests).
+4. **Read-only handlers** - Write handlers (workspace.openPanel, notes.updateNote) deferred to Phase 3.3.
+5. **No storage API** - Widget-scoped storage deferred to Phase 3.3.
+6. **Content preview only** - Notes handlers return 500-char preview, not full content (security).
 
 ---
 
 ## Next Phases
 
-### Phase 3: Safe Custom Widgets
-- [ ] Sandbox for third-party code (iframe/worker)
-- [ ] Restricted API surface
-- [ ] Permission gating for write intents
+### Phase 3.3: Write Handlers + Permission Persistence
+- [ ] Wire `workspace.openPanel` / `workspace.closePanel` handlers
+- [ ] Wire `notes.updateNote` handler
+- [ ] Wire `storage.get` / `storage.set` with DB table
+- [ ] Wire "Always Allow" to DB insert
+- [ ] Wire "Always Deny" to DB insert
+- [ ] Load persistent grants on component mount
+- [ ] UI to view/revoke granted permissions
+
+### Phase 3.4: Dashboard Integration
+- [ ] Add custom widget panel type to DashboardWidgetRenderer
+- [ ] Wire dependencies from dashboard state
+- [ ] Full E2E test with real sandboxed widget
 
 ### Phase 4: Widget Store
 - [ ] Store browsing UI

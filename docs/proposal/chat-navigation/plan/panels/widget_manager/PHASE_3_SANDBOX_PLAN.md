@@ -62,31 +62,36 @@ Phase 3 enables widgets to include custom executable code (JavaScript/React comp
 **Key insight:** The iframe `csp` attribute is not widely supported. CSP must be set via HTTP header on the iframe's content. This requires a server-side wrapper endpoint.
 
 ```
-GET /api/widgets/sandbox?entrypoint=<url>&widgetId=<id>
+GET /api/widgets/sandbox?widgetId=<id>&channelId=<uuid>
 ```
 
+**Security note:** The entrypoint URL is NOT passed via query string. Instead, the endpoint looks up the widget from the DB by `widgetId` and retrieves the entrypoint from the stored manifest. This prevents URL tampering.
+
 **Response:** HTML wrapper page with:
-1. CSP header set by the server
-2. Minimal HTML that loads the widget entrypoint
-3. Bridge client SDK injected
+1. CSP header set by the server (based on manifest's `networkAllowlist`)
+2. Minimal HTML that loads the widget entrypoint from DB
+3. Bridge client SDK with origin validation injected
+4. Host origin passed from server for widget-side validation
 
 ```typescript
 // app/api/widgets/sandbox/route.ts
 export async function GET(request: NextRequest) {
-  const entrypoint = request.nextUrl.searchParams.get('entrypoint')
   const widgetId = request.nextUrl.searchParams.get('widgetId')
+  const channelId = request.nextUrl.searchParams.get('channelId')
 
-  // Validate entrypoint URL against allowlist
-  if (!isAllowedEntrypoint(entrypoint)) {
-    return new Response('Invalid entrypoint', { status: 400 })
-  }
+  // Lookup widget from DB (entrypoint comes from trusted manifest)
+  const widget = await getInstalledWidget(widgetId, userId)
+  const sandbox = widget.manifest.sandbox
 
-  const html = generateSandboxHTML(entrypoint, widgetId)
+  // Host origin from server (trusted) - passed to widget for origin validation
+  const hostOrigin = request.nextUrl.origin
+
+  const html = generateSandboxHTML(sandbox.entrypoint, widgetId, channelId, sandbox.permissions, hostOrigin)
 
   return new Response(html, {
     headers: {
       'Content-Type': 'text/html',
-      'Content-Security-Policy': buildCSP(widgetId),
+      'Content-Security-Policy': buildCSP(sandbox, entrypointOrigin),
       'X-Frame-Options': 'SAMEORIGIN',
     },
   })
@@ -97,7 +102,7 @@ export async function GET(request: NextRequest) {
 
 ```html
 <iframe
-  src="/api/widgets/sandbox?entrypoint=...&widgetId=..."
+  src="/api/widgets/sandbox?widgetId=...&channelId=..."
   sandbox="allow-scripts allow-forms"
   referrerpolicy="no-referrer"
 />
@@ -568,11 +573,12 @@ function buildCSP(manifest: PanelChatManifest): string {
 - `lib/panels/panel-manifest.ts` - Add sandbox block + networkAllowlist validation
 
 **Deliverables:**
-- [ ] Sandbox wrapper endpoint with CSP headers (connect-src from networkAllowlist only, default 'none')
-- [ ] WidgetSandboxHost component renders iframe via wrapper with channelId
-- [ ] Origin + source + channelId validated postMessage communication
-- [ ] Manifest validation accepts sandbox block (optional in version "1.0")
-- [ ] Widget can send/receive messages
+- [x] Sandbox wrapper endpoint with CSP headers (connect-src from networkAllowlist only, default 'none')
+- [x] WidgetSandboxHost component renders iframe via wrapper with channelId
+- [x] Host-side origin + source + channelId validated postMessage (sandbox-bridge.ts)
+- [x] Widget-side origin validation: SDK validates `event.origin === HOST_ORIGIN` (hostOrigin passed from server)
+- [x] Manifest validation accepts sandbox block (optional in version "1.0")
+- [x] Widget can send/receive messages via bridge
 
 ### Phase 3.2: Bridge API (Read-Only)
 

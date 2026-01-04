@@ -1840,6 +1840,8 @@ export function DashboardView({
                     isActive={activePanelId === panel.id}
                     onMouseDown={(e) => handleDragStart(e, panel)}
                     onConfigChange={(config) => handleConfigChange(panel.id, config)}
+                    allPanels={panels}
+                    activePanelId={activePanelId}
                   />
                   {/* Size picker button - positioned at lower-right corner */}
                   <div

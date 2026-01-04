@@ -5,6 +5,8 @@
  * Each panel ships its own manifest with intents, examples, and handlers.
  */
 
+import type { WidgetPermission } from '@/lib/widgets/sandbox-permissions'
+
 /**
  * Permission level for panel intents
  * - read: View-only, safe operations
@@ -46,6 +48,30 @@ export interface PanelIntent {
 }
 
 /**
+ * Sandbox configuration for custom widget code execution
+ * Phase 3: Safe Custom Widgets
+ */
+export interface SandboxConfig {
+  /** URL to widget entry point (JS bundle) - must be HTTPS */
+  entrypoint: string
+
+  /** Permissions this widget requires */
+  permissions: WidgetPermission[]
+
+  /**
+   * Allowed network origins for connect-src CSP directive.
+   * If empty/omitted, no external network access allowed (connect-src 'none').
+   */
+  networkAllowlist?: string[]
+
+  /** Minimum container size */
+  minSize?: { width: number; height: number }
+
+  /** Preferred container size */
+  preferredSize?: { width: number; height: number }
+}
+
+/**
  * Full manifest for a panel's chat capabilities
  */
 export interface PanelChatManifest {
@@ -61,8 +87,18 @@ export interface PanelChatManifest {
   /** Manifest version for compatibility checking */
   version: string
 
+  /** Optional description */
+  description?: string
+
   /** List of chat intents this panel supports */
   intents: PanelIntent[]
+
+  /**
+   * Optional sandbox configuration for custom widget code.
+   * If present, widget runs in isolated iframe with declared permissions.
+   * Phase 3: Safe Custom Widgets
+   */
+  sandbox?: SandboxConfig
 }
 
 /**
@@ -182,5 +218,120 @@ export function validateManifest(manifest: unknown): manifest is PanelChatManife
     if (!['read', 'write'].includes(intent.permission)) return false
   }
 
+  // Validate sandbox configuration if present (Phase 3: Safe Custom Widgets)
+  if (m.sandbox !== undefined) {
+    if (!validateSandboxConfig(m.sandbox)) {
+      return false
+    }
+  }
+
   return true
+}
+
+/**
+ * Valid widget permissions for sandbox
+ */
+const VALID_WIDGET_PERMISSIONS = [
+  'read:workspace',
+  'read:notes',
+  'write:workspace',
+  'write:notes',
+  'write:chat',
+  'network:fetch',
+]
+
+/**
+ * Validate sandbox configuration
+ */
+export function validateSandboxConfig(sandbox: unknown): sandbox is SandboxConfig {
+  if (!sandbox || typeof sandbox !== 'object') {
+    console.warn('[PanelManifest] sandbox must be an object')
+    return false
+  }
+
+  const s = sandbox as Record<string, unknown>
+
+  // entrypoint is required if sandbox is present
+  if (!s.entrypoint || typeof s.entrypoint !== 'string') {
+    console.warn('[PanelManifest] sandbox.entrypoint is required')
+    return false
+  }
+
+  // Validate entrypoint is HTTPS URL
+  try {
+    const url = new URL(s.entrypoint)
+    if (url.protocol !== 'https:') {
+      console.warn('[PanelManifest] sandbox.entrypoint must be HTTPS')
+      return false
+    }
+  } catch {
+    console.warn('[PanelManifest] sandbox.entrypoint must be a valid URL')
+    return false
+  }
+
+  // Validate permissions array
+  if (!Array.isArray(s.permissions)) {
+    console.warn('[PanelManifest] sandbox.permissions must be an array')
+    return false
+  }
+
+  // Validate each permission is known
+  for (const perm of s.permissions) {
+    if (typeof perm !== 'string' || !VALID_WIDGET_PERMISSIONS.includes(perm)) {
+      console.warn(`[PanelManifest] Unknown permission: ${perm}`)
+      return false
+    }
+  }
+
+  // Validate networkAllowlist if present
+  if (s.networkAllowlist !== undefined) {
+    if (!Array.isArray(s.networkAllowlist)) {
+      console.warn('[PanelManifest] sandbox.networkAllowlist must be an array')
+      return false
+    }
+    for (const origin of s.networkAllowlist) {
+      if (typeof origin !== 'string') {
+        console.warn('[PanelManifest] networkAllowlist entries must be strings')
+        return false
+      }
+      try {
+        const url = new URL(origin)
+        if (url.protocol !== 'https:') {
+          console.warn(`[PanelManifest] networkAllowlist origin must be HTTPS: ${origin}`)
+          return false
+        }
+      } catch {
+        console.warn(`[PanelManifest] Invalid networkAllowlist origin: ${origin}`)
+        return false
+      }
+    }
+  }
+
+  // Validate minSize if present
+  if (s.minSize !== undefined) {
+    if (!isValidSize(s.minSize)) {
+      console.warn('[PanelManifest] sandbox.minSize must be { width: number, height: number }')
+      return false
+    }
+  }
+
+  // Validate preferredSize if present
+  if (s.preferredSize !== undefined) {
+    if (!isValidSize(s.preferredSize)) {
+      console.warn('[PanelManifest] sandbox.preferredSize must be { width: number, height: number }')
+      return false
+    }
+  }
+
+  return true
+}
+
+/**
+ * Validate size object
+ */
+function isValidSize(size: unknown): size is { width: number; height: number } {
+  if (!size || typeof size !== 'object') return false
+  const s = size as Record<string, unknown>
+  return typeof s.width === 'number' && typeof s.height === 'number' &&
+         s.width > 0 && s.height > 0
 }
