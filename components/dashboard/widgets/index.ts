@@ -22,5 +22,5 @@ export type { BaseWidgetProps } from './BaseWidget'
 // Widget components (added as they are created)
 export { RecentWidget } from './RecentWidget'
 export { QuickLinksWidget } from './QuickLinksWidget'
-export { DemoWidget } from './DemoWidget'
 export { WidgetManager } from './WidgetManager'
+// Note: DemoWidget removed - install as custom widget via /api/widgets/demo-manifest

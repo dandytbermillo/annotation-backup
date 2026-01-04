@@ -1,9 +1,9 @@
 /**
  * Bridge API Barrel Export
- * Phase 3.2: Widget Bridge Handler Wiring (Read-Only)
+ * Phase 3.2 + 3.3: Widget Bridge Handler Wiring (Read + Write)
  */
 
-// Workspace handlers
+// Workspace read handlers
 export {
   handleGetPanels,
   handleGetActivePanel,
@@ -13,7 +13,19 @@ export {
   type GetActivePanelResponse,
 } from './workspace'
 
-// Notes handlers
+// Workspace write handlers (Phase 3.3)
+export {
+  handleOpenPanel,
+  handleClosePanel,
+  handleFocusPanel,
+  type OpenPanelParams,
+  type ClosePanelParams,
+  type FocusPanelParams,
+  type WorkspaceWriteCallbacks,
+  type WriteResult,
+} from './workspace-write'
+
+// Notes read handlers
 export {
   handleGetCurrentNote,
   handleGetNote,
@@ -22,3 +34,23 @@ export {
   type GetCurrentNoteResponse,
   type GetNoteResponse,
 } from './notes'
+
+// Notes write handlers (Phase 3.3)
+export {
+  handleUpdateNote,
+  handleCreateNote,
+  handleDeleteNote,
+  type UpdateNoteParams,
+  type CreateNoteParams,
+  type DeleteNoteParams,
+  type NotesWriteCallbacks,
+  type NoteWriteResult,
+} from './notes-write'
+
+// Chat write handlers (Phase 3.3)
+export {
+  handleSendMessage,
+  type SendMessageParams,
+  type ChatWriteCallbacks,
+  type ChatWriteResult,
+} from './chat-write'

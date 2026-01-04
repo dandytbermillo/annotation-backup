@@ -1842,6 +1842,8 @@ export function DashboardView({
                     onConfigChange={(config) => handleConfigChange(panel.id, config)}
                     allPanels={panels}
                     activePanelId={activePanelId}
+                    onFocusPanel={setActivePanelId}
+                    onClosePanel={handlePanelClose}
                   />
                   {/* Size picker button - positioned at lower-right corner */}
                   <div

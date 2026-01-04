@@ -3,9 +3,13 @@
  *
  * System prompt for intent parsing. The LLM's only job is to extract
  * the user's intent and return structured JSON.
+ *
+ * Note: This file is server-only (used by API routes).
  */
 
+import 'server-only'
 import { panelRegistry } from '@/lib/panels/panel-registry'
+import { getEnabledManifests } from '@/lib/widgets/widget-store'
 
 export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-taking application. Your ONLY job is to parse user requests and return a JSON object indicating their intent.
 
@@ -327,12 +331,22 @@ export async function buildIntentMessages(
   // If userId is provided, load DB manifests (server-side)
   let panelIntentsSection: string
   if (userId !== undefined) {
-    // Server-side: load DB manifests
-    panelIntentsSection = await panelRegistry.buildPromptSectionWithDB(
-      userId,
-      context?.visiblePanels,
-      context?.focusedPanelId
-    )
+    // Server-side: load DB manifests directly and pass to registry
+    try {
+      const dbManifests = await getEnabledManifests(userId)
+      panelIntentsSection = panelRegistry.buildPromptSectionWithDBManifests(
+        dbManifests,
+        context?.visiblePanels,
+        context?.focusedPanelId
+      )
+    } catch (error) {
+      console.error('[buildIntentMessages] Failed to load DB manifests:', error)
+      // Fallback to code-registered manifests only
+      panelIntentsSection = panelRegistry.buildPromptSection(
+        context?.visiblePanels,
+        context?.focusedPanelId
+      )
+    }
   } else {
     // Client-side or no user context: use code-registered manifests only
     panelIntentsSection = panelRegistry.buildPromptSection(

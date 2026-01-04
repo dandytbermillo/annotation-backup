@@ -6,6 +6,7 @@
  * NOTE: This file is server-only. Import it only in API routes or server components.
  */
 
+import 'server-only'
 import { serverPool } from '@/lib/db/pool'
 import type { PanelChatManifest } from '@/lib/panels/panel-manifest'
 import { validateManifest } from '@/lib/panels/panel-manifest'

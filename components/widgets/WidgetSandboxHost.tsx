@@ -165,13 +165,31 @@ export function WidgetSandboxHost({
 
   // Handle permission dialog decision
   const handlePermissionDecision = useCallback(
-    (decision: 'allow' | 'deny' | 'always' | 'never') => {
+    async (decision: 'allow' | 'deny' | 'always' | 'never') => {
       if (permissionRequest) {
+        // Persist 'always' and 'never' decisions to DB
+        if (decision === 'always' || decision === 'never') {
+          try {
+            await fetch('/api/widgets/permissions', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                widgetInstanceId,
+                permission: permissionRequest.permission,
+                allowLevel: decision,
+              }),
+            })
+          } catch (error) {
+            console.error('[WidgetSandboxHost] Failed to persist permission:', error)
+            // Still resolve the request even if persistence fails
+          }
+        }
+
         permissionRequest.resolve(decision)
         setPermissionRequest(null)
       }
     },
-    [permissionRequest]
+    [permissionRequest, widgetInstanceId]
   )
 
   // Initialize bridge
@@ -198,6 +216,30 @@ export function WidgetSandboxHost({
 
     bridge.init()
     bridgeRef.current = bridge
+
+    // Fetch persistent grants and load into bridge
+    const loadPersistentGrants = async () => {
+      try {
+        const response = await fetch(
+          `/api/widgets/permissions?widgetInstanceId=${encodeURIComponent(widgetInstanceId)}`
+        )
+        if (response.ok) {
+          const data = await response.json()
+          const grants = (data.grants || []).map((g: { permission: string; allowLevel: string }) => ({
+            widgetInstanceId,
+            userId,
+            permission: g.permission,
+            allowLevel: g.allowLevel,
+            grantedAt: new Date(),
+            expiresAt: null,
+          }))
+          bridge.setPersistentGrants(grants)
+        }
+      } catch (error) {
+        console.error('[WidgetSandboxHost] Failed to load persistent grants:', error)
+      }
+    }
+    loadPersistentGrants()
 
     // Timeout for loading
     const timeout = setTimeout(() => {

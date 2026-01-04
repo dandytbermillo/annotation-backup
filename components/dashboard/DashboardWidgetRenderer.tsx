@@ -8,15 +8,14 @@
  * Falls back to BaseDashboardPanel for panel types without widgets yet.
  */
 
-import React from 'react'
+import React, { useMemo } from 'react'
 import type { WorkspacePanel, PanelConfig } from '@/lib/dashboard/panel-registry'
 import { RecentWidget } from './widgets/RecentWidget'
 import { QuickLinksWidget } from './widgets/QuickLinksWidget'
-import { DemoWidget } from './widgets/DemoWidget'
 import { WidgetManager } from './widgets/WidgetManager'
 import { BaseWidget, WidgetLabel, WidgetEmpty } from './widgets/BaseWidget'
 import { SandboxWidgetPanel } from '@/components/widgets/SandboxWidgetPanel'
-import type { SandboxHandlerDependencies } from '@/lib/widgets/use-sandbox-handlers'
+import type { SandboxHandlerDependencies, WriteCallbacks } from '@/lib/widgets/use-sandbox-handlers'
 import type { SandboxConfig } from '@/lib/panels/panel-manifest'
 
 export interface DashboardWidgetRendererProps {
@@ -34,6 +33,11 @@ export interface DashboardWidgetRendererProps {
   allPanels?: WorkspacePanel[]
   /** Active panel ID (for sandbox widget handlers) */
   activePanelId?: string | null
+  // Phase 3.3: Write operation callbacks for sandbox widgets
+  /** Focus a panel by ID */
+  onFocusPanel?: (panelId: string) => void
+  /** Close a panel by ID */
+  onClosePanel?: (panelId: string) => void
 }
 
 /**
@@ -48,6 +52,8 @@ export function DashboardWidgetRenderer({
   onConfigChange,
   allPanels = [],
   activePanelId = null,
+  onFocusPanel,
+  onClosePanel,
 }: DashboardWidgetRendererProps) {
   const handleDoubleClick = () => onDoubleClick(panel)
 
@@ -63,6 +69,54 @@ export function DashboardWidgetRenderer({
       getNoteById: undefined, // Could be wired up later if needed
     },
   }
+
+  // Phase 3.3: Build write callbacks for sandbox widgets
+  const writeCallbacks: WriteCallbacks = useMemo(() => ({
+    workspace: {
+      openPanel: async (panelId: string) => {
+        // Dashboard doesn't support opening arbitrary panels by ID
+        // This would require panel creation logic
+        console.warn('[DashboardWidgetRenderer] openPanel not supported in dashboard mode')
+        return false
+      },
+      closePanel: async (panelId: string) => {
+        if (onClosePanel) {
+          onClosePanel(panelId)
+          return true
+        }
+        return false
+      },
+      focusPanel: async (panelId: string) => {
+        if (onFocusPanel) {
+          onFocusPanel(panelId)
+          return true
+        }
+        return false
+      },
+    },
+    notes: {
+      // Notes operations require API calls - not available in dashboard context
+      updateNote: async () => {
+        console.warn('[DashboardWidgetRenderer] notes.updateNote not supported in dashboard mode')
+        return false
+      },
+      createNote: async () => {
+        console.warn('[DashboardWidgetRenderer] notes.createNote not supported in dashboard mode')
+        return null
+      },
+      deleteNote: async () => {
+        console.warn('[DashboardWidgetRenderer] notes.deleteNote not supported in dashboard mode')
+        return false
+      },
+    },
+    chat: {
+      // Chat operations not available in dashboard context
+      sendMessage: async () => {
+        console.warn('[DashboardWidgetRenderer] chat.sendMessage not supported in dashboard mode')
+        return null
+      },
+    },
+  }), [onClosePanel, onFocusPanel])
 
   switch (panel.panelType) {
     case 'recent':
@@ -86,15 +140,8 @@ export function DashboardWidgetRenderer({
         />
       )
 
-    case 'demo':
-      return (
-        <DemoWidget
-          panel={panel}
-          onDoubleClick={handleDoubleClick}
-          isActive={isActive}
-          onMouseDown={onMouseDown}
-        />
-      )
+    // Note: Demo widget was removed as a built-in
+    // Install as custom widget via: http://localhost:3000/api/widgets/demo-manifest
 
     case 'widget_manager':
       return (
@@ -144,6 +191,7 @@ export function DashboardWidgetRenderer({
             title={panel.title || 'Widget'}
             sandbox={config.sandbox}
             dependencies={sandboxDependencies}
+            writeCallbacks={writeCallbacks}
             className="w-full h-full"
           />
         </BaseWidget>

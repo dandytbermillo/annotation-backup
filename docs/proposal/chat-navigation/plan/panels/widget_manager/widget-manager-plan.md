@@ -212,9 +212,12 @@ Phase 2 prerequisites (define before implementation):
 - Package signing (optional)
 
 Phase 3 checklist:
-- [ ] Sandbox for third-party code
-- [ ] Restricted API surface
-- [ ] Permission gating for write intents
+- [x] Sandbox for third-party code (Phase 3.1)
+- [x] Restricted API surface (Phase 3.2)
+- [x] Permission gating for write intents (Phase 3.3 MVP)
+- [ ] Permission gating for write intents (Phase 3.3 Full: openPanel + notes + chat)
+- [ ] Widget SDK packaging (Phase 3.4) for third-party developers
+- [ ] Widget SDK packaging (Phase 3.4) for third-party developers
 
 ### Phase 4: Widget Store
 - Curated list

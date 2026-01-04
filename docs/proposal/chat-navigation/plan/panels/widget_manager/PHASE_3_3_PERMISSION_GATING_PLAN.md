@@ -1,7 +1,7 @@
 # Phase 3.3: Permission Gating + Write APIs
 
-**Date:** 2026-01-03  
-**Status:** Draft (Ready for Implementation)  
+**Date:** 2026-01-03
+**Status:** Complete (MVP - Dashboard Context)
 **Prerequisite:** Phase 3.1 + Phase 3.2 complete
 
 ---
@@ -158,6 +158,7 @@ Response:
 
 ## Acceptance Criteria
 
+### MVP (Dashboard Context)
 - [ ] Write methods prompt user for approval on first use.
 - [ ] "Always allow" persists across reloads.
 - [ ] "Always deny" persists across reloads.
@@ -165,6 +166,11 @@ Response:
 - [ ] Permission checks run before every write method.
 - [ ] Rate limit enforced for write methods.
 - [ ] Type-check passes.
+
+### Full Phase 3.3 (All Contexts)
+- [ ] workspace.openPanel executes real action (not stubbed).
+- [ ] notes.* execute real actions with note context.
+- [ ] chat.sendMessage executes real action.
 
 ---
 
@@ -188,3 +194,27 @@ Response:
 
 - This phase is write-capable; keep read-only handlers unchanged.
 - Permission persistence is per widget instance and user.
+
+---
+
+## MVP Completion (2026-01-04)
+
+### Implemented
+
+- Permission persistence: `lib/widgets/permission-store.ts`, `app/api/widgets/permissions/route.ts`
+- Permission loading on mount + always/never persist: `components/widgets/WidgetSandboxHost.tsx`
+- Rate limiting with real widget instance ID: `lib/widgets/use-sandbox-handlers.ts`
+- Write callbacks wired in dashboard: `components/dashboard/DashboardWidgetRenderer.tsx`
+- Real actions: `workspace.focusPanel`, `workspace.closePanel`
+
+### Deferred (Future Phase)
+
+| Method | Status | Reason |
+|--------|--------|--------|
+| `workspace.openPanel` | Stub (returns false) | Requires panel creation logic |
+| `notes.*` | Stub (returns false) | Widgets render on dashboard only, no note context |
+| `chat.sendMessage` | Stub (returns null) | Requires chat system integration |
+
+### Rationale
+
+Sandbox widgets only render on the dashboard (`DashboardWidgetRenderer` → `SandboxWidgetPanel`). There is no workspace-view rendering path for widgets, so notes context is unavailable. The permission gating infrastructure is complete; the stubs represent an architectural boundary.

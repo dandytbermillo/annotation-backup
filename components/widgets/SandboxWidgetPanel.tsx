@@ -12,7 +12,7 @@
 
 import React, { useState, useCallback } from 'react'
 import { WidgetSandboxHost } from './WidgetSandboxHost'
-import { useSandboxHandlers, createEmptyDependencies, type SandboxHandlerDependencies } from '@/lib/widgets/use-sandbox-handlers'
+import { useSandboxHandlers, createEmptyDependencies, type SandboxHandlerDependencies, type WriteCallbacks } from '@/lib/widgets/use-sandbox-handlers'
 import type { SandboxConfig } from '@/lib/panels/panel-manifest'
 
 // =============================================================================
@@ -32,6 +32,8 @@ export interface SandboxWidgetPanelProps {
   userId?: string | null
   /** Handler dependencies from parent context */
   dependencies?: SandboxHandlerDependencies
+  /** Write operation callbacks (Phase 3.3) */
+  writeCallbacks?: WriteCallbacks
   /** Callback when widget is ready */
   onReady?: () => void
   /** Callback when widget errors */
@@ -65,6 +67,11 @@ export interface SandboxWidgetPanelProps {
  *         workspace: { panels, activePanelId },
  *         notes: { currentNote, getNoteById },
  *       }}
+ *       writeCallbacks={{
+ *         workspace: { openPanel, closePanel, focusPanel },
+ *         notes: { updateNote, createNote, deleteNote },
+ *         chat: { sendMessage },
+ *       }}
  *     />
  *   )
  * ```
@@ -76,6 +83,7 @@ export function SandboxWidgetPanel({
   sandbox,
   userId = null,
   dependencies = createEmptyDependencies(),
+  writeCallbacks,
   onReady,
   onError,
   className,
@@ -99,7 +107,9 @@ export function SandboxWidgetPanel({
 
   // Create bridge handlers
   const handlers = useSandboxHandlers({
+    widgetInstanceId,
     dependencies,
+    writeCallbacks,
     onResizeRequest: handleResizeRequest,
   })
 
