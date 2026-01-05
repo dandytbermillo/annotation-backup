@@ -78,15 +78,23 @@ export type { SessionState }
 
 // Last action type for tracking
 export interface LastAction {
-  type: 'open_workspace' | 'open_entry' | 'rename_workspace' | 'delete_workspace' | 'create_workspace' | 'go_to_dashboard' | 'go_home'
+  type: 'open_workspace' | 'open_entry' | 'open_panel' | 'rename_workspace' | 'delete_workspace' | 'create_workspace' | 'go_to_dashboard' | 'go_home'
   workspaceId?: string
   workspaceName?: string
   entryId?: string
   entryName?: string
+  panelId?: string
+  panelTitle?: string
   fromName?: string
   toName?: string
   timestamp: number
 }
+
+// Re-export ActionHistoryEntry and RequestHistoryEntry for convenience
+export type { ActionHistoryEntry, RequestHistoryEntry } from './intent-prompt'
+
+// Constants for action history
+const ACTION_HISTORY_MAX_SIZE = 50
 
 interface ChatNavigationContextValue {
   messages: ChatMessage[]
@@ -104,6 +112,10 @@ interface ChatNavigationContextValue {
   setLastAction: (action: LastAction) => void
   incrementOpenCount: (id: string, name: string, type: 'workspace' | 'entry') => void
   setLastQuickLinksBadge: (badge: string) => void
+  // Action history for "did I [action] X?" queries
+  appendActionHistory: (entry: Omit<import('./intent-prompt').ActionHistoryEntry, 'timestamp'>) => void
+  // Request history for "did I ask you to [action] X?" queries
+  appendRequestHistory: (entry: Omit<import('./intent-prompt').RequestHistoryEntry, 'timestamp'>) => void
   // Persistence
   conversationId: string | null
   isLoadingHistory: boolean
@@ -239,6 +251,8 @@ async function fetchSessionState(
   openCounts?: SessionState['openCounts']
   lastAction?: LastAction
   lastQuickLinksBadge?: SessionState['lastQuickLinksBadge']
+  actionHistory?: SessionState['actionHistory']
+  requestHistory?: SessionState['requestHistory']
 } | null> {
   try {
     const response = await fetch(`/api/chat/session-state?conversationId=${conversationId}`)
@@ -256,6 +270,8 @@ async function persistSessionState(
     openCounts?: SessionState['openCounts']
     lastAction?: LastAction
     lastQuickLinksBadge?: SessionState['lastQuickLinksBadge']
+    actionHistory?: SessionState['actionHistory']
+    requestHistory?: SessionState['requestHistory']
   }
 ): Promise<boolean> {
   try {
@@ -322,6 +338,8 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     openCounts?: SessionState['openCounts']
     lastAction?: LastAction
     lastQuickLinksBadge?: SessionState['lastQuickLinksBadge']
+    actionHistory?: SessionState['actionHistory']
+    requestHistory?: SessionState['requestHistory']
   } | null>(null)
 
   // Flush pending session state (called on debounce timeout or unload)
@@ -340,6 +358,8 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
       openCounts?: SessionState['openCounts']
       lastAction?: LastAction
       lastQuickLinksBadge?: SessionState['lastQuickLinksBadge']
+      actionHistory?: SessionState['actionHistory']
+      requestHistory?: SessionState['requestHistory']
     }
   ) => {
     // Merge with any pending state
@@ -384,6 +404,8 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
             lastAction: ssData.lastAction ?? undefined,
             openCounts: ssData.openCounts ?? undefined,
             lastQuickLinksBadge: ssData.lastQuickLinksBadge ?? undefined,
+            actionHistory: ssData.actionHistory ?? undefined,
+            requestHistory: ssData.requestHistory ?? undefined,
           }))
         }
 
@@ -546,6 +568,7 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
 
   // Record last action (called after navigation/operation completes)
   // Uses debounced persistence for efficiency
+  // Also appends to action history for "did I [action] X?" queries
   const setLastAction = useCallback((action: LastAction) => {
     setSessionState((prev) => ({
       ...prev,
@@ -556,6 +579,78 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     if (conversationId) {
       debouncedPersistSessionState(conversationId, { lastAction: action })
     }
+
+    // Also append to action history (convert LastAction to ActionHistoryEntry)
+    // Map action type to targetType and targetName
+    let targetType: 'workspace' | 'entry' | 'panel' | 'link' = 'workspace'
+    let targetName = ''
+    let targetId: string | undefined
+
+    switch (action.type) {
+      case 'open_workspace':
+        targetType = 'workspace'
+        targetName = action.workspaceName || 'Unknown workspace'
+        targetId = action.workspaceId
+        break
+      case 'open_entry':
+        targetType = 'entry'
+        targetName = action.entryName || 'Unknown entry'
+        targetId = action.entryId
+        break
+      case 'open_panel':
+        targetType = 'panel'
+        targetName = action.panelTitle || 'Unknown panel'
+        targetId = action.panelId
+        break
+      case 'rename_workspace':
+        targetType = 'workspace'
+        targetName = action.toName || action.workspaceName || 'Unknown workspace'
+        targetId = action.workspaceId
+        break
+      case 'delete_workspace':
+        targetType = 'workspace'
+        targetName = action.workspaceName || 'Unknown workspace'
+        targetId = action.workspaceId
+        break
+      case 'create_workspace':
+        targetType = 'workspace'
+        targetName = action.workspaceName || 'New workspace'
+        targetId = action.workspaceId
+        break
+      case 'go_to_dashboard':
+        targetType = 'entry'
+        targetName = action.entryName || 'Dashboard'
+        targetId = action.entryId
+        break
+      case 'go_home':
+        targetType = 'entry'
+        targetName = 'Home'
+        targetId = action.entryId
+        break
+    }
+
+    // Append to action history (bounded list)
+    setSessionState((prev) => {
+      const prevHistory = prev.actionHistory || []
+      const newEntry: import('./intent-prompt').ActionHistoryEntry = {
+        type: action.type,
+        targetType,
+        targetName,
+        targetId,
+        timestamp: action.timestamp,
+      }
+      const newHistory = [newEntry, ...prevHistory].slice(0, ACTION_HISTORY_MAX_SIZE)
+
+      // Debounced persist action history
+      if (conversationId) {
+        debouncedPersistSessionState(conversationId, { actionHistory: newHistory })
+      }
+
+      return {
+        ...prev,
+        actionHistory: newHistory,
+      }
+    })
   }, [conversationId, debouncedPersistSessionState])
 
   // Increment open count for a workspace or entry
@@ -595,6 +690,58 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     if (conversationId) {
       debouncedPersistSessionState(conversationId, { lastQuickLinksBadge: normalizedBadge })
     }
+  }, [conversationId, debouncedPersistSessionState])
+
+  // Append to action history (bounded, for "did I [action] X?" queries)
+  const appendActionHistory = useCallback((
+    entry: Omit<import('./intent-prompt').ActionHistoryEntry, 'timestamp'>
+  ) => {
+    const newEntry: import('./intent-prompt').ActionHistoryEntry = {
+      ...entry,
+      timestamp: Date.now(),
+    }
+
+    setSessionState((prev) => {
+      const prevHistory = prev.actionHistory || []
+      // Keep bounded to ACTION_HISTORY_MAX_SIZE (newest first)
+      const newHistory = [newEntry, ...prevHistory].slice(0, ACTION_HISTORY_MAX_SIZE)
+
+      // Debounced persist
+      if (conversationId) {
+        debouncedPersistSessionState(conversationId, { actionHistory: newHistory })
+      }
+
+      return {
+        ...prev,
+        actionHistory: newHistory,
+      }
+    })
+  }, [conversationId, debouncedPersistSessionState])
+
+  // Append to request history (bounded, for "did I ask you to [action] X?" queries)
+  const appendRequestHistory = useCallback((
+    entry: Omit<import('./intent-prompt').RequestHistoryEntry, 'timestamp'>
+  ) => {
+    const newEntry: import('./intent-prompt').RequestHistoryEntry = {
+      ...entry,
+      timestamp: Date.now(),
+    }
+
+    setSessionState((prev) => {
+      const prevHistory = prev.requestHistory || []
+      // Keep bounded to ACTION_HISTORY_MAX_SIZE (newest first)
+      const newHistory = [newEntry, ...prevHistory].slice(0, ACTION_HISTORY_MAX_SIZE)
+
+      // Debounced persist
+      if (conversationId) {
+        debouncedPersistSessionState(conversationId, { requestHistory: newHistory })
+      }
+
+      return {
+        ...prev,
+        requestHistory: newHistory,
+      }
+    })
   }, [conversationId, debouncedPersistSessionState])
 
   // Panel visibility setters (Gap 2)
@@ -637,6 +784,8 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         setLastAction,
         incrementOpenCount,
         setLastQuickLinksBadge,
+        appendActionHistory,
+        appendRequestHistory,
         conversationId,
         isLoadingHistory,
         hasMoreMessages,

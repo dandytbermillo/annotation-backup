@@ -415,6 +415,7 @@ function ChatNavigationPanelContent({
     setLastAction,
     incrementOpenCount,
     setLastQuickLinksBadge,
+    appendRequestHistory,
     // Persistence
     isLoadingHistory,
     hasMoreMessages,
@@ -427,12 +428,34 @@ function ChatNavigationPanelContent({
     focusedPanelId,
   } = useChatNavigationContext()
 
-  const { executeAction, selectOption, openPanelDrawer } = useChatNavigation({
+  const { executeAction, selectOption, openPanelDrawer: openPanelDrawerBase } = useChatNavigation({
     onNavigationComplete: () => {
       onNavigationComplete?.()
       setOpen(false)
     },
   })
+
+  // Wrapper for openPanel that also tracks the action
+  const openPanelWithTracking = useCallback((content: ViewPanelContent, panelId?: string) => {
+    openPanel(content)
+    setLastAction({
+      type: 'open_panel',
+      panelTitle: content.title || 'Panel',
+      panelId: panelId,
+      timestamp: Date.now(),
+    })
+  }, [openPanel, setLastAction])
+
+  // Wrapper for openPanelDrawer that also tracks the action
+  const openPanelDrawer = useCallback((panelId: string, panelTitle?: string) => {
+    openPanelDrawerBase(panelId)
+    setLastAction({
+      type: 'open_panel',
+      panelTitle: panelTitle || panelId,
+      panelId: panelId,
+      timestamp: Date.now(),
+    })
+  }, [openPanelDrawerBase, setLastAction])
 
   // Auto-focus input when panel opens
   // Note: Scroll position is naturally preserved because we use CSS hiding instead of unmounting
@@ -538,7 +561,7 @@ function ChatNavigationPanelContent({
 
         // Open view panel if content available
         if (resolution.showInViewPanel && resolution.viewPanelContent) {
-          openPanel(resolution.viewPanelContent)
+          openPanelWithTracking(resolution.viewPanelContent, resolution.panelId)
         }
       } catch (error) {
         const errorMessage: ChatMessage = {
@@ -558,7 +581,7 @@ function ChatNavigationPanelContent({
     return () => {
       window.removeEventListener('chat-select-quick-links-panel', handleQuickLinksSelection as unknown as EventListener)
     }
-  }, [currentEntryId, currentWorkspaceId, sessionState, executeAction, addMessage, openPanel, setLastQuickLinksBadge])
+  }, [currentEntryId, currentWorkspaceId, sessionState, executeAction, addMessage, openPanelWithTracking, setLastQuickLinksBadge])
 
   // Handle panel write confirmation (from confirm_panel_write pill)
   useEffect(() => {
@@ -608,7 +631,7 @@ function ChatNavigationPanelContent({
 
         // Open view panel if content available
         if (resolution.showInViewPanel && resolution.viewPanelContent) {
-          openPanel(resolution.viewPanelContent)
+          openPanelWithTracking(resolution.viewPanelContent, resolution.panelId)
         }
       } catch (error) {
         const errorMessage: ChatMessage = {
@@ -628,7 +651,7 @@ function ChatNavigationPanelContent({
     return () => {
       window.removeEventListener('chat-confirm-panel-write', handlePanelWriteConfirmation as unknown as EventListener)
     }
-  }, [currentEntryId, currentWorkspaceId, sessionState, executeAction, addMessage, openPanel])
+  }, [currentEntryId, currentWorkspaceId, sessionState, executeAction, addMessage, openPanelWithTracking])
 
   // ---------------------------------------------------------------------------
   // Handle Selection (moved before sendMessage for hybrid selection)
@@ -825,9 +848,9 @@ function ChatNavigationPanelContent({
         })
 
         if (lastPreview.drawerPanelId) {
-          openPanelDrawer(lastPreview.drawerPanelId)
+          openPanelDrawer(lastPreview.drawerPanelId, lastPreview.drawerPanelTitle)
         } else {
-          openPanel(lastPreview.viewPanelContent)
+          openPanelWithTracking(lastPreview.viewPanelContent, lastPreview.drawerPanelId)
         }
 
         const assistantMessage: ChatMessage = {
@@ -866,9 +889,9 @@ function ChatNavigationPanelContent({
               })
 
               if (lastPreview.drawerPanelId) {
-                openPanelDrawer(lastPreview.drawerPanelId)
+                openPanelDrawer(lastPreview.drawerPanelId, lastPreview.drawerPanelTitle)
               } else {
-                openPanel(lastPreview.viewPanelContent)
+                openPanelWithTracking(lastPreview.viewPanelContent, lastPreview.drawerPanelId)
               }
 
               const assistantMessage: ChatMessage = {
@@ -1059,6 +1082,80 @@ function ChatNavigationPanelContent({
         },
       })
 
+      // ---------------------------------------------------------------------------
+      // Track user requests for "did I ask you to..." queries
+      // ---------------------------------------------------------------------------
+      // Track request based on resolution action (before execution)
+      const trackRequest = () => {
+        switch (resolution.action) {
+          case 'open_panel_drawer':
+            if (resolution.panelId) {
+              appendRequestHistory({
+                type: 'request_open_panel',
+                targetType: 'panel',
+                targetName: resolution.panelTitle || resolution.panelId,
+                targetId: resolution.semanticPanelId || resolution.panelId,
+              })
+            }
+            break
+          case 'navigate_workspace':
+            if (resolution.workspace) {
+              appendRequestHistory({
+                type: 'request_open_workspace',
+                targetType: 'workspace',
+                targetName: resolution.workspace.name,
+                targetId: resolution.workspace.id,
+              })
+            }
+            break
+          case 'navigate_entry':
+            if (resolution.entry) {
+              appendRequestHistory({
+                type: 'request_open_entry',
+                targetType: 'entry',
+                targetName: resolution.entry.name,
+                targetId: resolution.entry.id,
+              })
+            }
+            break
+          case 'navigate_home':
+            appendRequestHistory({
+              type: 'request_go_home',
+              targetType: 'navigation',
+              targetName: 'Home',
+            })
+            break
+          case 'navigate_dashboard':
+            appendRequestHistory({
+              type: 'request_go_dashboard',
+              targetType: 'navigation',
+              targetName: 'Dashboard',
+            })
+            break
+          case 'list_workspaces':
+            appendRequestHistory({
+              type: 'request_list_workspaces',
+              targetType: 'workspace',
+              targetName: 'Workspaces',
+            })
+            break
+          case 'inform':
+          case 'show_view_panel':
+            // Track panel_intent (custom widgets) when viewPanelContent is shown
+            // This handles "show my demo widget" style requests
+            if (resolution.viewPanelContent?.title) {
+              appendRequestHistory({
+                type: 'request_open_panel',
+                targetType: 'panel',
+                targetName: resolution.viewPanelContent.title,
+                targetId: resolution.panelId || resolution.viewPanelContent.title.toLowerCase().replace(/\s+/g, '-'),
+              })
+            }
+            break
+        }
+      }
+      trackRequest()
+
       if (resolution.action === 'select_option' && pendingOptions.length > 0) {
         // LLM returned select_option - map to pending options
         // Resolution should have optionIndex or optionLabel from the resolver
@@ -1212,6 +1309,15 @@ function ChatNavigationPanelContent({
               })
               showEntryOpenedToast(resolution.entry.name)
               incrementOpenCount(resolution.entry.id, resolution.entry.name, 'entry')
+            } else if (resolution.action === 'open_panel_drawer' && resolution.panelId) {
+              // Track panel drawer opens for "did I open X?" queries
+              // Use semanticPanelId for robust ID-based matching (e.g., "quick-links-d")
+              setLastAction({
+                type: 'open_panel',
+                panelId: resolution.semanticPanelId || resolution.panelId,
+                panelTitle: resolution.panelTitle || resolution.panelId,
+                timestamp: now,
+              })
             }
             break
           case 'created':
@@ -1312,7 +1418,7 @@ function ChatNavigationPanelContent({
 
       // Open view panel if content is available
       if (resolution.showInViewPanel && resolution.viewPanelContent) {
-        openPanel(resolution.viewPanelContent)
+        openPanelWithTracking(resolution.viewPanelContent, resolution.panelId)
       }
     } catch (error) {
       const errorMessage: ChatMessage = {
@@ -1326,7 +1432,7 @@ function ChatNavigationPanelContent({
     } finally {
       setIsLoading(false)
     }
-  }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction, messages, addMessage, setInput, sessionState, setLastAction, setLastQuickLinksBadge, openPanel, openPanelDrawer, conversationSummary, pendingOptions, pendingOptionsGraceCount, handleSelectOption, lastPreview])
+  }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction, messages, addMessage, setInput, sessionState, setLastAction, setLastQuickLinksBadge, appendRequestHistory, openPanelWithTracking, openPanelDrawer, conversationSummary, pendingOptions, pendingOptionsGraceCount, handleSelectOption, lastPreview])
 
   // ---------------------------------------------------------------------------
   // Handle Key Press
@@ -1525,7 +1631,7 @@ function ChatNavigationPanelContent({
                             fullContent={message.viewPanelContent}
                             onShowAll={
                               message.drawerPanelId
-                                ? () => openPanelDrawer(message.drawerPanelId!)
+                                ? () => openPanelDrawer(message.drawerPanelId!, message.drawerPanelTitle)
                                 : undefined
                             }
                           />
@@ -1586,7 +1692,9 @@ function ChatNavigationPanelContent({
                                     )}
                                   >
                                     <span className="flex items-center gap-1">
-                                      Open {message.suggestions.candidates[0].label}
+                                      {message.suggestions.candidates[0].primaryAction === 'list'
+                                        ? `Show ${message.suggestions.candidates[0].label}`
+                                        : `Open ${message.suggestions.candidates[0].label}`}
                                       <ChevronRight className="h-3 w-3 opacity-50 group-hover:opacity-100" />
                                     </span>
                                   </Badge>

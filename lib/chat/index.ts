@@ -55,6 +55,7 @@ export type {
   LastAction,
   SuggestionCandidate,
   ChatSuggestions,
+  ActionHistoryEntry,
 } from './chat-navigation-context'
 
 // Schema utilities (for reference)

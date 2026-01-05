@@ -27,6 +27,7 @@ export const IntentType = z.enum([
   'last_action',
   'session_stats',
   'verify_action',
+  'verify_request',  // Verify if user asked/told/requested something (not action execution)
   // Phase 3: View Panel Content Intents
   'show_quick_links',
   'preview_file',
@@ -65,10 +66,15 @@ export const IntentArgs = z.object({
   statsWorkspaceName: z.string().optional(),
 
   // For verify_action: verify if a specific action was performed
-  verifyActionType: z.enum(['open_workspace', 'open_entry', 'rename_workspace', 'delete_workspace', 'create_workspace', 'go_to_dashboard', 'go_home']).optional(),
+  verifyActionType: z.enum(['open_workspace', 'open_entry', 'rename_workspace', 'delete_workspace', 'create_workspace', 'go_to_dashboard', 'go_home', 'open_panel']).optional(),
   verifyWorkspaceName: z.string().optional(),  // workspace or entry name to verify
   verifyFromName: z.string().optional(),       // for rename: original name
   verifyToName: z.string().optional(),         // for rename: new name
+  verifyPanelName: z.string().optional(),      // for open_panel: panel name to verify (e.g., "Recent", "Quick Links D")
+
+  // For verify_request: verify if user asked/told/requested something (separate from action execution)
+  verifyRequestType: z.enum(['request_open_panel', 'request_open_workspace', 'request_open_entry', 'request_open_note', 'request_list_workspaces', 'request_show_recent', 'request_go_home', 'request_go_dashboard']).optional(),
+  verifyRequestTargetName: z.string().optional(),  // target name to verify (panel/workspace/entry/note name)
 
   // For show_quick_links: panel badge (A, B, C, etc.) or panel title
   quickLinksPanelBadge: z.string().optional(),

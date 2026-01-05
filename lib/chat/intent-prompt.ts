@@ -79,14 +79,37 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
     Args: statsWorkspaceName (optional - specific workspace OR entry name to query stats for)
     IMPORTANT: Use sessionState.openCounts to answer this question. Returns yes/no + count. Works for both workspaces and entries.
 
-13. **verify_action** - User asks to verify their LAST/MOST RECENT action specifically
-    Examples: "did you just rename Sprint 6 to Sprint 66?", "did I just open workspace77?", "did I just open summary14?", "did I just go home?", "was my last action opening X?"
+13. **verify_action** - User asks to verify whether they performed a specific action this session
+    Examples: "did you just rename Sprint 6 to Sprint 66?", "did I just open workspace77?", "did I just open summary14?", "did I just go home?", "was my last action opening X?", "did I open recent?", "did I open quick links D?"
     Args:
-      - verifyActionType (required): "open_workspace" | "open_entry" | "rename_workspace" | "delete_workspace" | "create_workspace" | "go_to_dashboard" | "go_home"
+      - verifyActionType (required): "open_workspace" | "open_entry" | "rename_workspace" | "delete_workspace" | "create_workspace" | "go_to_dashboard" | "go_home" | "open_panel"
       - verifyWorkspaceName (optional): workspace or entry name to verify
       - verifyFromName (optional): for rename - original name to verify
       - verifyToName (optional): for rename - new name to verify
-    IMPORTANT: Only use this for questions with "just", "last", or "previous". Compare against sessionState.lastAction only.
+      - verifyPanelName (optional): panel name/title to verify (e.g., "Recent", "Quick Links", "Quick Links D")
+    IMPORTANT: For "just", "last", "previous" - check lastAction. For "did I open X?" without "just" - check actionHistory for any matching action this session.
+    PANEL NAMES: "recent", "recents" → panel name "Recent". "quick links", "links", "quick links D" → panel name "Quick Links" or "Quick Links D".
+
+13b. **verify_request** - User asks to verify whether they ASKED/TOLD/REQUESTED you to do something (NOT whether action was executed)
+    Examples: "did I ask you to open quick links D?", "did I tell you to open workspace 6?", "did I request you to show recent?"
+    Args:
+      - verifyRequestType (required): "request_open_panel" | "request_open_workspace" | "request_open_entry" | "request_open_note" | "request_list_workspaces" | "request_show_recent" | "request_go_home" | "request_go_dashboard"
+      - verifyRequestTargetName (optional): target name to verify (panel/workspace/entry/note name)
+    IMPORTANT: Use this intent ONLY when user explicitly uses request phrasing:
+      - "did I ask you to..."
+      - "did I tell you to..."
+      - "did I request..."
+    For "did I open..." without request phrasing → use verify_action instead.
+    This checks requestHistory (what user asked for), not actionHistory (what was executed).
+
+    CLASSIFICATION RULES for verifyRequestType:
+    - "open/show recent" or "open/show recents" → request_open_panel with verifyRequestTargetName: "Recent"
+    - "open/show quick links [X]" → request_open_panel with verifyRequestTargetName: "Quick Links X"
+    - "open workspace X" → request_open_workspace with verifyRequestTargetName: "X"
+    - "go home" → request_go_home (no target name needed)
+    - "go to dashboard" → request_go_dashboard (no target name needed)
+    - "list workspaces" → request_list_workspaces (no target name needed)
+    NOTE: request_show_recent is DEPRECATED - use request_open_panel with target "Recent" instead.
 
 14. **show_quick_links** - User wants to see Quick Links from a specific panel
     Examples: "show quick links", "show quick links A", "show quick links panel B", "what's in quick links C?"
@@ -189,6 +212,7 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
 - "did I open X?" (without "just/last/previous") → **session_stats** (checks session history)
 - "did I just/last open X?", "was my last action X?" → **verify_action** (checks most recent action only)
 - "did you rename X to Y?" → **verify_action** (verifies specific action details)
+- "did I ask you to X?", "did I tell you to X?", "did I request X?" → **verify_request** (checks request history, not action history)
 - "the first one", "second option", "last one" (when pendingOptions exists) → **select_option**
 - "the one from X", "the workspace with Y" (when pendingOptions exists) → **select_option**
 - "show/view/display/open quick links" → **show_quick_links**
@@ -244,6 +268,9 @@ Return ONLY a JSON object with this exact structure:
     "verifyWorkspaceName": "<string or omit - for verify_action>",
     "verifyFromName": "<string or omit - for verify_action rename>",
     "verifyToName": "<string or omit - for verify_action rename>",
+    "verifyPanelName": "<string or omit - for verify_action open_panel>",
+    "verifyRequestType": "<string or omit - for verify_request>",
+    "verifyRequestTargetName": "<string or omit - for verify_request>",
     "optionIndex": "<number or omit - for select_option>",
     "optionLabel": "<string or omit - for select_option>",
     "name": "<string or omit - for resolve_name>",
@@ -265,6 +292,31 @@ Return ONLY a JSON object with this exact structure:
 7. When conversation context is provided, use it to understand follow-up requests`
 
 /**
+ * Action history entry for session tracking
+ * Used to answer "did I [action] X?" queries
+ */
+export interface ActionHistoryEntry {
+  type: 'open_workspace' | 'open_entry' | 'open_panel' | 'rename_workspace' | 'delete_workspace' | 'create_workspace' | 'go_to_dashboard' | 'go_home' | 'add_link' | 'remove_link'
+  targetType: 'workspace' | 'entry' | 'panel' | 'link'
+  targetName: string
+  targetId?: string
+  timestamp: number
+}
+
+/**
+ * Request history entry for session tracking
+ * Used to answer "did I ask you to [action] X?" queries
+ * Tracks user requests (intent) separately from executed actions
+ */
+export interface RequestHistoryEntry {
+  type: 'request_open_panel' | 'request_open_workspace' | 'request_open_entry' | 'request_open_note' | 'request_list_workspaces' | 'request_show_recent' | 'request_go_home' | 'request_go_dashboard'
+  targetType: 'panel' | 'workspace' | 'entry' | 'note' | 'navigation'
+  targetName: string
+  targetId?: string
+  timestamp: number
+}
+
+/**
  * Session state for informational intents
  */
 export interface SessionState {
@@ -276,17 +328,23 @@ export interface SessionState {
   // Last selected Quick Links badge (for default panel selection)
   lastQuickLinksBadge?: string
   lastAction?: {
-    type: 'open_workspace' | 'open_entry' | 'rename_workspace' | 'delete_workspace' | 'create_workspace' | 'go_to_dashboard' | 'go_home'
+    type: 'open_workspace' | 'open_entry' | 'open_panel' | 'rename_workspace' | 'delete_workspace' | 'create_workspace' | 'go_to_dashboard' | 'go_home'
     workspaceId?: string
     workspaceName?: string
     entryId?: string      // for open_entry
     entryName?: string    // for open_entry
+    panelId?: string      // for open_panel
+    panelTitle?: string   // for open_panel
     fromName?: string     // for rename
     toName?: string       // for rename
     timestamp: number
   }
   // Unified open counts for both entries and workspaces
   openCounts?: Record<string, { type: 'workspace' | 'entry'; count: number; name: string }>
+  // Action history for "did I [action] X?" queries (bounded, last 50)
+  actionHistory?: ActionHistoryEntry[]
+  // Request history for "did I ask you to [action] X?" queries (bounded, last 50)
+  requestHistory?: RequestHistoryEntry[]
 }
 
 /**

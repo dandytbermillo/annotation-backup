@@ -118,6 +118,9 @@ export interface IntentResolutionResult {
   // For open_panel_drawer (Widget Architecture)
   panelId?: string
   panelTitle?: string
+  // Semantic panel ID for action tracking (e.g., "recent", "quick-links-d")
+  // Used to match user queries like "did I open quick links D?"
+  semanticPanelId?: string
 
   // Message to display
   message: string
@@ -175,6 +178,9 @@ export async function resolveIntent(
 
     case 'verify_action':
       return resolveVerifyAction(intent, context)
+
+    case 'verify_request':
+      return resolveVerifyRequest(intent, context)
 
     // Phase 3: View Panel Content Intents
     case 'show_quick_links':
@@ -958,6 +964,10 @@ function resolveSessionStats(
 /**
  * Resolve verify_action intent - verify if a specific action was performed
  * Uses case-insensitive, trimmed comparison per the plan's name matching rules.
+ *
+ * Session Query Routing: Checks actionHistory for any matching action this session.
+ * - For panel queries: normalizes panel names ("recent" → "Recent", "quick links d" → "Quick Links D")
+ * - Falls back to lastAction if actionHistory is empty
  */
 function resolveVerifyAction(
   intent: IntentResponse,
@@ -965,21 +975,40 @@ function resolveVerifyAction(
 ): IntentResolutionResult {
   const ss = context.sessionState
   const lastAction = ss?.lastAction
+  const actionHistory = ss?.actionHistory || []
 
-  if (!lastAction) {
-    return {
-      success: true,
-      action: 'inform',
-      message: "I don't have enough info to confirm that. No recent actions recorded.",
-    }
-  }
-
-  const { verifyActionType, verifyWorkspaceName, verifyFromName, verifyToName } = intent.args
+  const { verifyActionType, verifyWorkspaceName, verifyFromName, verifyToName, verifyPanelName } = intent.args
 
   // Helper for case-insensitive, trimmed comparison
   const matches = (a?: string, b?: string): boolean => {
     if (!a || !b) return false
     return a.trim().toLowerCase() === b.trim().toLowerCase()
+  }
+
+  // Helper to convert user's panel name to canonical panelId pattern
+  // This is the KEY for robust matching - compare IDs, not display names
+  const toPanelIdPattern = (input: string): string | null => {
+    const lower = input.trim().toLowerCase()
+    // "recent" or "recents" → "recent"
+    if (lower === 'recent' || lower === 'recents') return 'recent'
+    // "quick links" → "quick-links", "quick links d" → "quick-links-d"
+    if (lower.startsWith('quick link') || lower.startsWith('links')) {
+      const badge = lower.match(/quick\s*links?\s*([a-z])?$/i)?.[1] || lower.match(/links?\s+([a-z])$/i)?.[1]
+      return badge ? `quick-links-${badge.toLowerCase()}` : 'quick-links'
+    }
+    // Generic: convert spaces/underscores to dashes, lowercase
+    return lower.replace(/[\s_]+/g, '-')
+  }
+
+  // Helper to get user-friendly panel name for responses
+  const toFriendlyPanelName = (input: string): string => {
+    const lower = input.trim().toLowerCase()
+    if (lower === 'recent' || lower === 'recents') return 'Recent'
+    if (lower.startsWith('quick link') || lower.startsWith('links')) {
+      const badge = lower.match(/quick\s*links?\s*([a-z])?$/i)?.[1] || lower.match(/links?\s+([a-z])$/i)?.[1]
+      return badge ? `Quick Links ${badge.toUpperCase()}` : 'Quick Links'
+    }
+    return input.trim()
   }
 
   // If no action type specified, we can't verify
@@ -991,17 +1020,188 @@ function resolveVerifyAction(
     }
   }
 
-  // Check if action type matches
+  // ============================================================================
+  // Special handling for open_panel - check actionHistory by targetId (panelId)
+  // Best practice: match by canonical ID, use display name only for response
+  // ============================================================================
+  if (verifyActionType === 'open_panel') {
+    const targetPanelIdPattern = verifyPanelName ? toPanelIdPattern(verifyPanelName) : null
+    const friendlyPanelName = verifyPanelName ? toFriendlyPanelName(verifyPanelName) : null
+
+    // Search actionHistory for matching panel opens
+    const panelOpens = actionHistory.filter(entry => entry.type === 'open_panel')
+
+    if (panelOpens.length === 0) {
+      const panelDesc = friendlyPanelName ? `"${friendlyPanelName}"` : 'any panel'
+      return {
+        success: true,
+        action: 'inform',
+        message: `No, I have no record of opening ${panelDesc} this session.`,
+      }
+    }
+
+    if (targetPanelIdPattern) {
+      // Match by targetId (panelId) - robust against display name changes
+      const matchingOpen = panelOpens.find(entry => {
+        if (!entry.targetId) return false
+        const entryPanelId = entry.targetId.toLowerCase()
+        // Exact match or pattern match (e.g., "quick-links-d" matches "quick-links-d")
+        // Also handle partial matches for badge (e.g., targetId contains the pattern)
+        return entryPanelId === targetPanelIdPattern ||
+               entryPanelId.includes(targetPanelIdPattern) ||
+               targetPanelIdPattern.includes(entryPanelId)
+      })
+
+      if (matchingOpen) {
+        return {
+          success: true,
+          action: 'inform',
+          message: `Yes, you opened "${matchingOpen.targetName}" this session.`,
+        }
+      } else {
+        // List what panels were opened (use display names for user-friendly response)
+        const openedPanels = [...new Set(panelOpens.map(e => e.targetName))]
+        if (openedPanels.length === 1) {
+          return {
+            success: true,
+            action: 'inform',
+            message: `No, I have no record of opening "${friendlyPanelName}" this session. You opened "${openedPanels[0]}".`,
+          }
+        } else {
+          return {
+            success: true,
+            action: 'inform',
+            message: `No, I have no record of opening "${friendlyPanelName}" this session. Panels opened: ${openedPanels.join(', ')}.`,
+          }
+        }
+      }
+    } else {
+      // No specific panel name - list all opened panels
+      const openedPanels = [...new Set(panelOpens.map(e => e.targetName))]
+      return {
+        success: true,
+        action: 'inform',
+        message: `Yes, you opened panels this session: ${openedPanels.join(', ')}.`,
+      }
+    }
+  }
+
+  // ============================================================================
+  // For other action types - first check lastAction, then fallback to actionHistory
+  // ============================================================================
+
+  // Try to find a match in actionHistory first
+  const historyMatch = actionHistory.find(entry => {
+    if (entry.type !== verifyActionType) return false
+
+    switch (verifyActionType) {
+      case 'open_workspace':
+        return !verifyWorkspaceName || matches(entry.targetName, verifyWorkspaceName)
+      case 'open_entry':
+        return !verifyWorkspaceName || matches(entry.targetName, verifyWorkspaceName)
+      case 'rename_workspace':
+        // For rename, targetName is the new name
+        return !verifyToName || matches(entry.targetName, verifyToName)
+      case 'delete_workspace':
+        return !verifyWorkspaceName || matches(entry.targetName, verifyWorkspaceName)
+      case 'create_workspace':
+        return !verifyWorkspaceName || matches(entry.targetName, verifyWorkspaceName)
+      case 'go_to_dashboard':
+      case 'go_home':
+        return true
+      default:
+        return false
+    }
+  })
+
+  // If found in actionHistory, return success
+  if (historyMatch) {
+    switch (verifyActionType) {
+      case 'open_workspace':
+        return {
+          success: true,
+          action: 'inform',
+          message: `Yes, you opened workspace "${historyMatch.targetName}" this session.`,
+        }
+      case 'open_entry':
+        return {
+          success: true,
+          action: 'inform',
+          message: `Yes, you opened entry "${historyMatch.targetName}" this session.`,
+        }
+      case 'rename_workspace':
+        return {
+          success: true,
+          action: 'inform',
+          message: `Yes, you renamed a workspace to "${historyMatch.targetName}" this session.`,
+        }
+      case 'delete_workspace':
+        return {
+          success: true,
+          action: 'inform',
+          message: `Yes, you deleted workspace "${historyMatch.targetName}" this session.`,
+        }
+      case 'create_workspace':
+        return {
+          success: true,
+          action: 'inform',
+          message: `Yes, you created workspace "${historyMatch.targetName}" this session.`,
+        }
+      case 'go_to_dashboard':
+        return {
+          success: true,
+          action: 'inform',
+          message: 'Yes, you went to the dashboard this session.',
+        }
+      case 'go_home':
+        return {
+          success: true,
+          action: 'inform',
+          message: 'Yes, you went home this session.',
+        }
+      default:
+        return {
+          success: true,
+          action: 'inform',
+          message: `Yes, you performed that action this session.`,
+        }
+    }
+  }
+
+  // ============================================================================
+  // Fallback: Check lastAction for legacy support and "just" queries
+  // ============================================================================
+
+  if (!lastAction) {
+    // No lastAction and no history match
+    const targetDesc = verifyWorkspaceName || verifyPanelName || verifyActionType
+    return {
+      success: true,
+      action: 'inform',
+      message: `No, I have no record of ${formatActionTypeDescription(verifyActionType)} "${targetDesc}" this session.`,
+    }
+  }
+
+  // Check if action type matches lastAction
   if (lastAction.type !== verifyActionType) {
+    // Check if the specific target was in history but type doesn't match
+    const targetDesc = verifyWorkspaceName || verifyPanelName || ''
+    if (targetDesc) {
+      return {
+        success: true,
+        action: 'inform',
+        message: `No, I have no record of ${formatActionTypeDescription(verifyActionType)} "${targetDesc}" this session.`,
+      }
+    }
     const lastActionSummary = formatLastActionSummary(lastAction)
     return {
       success: true,
       action: 'inform',
-      message: `No, the last action was ${lastActionSummary}.`,
+      message: `No, your last action was ${lastActionSummary}.`,
     }
   }
 
-  // Action type matches - now verify details based on type
+  // LastAction type matches - verify details based on type
   switch (verifyActionType) {
     case 'open_workspace':
       if (verifyWorkspaceName) {
@@ -1015,11 +1215,10 @@ function resolveVerifyAction(
           return {
             success: true,
             action: 'inform',
-            message: `No, the last action was opening workspace "${lastAction.workspaceName}".`,
+            message: `No, I have no record of opening workspace "${verifyWorkspaceName}" this session. Your last action was opening workspace "${lastAction.workspaceName}".`,
           }
         }
       }
-      // No specific workspace to verify, just confirm the action type
       return {
         success: true,
         action: 'inform',
@@ -1027,7 +1226,6 @@ function resolveVerifyAction(
       }
 
     case 'rename_workspace':
-      // For rename, we need to check fromName and toName
       if (verifyFromName || verifyToName) {
         const fromMatches = !verifyFromName || matches(lastAction.fromName, verifyFromName)
         const toMatches = !verifyToName || matches(lastAction.toName, verifyToName)
@@ -1042,11 +1240,10 @@ function resolveVerifyAction(
           return {
             success: true,
             action: 'inform',
-            message: `No, the last action was renaming "${lastAction.fromName}" to "${lastAction.toName}".`,
+            message: `No, your last rename was "${lastAction.fromName}" to "${lastAction.toName}".`,
           }
         }
       }
-      // No specific names to verify
       return {
         success: true,
         action: 'inform',
@@ -1065,7 +1262,7 @@ function resolveVerifyAction(
           return {
             success: true,
             action: 'inform',
-            message: `No, the last action was deleting workspace "${lastAction.workspaceName}".`,
+            message: `No, I have no record of deleting workspace "${verifyWorkspaceName}" this session.`,
           }
         }
       }
@@ -1087,7 +1284,7 @@ function resolveVerifyAction(
           return {
             success: true,
             action: 'inform',
-            message: `No, the last action was creating workspace "${lastAction.workspaceName}".`,
+            message: `No, I have no record of creating workspace "${verifyWorkspaceName}" this session.`,
           }
         }
       }
@@ -1105,9 +1302,7 @@ function resolveVerifyAction(
       }
 
     case 'open_entry':
-      // For entry opens, check entry name if provided
       if (verifyWorkspaceName) {
-        // verifyWorkspaceName is reused for entry name verification
         if (matches(lastAction.entryName, verifyWorkspaceName)) {
           return {
             success: true,
@@ -1118,7 +1313,7 @@ function resolveVerifyAction(
           return {
             success: true,
             action: 'inform',
-            message: `No, the last action was opening entry "${lastAction.entryName}".`,
+            message: `No, I have no record of opening entry "${verifyWorkspaceName}" this session.`,
           }
         }
       }
@@ -1145,6 +1340,189 @@ function resolveVerifyAction(
 }
 
 /**
+ * Resolve verify_request intent - verify if user asked/told/requested something
+ * Checks requestHistory (user requests) separately from actionHistory (executed actions).
+ *
+ * Request Query Routing: Checks requestHistory for any matching request this session.
+ * - For panel requests: normalizes panel names ("recent" → "Recent", "quick links d" → "Quick Links D")
+ * - Uses "asked me to" / "told me to" phrasing in responses per UX Copy Rules
+ */
+function resolveVerifyRequest(
+  intent: IntentResponse,
+  context: ResolutionContext
+): IntentResolutionResult {
+  const ss = context.sessionState
+  const requestHistory = ss?.requestHistory || []
+
+  const { verifyRequestType, verifyRequestTargetName } = intent.args
+
+  // Helper for case-insensitive, trimmed comparison
+  const matches = (a?: string, b?: string): boolean => {
+    if (!a || !b) return false
+    return a.trim().toLowerCase() === b.trim().toLowerCase()
+  }
+
+  // Helper to convert user's panel name to canonical panelId pattern
+  const toPanelIdPattern = (input: string): string | null => {
+    const lower = input.trim().toLowerCase()
+    if (lower === 'recent' || lower === 'recents') return 'recent'
+    if (lower.startsWith('quick link') || lower.startsWith('links')) {
+      const badge = lower.match(/quick\s*links?\s*([a-z])?$/i)?.[1] || lower.match(/links?\s+([a-z])$/i)?.[1]
+      return badge ? `quick-links-${badge.toLowerCase()}` : 'quick-links'
+    }
+    return lower.replace(/[\s_]+/g, '-')
+  }
+
+  // Helper to get user-friendly target name for responses
+  const toFriendlyName = (input: string): string => {
+    const lower = input.trim().toLowerCase()
+    if (lower === 'recent' || lower === 'recents') return 'Recent'
+    if (lower.startsWith('quick link') || lower.startsWith('links')) {
+      const badge = lower.match(/quick\s*links?\s*([a-z])?$/i)?.[1] || lower.match(/links?\s+([a-z])$/i)?.[1]
+      return badge ? `Quick Links ${badge.toUpperCase()}` : 'Quick Links'
+    }
+    return input.trim()
+  }
+
+  // If no request type specified, check for any requests
+  if (!verifyRequestType) {
+    if (requestHistory.length === 0) {
+      return {
+        success: true,
+        action: 'inform',
+        message: "No, I have no record of you asking me to do anything this session.",
+      }
+    }
+
+    // List all requests
+    const requestTypes = [...new Set(requestHistory.map(r => r.targetName))]
+    return {
+      success: true,
+      action: 'inform',
+      message: `This session, you asked me to: ${requestTypes.join(', ')}.`,
+    }
+  }
+
+  // Map verify request type to matcher
+  const requestTypeMap: Record<string, (entry: typeof requestHistory[0]) => boolean> = {
+    'request_open_panel': (e) => e.type === 'request_open_panel',
+    'request_open_workspace': (e) => e.type === 'request_open_workspace',
+    'request_open_entry': (e) => e.type === 'request_open_entry',
+    'request_open_note': (e) => e.type === 'request_open_note',
+    'request_list_workspaces': (e) => e.type === 'request_list_workspaces',
+    'request_show_recent': (e) => e.type === 'request_show_recent',
+    'request_go_home': (e) => e.type === 'request_go_home',
+    'request_go_dashboard': (e) => e.type === 'request_go_dashboard',
+  }
+
+  const typeMatcher = requestTypeMap[verifyRequestType]
+  if (!typeMatcher) {
+    return {
+      success: true,
+      action: 'inform',
+      message: "I'm not sure what kind of request you want to verify.",
+    }
+  }
+
+  // Filter by type
+  const matchingByType = requestHistory.filter(typeMatcher)
+
+  if (matchingByType.length === 0) {
+    const actionDesc = formatRequestTypeDescription(verifyRequestType)
+    const targetDesc = verifyRequestTargetName ? ` "${toFriendlyName(verifyRequestTargetName)}"` : ''
+    return {
+      success: true,
+      action: 'inform',
+      message: `No, I have no record of you asking me to ${actionDesc}${targetDesc} this session.`,
+    }
+  }
+
+  // If target name specified, filter further
+  if (verifyRequestTargetName) {
+    const targetPattern = toPanelIdPattern(verifyRequestTargetName)
+    const friendlyName = toFriendlyName(verifyRequestTargetName)
+
+    const matchingTarget = matchingByType.find(entry => {
+      // Match by targetId (robust) or targetName (fallback)
+      if (entry.targetId && targetPattern) {
+        const entryId = entry.targetId.toLowerCase()
+        return entryId === targetPattern ||
+               entryId.includes(targetPattern) ||
+               targetPattern.includes(entryId)
+      }
+      return matches(entry.targetName, verifyRequestTargetName)
+    })
+
+    if (matchingTarget) {
+      return {
+        success: true,
+        action: 'inform',
+        message: `Yes, you asked me to open "${matchingTarget.targetName}" this session.`,
+      }
+    } else {
+      // List what they DID ask for of this type
+      const requestedTargets = [...new Set(matchingByType.map(e => e.targetName))]
+      if (requestedTargets.length === 1) {
+        return {
+          success: true,
+          action: 'inform',
+          message: `No, I have no record of you asking me to open "${friendlyName}" this session. You asked me to open "${requestedTargets[0]}".`,
+        }
+      } else {
+        return {
+          success: true,
+          action: 'inform',
+          message: `No, I have no record of you asking me to open "${friendlyName}" this session. You asked me to open: ${requestedTargets.join(', ')}.`,
+        }
+      }
+    }
+  }
+
+  // Type matches but no specific target - confirm with list
+  const requestedTargets = [...new Set(matchingByType.map(e => e.targetName))]
+  const actionDesc = formatRequestTypeDescription(verifyRequestType)
+  return {
+    success: true,
+    action: 'inform',
+    message: `Yes, you asked me to ${actionDesc} this session: ${requestedTargets.join(', ')}.`,
+  }
+}
+
+/**
+ * Helper to format request type as human-readable description
+ */
+function formatRequestTypeDescription(requestType: string): string {
+  switch (requestType) {
+    case 'request_open_panel': return 'open a panel'
+    case 'request_open_workspace': return 'open a workspace'
+    case 'request_open_entry': return 'open an entry'
+    case 'request_open_note': return 'open a note'
+    case 'request_list_workspaces': return 'list workspaces'
+    case 'request_show_recent': return 'show recent items'
+    case 'request_go_home': return 'go home'
+    case 'request_go_dashboard': return 'go to the dashboard'
+    default: return requestType.replace('request_', '').replace(/_/g, ' ')
+  }
+}
+
+/**
+ * Helper to format action type as human-readable description
+ */
+function formatActionTypeDescription(actionType: string): string {
+  switch (actionType) {
+    case 'open_workspace': return 'opening workspace'
+    case 'open_entry': return 'opening entry'
+    case 'open_panel': return 'opening'
+    case 'rename_workspace': return 'renaming workspace'
+    case 'delete_workspace': return 'deleting workspace'
+    case 'create_workspace': return 'creating workspace'
+    case 'go_to_dashboard': return 'going to dashboard'
+    case 'go_home': return 'going home'
+    default: return actionType
+  }
+}
+
+/**
  * Helper to format last action as a summary string
  */
 function formatLastActionSummary(lastAction: NonNullable<ResolutionContext['sessionState']>['lastAction']): string {
@@ -1155,6 +1533,8 @@ function formatLastActionSummary(lastAction: NonNullable<ResolutionContext['sess
       return `opening workspace "${lastAction.workspaceName}"`
     case 'open_entry':
       return `opening entry "${lastAction.entryName}"`
+    case 'open_panel':
+      return `opening "${lastAction.panelTitle || 'panel'}"`
     case 'rename_workspace':
       return `renaming "${lastAction.fromName}" to "${lastAction.toName}"`
     case 'delete_workspace':
@@ -1310,6 +1690,8 @@ async function resolveShowQuickLinks(
     action: 'open_panel_drawer',
     panelId: panel.id,
     panelTitle,
+    // Semantic ID for action tracking (e.g., "quick-links-d")
+    semanticPanelId: `quick-links-${badge}`,
     message: `Opening ${panelTitle}...`,
   }
 }
@@ -1620,7 +2002,7 @@ async function resolvePanelIntent(
     (panelId.startsWith('quick-links-') && resolvedIntentName === 'show_links')
 
   // Resolve panel instance for drawer usage (current entry dashboard)
-  const resolveDrawerPanelTarget = async (): Promise<{ panelId: string; panelTitle: string } | null> => {
+  const resolveDrawerPanelTarget = async (): Promise<{ panelId: string; panelTitle: string; semanticPanelId: string } | null> => {
     if (!context.currentEntryId) return null
 
     const dashboardResult = await serverPool.query(
@@ -1650,7 +2032,9 @@ async function resolvePanelIntent(
 
       return {
         panelId: recentResult.rows[0].id,
-        panelTitle: recentResult.rows[0].title || 'Recent Items',
+        panelTitle: recentResult.rows[0].title || 'Recent',
+        // Semantic ID for action tracking
+        semanticPanelId: 'recent',
       }
     }
 
@@ -1671,11 +2055,14 @@ async function resolvePanelIntent(
       if (quickLinksResult.rows.length === 0) return null
 
       const row = quickLinksResult.rows[0]
-      const panelTitle = row.title || (row.badge ? `Quick Links ${row.badge}` : 'Quick Links')
+      // Use badge-based title for user-friendly display and tracking
+      const panelTitle = row.badge ? `Quick Links ${row.badge.toUpperCase()}` : (row.title || 'Quick Links')
 
       return {
         panelId: row.id,
         panelTitle,
+        // Semantic ID for action tracking (matches user query patterns like "quick-links-d")
+        semanticPanelId: `quick-links-${row.badge?.toLowerCase() || 'd'}`,
       }
     }
 
@@ -1697,6 +2084,8 @@ async function resolvePanelIntent(
         action: 'open_panel_drawer',
         panelId: drawerTarget.panelId,
         panelTitle: drawerTarget.panelTitle,
+        // Semantic ID for action tracking (e.g., "recent", "quick-links-d")
+        semanticPanelId: drawerTarget.semanticPanelId,
         message: `Opening ${drawerTarget.panelTitle}...`,
       }
     }
