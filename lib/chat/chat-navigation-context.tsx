@@ -55,6 +55,12 @@ export interface ChatSuggestions {
   candidates: SuggestionCandidate[]
 }
 
+/** Last suggestion state for rejection handling */
+export interface LastSuggestionState {
+  candidates: SuggestionCandidate[]
+  messageId: string
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
@@ -131,6 +137,13 @@ interface ChatNavigationContextValue {
   setFocusedPanelId: (panelId: string | null) => void
   registerVisiblePanel: (panelId: string) => void
   unregisterVisiblePanel: (panelId: string) => void
+  // Suggestion rejection handling (ephemeral, not persisted)
+  lastSuggestion: LastSuggestionState | null
+  rejectedSuggestions: Set<string>
+  setLastSuggestion: (suggestion: LastSuggestionState | null) => void
+  addRejectedSuggestions: (labels: string[]) => void
+  clearRejectedSuggestions: () => void
+  isRejectedSuggestion: (label: string) => boolean
 }
 
 // =============================================================================
@@ -330,6 +343,10 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
   // Panel visibility state for intent prioritization (Gap 2)
   const [visiblePanels, setVisiblePanelsState] = useState<string[]>([])
   const [focusedPanelId, setFocusedPanelIdState] = useState<string | null>(null)
+
+  // Suggestion rejection handling (ephemeral, not persisted)
+  const [lastSuggestion, setLastSuggestionState] = useState<LastSuggestionState | null>(null)
+  const [rejectedSuggestions, setRejectedSuggestions] = useState<Set<string>>(new Set())
 
   // Debounce refs for session state persistence
   const DEBOUNCE_MS = 1000
@@ -767,6 +784,29 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     setFocusedPanelIdState((prev) => (prev === panelId ? null : prev))
   }, [])
 
+  // Suggestion rejection handlers
+  const setLastSuggestion = useCallback((suggestion: LastSuggestionState | null) => {
+    setLastSuggestionState(suggestion)
+  }, [])
+
+  const addRejectedSuggestions = useCallback((labels: string[]) => {
+    setRejectedSuggestions((prev) => {
+      const next = new Set(prev)
+      for (const label of labels) {
+        next.add(label.toLowerCase())
+      }
+      return next
+    })
+  }, [])
+
+  const clearRejectedSuggestions = useCallback(() => {
+    setRejectedSuggestions(new Set())
+  }, [])
+
+  const isRejectedSuggestion = useCallback((label: string) => {
+    return rejectedSuggestions.has(label.toLowerCase())
+  }, [rejectedSuggestions])
+
   return (
     <ChatNavigationContext.Provider
       value={{
@@ -799,6 +839,13 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         setFocusedPanelId,
         registerVisiblePanel,
         unregisterVisiblePanel,
+        // Suggestion rejection handling
+        lastSuggestion,
+        rejectedSuggestions,
+        setLastSuggestion,
+        addRejectedSuggestions,
+        clearRejectedSuggestions,
+        isRejectedSuggestion,
       }}
     >
       {children}

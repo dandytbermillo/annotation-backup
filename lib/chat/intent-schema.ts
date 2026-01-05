@@ -33,6 +33,7 @@ export const IntentType = z.enum([
   'preview_file',
   // Phase 4: Hybrid Selection Follow-up
   'select_option',  // User selects from pending options via natural language
+  'reshow_options', // User wants to see pending options again (typos, confusion, etc.)
   // Phase 5: Hybrid Commands - bare name resolution
   'resolve_name',   // Bare name input - resolve to entry or workspace
   // Phase 6: Panel Intent Registry - extensible panel commands

@@ -2,10 +2,16 @@
  * Typo Suggestion Fallback
  *
  * Provides friendly suggestions when intent parsing fails due to typos.
- * Uses fuzzy matching against a closed vocabulary of commands.
+ * Uses fuzzy matching against a dynamic vocabulary built from:
+ * - Core commands (workspaces, dashboard, home)
+ * - Visible panels (Recent, Quick Links)
+ * - Installed widget manifests (Demo Widget, etc.)
  *
  * Reference: docs/proposal/chat-navigation/plan/panels/chat/typo-suggestion-fallback-plan.md
+ * Reference: docs/proposal/chat-navigation/plan/panels/chat/dynamic-typo-suggestions-plan.md
  */
+
+import type { PanelChatManifest } from '@/lib/panels/panel-manifest'
 
 // =============================================================================
 // Types
@@ -37,6 +43,17 @@ export interface SuggestionResult {
   showButtons: boolean
 }
 
+/**
+ * Context for dynamic suggestion generation
+ * Includes panel manifests and visible panels for building dynamic vocabulary
+ */
+export interface DynamicSuggestionContext {
+  /** Panel manifests from registry (built-in + DB-loaded widgets) */
+  manifests?: PanelChatManifest[]
+  /** Currently visible panel IDs */
+  visiblePanels?: string[]
+}
+
 // =============================================================================
 // Closed Command Vocabulary
 // =============================================================================
@@ -64,7 +81,7 @@ const COMMAND_VOCABULARY: CommandDef[] = [
   },
   // Recent
   {
-    phrases: ['recent', 'recents', 'recent items', 'recently opened'],
+    phrases: ['recent', 'recents', 'recent items', 'recently opened', 'open recent', 'show recent', 'list recent', 'view recent'],
     label: 'Recent',
     primaryAction: 'open',
     intentName: 'panel_intent',
@@ -113,6 +130,185 @@ const COMMAND_VOCABULARY: CommandDef[] = [
     intentName: 'last_action',
   },
 ]
+
+// =============================================================================
+// Dynamic Vocabulary Builder
+// =============================================================================
+
+/**
+ * Normalize text for matching (handle pluralization and common variations)
+ */
+function normalizeForMatching(text: string): string {
+  return text
+    .toLowerCase()
+    .trim()
+    // Normalize plurals
+    .replace(/widgets$/i, 'widget')
+    .replace(/links$/i, 'link')
+    .replace(/items$/i, 'item')
+    .replace(/panels$/i, 'panel')
+}
+
+/**
+ * Build dynamic command vocabulary from panel manifests
+ * Converts panel manifests into CommandDef entries for fuzzy matching
+ */
+function buildDynamicVocabulary(manifests: PanelChatManifest[]): CommandDef[] {
+  const dynamicCommands: CommandDef[] = []
+  const seenPanelIds = new Set<string>()
+
+  for (const manifest of manifests) {
+    // Skip duplicates (same panelId from different sources)
+    if (seenPanelIds.has(manifest.panelId)) continue
+    seenPanelIds.add(manifest.panelId)
+
+    // Skip built-in panels that are already in COMMAND_VOCABULARY
+    // to avoid duplicates (recent, quick-links-* are already covered)
+    if (manifest.panelId === 'recent') continue
+    if (manifest.panelId.startsWith('quick-links-')) continue
+
+    // Build phrases from title and common variations
+    const title = manifest.title
+    const titleLower = title.toLowerCase()
+    const titleNormalized = normalizeForMatching(title)
+
+    const phrases: string[] = [
+      titleLower,
+      titleNormalized,
+      // Add common verb + title patterns
+      `show ${titleLower}`,
+      `open ${titleLower}`,
+      `view ${titleLower}`,
+      // Handle "my X" pattern
+      `my ${titleLower}`,
+      `show my ${titleLower}`,
+    ]
+
+    // Add example phrases from intents (without verbs, for fuzzy matching)
+    for (const intent of manifest.intents) {
+      for (const example of intent.examples) {
+        // Extract just the key part (remove common verbs)
+        const cleaned = example
+          .toLowerCase()
+          .replace(/^(show|open|view|display|list|get)\s+/i, '')
+          .trim()
+        if (cleaned && !phrases.includes(cleaned)) {
+          phrases.push(cleaned)
+        }
+      }
+    }
+
+    dynamicCommands.push({
+      phrases,
+      label: title,
+      primaryAction: 'open',
+      intentName: 'panel_intent',
+      panelId: manifest.panelId,
+    })
+  }
+
+  return dynamicCommands
+}
+
+/**
+ * Build quick-links badge variants from visible panels
+ * Extracts quick-links-a, quick-links-b, etc. from visiblePanels and creates
+ * CommandDef entries like "Quick Links A", "Quick Links D"
+ */
+function buildVisibleQuickLinksVocabulary(visiblePanels?: string[]): CommandDef[] {
+  if (!visiblePanels || visiblePanels.length === 0) return []
+
+  const quickLinksCommands: CommandDef[] = []
+
+  for (const panelId of visiblePanels) {
+    // Match quick-links-X pattern (e.g., quick-links-a, quick-links-d)
+    const match = panelId.match(/^quick-links-([a-z])$/i)
+    if (!match) continue
+
+    const badge = match[1].toUpperCase()
+    const label = `Quick Links ${badge}`
+    const badgeLower = badge.toLowerCase()
+
+    quickLinksCommands.push({
+      phrases: [
+        `quick links ${badgeLower}`,
+        `quick link ${badgeLower}`,
+        `quicklinks ${badgeLower}`,
+        `links ${badgeLower}`,
+        `show quick links ${badgeLower}`,
+        `open quick links ${badgeLower}`,
+      ],
+      label,
+      primaryAction: 'open',
+      intentName: 'panel_intent',
+      panelId,
+    })
+  }
+
+  return quickLinksCommands
+}
+
+/**
+ * Get merged vocabulary: static core commands + dynamic panel/widget commands
+ *
+ * Per dynamic-typo-suggestions-fixes-plan.md:
+ * - Generic "Quick Links" is kept in vocabulary (API handles disambiguation)
+ * - Badge-specific variants (Quick Links D, etc.) are added from visible panels
+ * - When user confirms "Quick Links" with multiple panels, API returns selection
+ */
+function getMergedVocabulary(context?: DynamicSuggestionContext): CommandDef[] {
+  // Start with core commands
+  const vocabulary = [...COMMAND_VOCABULARY]
+
+  // Add visible quick-links badge variants (e.g., Quick Links D)
+  if (context?.visiblePanels) {
+    const quickLinksVocab = buildVisibleQuickLinksVocabulary(context.visiblePanels)
+    vocabulary.push(...quickLinksVocab)
+  }
+
+  // Add dynamic commands from manifests if provided
+  if (context?.manifests && context.manifests.length > 0) {
+    const dynamicCommands = buildDynamicVocabulary(context.manifests)
+    vocabulary.push(...dynamicCommands)
+  }
+
+  return vocabulary
+}
+
+/**
+ * Get default suggestions list from available vocabulary
+ * Used for fallback message when no matches found
+ */
+function getDefaultSuggestionLabels(vocabulary: CommandDef[]): string {
+  // Pick top 3 most common/useful commands for the fallback message
+  // Prioritize: panels first, then core commands
+  const panels = vocabulary.filter(c => c.panelId)
+  const coreCommands = vocabulary.filter(c => !c.panelId && ['Workspaces', 'Dashboard', 'Home'].includes(c.label))
+
+  const suggestions: string[] = []
+
+  // Add up to 2 panels
+  for (const panel of panels.slice(0, 2)) {
+    suggestions.push(`\`${panel.label.toLowerCase()}\``)
+  }
+
+  // Add 1 core command if we have room
+  if (suggestions.length < 3 && coreCommands.length > 0) {
+    suggestions.push(`\`${coreCommands[0].label.toLowerCase()}\``)
+  }
+
+  // If still need more, add from static vocabulary
+  if (suggestions.length < 3) {
+    const remaining = COMMAND_VOCABULARY
+      .filter(c => !suggestions.some(s => s.includes(c.label.toLowerCase())))
+      .slice(0, 3 - suggestions.length)
+    for (const cmd of remaining) {
+      suggestions.push(`\`${cmd.label.toLowerCase()}\``)
+    }
+  }
+
+  return suggestions.join(', ')
+}
 
 // =============================================================================
 // Fuzzy Matching
@@ -184,17 +380,27 @@ function similarityScore(input: string, target: string): number {
 
 /**
  * Find the best matching command for a given input
+ * @param input - User input to match
+ * @param vocabulary - Optional custom vocabulary (defaults to COMMAND_VOCABULARY)
  */
-function findMatches(input: string): CommandCandidate[] {
+function findMatches(input: string, vocabulary?: CommandDef[]): CommandCandidate[] {
   const candidates: CommandCandidate[] = []
   const inputLower = input.toLowerCase().trim()
+  // Also normalize input for better matching (handle "widgets" → "widget")
+  const inputNormalized = normalizeForMatching(input)
 
-  for (const cmd of COMMAND_VOCABULARY) {
+  const commandList = vocabulary ?? COMMAND_VOCABULARY
+
+  for (const cmd of commandList) {
     let bestScore = 0
     let bestPhrase = cmd.phrases[0]
 
     for (const phrase of cmd.phrases) {
-      const score = similarityScore(inputLower, phrase)
+      // Try both raw and normalized input
+      const score1 = similarityScore(inputLower, phrase)
+      const score2 = similarityScore(inputNormalized, phrase)
+      const score = Math.max(score1, score2)
+
       if (score > bestScore) {
         bestScore = score
         bestPhrase = phrase
@@ -231,15 +437,24 @@ function findMatches(input: string): CommandCandidate[] {
  * - One strong candidate (score >= 0.90): Ask confirmation + 2 action buttons
  * - Two candidates close (score gap < 0.08): Ask which one + buttons
  * - Otherwise: Short suggestion list
+ *
+ * @param userInput - The user's input message
+ * @param context - Optional dynamic context with manifests for building vocabulary
  */
-export function getSuggestions(userInput: string): SuggestionResult | null {
-  const candidates = findMatches(userInput)
+export function getSuggestions(
+  userInput: string,
+  context?: DynamicSuggestionContext
+): SuggestionResult | null {
+  // Build vocabulary dynamically from manifests + core commands
+  const vocabulary = getMergedVocabulary(context)
+  const candidates = findMatches(userInput, vocabulary)
 
   if (candidates.length === 0) {
-    // No matches at all - return generic suggestions
+    // No matches at all - return dynamic suggestions based on available vocabulary
+    const defaultLabels = getDefaultSuggestionLabels(vocabulary)
     return {
       type: 'low_confidence',
-      message: "I'm not sure what you meant. Try: `quick links`, `recent`, or `workspaces`.",
+      message: `I'm not sure what you meant. Try: ${defaultLabels}.`,
       candidates: [],
       showButtons: false,
     }
@@ -293,14 +508,13 @@ export function getSuggestions(userInput: string): SuggestionResult | null {
     }
   }
 
-  // Very low confidence - generic suggestions
+  // Very low confidence - use dynamic suggestions from candidates or vocabulary
   const suggestionLabels = candidates.slice(0, 3).map(c => `\`${c.label.toLowerCase()}\``).join(', ')
+  const fallbackLabels = suggestionLabels || getDefaultSuggestionLabels(vocabulary)
 
   return {
     type: 'low_confidence',
-    message: suggestionLabels
-      ? `I'm not sure what you meant. Try: ${suggestionLabels}.`
-      : "I'm not sure what you meant. Try: `quick links`, `recent`, or `workspaces`.",
+    message: `I'm not sure what you meant. Try: ${fallbackLabels}.`,
     candidates: candidates.slice(0, 3),
     showButtons: candidates.length > 0 && candidates[0].score >= 0.50,
   }

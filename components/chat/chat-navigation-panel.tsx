@@ -154,6 +154,19 @@ interface PendingOptionState {
 }
 
 /**
+ * Last options state for re-show grace window.
+ * Keeps the last disambiguation options for a period after selection.
+ */
+interface LastOptionsState {
+  options: PendingOptionState[]
+  message: string
+  createdAt: number
+}
+
+/** Grace window for re-showing last options (60 seconds) */
+const RESHOW_WINDOW_MS = 60_000
+
+/**
  * Last preview state for "show all" shortcut
  */
 interface LastPreviewState {
@@ -202,6 +215,91 @@ function matchesShowAllHeuristic(input: string): boolean {
 }
 
 /**
+ * Check if input is a rejection phrase.
+ * Per suggestion-rejection-handling-plan.md:
+ * - Exact: "no", "nope", "not that", "cancel", "never mind"
+ * - Or it begins with "no,"
+ */
+function isRejectionPhrase(input: string): boolean {
+  const normalized = input.toLowerCase().trim()
+
+  // Exact rejection phrases
+  const rejectionPhrases = ['no', 'nope', 'not that', 'cancel', 'never mind', 'nevermind']
+  if (rejectionPhrases.includes(normalized)) {
+    return true
+  }
+
+  // Begins with "no,"
+  if (normalized.startsWith('no,')) {
+    return true
+  }
+
+  return false
+}
+
+/**
+ * Check if input is an affirmation phrase.
+ * Per suggestion-fallback-polish-plan.md:
+ * Used to detect "yes" when there's no active suggestion to confirm.
+ */
+function isAffirmationPhrase(input: string): boolean {
+  const normalized = input.toLowerCase().trim()
+  const affirmationPhrases = ['yes', 'yeah', 'yep', 'yup', 'sure', 'ok', 'okay']
+  return affirmationPhrases.includes(normalized)
+}
+
+/**
+ * Match ordinal phrases to option index.
+ * Returns 0-based index or undefined if no match.
+ */
+function matchOrdinal(input: string, optionCount: number): number | undefined {
+  const normalized = input.toLowerCase().trim()
+
+  const ordinals: Record<string, number> = {
+    'first': 0, 'first one': 0, 'the first': 0, 'the first one': 0, '1st': 0,
+    'second': 1, 'second one': 1, 'the second': 1, 'the second one': 1, '2nd': 1,
+    'third': 2, 'third one': 2, 'the third': 2, 'the third one': 2, '3rd': 2,
+    'fourth': 3, 'fourth one': 3, 'the fourth': 3, 'the fourth one': 3, '4th': 3,
+    'fifth': 4, 'fifth one': 4, 'the fifth': 4, 'the fifth one': 4, '5th': 4,
+    'last': optionCount - 1, 'last one': optionCount - 1, 'the last': optionCount - 1, 'the last one': optionCount - 1,
+  }
+
+  for (const [phrase, index] of Object.entries(ordinals)) {
+    if (normalized === phrase || normalized.includes(phrase)) {
+      if (index >= 0 && index < optionCount) {
+        return index
+      }
+    }
+  }
+
+  return undefined
+}
+
+/**
+ * Check if input matches re-show options phrases.
+ * Per pending-options-reshow-grace-window.md triggers.
+ * Handles common typos via simple normalization.
+ */
+function matchesReshowPhrases(input: string): boolean {
+  const normalized = input.toLowerCase().trim()
+    // Normalize common typos
+    .replace(/shwo|shw/g, 'show')
+    .replace(/optins|optons|optiosn/g, 'options')
+    .replace(/teh/g, 'the')
+
+  const reshowPatterns = [
+    /^show\s*(me\s*)?(the\s*)?options$/,
+    /^(what\s*were\s*those|what\s*were\s*they)\??$/,
+    /^i'?m\s*confused\??$/,
+    /^(can\s*you\s*)?show\s*(me\s*)?(again|them)\??$/,
+    /^remind\s*me\??$/,
+    /^options\??$/,
+  ]
+
+  return reshowPatterns.some(pattern => pattern.test(normalized))
+}
+
+/**
  * Check if input contains action verbs that should skip grace window.
  * These are deliberate commands that shouldn't be intercepted.
  */
@@ -237,6 +335,16 @@ function findExactOptionMatch(
     opt => opt.sublabel && opt.sublabel.toLowerCase() === normalized
   )
   if (sublabelMatch) return sublabelMatch
+
+  // Try "contains" match - input contains the option label
+  // e.g., "pls show the Quick Links D" contains "Quick Links D"
+  // Only match if exactly one option label is found (avoid ambiguity)
+  const containsMatches = options.filter(opt =>
+    normalized.includes(opt.label.toLowerCase())
+  )
+  if (containsMatches.length === 1) {
+    return containsMatches[0]
+  }
 
   return undefined
 }
@@ -399,6 +507,9 @@ function ChatNavigationPanelContent({
   // Last preview state for "show all" shortcut
   const [lastPreview, setLastPreview] = useState<LastPreviewState | null>(null)
 
+  // Last options state for re-show grace window (survives selection for 60 seconds)
+  const [lastOptions, setLastOptions] = useState<LastOptionsState | null>(null)
+
   // View panel hook (for opening view panel with content)
   const { openPanel } = useViewPanel()
 
@@ -426,6 +537,12 @@ function ChatNavigationPanelContent({
     // Panel visibility (Gap 2) - read from context instead of props
     visiblePanels,
     focusedPanelId,
+    // Suggestion rejection handling
+    lastSuggestion,
+    setLastSuggestion,
+    addRejectedSuggestions,
+    clearRejectedSuggestions,
+    isRejectedSuggestion,
   } = useChatNavigationContext()
 
   const { executeAction, selectOption, openPanelDrawer: openPanelDrawerBase } = useChatNavigation({
@@ -834,6 +951,266 @@ function ChatNavigationPanelContent({
 
     try {
       // ---------------------------------------------------------------------------
+      // Rejection Detection: Check if user is rejecting a suggestion
+      // Per suggestion-rejection-handling-plan.md
+      // ---------------------------------------------------------------------------
+      if (lastSuggestion && isRejectionPhrase(trimmedInput)) {
+        // User rejected the suggestion - clear state and respond
+        const rejectedLabels = lastSuggestion.candidates.map(c => c.label)
+        addRejectedSuggestions(rejectedLabels)
+        setLastSuggestion(null)
+
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'suggestion_rejected',
+          metadata: { rejectedLabels, userInput: trimmedInput },
+        })
+
+        // Build response message - include alternatives if multiple candidates existed
+        let responseContent = 'Okay — what would you like instead?'
+        if (lastSuggestion.candidates.length > 1) {
+          const alternativesList = lastSuggestion.candidates.map(c => c.label.toLowerCase()).join(', ')
+          responseContent = `Okay — what would you like instead?\nYou can try: ${alternativesList}.`
+        }
+
+        const assistantMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: responseContent,
+          timestamp: new Date(),
+          isError: false,
+        }
+        addMessage(assistantMessage)
+        setIsLoading(false)
+        return
+      }
+
+      // ---------------------------------------------------------------------------
+      // Affirmation With Suggestion: Handle "yes" to confirm active suggestion
+      // Per suggestion-confirm-yes-plan.md
+      // ---------------------------------------------------------------------------
+      if (lastSuggestion && isAffirmationPhrase(trimmedInput)) {
+        const candidates = lastSuggestion.candidates
+
+        if (candidates.length === 1) {
+          // Single candidate: execute primary action directly
+          const candidate = candidates[0]
+
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'affirmation_confirm_single',
+            metadata: { candidate: candidate.label, primaryAction: candidate.primaryAction },
+          })
+
+          // Clear suggestion state before making API call
+          setLastSuggestion(null)
+          clearRejectedSuggestions()
+
+          // Build message based on primaryAction
+          // 'list' needs special handling to trigger preview mode
+          const confirmMessage = candidate.primaryAction === 'list'
+            ? `list ${candidate.label.toLowerCase()} in chat`
+            : candidate.label.toLowerCase()
+
+          // Make API call with confirmed candidate
+          const entryId = currentEntryId ?? getActiveEntryContext() ?? undefined
+          const workspaceId = currentWorkspaceId ?? getActiveWorkspaceContext() ?? undefined
+
+          try {
+            const response = await fetch('/api/chat/navigate', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                message: confirmMessage,
+                currentEntryId: entryId,
+                currentWorkspaceId: workspaceId,
+                context: {
+                  sessionState,
+                  visiblePanels,
+                  focusedPanelId,
+                },
+              }),
+            })
+
+            if (!response.ok) {
+              throw new Error('Failed to process confirmation')
+            }
+
+            const { resolution } = (await response.json()) as {
+              resolution: IntentResolutionResult
+            }
+
+            // Execute action based on resolution
+            if (resolution.action === 'open_panel_drawer' && resolution.panelId) {
+              openPanelDrawer(resolution.panelId, resolution.panelTitle)
+            }
+
+            // Handle 'select' action: set pendingOptions so pills render and guard works
+            // Per suggestion-confirm-yes-plan.md: set pendingOptions when options are shown
+            const hasSelectOptions = resolution.action === 'select' && resolution.options && resolution.options.length > 0
+            if (hasSelectOptions) {
+              const newPendingOptions: PendingOptionState[] = resolution.options!.map((opt, idx) => ({
+                index: idx + 1,
+                label: opt.label,
+                sublabel: opt.sublabel,
+                type: opt.type,
+                id: opt.id,
+                data: opt.data,
+              }))
+              setPendingOptions(newPendingOptions)
+              setPendingOptionsMessageId(`assistant-${Date.now()}`)
+              setPendingOptionsGraceCount(0)
+
+              // Store lastOptions for re-show grace window (persists after selection)
+              setLastOptions({
+                options: newPendingOptions,
+                message: resolution.message,
+                createdAt: Date.now(),
+              })
+            }
+
+            // Add assistant message (include options for 'select' action)
+            const assistantMessage: ChatMessage = {
+              id: `assistant-${Date.now()}`,
+              role: 'assistant',
+              content: resolution.message,
+              timestamp: new Date(),
+              isError: !resolution.success,
+              options: hasSelectOptions
+                ? resolution.options!.map((opt) => ({
+                    type: opt.type,
+                    id: opt.id,
+                    label: opt.label,
+                    sublabel: opt.sublabel,
+                    data: opt.data,
+                  }))
+                : undefined,
+            }
+            addMessage(assistantMessage)
+          } catch (error) {
+            const assistantMessage: ChatMessage = {
+              id: `assistant-${Date.now()}`,
+              role: 'assistant',
+              content: 'Something went wrong. Please try again.',
+              timestamp: new Date(),
+              isError: true,
+            }
+            addMessage(assistantMessage)
+          }
+
+          setIsLoading(false)
+          return
+        } else {
+          // Multiple candidates: ask which one
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'affirmation_multiple_candidates',
+            metadata: { candidateCount: candidates.length },
+          })
+
+          const assistantMessage: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: 'Which one?',
+            timestamp: new Date(),
+            isError: false,
+            // Re-display the candidates as suggestions
+            suggestions: {
+              type: 'choose_multiple',
+              candidates: candidates,
+            },
+          }
+          addMessage(assistantMessage)
+          setIsLoading(false)
+          return
+        }
+      }
+
+      // ---------------------------------------------------------------------------
+      // Affirmation Without Context: Handle "yes" when no active suggestion
+      // Per suggestion-fallback-polish-plan.md
+      // ---------------------------------------------------------------------------
+      if (!lastSuggestion && isAffirmationPhrase(trimmedInput)) {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'affirmation_without_context',
+          metadata: { userInput: trimmedInput },
+        })
+
+        const assistantMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: 'Yes to which option?',
+          timestamp: new Date(),
+          isError: false,
+        }
+        addMessage(assistantMessage)
+        setIsLoading(false)
+        return
+      }
+
+      // ---------------------------------------------------------------------------
+      // Re-show Options: Deterministic check for re-show phrases
+      // Per pending-options-reshow-grace-window.md - re-show last options without LLM
+      // ---------------------------------------------------------------------------
+      if (matchesReshowPhrases(trimmedInput)) {
+        const now = Date.now()
+        const isWithinGraceWindow = lastOptions && (now - lastOptions.createdAt) <= RESHOW_WINDOW_MS
+
+        if (isWithinGraceWindow && lastOptions) {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'reshow_options_deterministic',
+            metadata: { optionsCount: lastOptions.options.length },
+          })
+
+          // Re-render options without calling LLM
+          const messageId = `assistant-${Date.now()}`
+          const assistantMessage: ChatMessage = {
+            id: messageId,
+            role: 'assistant',
+            content: 'Here are your options:',
+            timestamp: new Date(),
+            isError: false,
+            options: lastOptions.options.map((opt) => ({
+              type: opt.type as SelectionOption['type'],
+              id: opt.id,
+              label: opt.label,
+              sublabel: opt.sublabel,
+              data: opt.data as SelectionOption['data'],
+            })),
+          }
+          addMessage(assistantMessage)
+
+          // Restore pendingOptions for selection handling
+          setPendingOptions(lastOptions.options)
+          setPendingOptionsMessageId(messageId)
+          setPendingOptionsGraceCount(0)
+
+          setIsLoading(false)
+          return
+        } else {
+          // Grace window expired or no prior options
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'reshow_options_expired',
+            metadata: { hasLastOptions: !!lastOptions, timeSinceCreation: lastOptions ? now - lastOptions.createdAt : null },
+          })
+
+          const assistantMessage: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: "No options are open. Say 'show quick links' to see them again.",
+            timestamp: new Date(),
+            isError: false,
+          }
+          addMessage(assistantMessage)
+          setIsLoading(false)
+          return
+        }
+      }
+
+      // ---------------------------------------------------------------------------
       // Preview Shortcut: Check for "show all" when a preview exists
       // ---------------------------------------------------------------------------
       const PREVIEW_TIMEOUT_MS = 2 * 60 * 1000 // 2 minutes
@@ -994,17 +1371,63 @@ function ChatNavigationPanelContent({
           handleSelectOption(optionToSelect)
           return
         }
-      }
 
-      // ---------------------------------------------------------------------------
-      // Grace window expiry: if we had pending options but no match, decrement grace
-      // ---------------------------------------------------------------------------
-      if (pendingOptions.length > 0 && pendingOptionsGraceCount > 0) {
-        // No match found, decrement grace count
-        setPendingOptionsGraceCount(0)
-        // Clear options after grace expires
-        setPendingOptions([])
-        setPendingOptionsMessageId(null)
+        // 3) Check word-based ordinal match ("first", "second", "last", etc.)
+        const wordOrdinalIndex = matchOrdinal(trimmedInput, pendingOptions.length)
+
+        if (wordOrdinalIndex !== undefined) {
+          const selectedOption = pendingOptions[wordOrdinalIndex]
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'ordinal_match',
+            metadata: { input: trimmedInput, wordOrdinalIndex, selectedLabel: selectedOption.label },
+          })
+
+          // Use grace window: keep options for one more turn
+          setPendingOptionsGraceCount(1)
+
+          // Execute the selection directly
+          const optionToSelect: SelectionOption = {
+            type: selectedOption.type as SelectionOption['type'],
+            id: selectedOption.id,
+            label: selectedOption.label,
+            sublabel: selectedOption.sublabel,
+            data: selectedOption.data as SelectionOption['data'],
+          }
+
+          setIsLoading(false)
+          handleSelectOption(optionToSelect)
+          return
+        }
+
+        // ---------------------------------------------------------------------------
+        // Grace window check: if graceCount > 0, clear options and continue to normal flow
+        // This MUST run before falling through to LLM
+        // ---------------------------------------------------------------------------
+        if (pendingOptionsGraceCount > 0) {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'grace_window_expiry',
+            metadata: { input: trimmedInput, graceCount: pendingOptionsGraceCount },
+          })
+          // Clear grace and options, then continue to normal flow
+          setPendingOptionsGraceCount(0)
+          setPendingOptions([])
+          setPendingOptionsMessageId(null)
+        }
+
+        // ---------------------------------------------------------------------------
+        // No local match found - fall through to LLM
+        // The LLM will receive pendingOptions in context and can:
+        // - Return select_option if it understands the user's selection intent
+        // - Return reshow_options if user wants to see options again
+        // - Return other intents if user wants to do something else
+        // ---------------------------------------------------------------------------
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'pending_options_fallthrough_to_llm',
+          metadata: { input: trimmedInput, pendingCount: pendingOptions.length },
+        })
       }
 
       // ---------------------------------------------------------------------------
@@ -1063,9 +1486,49 @@ function ChatNavigationPanelContent({
         throw new Error('Failed to process request')
       }
 
-      const { resolution, suggestions } = (await response.json()) as {
+      const { resolution, suggestions: rawSuggestions } = (await response.json()) as {
         resolution: IntentResolutionResult
         suggestions?: ChatSuggestions
+      }
+
+      // Filter out rejected candidates from suggestions
+      let suggestions: ChatSuggestions | undefined = rawSuggestions
+      let allSuggestionsFiltered = false
+      if (rawSuggestions && rawSuggestions.candidates.length > 0) {
+        // Debug: log rejection filtering
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'filtering_suggestions',
+          metadata: {
+            rawCandidates: rawSuggestions.candidates.map(c => c.label),
+            rejectedLabels: Array.from(rawSuggestions.candidates.map(c => ({
+              label: c.label,
+              isRejected: isRejectedSuggestion(c.label),
+            }))),
+          },
+        })
+
+        const filteredCandidates = rawSuggestions.candidates.filter(
+          (c) => !isRejectedSuggestion(c.label)
+        )
+        if (filteredCandidates.length === 0) {
+          // All candidates were rejected - don't show suggestions
+          suggestions = undefined
+          allSuggestionsFiltered = true
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'all_suggestions_filtered',
+            metadata: { reason: 'all candidates were rejected' },
+          })
+        } else if (filteredCandidates.length !== rawSuggestions.candidates.length) {
+          // Some candidates were filtered out
+          suggestions = {
+            ...rawSuggestions,
+            candidates: filteredCandidates,
+            // If we went from multiple to single, change type to confirm_single
+            type: filteredCandidates.length === 1 ? 'confirm_single' : rawSuggestions.type,
+          }
+        }
       }
 
       // ---------------------------------------------------------------------------
@@ -1227,6 +1690,76 @@ function ChatNavigationPanelContent({
         }
       }
 
+      // ---------------------------------------------------------------------------
+      // Handle reshow_options - user wants to see pending options again
+      // Uses lastOptions as fallback when pendingOptions is empty (grace window)
+      // ---------------------------------------------------------------------------
+      if (resolution.action === 'reshow_options') {
+        const now = Date.now()
+        const isWithinGraceWindow = lastOptions && (now - lastOptions.createdAt) <= RESHOW_WINDOW_MS
+
+        // Determine which options to show: pendingOptions or lastOptions (grace window)
+        const optionsToShow = pendingOptions.length > 0
+          ? pendingOptions
+          : (isWithinGraceWindow && lastOptions ? lastOptions.options : null)
+
+        if (optionsToShow && optionsToShow.length > 0) {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'llm_reshow_options',
+            metadata: {
+              source: pendingOptions.length > 0 ? 'pendingOptions' : 'lastOptions',
+              optionsCount: optionsToShow.length,
+            },
+          })
+
+          const messageId = `assistant-${Date.now()}`
+          const assistantMessage: ChatMessage = {
+            id: messageId,
+            role: 'assistant',
+            content: resolution.message || 'Here are your options:',
+            timestamp: new Date(),
+            isError: false,
+            options: optionsToShow.map((opt) => ({
+              type: opt.type as SelectionOption['type'],
+              id: opt.id,
+              label: opt.label,
+              sublabel: opt.sublabel,
+              data: opt.data as SelectionOption['data'],
+            })),
+          }
+          addMessage(assistantMessage)
+
+          // Restore pendingOptions if using lastOptions
+          if (pendingOptions.length === 0 && lastOptions) {
+            setPendingOptions(lastOptions.options)
+          }
+          setPendingOptionsMessageId(messageId)
+          setPendingOptionsGraceCount(0)
+
+          setIsLoading(false)
+          return
+        } else {
+          // No options to show - grace window expired or no prior options
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'llm_reshow_options_expired',
+            metadata: { hasLastOptions: !!lastOptions },
+          })
+
+          const assistantMessage: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: "No options are open. Say 'show quick links' to see them again.",
+            timestamp: new Date(),
+            isError: false,
+          }
+          addMessage(assistantMessage)
+          setIsLoading(false)
+          return
+        }
+      }
+
       // Execute the action
       const result = await executeAction(resolution)
 
@@ -1248,6 +1781,13 @@ function ChatNavigationPanelContent({
         setPendingOptionsMessageId(`assistant-${Date.now()}`)
         setPendingOptionsGraceCount(0)  // Fresh options, no grace yet
 
+        // Store lastOptions for re-show grace window (persists after selection)
+        setLastOptions({
+          options: newPendingOptions,
+          message: resolution.message,
+          createdAt: Date.now(),
+        })
+
         void debugLog({
           component: 'ChatNavigation',
           action: 'stored_pending_options',
@@ -1264,6 +1804,11 @@ function ChatNavigationPanelContent({
 
       // Track successful actions for session state and show toast
       if (result.success && result.action) {
+        // Clear rejected suggestions when user successfully navigates (explicitly named a target)
+        if (result.action === 'navigated' || result.action === 'created' || result.action === 'renamed' || result.action === 'deleted') {
+          clearRejectedSuggestions()
+        }
+
         const now = Date.now()
         switch (result.action) {
           case 'navigated':
@@ -1377,10 +1922,24 @@ function ChatNavigationPanelContent({
         resolution.action === 'confirm_delete' ||
         resolution.action === 'confirm_panel_write'
       ) && resolution.options
+      const assistantMessageId = `assistant-${Date.now()}`
+      // Override message content if all suggestions were filtered out (user rejected them)
+      // Per suggestion-fallback-polish-plan.md: filter rejected labels from fallback
+      let messageContent = result.message
+      if (allSuggestionsFiltered) {
+        const baseFallbackLabels = ['recent', 'quick links', 'workspaces']
+        const filteredFallbackLabels = baseFallbackLabels.filter(
+          (label) => !isRejectedSuggestion(label)
+        )
+        const fallbackList = filteredFallbackLabels.length > 0
+          ? filteredFallbackLabels.map((l) => `\`${l}\``).join(', ')
+          : '`workspaces`' // Ultimate fallback if all are rejected
+        messageContent = `I'm not sure what you meant. Try: ${fallbackList}.`
+      }
       const assistantMessage: ChatMessage = {
-        id: `assistant-${Date.now()}`,
+        id: assistantMessageId,
         role: 'assistant',
-        content: result.message,
+        content: messageContent,
         timestamp: new Date(),
         isError: !result.success,
         options: showOptions
@@ -1402,6 +1961,17 @@ function ChatNavigationPanelContent({
         drawerPanelTitle: resolution.panelTitle,
       }
       addMessage(assistantMessage)
+
+      // Store lastSuggestion for rejection handling
+      if (suggestions && suggestions.candidates.length > 0) {
+        setLastSuggestion({
+          candidates: suggestions.candidates,
+          messageId: assistantMessageId,
+        })
+      } else {
+        // Clear lastSuggestion if no suggestions (user moved on to valid command)
+        setLastSuggestion(null)
+      }
 
       // Store lastPreview for "show all" shortcut
       if (resolution.viewPanelContent && resolution.previewItems && resolution.previewItems.length > 0) {
@@ -1432,7 +2002,7 @@ function ChatNavigationPanelContent({
     } finally {
       setIsLoading(false)
     }
-  }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction, messages, addMessage, setInput, sessionState, setLastAction, setLastQuickLinksBadge, appendRequestHistory, openPanelWithTracking, openPanelDrawer, conversationSummary, pendingOptions, pendingOptionsGraceCount, handleSelectOption, lastPreview])
+  }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction, messages, addMessage, setInput, sessionState, setLastAction, setLastQuickLinksBadge, appendRequestHistory, openPanelWithTracking, openPanelDrawer, conversationSummary, pendingOptions, pendingOptionsGraceCount, handleSelectOption, lastPreview, lastOptions, lastSuggestion, setLastSuggestion, addRejectedSuggestions, clearRejectedSuggestions, isRejectedSuggestion])
 
   // ---------------------------------------------------------------------------
   // Handle Key Press
@@ -1711,7 +2281,7 @@ function ChatNavigationPanelContent({
                                     className={cn(
                                       'cursor-pointer transition-colors',
                                       'hover:bg-primary hover:text-primary-foreground',
-                                      'border-dashed',
+                                      'border-dashed text-muted-foreground',
                                       isLoading && 'opacity-50 cursor-not-allowed'
                                     )}
                                   >
@@ -1737,7 +2307,7 @@ function ChatNavigationPanelContent({
                                   className={cn(
                                     'cursor-pointer transition-colors',
                                     'hover:bg-primary hover:text-primary-foreground',
-                                    'border-dashed',
+                                    'border-dashed text-muted-foreground',
                                     isLoading && 'opacity-50 cursor-not-allowed'
                                   )}
                                 >

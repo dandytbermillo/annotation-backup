@@ -48,6 +48,7 @@ export interface IntentResolutionResult {
     | 'confirm_panel_write'  // Confirm before executing write panel intent
     | 'select'
     | 'select_option'  // Hybrid selection follow-up
+    | 'reshow_options' // User wants to see pending options again
     | 'clarify_type'   // Entry vs workspace type conflict
     | 'inform'
     | 'show_view_panel'
@@ -192,6 +193,9 @@ export async function resolveIntent(
     // Phase 4: Hybrid Selection Follow-up
     case 'select_option':
       return resolveSelectOption(intent)
+
+    case 'reshow_options':
+      return resolveReshowOptions(context)
 
     // Phase 5: Hybrid Commands - bare name resolution
     case 'resolve_name':
@@ -1634,20 +1638,11 @@ async function resolveShowQuickLinks(
     }
   }
 
-  // If multiple panels and no specific badge requested, prefer last-selected badge
-  let preferredPanel: typeof panelsResult.rows[0] | null = null
-  if (panelsResult.rows.length > 1 && !quickLinksPanelBadge && context.sessionState?.lastQuickLinksBadge) {
-    const preferredBadge = context.sessionState.lastQuickLinksBadge.toLowerCase()
-    const isVisible = !context.visiblePanels || context.visiblePanels.includes(`quick-links-${preferredBadge}`)
-    if (isVisible) {
-      preferredPanel = panelsResult.rows.find((p) =>
-        (p.badge || '').toLowerCase() === preferredBadge
-      ) || null
-    }
-  }
-
-  // If multiple panels and no preferred match, list them
-  if (panelsResult.rows.length > 1 && !quickLinksPanelBadge && !preferredPanel) {
+  // Per dynamic-typo-suggestions-fixes-plan.md:
+  // When multiple panels exist and no specific badge requested, ALWAYS show selection.
+  // Don't use lastQuickLinksBadge to auto-pick (that's only for "my last quick links").
+  // This treats "quick links" as a collection, not a specific badge.
+  if (panelsResult.rows.length > 1 && !quickLinksPanelBadge) {
     const panels = panelsResult.rows
     return {
       success: true,
@@ -1663,8 +1658,8 @@ async function resolveShowQuickLinks(
     }
   }
 
-  // Single panel found (or preferred panel selected)
-  const panel = preferredPanel || panelsResult.rows[0]
+  // Single panel found (or specific badge requested)
+  const panel = panelsResult.rows[0]
   const panelTitle = panel.badge ? `Quick Links ${panel.badge}` : 'Quick Links'
   const badge = (panel.badge || 'a').toLowerCase()
 
@@ -1781,6 +1776,29 @@ function resolveSelectOption(
     optionIndex,
     optionLabel,
     message: 'Selecting option...',
+  }
+}
+
+/**
+ * Resolve reshow_options intent - user wants to see pending options again
+ * The actual options are client-side state; this just signals the client to re-display them.
+ */
+function resolveReshowOptions(
+  context: ResolutionContext
+): IntentResolutionResult {
+  // Check if there are pending options in context
+  if (!context.pendingOptions || context.pendingOptions.length === 0) {
+    return {
+      success: false,
+      action: 'error',
+      message: 'No options to show. What would you like to do?',
+    }
+  }
+
+  return {
+    success: true,
+    action: 'reshow_options',
+    message: 'Here are your options:',
   }
 }
 

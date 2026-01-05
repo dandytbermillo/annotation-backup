@@ -95,4 +95,12 @@ export interface ResolutionContext {
   // "list", "preview", "in the chatbox", or "in chat" keywords
   // (per panel-intent-registry-plan.md Routing Precedence)
   forcePreviewMode?: boolean
+  // Pending disambiguation options (for reshow_options intent)
+  pendingOptions?: Array<{
+    index: number
+    label: string
+    sublabel?: string
+    type: string
+    id: string
+  }>
 }

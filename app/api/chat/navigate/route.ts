@@ -11,7 +11,8 @@ import {
   type IntentResponse,
 } from '@/lib/chat/intent-schema'
 import { resolveIntent, type IntentResolutionResult } from '@/lib/chat/intent-resolver'
-import { getSuggestions, type SuggestionResult } from '@/lib/chat/typo-suggestions'
+import { getSuggestions, type SuggestionResult, type DynamicSuggestionContext } from '@/lib/chat/typo-suggestions'
+import { panelRegistry } from '@/lib/panels/panel-registry'
 import { resolveNoteWorkspaceUserId } from '@/app/api/note-workspaces/user-id'
 
 // =============================================================================
@@ -254,26 +255,38 @@ export async function POST(request: NextRequest) {
       pendingPanelIntent: context?.pendingPanelIntent,
       // Deterministic preview mode fallback
       forcePreviewMode,
+      // Pending options for reshow_options intent
+      pendingOptions: conversationContext?.pendingOptions,
     }
 
     const resolution = await resolveIntent(intent, resolutionContext)
 
     // Generate friendly suggestions for unsupported intents (typo fallback)
+    // Build dynamic context from panel registry (includes DB-loaded widgets after buildIntentMessages)
+    const suggestionContext: DynamicSuggestionContext = {
+      manifests: panelRegistry.getAll(),
+      visiblePanels: context?.visiblePanels,
+    }
+
     let suggestions: SuggestionResult | null = null
     const normalizedInput = userMessage.toLowerCase().replace(/\s+/g, ' ').trim()
     const VERB_REGEX = /\b(open|show|view|display|list|go|back|rename|delete|create|add|remove|close)\b/i
     const hasVerb = VERB_REGEX.test(normalizedInput)
 
+    // Verify query guard: "did I open/rename/delete..." should go to LLM, not typo fallback
+    // These are verify_action or verify_request intents that the LLM should handle
+    const isVerifyQuery = /^did\s+i\b/i.test(normalizedInput)
+
     if (!resolution.success && resolution.action === 'error') {
-      suggestions = getSuggestions(userMessage)
+      suggestions = getSuggestions(userMessage, suggestionContext)
       if (suggestions) {
         // Replace generic error with friendly suggestion
         resolution.message = suggestions.message
       }
-    } else if (!hasVerb) {
-      // If the input has no verb, don't let the LLM guess.
+    } else if (!hasVerb && !isVerifyQuery) {
+      // If the input has no verb and is not a verify query, don't let the LLM guess.
       // Only override when the input is not an exact match to a known command.
-      const typoSuggestion = getSuggestions(userMessage)
+      const typoSuggestion = getSuggestions(userMessage, suggestionContext)
       const topCandidate = typoSuggestion?.candidates[0]
       const isExactMatch = Boolean(
         topCandidate &&

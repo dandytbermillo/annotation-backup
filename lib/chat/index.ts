@@ -55,6 +55,7 @@ export type {
   LastAction,
   SuggestionCandidate,
   ChatSuggestions,
+  LastSuggestionState,
   ActionHistoryEntry,
 } from './chat-navigation-context'
 

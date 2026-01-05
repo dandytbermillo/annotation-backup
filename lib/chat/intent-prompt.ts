@@ -150,7 +150,25 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
       User: "Sprint 66" → { "intent": "select_option", "args": { "optionIndex": 2 } }
       User: "last" → { "intent": "select_option", "args": { "optionIndex": 2 } }
 
-17. **resolve_name** - User wants to open something by name without specifying type
+17. **reshow_options** - User wants to see pending options again
+    Use when pendingOptions exist AND user:
+      - Asks to see/show/display options again
+      - Is confused or uncertain ("I'm confused", "what were those?", "remind me")
+      - Types something unclear that doesn't match any option
+      - Has typos that make their intent unclear (e.g., "shwo me teh optins")
+    Args: none required
+    RULES:
+      - ONLY use when pendingOptions exist
+      - Prefer select_option if user's intent to select a specific option is clear (even with typos)
+      - Use reshow_options when user clearly wants to see all options again
+    Examples (given pendingOptions):
+      User: "show me the options" → { "intent": "reshow_options", "args": {} }
+      User: "what were my choices?" → { "intent": "reshow_options", "args": {} }
+      User: "I'm confused" → { "intent": "reshow_options", "args": {} }
+      User: "remind me" → { "intent": "reshow_options", "args": {} }
+      User: "shwo me teh optins" → { "intent": "reshow_options", "args": {} }
+
+19. **resolve_name** - User wants to open something by name without specifying type
     Use this when:
     - Input is a bare name (e.g., "summary14")
     - Input has "open" but no type keyword like "workspace" or "note" (e.g., "open summary14")
@@ -165,7 +183,7 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
     NOTE: The system will check if this name matches an entry, workspace, or both,
     and respond appropriately (open directly if single match, or ask for clarification).
 
-18. **panel_intent** - User wants to interact with a specific panel (Recent, Quick Links, etc.)
+20. **panel_intent** - User wants to interact with a specific panel (Recent, Quick Links, etc.)
     Args:
       - panelId (required): target panel ID (e.g., "recent", "quick-links-a")
       - intentName (required): intent within the panel (e.g., "list_recent", "show_links")
@@ -182,7 +200,7 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
       - If user says **preview/list/widget + panel**, set params.mode = "preview"
     NOTE: See Panel Intents section below for all available panel commands.
 
-19. **unsupported** - Request doesn't match any supported intent
+21. **unsupported** - Request doesn't match any supported intent
     Args: reason (brief explanation)
 
 ## Intent Disambiguation Rules
@@ -215,6 +233,7 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
 - "did I ask you to X?", "did I tell you to X?", "did I request X?" → **verify_request** (checks request history, not action history)
 - "the first one", "second option", "last one" (when pendingOptions exists) → **select_option**
 - "the one from X", "the workspace with Y" (when pendingOptions exists) → **select_option**
+- "show me the options", "what were my choices?", "I'm confused" (when pendingOptions exists) → **reshow_options**
 - "show/view/display/open quick links" → **show_quick_links**
 - "preview/list/widget quick links" → **show_quick_links** (no badge) so the system can disambiguate panels
 - "preview/list/widget quick links D" → **panel_intent** with intentName="show_links" and params.mode = "preview"
