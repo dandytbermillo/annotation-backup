@@ -67,10 +67,138 @@ const LLM_CONFIG = {
 }
 
 const TIMEOUT_MS = 8000
+const MAX_CONTEXT_RETRIES = 1  // Max retries for need_context loop
 
 // =============================================================================
 // Context Helpers
 // =============================================================================
+
+/**
+ * Build expanded context based on LLM's request.
+ * Per llm-context-retrieval-general-answers-plan.md:
+ * Server fetches additional context from chat history.
+ */
+function buildExpandedContext(
+  contextRequest: string,
+  originalContext: ConversationContext | undefined,
+  fullChatHistory?: Array<{ role: string; content: string }>
+): ConversationContext {
+  const base = originalContext || {}
+  const lower = contextRequest.toLowerCase()
+
+  // Determine what additional context to include based on the request
+  let expandedMessages: string[] = []
+
+  if (fullChatHistory && fullChatHistory.length > 0) {
+    // Extract messages based on request type
+    if (lower.includes('assistant') || lower.includes('response')) {
+      // Get assistant messages
+      expandedMessages = fullChatHistory
+        .filter(m => m.role === 'assistant')
+        .map(m => `[Assistant]: ${m.content}`)
+        .slice(-10) // Last 10 assistant messages
+    } else if (lower.includes('user') || lower.includes('message')) {
+      // Get user messages
+      expandedMessages = fullChatHistory
+        .filter(m => m.role === 'user')
+        .map(m => `[User]: ${m.content}`)
+        .slice(-10)
+    } else {
+      // Get full conversation (interleaved)
+      expandedMessages = fullChatHistory
+        .slice(-20) // Last 20 messages total
+        .map(m => `[${m.role === 'user' ? 'User' : 'Assistant'}]: ${m.content}`)
+    }
+  }
+
+  return {
+    ...base,
+    // Override recentUserMessages with expanded context
+    recentUserMessages: expandedMessages.length > 0 ? expandedMessages : base.recentUserMessages,
+    // Add a summary indicating this is expanded context
+    summary: expandedMessages.length > 0
+      ? `Expanded context (${expandedMessages.length} messages) per request: "${contextRequest}"`
+      : base.summary,
+  }
+}
+
+/**
+ * Get server time formatted for general_answer responses.
+ */
+function getServerTimeString(): string {
+  const now = new Date()
+  return now.toLocaleString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+    timeZoneName: 'short',
+  })
+}
+
+/**
+ * Call LLM to parse intent from user message.
+ * Returns parsed IntentResponse or error.
+ */
+async function callLLMForIntent(
+  client: OpenAI,
+  userMessage: string,
+  conversationContext: ConversationContext | undefined,
+  userId: string | null
+): Promise<{ intent: IntentResponse; error?: string }> {
+  const messages = await buildIntentMessages(userMessage, conversationContext, userId)
+
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS)
+
+  try {
+    const completion = await client.chat.completions.create(
+      {
+        ...LLM_CONFIG,
+        messages,
+      },
+      { signal: controller.signal }
+    )
+
+    clearTimeout(timeoutId)
+
+    const content = completion.choices[0]?.message?.content
+    if (!content) {
+      return {
+        intent: {
+          intent: 'unsupported',
+          args: { reason: 'No response from assistant' },
+        },
+      }
+    }
+
+    try {
+      const rawJson = JSON.parse(content)
+      return { intent: parseIntentResponse(rawJson) }
+    } catch {
+      return {
+        intent: {
+          intent: 'unsupported',
+          args: { reason: 'Could not understand the request' },
+        },
+      }
+    }
+  } catch (error) {
+    clearTimeout(timeoutId)
+
+    if (error instanceof Error && error.name === 'AbortError') {
+      return {
+        intent: { intent: 'unsupported', args: { reason: 'Request timeout' } },
+        error: 'timeout',
+      }
+    }
+
+    throw error
+  }
+}
 
 /**
  * Fetch Home entry ID for the user (for "already on Home" detection)
@@ -131,7 +259,7 @@ export async function POST(request: NextRequest) {
 
     const userMessage = message.trim()
 
-    // Extract conversation context (optional), session state, pending options, and visibility
+    // Extract conversation context (optional), session state, pending options, visibility, and chatContext
     const conversationContext: ConversationContext | undefined = context ? {
       summary: context.summary,
       recentUserMessages: context.recentUserMessages,
@@ -141,6 +269,8 @@ export async function POST(request: NextRequest) {
       // Panel visibility context (from client)
       visiblePanels: context.visiblePanels,
       focusedPanelId: context.focusedPanelId,
+      // Chat context for LLM clarification answers (per llm-chat-context-first-plan.md)
+      chatContext: context.chatContext,
     } : undefined
 
     // Check if OpenAI is configured
@@ -162,59 +292,78 @@ export async function POST(request: NextRequest) {
     // Step 1: Parse intent with LLM
     // Pass userId to load DB widget manifests (server-side)
     const client = getOpenAIClient()
-    const messages = await buildIntentMessages(userMessage, conversationContext, userId)
 
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS)
+    // Initial LLM call
+    let llmResult = await callLLMForIntent(client, userMessage, conversationContext, userId)
 
-    let intent: IntentResponse
-
-    try {
-      const completion = await client.chat.completions.create(
+    if (llmResult.error === 'timeout') {
+      return NextResponse.json(
         {
-          ...LLM_CONFIG,
-          messages,
+          error: 'Request timeout',
+          resolution: {
+            success: false,
+            action: 'error',
+            message: 'Request timed out. Please try again.',
+          } satisfies IntentResolutionResult,
         },
-        { signal: controller.signal }
+        { status: 504 }
       )
+    }
 
-      clearTimeout(timeoutId)
+    let intent: IntentResponse = llmResult.intent
 
-      const content = completion.choices[0]?.message?.content
-      if (!content) {
-        intent = {
-          intent: 'unsupported',
-          args: { reason: 'No response from assistant' },
-        }
-      } else {
-        try {
-          const rawJson = JSON.parse(content)
-          intent = parseIntentResponse(rawJson)
-        } catch {
-          intent = {
-            intent: 'unsupported',
-            args: { reason: 'Could not understand the request' },
-          }
-        }
-      }
-    } catch (error) {
-      clearTimeout(timeoutId)
+    // Step 1.5: Handle need_context loop
+    // Per llm-context-retrieval-general-answers-plan.md:
+    // If LLM returns need_context, fetch expanded context and re-call LLM (max 1 retry)
+    let contextRetryCount = 0
+    const fullChatHistory = context?.fullChatHistory as Array<{ role: string; content: string }> | undefined
 
-      if (error instanceof Error && error.name === 'AbortError') {
+    while (intent.intent === 'need_context' && contextRetryCount < MAX_CONTEXT_RETRIES) {
+      contextRetryCount++
+      const contextRequest = intent.args.contextRequest || 'full conversation'
+
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'need_context_retry',
+        metadata: {
+          retryCount: contextRetryCount,
+          contextRequest,
+          hasFullHistory: !!fullChatHistory,
+          historyLength: fullChatHistory?.length || 0,
+        },
+      })
+
+      // Build expanded context based on LLM's request
+      const expandedContext = buildExpandedContext(contextRequest, conversationContext, fullChatHistory)
+
+      // Re-call LLM with expanded context
+      llmResult = await callLLMForIntent(client, userMessage, expandedContext, userId)
+
+      if (llmResult.error === 'timeout') {
         return NextResponse.json(
           {
             error: 'Request timeout',
             resolution: {
               success: false,
               action: 'error',
-              message: 'Request timed out. Please try again.',
+              message: 'Request timed out while fetching additional context. Please try again.',
             } satisfies IntentResolutionResult,
           },
           { status: 504 }
         )
       }
 
-      throw error
+      intent = llmResult.intent
+    }
+
+    // If still need_context after max retries, ask user for clarification
+    if (intent.intent === 'need_context') {
+      intent = {
+        intent: 'unsupported',
+        args: {
+          reason: "I couldn't find enough context to answer that. Could you provide more details or rephrase your question?",
+        },
+      }
     }
 
     // Step 2: Resolve intent to actionable data
@@ -260,6 +409,20 @@ export async function POST(request: NextRequest) {
     }
 
     const resolution = await resolveIntent(intent, resolutionContext)
+
+    // Step 3: Handle general_answer with time replacement
+    // Per llm-context-retrieval-general-answers-plan.md:
+    // For time questions, replace placeholder with actual server time
+    if (resolution.action === 'general_answer' && resolution.generalAnswerType === 'time') {
+      const serverTime = getServerTimeString()
+      // Replace placeholder or provide the time directly
+      if (resolution.message === 'TIME_PLACEHOLDER' || resolution.message.includes('TIME_PLACEHOLDER')) {
+        resolution.message = `It's currently ${serverTime}.`
+      } else {
+        // LLM might have guessed a time - replace with accurate server time
+        resolution.message = `It's currently ${serverTime}.`
+      }
+    }
 
     // Generate friendly suggestions for unsupported intents (typo fallback)
     // Build dynamic context from panel registry (includes DB-loaded widgets after buildIntentMessages)

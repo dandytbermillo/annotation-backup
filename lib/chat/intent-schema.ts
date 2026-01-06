@@ -38,6 +38,11 @@ export const IntentType = z.enum([
   'resolve_name',   // Bare name input - resolve to entry or workspace
   // Phase 6: Panel Intent Registry - extensible panel commands
   'panel_intent',   // Dispatch to panel-specific handler via manifest
+  // Phase 7: LLM-first context answers
+  'answer_from_context',  // Answer clarification from chat context (no side effects)
+  // Phase 8: Context retrieval and general answers
+  'need_context',         // LLM needs more context to answer (triggers server-side retrieval)
+  'general_answer',       // Non-app question: time, math, static knowledge (no side effects)
   'unsupported',
 ])
 
@@ -98,6 +103,16 @@ export const IntentArgs = z.object({
 
   // For unsupported: brief reason why the request is not supported
   reason: z.string().optional(),
+
+  // For answer_from_context: the LLM's answer based on chat context
+  contextAnswer: z.string().optional(),
+
+  // For need_context: request additional context from server
+  contextRequest: z.string().optional(),  // e.g., "last 5 messages", "recent actions"
+
+  // For general_answer: non-app question (time/math/static knowledge)
+  generalAnswer: z.string().optional(),
+  answerType: z.enum(['time', 'math', 'general']).optional(),
 })
 
 export type IntentArgs = z.infer<typeof IntentArgs>
@@ -159,6 +174,8 @@ export const SUPPORTED_ACTIONS = [
   'preview file',
   'select from options',
   'panel commands (recent, quick links, etc.)',
+  'answer questions from chat context',
+  'answer general questions (time, math, facts)',
 ] as const
 
 export const SUPPORTED_ACTIONS_TEXT = SUPPORTED_ACTIONS.join(', ')

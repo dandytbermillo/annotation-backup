@@ -149,6 +149,105 @@ No new useSyncExternalStore usage or provider/consumer contract changes.
 
 ---
 
+## Affected Files
+
+### Data Layer (Types & State)
+
+| File | Role | Changes |
+|------|------|---------|
+| `lib/chat/intent-schema.ts` | Zod schemas for intent parsing | Add `ActionHistoryEntry` type with `type`, `targetType`, `targetName`, `targetId`, `ts` fields |
+| `lib/chat/intent-prompt.ts` | LLM prompt construction | Add `verify_action` intent examples; add routing rules for "did I [action] X?" queries |
+| `lib/chat/chat-navigation-context.tsx` | React context for session state | Add `actionHistory: ActionHistoryEntry[]` to `SessionState`; add `appendActionHistory()` helper |
+| `lib/chat/resolution-types.ts` | Resolution result types | Add `actionHistory` field to session state interface if not using shared type |
+
+### Action Recording (Write Path)
+
+| File | Role | Changes |
+|------|------|---------|
+| `lib/chat/use-chat-navigation.ts` | Hook that executes resolved actions | Call `appendActionHistory()` after each successful action (open workspace, rename, delete, etc.) |
+| `components/chat/chat-navigation-panel.tsx` | Chat UI + drawer/preview rendering | Record `open_panel` entries when drawers open or previews render; pass `actionHistory` to context |
+
+### Action Query (Read Path)
+
+| File | Role | Changes |
+|------|------|---------|
+| `lib/chat/intent-resolver.ts` | Resolves parsed intent to actionable result | Add `resolveVerifyAction()` handler; query `actionHistory` by type + targetName; return action-aware yes/no responses |
+
+### API Layer
+
+| File | Role | Changes |
+|------|------|---------|
+| `app/api/chat/navigate/route.ts` | Server endpoint for intent parsing | Pass `sessionState.actionHistory` to resolver context (if server-side verification needed) |
+
+### Data Flow Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           ACTION RECORDING (Write)                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  User action (open workspace, rename, delete, open panel)                   │
+│       │                                                                     │
+│       ▼                                                                     │
+│  use-chat-navigation.ts: executeAction()                                    │
+│       │                                                                     │
+│       ▼                                                                     │
+│  chat-navigation-context.tsx: appendActionHistory({                         │
+│    type: "open_workspace",                                                  │
+│    targetType: "workspace",                                                 │
+│    targetName: "Sprint 6",                                                  │
+│    ts: "2026-01-06T..."                                                     │
+│  })                                                                         │
+│       │                                                                     │
+│       ▼                                                                     │
+│  sessionState.actionHistory[] (bounded, last 50)                            │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           ACTION QUERY (Read)                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  User: "did I open workspace 6?"                                            │
+│       │                                                                     │
+│       ▼                                                                     │
+│  intent-prompt.ts: LLM parses → { intent: "verify_action", args: {...} }    │
+│       │                                                                     │
+│       ▼                                                                     │
+│  intent-resolver.ts: resolveVerifyAction()                                  │
+│       │                                                                     │
+│       ├── Query sessionState.actionHistory[]                                │
+│       │                                                                     │
+│       ▼                                                                     │
+│  Match by type + targetName (case-insensitive)                              │
+│       │                                                                     │
+│       ├── Found → "Yes, you opened Workspace 6 this session."               │
+│       └── Not found → "No, I have no record of opening Workspace 6."        │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### File Dependency Graph
+
+```
+intent-schema.ts (types)
+       │
+       ├──────────────────────────┐
+       ▼                          ▼
+intent-prompt.ts            chat-navigation-context.tsx
+(LLM rules)                 (state + appendActionHistory)
+       │                          │
+       ▼                          ▼
+intent-resolver.ts  ◄────── use-chat-navigation.ts
+(query actionHistory)       (record actions)
+       │                          │
+       ▼                          ▼
+route.ts                    chat-navigation-panel.tsx
+(API endpoint)              (UI + panel tracking)
+```
+
+---
+
 ## Implementation Plan
 
 ### Step 1: Data Model + State

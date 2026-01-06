@@ -200,8 +200,61 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
       - If user says **preview/list/widget + panel**, set params.mode = "preview"
     NOTE: See Panel Intents section below for all available panel commands.
 
-21. **unsupported** - Request doesn't match any supported intent
+21. **answer_from_context** - Answer a clarification question using chat context
+    Use when user asks about something visible in the chat (options, lists, last opened panel).
+    Examples:
+    - "is F in the list?" (when chatContext.lastOptions shows available options)
+    - "what did you just open?" (when chatContext.lastOpenedPanel exists)
+    - "what were the options?" (when chatContext.lastOptions exists)
+    - "how many items?" (when chatContext.lastListPreview exists)
+    Args:
+      - contextAnswer (required): The answer based on chat context
+    IMPORTANT:
+      - Only use this intent for questions that can be answered from chatContext
+      - If chatContext lacks the needed info, use need_context to request more
+      - This intent has NO side effects - it only returns a message
+
+22. **need_context** - Request more context to answer a question
+    Use when:
+    - User asks about something NOT in chatContext (e.g., "what did you say before that?")
+    - You need more chat history to answer a clarification question
+    - The answer requires information not currently provided
+    Args:
+      - contextRequest (required): What context you need (e.g., "last 5 messages", "recent actions", "full chat history")
+    IMPORTANT:
+      - Only use this when chatContext is insufficient
+      - Server will fetch the requested context and re-call you
+      - Be specific about what you need (don't just say "more context")
+    Examples:
+      - "what did you say before that?" → need_context (contextRequest: "last 5 assistant messages")
+      - "what options did you show earlier?" → need_context (contextRequest: "previous options lists")
+
+23. **general_answer** - Answer a non-app question (time, math, static knowledge)
+    Use for questions that are NOT about the app but can be answered without web access:
+    - Time/date: "what time is it?" → server time (NOT your estimate)
+    - Math: "what's 127 * 48?" → computed answer
+    - Static knowledge: "capital of France?" → factual answer
+    Args:
+      - generalAnswer (required): The answer to the question
+      - answerType (required): "time" | "math" | "general"
+    IMPORTANT:
+      - For time/date questions, set answerType to "time" - the server will provide accurate time
+      - For math, compute the answer and set answerType to "math"
+      - For static knowledge (geography, history, science facts), set answerType to "general"
+      - DO NOT use this for live/external data (weather, news, prices) - use unsupported instead
+    Examples:
+      - "what time is it?" → general_answer (generalAnswer: "TIME_PLACEHOLDER", answerType: "time")
+      - "what's 2 + 2?" → general_answer (generalAnswer: "4", answerType: "math")
+      - "capital of France?" → general_answer (generalAnswer: "Paris", answerType: "general")
+
+24. **unsupported** - Request doesn't match any supported intent
     Args: reason (brief explanation)
+    Use this for:
+    - Requests requiring web access (weather, news, live prices, real-time data)
+    - Requests you cannot understand after context retrieval
+    - Requests outside the app's scope
+    For web requests, use a helpful message like:
+      "I can help with your knowledge base and what's in this app. For live web info, use a web search."
 
 ## Intent Disambiguation Rules
 
@@ -237,6 +290,15 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
 - "show/view/display/open quick links" → **show_quick_links**
 - "preview/list/widget quick links" → **show_quick_links** (no badge) so the system can disambiguate panels
 - "preview/list/widget quick links D" → **panel_intent** with intentName="show_links" and params.mode = "preview"
+
+## Quick Links Badge Rule
+
+IMPORTANT: Only set quickLinksPanelBadge if the user explicitly says a letter (A, B, C, D, E, etc.).
+- "quick links" → NO badge (let system disambiguate if multiple panels exist)
+- "quick links D" → badge = "D"
+- "open quick links" → NO badge
+- "show me quick link E" → badge = "E"
+Do NOT infer a badge from context, history, or session state. If no explicit letter is present, omit the badge entirely.
 
 ## Typo Tolerance
 
@@ -296,9 +358,47 @@ Return ONLY a JSON object with this exact structure:
     "panelId": "<string or omit - for panel_intent>",
     "intentName": "<string or omit - for panel_intent>",
     "params": "<object or omit - for panel_intent>",
-    "reason": "<string or omit>"
+    "reason": "<string or omit>",
+    "contextAnswer": "<string or omit - for answer_from_context>",
+    "contextRequest": "<string or omit - for need_context>",
+    "generalAnswer": "<string or omit - for general_answer>",
+    "answerType": "<'time'|'math'|'general' or omit - for general_answer>"
   }
 }
+
+## Decision Flow
+
+Follow this decision tree to select the correct intent:
+
+1. **Is it an app command?** (navigation, panel, workspace operations)
+   → Use the appropriate app intent (open_workspace, list_workspaces, panel_intent, etc.)
+
+2. **Is it a question about what's in the chat?** (options, lists, what was shown)
+   → If chatContext has the answer → **answer_from_context**
+   → If chatContext lacks info → **need_context** (request what you need)
+
+3. **Is it a non-app question?** (not about the app or chat)
+   → Time/date question → **general_answer** (answerType: "time")
+   → Math/calculation → **general_answer** (answerType: "math")
+   → Static knowledge (geography, history, science) → **general_answer** (answerType: "general")
+   → Live/external data (weather, news, prices) → **unsupported** (explain it requires web access)
+
+4. **Still unclear?**
+   → If you need more context to understand → **need_context**
+   → If request is truly unsupported → **unsupported** with helpful reason
+
+## Knowledge Boundary
+
+**In scope (answer with answer_from_context or general_answer):**
+- App navigation and state (workspaces, entries, panels)
+- Chat context (what was shown, options listed, panels opened)
+- Static knowledge (facts, definitions, math)
+- Server time (for time questions)
+
+**Out of scope (return unsupported):**
+- Weather, news, live events, real-time prices
+- Anything requiring web browsing or live updates
+- Personal data not in the app
 
 ## Rules
 
@@ -308,7 +408,10 @@ Return ONLY a JSON object with this exact structure:
 4. If unsure which intent, return "unsupported" with a reason
 5. Do NOT hallucinate workspace/note names - only use what the user provided
 6. Do NOT select IDs or make database queries - only extract intent and names
-7. When conversation context is provided, use it to understand follow-up requests`
+7. When conversation context is provided, use it to understand follow-up requests
+8. For clarification questions, check chatContext FIRST before using need_context
+9. For time questions, use general_answer with answerType "time" - the server will provide accurate time
+10. For out-of-scope requests, provide a helpful message explaining you can help with the app and knowledge base`
 
 /**
  * Action history entry for session tracking
@@ -378,6 +481,20 @@ export interface PendingOption {
 }
 
 /**
+ * ChatContext for LLM clarification answers.
+ * Per llm-chat-context-first-plan.md
+ */
+export interface ChatContext {
+  lastAssistantMessage?: string
+  lastOptions?: Array<{ label: string; sublabel?: string }>
+  lastListPreview?: { title: string; count: number; items: string[] }
+  lastOpenedPanel?: { title: string }
+  lastShownContent?: { type: 'preview' | 'panel' | 'list'; title: string; count?: number }
+  lastErrorMessage?: string
+  lastUserMessage?: string
+}
+
+/**
  * Context type for conversation history
  */
 export interface ConversationContext {
@@ -389,6 +506,8 @@ export interface ConversationContext {
   // Panel visibility context (client-side state passed to server)
   visiblePanels?: string[]          // IDs of currently visible panels
   focusedPanelId?: string | null    // ID of the focused panel (for priority)
+  // Chat context for answering clarification questions
+  chatContext?: ChatContext
 }
 
 /**
@@ -445,11 +564,56 @@ export async function buildIntentMessages(
     context.recentUserMessages?.length ||
     context.lastAssistantQuestion ||
     context.sessionState ||
-    context.pendingOptions?.length
+    context.pendingOptions?.length ||
+    context.chatContext
   )
 
   if (hasContext) {
     let contextBlock = 'Context:\n'
+
+    // Add chat context for clarification answers (per llm-chat-context-first-plan.md)
+    if (context.chatContext) {
+      const cc = context.chatContext
+      contextBlock += '\nChat Context (for answering questions about what was shown):\n'
+
+      if (cc.lastOptions && cc.lastOptions.length > 0) {
+        contextBlock += `  lastOptions:\n`
+        cc.lastOptions.forEach((opt, i) => {
+          const sublabelPart = opt.sublabel ? ` (${opt.sublabel})` : ''
+          contextBlock += `    ${i + 1}. "${opt.label}"${sublabelPart}\n`
+        })
+      }
+
+      if (cc.lastListPreview) {
+        contextBlock += `  lastListPreview:\n`
+        contextBlock += `    title: "${cc.lastListPreview.title}"\n`
+        contextBlock += `    count: ${cc.lastListPreview.count}\n`
+        if (cc.lastListPreview.items.length > 0) {
+          contextBlock += `    items: ${cc.lastListPreview.items.slice(0, 10).map(i => `"${i}"`).join(', ')}\n`
+        }
+      }
+
+      if (cc.lastOpenedPanel) {
+        contextBlock += `  lastOpenedPanel: "${cc.lastOpenedPanel.title}"\n`
+      }
+
+      if (cc.lastShownContent) {
+        contextBlock += `  lastShownContent:\n`
+        contextBlock += `    type: "${cc.lastShownContent.type}"\n`
+        contextBlock += `    title: "${cc.lastShownContent.title}"\n`
+        if (cc.lastShownContent.count !== undefined) {
+          contextBlock += `    count: ${cc.lastShownContent.count}\n`
+        }
+      }
+
+      if (cc.lastAssistantMessage) {
+        // Truncate long messages
+        const truncated = cc.lastAssistantMessage.length > 200
+          ? cc.lastAssistantMessage.substring(0, 200) + '...'
+          : cc.lastAssistantMessage
+        contextBlock += `  lastAssistantMessage: "${truncated}"\n`
+      }
+    }
 
     // Add session state for informational intents
     if (context.sessionState) {

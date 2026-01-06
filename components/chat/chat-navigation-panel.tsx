@@ -153,16 +153,6 @@ interface PendingOptionState {
   data: unknown
 }
 
-/**
- * Last options state for re-show grace window.
- * Keeps the last disambiguation options for a period after selection.
- */
-interface LastOptionsState {
-  options: PendingOptionState[]
-  message: string
-  createdAt: number
-}
-
 /** Grace window for re-showing last options (60 seconds) */
 const RESHOW_WINDOW_MS = 60_000
 
@@ -300,6 +290,266 @@ function matchesReshowPhrases(input: string): boolean {
 }
 
 /**
+ * Find the most recent assistant message that contains options (pills).
+ * Per pending-options-message-source-plan.md: use chat as source of truth.
+ * Returns the options and timestamp, or null if no options message exists.
+ */
+function findLastOptionsMessage(messages: ChatMessage[]): {
+  options: PendingOptionState[]
+  timestamp: Date
+} | null {
+  // Scan from newest to oldest
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]
+    if (msg.role === 'assistant' && msg.options && msg.options.length > 0) {
+      return {
+        options: msg.options.map((opt, idx) => ({
+          index: idx + 1,
+          label: opt.label,
+          sublabel: opt.sublabel,
+          type: opt.type,
+          id: opt.id,
+          data: opt.data,
+        })),
+        timestamp: msg.timestamp,
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * ChatContext for LLM clarification answers.
+ * Per llm-chat-context-first-plan.md
+ */
+interface ChatContext {
+  lastAssistantMessage?: string
+  lastOptions?: Array<{ label: string; sublabel?: string }>
+  lastListPreview?: { title: string; count: number; items: string[] }
+  lastOpenedPanel?: { title: string }
+  lastShownContent?: { type: 'preview' | 'panel' | 'list'; title: string; count?: number }
+  lastErrorMessage?: string
+  lastUserMessage?: string
+}
+
+/**
+ * Build ChatContext from chat messages.
+ * Per llm-chat-context-first-plan.md - derive from chat messages (source of truth).
+ */
+function buildChatContext(messages: ChatMessage[]): ChatContext {
+  const context: ChatContext = {}
+
+  // Scan from newest to oldest
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]
+
+    // Last user message
+    if (!context.lastUserMessage && msg.role === 'user' && msg.content) {
+      context.lastUserMessage = msg.content
+    }
+
+    // Last assistant message
+    if (!context.lastAssistantMessage && msg.role === 'assistant' && msg.content) {
+      context.lastAssistantMessage = msg.content
+
+      // Check for error message
+      if (!context.lastErrorMessage && msg.isError) {
+        context.lastErrorMessage = msg.content
+      }
+    }
+
+    // Check for options in ANY assistant message (not just the newest)
+    // This ensures options from earlier messages aren't lost when follow-up questions are asked
+    if (!context.lastOptions && msg.role === 'assistant' && msg.options && msg.options.length > 0) {
+      context.lastOptions = msg.options.map(opt => ({
+        label: opt.label,
+        sublabel: opt.sublabel,
+      }))
+    }
+
+    // Check for list preview in ANY assistant message
+    if (!context.lastListPreview && msg.role === 'assistant') {
+      if (msg.previewItems && msg.previewItems.length > 0) {
+        context.lastListPreview = {
+          title: msg.viewPanelContent?.title || 'List',
+          count: msg.totalCount || msg.previewItems.length,
+          items: msg.previewItems.map((item: ViewListItem) => item.name),
+        }
+        if (!context.lastShownContent) {
+          context.lastShownContent = {
+            type: 'preview',
+            title: msg.viewPanelContent?.title || 'items',
+            count: msg.totalCount || msg.previewItems.length,
+          }
+        }
+      } else if (msg.viewPanelContent?.items && msg.viewPanelContent.items.length > 0) {
+        context.lastListPreview = {
+          title: msg.viewPanelContent.title,
+          count: msg.viewPanelContent.items.length,
+          items: msg.viewPanelContent.items.map((item: ViewListItem) => item.name),
+        }
+        if (!context.lastShownContent) {
+          context.lastShownContent = {
+            type: 'list',
+            title: msg.viewPanelContent.title,
+            count: msg.viewPanelContent.items.length,
+          }
+        }
+      }
+    }
+
+    // Check for "Found X items" pattern in ANY assistant message
+    if (!context.lastShownContent && msg.role === 'assistant' && msg.content) {
+      const foundMatch = msg.content.match(/Found\s+(\d+)\s+(.+?)(?:\s+items?)?\.?$/i)
+      if (foundMatch) {
+        context.lastShownContent = {
+          type: 'preview',
+          title: foundMatch[2].trim(),
+          count: parseInt(foundMatch[1], 10),
+        }
+      }
+    }
+
+    // Check for opened panel in ANY assistant message
+    if (!context.lastOpenedPanel && msg.role === 'assistant' && msg.content) {
+      const openingMatch = msg.content.match(/Opening\s+(?:panel\s+)?(.+?)\.?$/i)
+      if (openingMatch) {
+        context.lastOpenedPanel = { title: openingMatch[1] }
+        if (!context.lastShownContent) {
+          context.lastShownContent = {
+            type: 'panel',
+            title: openingMatch[1],
+          }
+        }
+      }
+    }
+
+    // Stop once we have all context (limit scan depth)
+    if (
+      context.lastAssistantMessage &&
+      context.lastUserMessage &&
+      (context.lastOptions || context.lastListPreview || context.lastShownContent)
+    ) {
+      break
+    }
+
+    // Limit scan to last 10 messages for performance
+    if (messages.length - 1 - i >= 10) {
+      break
+    }
+  }
+
+  return context
+}
+
+/**
+ * Clarification question types that can be answered from chat context.
+ * Per answer-from-chat-context-plan.md
+ */
+type ClarificationType =
+  | 'what_opened'      // "what did you just open?"
+  | 'what_shown'       // "what did you just show?"
+  | 'what_said'        // "what did you say?"
+  | 'option_count'     // "is there a third option?", "how many options?"
+  | 'item_count'       // "how many items were there?"
+  | 'list_items'       // "what were the items?"
+  | 'repeat_options'   // "what were the options?" (similar to reshow)
+  | null
+
+/**
+ * Detect if input is a clarification question that can be answered from context.
+ * Returns the type of clarification or null if not a clarification question.
+ */
+function detectClarification(input: string): ClarificationType {
+  const normalized = input.toLowerCase().trim()
+
+  // What did you just open?
+  if (/what\s+(did\s+you\s+)?(just\s+)?open(ed)?\??$/.test(normalized)) {
+    return 'what_opened'
+  }
+
+  // What did you just show?
+  if (/what\s+(did\s+you\s+)?(just\s+)?show(n|ed)?\??$/.test(normalized)) {
+    return 'what_shown'
+  }
+
+  // What did you say?
+  if (/what\s+(did\s+you\s+)?say(\s+again)?\??$/.test(normalized)) {
+    return 'what_said'
+  }
+
+  // Is there a third/fourth/etc option?
+  if (/is\s+there\s+(a\s+)?(third|fourth|fifth|sixth|3rd|4th|5th|6th|\d+)\s+option\??$/.test(normalized)) {
+    return 'option_count'
+  }
+
+  // How many options?
+  if (/how\s+many\s+options(\s+are\s+there)?\??$/.test(normalized)) {
+    return 'option_count'
+  }
+
+  // How many items?
+  if (/how\s+many\s+items(\s+(are|were)\s+there)?\??$/.test(normalized)) {
+    return 'item_count'
+  }
+
+  // What were the items?
+  if (/what\s+(were|are)\s+the\s+items\??$/.test(normalized)) {
+    return 'list_items'
+  }
+
+  // What were the options? (can overlap with reshow, but we'll answer with count/list)
+  if (/what\s+(were|are)\s+the\s+options\??$/.test(normalized)) {
+    return 'repeat_options'
+  }
+
+  return null
+}
+
+/**
+ * Get the last assistant message content from chat history.
+ */
+function getLastAssistantMessage(messages: ChatMessage[]): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'assistant' && messages[i].content) {
+      return messages[i].content
+    }
+  }
+  return null
+}
+
+/**
+ * Parse ordinal number from clarification question (e.g., "third" → 3).
+ */
+function parseOrdinalFromQuestion(input: string): number | null {
+  const normalized = input.toLowerCase()
+  const ordinalMap: Record<string, number> = {
+    'third': 3, '3rd': 3,
+    'fourth': 4, '4th': 4,
+    'fifth': 5, '5th': 5,
+    'sixth': 6, '6th': 6,
+    'seventh': 7, '7th': 7,
+    'eighth': 8, '8th': 8,
+    'ninth': 9, '9th': 9,
+    'tenth': 10, '10th': 10,
+  }
+
+  for (const [word, num] of Object.entries(ordinalMap)) {
+    if (normalized.includes(word)) {
+      return num
+    }
+  }
+
+  // Check for numeric (e.g., "is there a 5 option")
+  const numMatch = normalized.match(/(\d+)\s*option/)
+  if (numMatch) {
+    return parseInt(numMatch[1], 10)
+  }
+
+  return null
+}
+
+/**
  * Check if input contains action verbs that should skip grace window.
  * These are deliberate commands that shouldn't be intercepted.
  */
@@ -314,6 +564,97 @@ function hasActionVerb(input: string): boolean {
   ]
   const normalized = input.toLowerCase()
   return actionVerbs.some(verb => normalized.includes(verb))
+}
+
+/**
+ * Check if input is an explicit command that should bypass the pending options guard.
+ * Per pending-options-explicit-command-bypass.md
+ *
+ * This is broader than hasActionVerb - it catches commands like "open demo widget"
+ * that should not be blocked by the options guard.
+ */
+function isExplicitCommand(input: string): boolean {
+  const normalized = input.toLowerCase()
+
+  // Action verbs that indicate a new command
+  const actionVerbs = [
+    'open', 'show', 'list', 'view', 'go', 'back', 'home',
+    'create', 'rename', 'delete', 'remove',
+  ]
+
+  // Must have an action verb to be considered an explicit command
+  return actionVerbs.some(verb => normalized.includes(verb))
+}
+
+/**
+ * Check if input is a selection-only pattern (ordinal or single letter).
+ * Per llm-chat-context-first-plan.md: Only intercept pure selection patterns.
+ *
+ * Returns: { isSelection: true, index: number } if input is a selection
+ *          { isSelection: false } if input should go to LLM
+ *
+ * Selection patterns (fully match, no extra words):
+ * - Ordinals: "first", "second", "third", "last", "1", "2", "3"
+ * - Option phrases: "option 2", "the first one", "the second one"
+ * - Single letters: "a", "b", "c", "d", "e" (when options use letter badges)
+ */
+function isSelectionOnly(
+  input: string,
+  optionCount: number,
+  optionLabels?: string[]
+): { isSelection: boolean; index?: number } {
+  const normalized = input.toLowerCase().trim()
+
+  // Selection-only regex pattern - must fully match (no extra words)
+  // Ordinals: first, second, third, fourth, fifth, last
+  // Numbers: 1, 2, 3, 4, 5
+  // Option phrases: option 1, option 2, the first one, the second one
+  // Single letters: a, b, c, d, e (only when options exist)
+  const selectionPattern = /^(first|second|third|fourth|fifth|last|[1-9]|option\s*[1-9]|the\s+(first|second|third|fourth|fifth|last)\s+one|[a-e])$/i
+
+  if (!selectionPattern.test(normalized)) {
+    return { isSelection: false }
+  }
+
+  // Map to 0-based index
+  const ordinalMap: Record<string, number> = {
+    'first': 0, '1': 0, 'option 1': 0, 'the first one': 0, 'a': 0,
+    'second': 1, '2': 1, 'option 2': 1, 'the second one': 1, 'b': 1,
+    'third': 2, '3': 2, 'option 3': 2, 'the third one': 2, 'c': 2,
+    'fourth': 3, '4': 3, 'option 4': 3, 'the fourth one': 3, 'd': 3,
+    'fifth': 4, '5': 4, 'option 5': 4, 'the fifth one': 4, 'e': 4,
+  }
+
+  // Handle "last"
+  if (normalized === 'last' || normalized === 'the last one') {
+    const index = optionCount - 1
+    if (index >= 0) {
+      return { isSelection: true, index }
+    }
+    return { isSelection: false }
+  }
+
+  // For single letters, check if option labels contain that letter badge
+  if (/^[a-e]$/.test(normalized) && optionLabels) {
+    const letterUpper = normalized.toUpperCase()
+    const matchIndex = optionLabels.findIndex(label =>
+      label.toUpperCase().includes(letterUpper) ||
+      label.toUpperCase().endsWith(` ${letterUpper}`)
+    )
+    if (matchIndex >= 0) {
+      return { isSelection: true, index: matchIndex }
+    }
+    // Letter doesn't match any option - not a selection
+    return { isSelection: false }
+  }
+
+  // Check ordinal map
+  const index = ordinalMap[normalized]
+  if (index !== undefined && index < optionCount) {
+    return { isSelection: true, index }
+  }
+
+  return { isSelection: false }
 }
 
 /**
@@ -506,9 +847,7 @@ function ChatNavigationPanelContent({
 
   // Last preview state for "show all" shortcut
   const [lastPreview, setLastPreview] = useState<LastPreviewState | null>(null)
-
-  // Last options state for re-show grace window (survives selection for 60 seconds)
-  const [lastOptions, setLastOptions] = useState<LastOptionsState | null>(null)
+  // Note: lastOptions state removed - now using findLastOptionsMessage(messages) as source of truth
 
   // View panel hook (for opening view panel with content)
   const { openPanel } = useViewPanel()
@@ -1060,13 +1399,7 @@ function ChatNavigationPanelContent({
               setPendingOptions(newPendingOptions)
               setPendingOptionsMessageId(`assistant-${Date.now()}`)
               setPendingOptionsGraceCount(0)
-
-              // Store lastOptions for re-show grace window (persists after selection)
-              setLastOptions({
-                options: newPendingOptions,
-                message: resolution.message,
-                createdAt: Date.now(),
-              })
+              // Note: lastOptions state removed - now using findLastOptionsMessage() as source of truth
             }
 
             // Add assistant message (include options for 'select' action)
@@ -1151,17 +1484,20 @@ function ChatNavigationPanelContent({
 
       // ---------------------------------------------------------------------------
       // Re-show Options: Deterministic check for re-show phrases
-      // Per pending-options-reshow-grace-window.md - re-show last options without LLM
+      // Per pending-options-message-source-plan.md - use chat messages as source of truth
       // ---------------------------------------------------------------------------
       if (matchesReshowPhrases(trimmedInput)) {
         const now = Date.now()
-        const isWithinGraceWindow = lastOptions && (now - lastOptions.createdAt) <= RESHOW_WINDOW_MS
+        // Find last options from chat messages (source of truth)
+        const lastOptionsMessage = findLastOptionsMessage(messages)
+        const messageAge = lastOptionsMessage ? now - lastOptionsMessage.timestamp.getTime() : null
+        const isWithinGraceWindow = lastOptionsMessage && messageAge !== null && messageAge <= RESHOW_WINDOW_MS
 
-        if (isWithinGraceWindow && lastOptions) {
+        if (isWithinGraceWindow && lastOptionsMessage) {
           void debugLog({
             component: 'ChatNavigation',
             action: 'reshow_options_deterministic',
-            metadata: { optionsCount: lastOptions.options.length },
+            metadata: { optionsCount: lastOptionsMessage.options.length, messageAgeMs: messageAge },
           })
 
           // Re-render options without calling LLM
@@ -1172,7 +1508,7 @@ function ChatNavigationPanelContent({
             content: 'Here are your options:',
             timestamp: new Date(),
             isError: false,
-            options: lastOptions.options.map((opt) => ({
+            options: lastOptionsMessage.options.map((opt) => ({
               type: opt.type as SelectionOption['type'],
               id: opt.id,
               label: opt.label,
@@ -1183,7 +1519,7 @@ function ChatNavigationPanelContent({
           addMessage(assistantMessage)
 
           // Restore pendingOptions for selection handling
-          setPendingOptions(lastOptions.options)
+          setPendingOptions(lastOptionsMessage.options)
           setPendingOptionsMessageId(messageId)
           setPendingOptionsGraceCount(0)
 
@@ -1194,7 +1530,7 @@ function ChatNavigationPanelContent({
           void debugLog({
             component: 'ChatNavigation',
             action: 'reshow_options_expired',
-            metadata: { hasLastOptions: !!lastOptions, timeSinceCreation: lastOptions ? now - lastOptions.createdAt : null },
+            metadata: { hasLastOptionsMessage: !!lastOptionsMessage, messageAgeMs: messageAge },
           })
 
           const assistantMessage: ChatMessage = {
@@ -1208,6 +1544,42 @@ function ChatNavigationPanelContent({
           setIsLoading(false)
           return
         }
+      }
+
+      // ---------------------------------------------------------------------------
+      // NOTE: Local clarification handler removed per llm-chat-context-first-plan.md
+      // Clarification questions now go to the LLM with ChatContext for better answers.
+      // The LLM can answer "what did you just open?", "is F in the list?", etc.
+      // using the chatContext passed in the API request.
+      // ---------------------------------------------------------------------------
+
+      // ---------------------------------------------------------------------------
+      // Explicit Command Bypass: Clear pending options if explicit command detected
+      // Per pending-options-explicit-command-bypass.md
+      // ---------------------------------------------------------------------------
+      if (isExplicitCommand(trimmedInput)) {
+        // Check if we have pending options (either in state or in recent messages)
+        const lastOptionsMessage = findLastOptionsMessage(messages)
+        const hasRecentOptions = lastOptionsMessage &&
+          (Date.now() - lastOptionsMessage.timestamp.getTime()) <= RESHOW_WINDOW_MS
+
+        if (pendingOptions.length > 0 || hasRecentOptions) {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'explicit_command_bypass',
+            metadata: {
+              input: trimmedInput,
+              hadPendingOptions: pendingOptions.length > 0,
+              hadRecentOptions: hasRecentOptions,
+            },
+          })
+
+          // Clear pending options so the command proceeds to normal routing
+          setPendingOptions([])
+          setPendingOptionsMessageId(null)
+          setPendingOptionsGraceCount(0)
+        }
+        // Don't return - let the message fall through to LLM for normal processing
       }
 
       // ---------------------------------------------------------------------------
@@ -1294,140 +1666,103 @@ function ChatNavigationPanelContent({
       }
 
       // ---------------------------------------------------------------------------
-      // Hybrid Selection: Check for ordinal/label match if pending options exist
+      // Selection-Only Guard: Only intercept pure selection patterns
+      // Per llm-chat-context-first-plan.md - let everything else go to LLM
       // ---------------------------------------------------------------------------
-      if (pendingOptions.length > 0 && !hasActionVerb(trimmedInput)) {
-        // 1) Check ordinal first ("first", "second", "last", etc.)
-        const ordinalIndex = parseOrdinal(trimmedInput)
+      if (pendingOptions.length > 0) {
+        const optionLabels = pendingOptions.map(opt => opt.label)
+        const selectionResult = isSelectionOnly(trimmedInput, pendingOptions.length, optionLabels)
 
-        if (ordinalIndex !== null) {
-          // Resolve the actual index (handle "last" = -1)
-          const resolvedIndex = ordinalIndex === -1 ? pendingOptions.length : ordinalIndex
+        if (selectionResult.isSelection && selectionResult.index !== undefined) {
+          // Pure selection pattern - handle locally for speed
+          const selectedOption = pendingOptions[selectionResult.index]
 
-          // Validate index is in range
-          if (resolvedIndex < 1 || resolvedIndex > pendingOptions.length) {
-            const assistantMessage: ChatMessage = {
-              id: `assistant-${Date.now()}`,
-              role: 'assistant',
-              content: `Please pick a number between 1 and ${pendingOptions.length}.`,
-              timestamp: new Date(),
-              isError: false,
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'selection_only_guard',
+            metadata: {
+              input: trimmedInput,
+              index: selectionResult.index,
+              selectedLabel: selectedOption.label,
+            },
+          })
+
+          // Use grace window: keep options for one more turn
+          setPendingOptionsGraceCount(1)
+
+          // Execute the selection directly
+          const optionToSelect: SelectionOption = {
+            type: selectedOption.type as SelectionOption['type'],
+            id: selectedOption.id,
+            label: selectedOption.label,
+            sublabel: selectedOption.sublabel,
+            data: selectedOption.data as SelectionOption['data'],
+          }
+
+          setIsLoading(false)
+          handleSelectOption(optionToSelect)
+          return
+        }
+
+        // Not a pure selection - fall through to LLM with context
+        // The LLM can handle: "is D available?", "what are the options?", etc.
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'selection_guard_passthrough_to_llm',
+          metadata: { input: trimmedInput, pendingCount: pendingOptions.length },
+        })
+      }
+
+      // ---------------------------------------------------------------------------
+      // Fallback Selection: Use message-derived options when pendingOptions is empty
+      // Per llm-chat-context-first-plan.md - only intercept pure selection patterns
+      // ---------------------------------------------------------------------------
+      if (pendingOptions.length === 0) {
+        const now = Date.now()
+        // Find last options from chat messages (source of truth)
+        const lastOptionsMessage = findLastOptionsMessage(messages)
+        const messageAge = lastOptionsMessage ? now - lastOptionsMessage.timestamp.getTime() : null
+        const isWithinGraceWindow = lastOptionsMessage && messageAge !== null && messageAge <= RESHOW_WINDOW_MS
+
+        if (isWithinGraceWindow && lastOptionsMessage) {
+          // Use selection-only guard for message-derived options too
+          const optionLabels = lastOptionsMessage.options.map(opt => opt.label)
+          const selectionResult = isSelectionOnly(trimmedInput, lastOptionsMessage.options.length, optionLabels)
+
+          if (selectionResult.isSelection && selectionResult.index !== undefined) {
+            const selectedOption = lastOptionsMessage.options[selectionResult.index]
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'selection_from_message',
+              metadata: {
+                input: trimmedInput,
+                index: selectionResult.index,
+                selectedLabel: selectedOption.label,
+              },
+            })
+
+            // Restore pendingOptions and execute selection
+            setPendingOptions(lastOptionsMessage.options)
+            const optionToSelect: SelectionOption = {
+              type: selectedOption.type as SelectionOption['type'],
+              id: selectedOption.id,
+              label: selectedOption.label,
+              sublabel: selectedOption.sublabel,
+              data: selectedOption.data as SelectionOption['data'],
             }
-            addMessage(assistantMessage)
             setIsLoading(false)
+            handleSelectOption(optionToSelect)
             return
           }
 
-          // Get the selected option
-          const selectedOption = pendingOptions[resolvedIndex - 1]
-
+          // Not a pure selection - let it go to LLM with context
+          // LLM will see lastOptions in chatContext and can answer accordingly
           void debugLog({
             component: 'ChatNavigation',
-            action: 'ordinal_selection',
-            metadata: { ordinalIndex, resolvedIndex, selectedLabel: selectedOption.label },
+            action: 'message_options_passthrough_to_llm',
+            metadata: { input: trimmedInput, optionsCount: lastOptionsMessage.options.length },
           })
-
-          // Use grace window: keep options for one more turn
-          setPendingOptionsGraceCount(1)
-
-          // Execute the selection directly via handleSelectOption
-          const optionToSelect: SelectionOption = {
-            type: selectedOption.type as SelectionOption['type'],
-            id: selectedOption.id,
-            label: selectedOption.label,
-            sublabel: selectedOption.sublabel,
-            data: selectedOption.data as SelectionOption['data'],
-          }
-
-          // Call handleSelectOption but don't await here - let it update state
-          setIsLoading(false)
-          handleSelectOption(optionToSelect)
-          return
         }
-
-        // 2) Check exact label/sublabel match (grace window feature)
-        const exactMatch = findExactOptionMatch(trimmedInput, pendingOptions)
-
-        if (exactMatch) {
-          void debugLog({
-            component: 'ChatNavigation',
-            action: 'exact_label_match',
-            metadata: { input: trimmedInput, matchedLabel: exactMatch.label },
-          })
-
-          // Use grace window: keep options for one more turn
-          setPendingOptionsGraceCount(1)
-
-          // Execute the selection directly
-          const optionToSelect: SelectionOption = {
-            type: exactMatch.type as SelectionOption['type'],
-            id: exactMatch.id,
-            label: exactMatch.label,
-            sublabel: exactMatch.sublabel,
-            data: exactMatch.data as SelectionOption['data'],
-          }
-
-          setIsLoading(false)
-          handleSelectOption(optionToSelect)
-          return
-        }
-
-        // 3) Check word-based ordinal match ("first", "second", "last", etc.)
-        const wordOrdinalIndex = matchOrdinal(trimmedInput, pendingOptions.length)
-
-        if (wordOrdinalIndex !== undefined) {
-          const selectedOption = pendingOptions[wordOrdinalIndex]
-          void debugLog({
-            component: 'ChatNavigation',
-            action: 'ordinal_match',
-            metadata: { input: trimmedInput, wordOrdinalIndex, selectedLabel: selectedOption.label },
-          })
-
-          // Use grace window: keep options for one more turn
-          setPendingOptionsGraceCount(1)
-
-          // Execute the selection directly
-          const optionToSelect: SelectionOption = {
-            type: selectedOption.type as SelectionOption['type'],
-            id: selectedOption.id,
-            label: selectedOption.label,
-            sublabel: selectedOption.sublabel,
-            data: selectedOption.data as SelectionOption['data'],
-          }
-
-          setIsLoading(false)
-          handleSelectOption(optionToSelect)
-          return
-        }
-
-        // ---------------------------------------------------------------------------
-        // Grace window check: if graceCount > 0, clear options and continue to normal flow
-        // This MUST run before falling through to LLM
-        // ---------------------------------------------------------------------------
-        if (pendingOptionsGraceCount > 0) {
-          void debugLog({
-            component: 'ChatNavigation',
-            action: 'grace_window_expiry',
-            metadata: { input: trimmedInput, graceCount: pendingOptionsGraceCount },
-          })
-          // Clear grace and options, then continue to normal flow
-          setPendingOptionsGraceCount(0)
-          setPendingOptions([])
-          setPendingOptionsMessageId(null)
-        }
-
-        // ---------------------------------------------------------------------------
-        // No local match found - fall through to LLM
-        // The LLM will receive pendingOptions in context and can:
-        // - Return select_option if it understands the user's selection intent
-        // - Return reshow_options if user wants to see options again
-        // - Return other intents if user wants to do something else
-        // ---------------------------------------------------------------------------
-        void debugLog({
-          component: 'ChatNavigation',
-          action: 'pending_options_fallthrough_to_llm',
-          metadata: { input: trimmedInput, pendingCount: pendingOptions.length },
-        })
       }
 
       // ---------------------------------------------------------------------------
@@ -1463,6 +1798,9 @@ function ChatNavigationPanelContent({
           }))
         : undefined
 
+      // Build chat context for LLM clarification answers (per llm-chat-context-first-plan.md)
+      const chatContext = buildChatContext(messages)
+
       // Call the navigate API with normalized message, context, and session state
       const response = await fetch('/api/chat/navigate', {
         method: 'POST',
@@ -1478,6 +1816,14 @@ function ChatNavigationPanelContent({
             // Panel visibility context for intent prioritization
             visiblePanels,
             focusedPanelId,
+            // Chat context for LLM clarification answers
+            chatContext,
+            // Full chat history for need_context retrieval loop
+            // Per llm-context-retrieval-general-answers-plan.md
+            fullChatHistory: messages.slice(-50).map(m => ({
+              role: m.role,
+              content: m.content,
+            })),
           },
         }),
       })
@@ -1692,23 +2038,26 @@ function ChatNavigationPanelContent({
 
       // ---------------------------------------------------------------------------
       // Handle reshow_options - user wants to see pending options again
-      // Uses lastOptions as fallback when pendingOptions is empty (grace window)
+      // Per pending-options-message-source-plan.md - use chat messages as source of truth
       // ---------------------------------------------------------------------------
       if (resolution.action === 'reshow_options') {
         const now = Date.now()
-        const isWithinGraceWindow = lastOptions && (now - lastOptions.createdAt) <= RESHOW_WINDOW_MS
+        // Find last options from chat messages (source of truth)
+        const lastOptionsMessage = findLastOptionsMessage(messages)
+        const messageAge = lastOptionsMessage ? now - lastOptionsMessage.timestamp.getTime() : null
+        const isWithinGraceWindow = lastOptionsMessage && messageAge !== null && messageAge <= RESHOW_WINDOW_MS
 
-        // Determine which options to show: pendingOptions or lastOptions (grace window)
+        // Determine which options to show: pendingOptions or message-derived (grace window)
         const optionsToShow = pendingOptions.length > 0
           ? pendingOptions
-          : (isWithinGraceWindow && lastOptions ? lastOptions.options : null)
+          : (isWithinGraceWindow && lastOptionsMessage ? lastOptionsMessage.options : null)
 
         if (optionsToShow && optionsToShow.length > 0) {
           void debugLog({
             component: 'ChatNavigation',
             action: 'llm_reshow_options',
             metadata: {
-              source: pendingOptions.length > 0 ? 'pendingOptions' : 'lastOptions',
+              source: pendingOptions.length > 0 ? 'pendingOptions' : 'message',
               optionsCount: optionsToShow.length,
             },
           })
@@ -1730,9 +2079,9 @@ function ChatNavigationPanelContent({
           }
           addMessage(assistantMessage)
 
-          // Restore pendingOptions if using lastOptions
-          if (pendingOptions.length === 0 && lastOptions) {
-            setPendingOptions(lastOptions.options)
+          // Restore pendingOptions if using message-derived options
+          if (pendingOptions.length === 0 && lastOptionsMessage) {
+            setPendingOptions(lastOptionsMessage.options)
           }
           setPendingOptionsMessageId(messageId)
           setPendingOptionsGraceCount(0)
@@ -1744,7 +2093,7 @@ function ChatNavigationPanelContent({
           void debugLog({
             component: 'ChatNavigation',
             action: 'llm_reshow_options_expired',
-            metadata: { hasLastOptions: !!lastOptions },
+            metadata: { hasLastOptionsMessage: !!lastOptionsMessage, messageAgeMs: messageAge },
           })
 
           const assistantMessage: ChatMessage = {
@@ -1780,13 +2129,7 @@ function ChatNavigationPanelContent({
         setPendingOptions(newPendingOptions)
         setPendingOptionsMessageId(`assistant-${Date.now()}`)
         setPendingOptionsGraceCount(0)  // Fresh options, no grace yet
-
-        // Store lastOptions for re-show grace window (persists after selection)
-        setLastOptions({
-          options: newPendingOptions,
-          message: resolution.message,
-          createdAt: Date.now(),
-        })
+        // Note: lastOptions state removed - now using findLastOptionsMessage() as source of truth
 
         void debugLog({
           component: 'ChatNavigation',
@@ -1794,8 +2137,23 @@ function ChatNavigationPanelContent({
           metadata: { count: newPendingOptions.length },
         })
       } else {
-        // Clear pending options for non-selection intents
-        if (pendingOptions.length > 0) {
+        // Only clear pending options for explicit navigation/action commands
+        // Do NOT clear on fallback/error responses (preserves options for retry)
+        const explicitActionsThatClearOptions = [
+          'navigate_workspace',
+          'navigate_entry',
+          'navigate_home',
+          'navigate_dashboard',
+          'create_workspace',
+          'rename_workspace',
+          'delete_workspace',
+          'open_panel_drawer',
+          'confirm_delete',
+          'list_workspaces',
+        ]
+        const shouldClear = resolution.action && explicitActionsThatClearOptions.includes(resolution.action)
+
+        if (shouldClear && pendingOptions.length > 0) {
           setPendingOptions([])
           setPendingOptionsMessageId(null)
           setPendingOptionsGraceCount(0)
@@ -2002,7 +2360,7 @@ function ChatNavigationPanelContent({
     } finally {
       setIsLoading(false)
     }
-  }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction, messages, addMessage, setInput, sessionState, setLastAction, setLastQuickLinksBadge, appendRequestHistory, openPanelWithTracking, openPanelDrawer, conversationSummary, pendingOptions, pendingOptionsGraceCount, handleSelectOption, lastPreview, lastOptions, lastSuggestion, setLastSuggestion, addRejectedSuggestions, clearRejectedSuggestions, isRejectedSuggestion])
+  }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction, messages, addMessage, setInput, sessionState, setLastAction, setLastQuickLinksBadge, appendRequestHistory, openPanelWithTracking, openPanelDrawer, conversationSummary, pendingOptions, pendingOptionsGraceCount, handleSelectOption, lastPreview, lastSuggestion, setLastSuggestion, addRejectedSuggestions, clearRejectedSuggestions, isRejectedSuggestion])
 
   // ---------------------------------------------------------------------------
   // Handle Key Press

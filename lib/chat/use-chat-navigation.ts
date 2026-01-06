@@ -22,7 +22,7 @@ import type { WorkspaceMatch, NoteMatch, EntryMatch } from './resolution-types'
 export interface ChatNavigationResult {
   success: boolean
   message: string
-  action?: 'navigated' | 'created' | 'selected' | 'renamed' | 'deleted' | 'listed' | 'informed' | 'error'
+  action?: 'navigated' | 'created' | 'selected' | 'renamed' | 'deleted' | 'listed' | 'informed' | 'answered' | 'error'
 }
 
 export interface UseChatNavigationOptions {
@@ -600,6 +600,34 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
           return {
             success: false,
             message: 'No panel specified to open',
+            action: 'error',
+          }
+
+        // Phase 7: LLM-first context answers (per llm-chat-context-first-plan.md)
+        case 'answer_from_context':
+          // Just display the answer - no side effects
+          return {
+            success: true,
+            message: resolution.message,
+            action: 'answered',
+          }
+
+        // Phase 8: General answers (per llm-context-retrieval-general-answers-plan.md)
+        case 'general_answer':
+          // Just display the answer - no side effects
+          // Time/math/static knowledge answers are already computed by server
+          return {
+            success: true,
+            message: resolution.message,
+            action: 'answered',
+          }
+
+        // need_context is handled server-side (loop + retry)
+        // It should never reach the client, but handle gracefully if it does
+        case 'need_context':
+          return {
+            success: false,
+            message: resolution.message || 'Unable to fetch additional context.',
             action: 'error',
           }
 

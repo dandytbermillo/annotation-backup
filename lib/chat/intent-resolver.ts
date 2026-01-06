@@ -27,6 +27,7 @@ import { resolveEntry } from './entry-resolver'
 import { serverPool } from '@/lib/db/pool'
 import { buildQuickLinksViewItems } from './parse-quick-links'
 import { executePanelIntent, panelRegistry } from '@/lib/panels/panel-registry'
+import { debugLog } from '@/lib/utils/debug-logger'
 
 // =============================================================================
 // Resolution Result
@@ -53,6 +54,9 @@ export interface IntentResolutionResult {
     | 'inform'
     | 'show_view_panel'
     | 'open_panel_drawer'  // Open panel in right-side drawer (Widget Architecture)
+    | 'answer_from_context'  // Answer clarification from chat context (no side effects)
+    | 'need_context'  // LLM needs more context to answer (triggers re-call with expanded context)
+    | 'general_answer'  // Answer to non-app question (time/math/static knowledge)
     | 'error'
 
   // For navigate_workspace
@@ -122,6 +126,12 @@ export interface IntentResolutionResult {
   // Semantic panel ID for action tracking (e.g., "recent", "quick-links-d")
   // Used to match user queries like "did I open quick links D?"
   semanticPanelId?: string
+
+  // For need_context: what context the LLM needs
+  contextRequest?: string
+
+  // For general_answer: the type of answer (time/math/general)
+  generalAnswerType?: 'time' | 'math' | 'general'
 
   // Message to display
   message: string
@@ -204,6 +214,17 @@ export async function resolveIntent(
     // Phase 6: Panel Intent Registry
     case 'panel_intent':
       return resolvePanelIntent(intent, context)
+
+    // Phase 7: LLM-first context answers
+    case 'answer_from_context':
+      return resolveAnswerFromContext(intent)
+
+    // Phase 8: Context retrieval and general answers
+    case 'need_context':
+      return resolveNeedContext(intent)
+
+    case 'general_answer':
+      return resolveGeneralAnswer(intent)
 
     case 'unsupported':
     default:
@@ -1573,6 +1594,17 @@ async function resolveShowQuickLinks(
 ): Promise<IntentResolutionResult> {
   const { quickLinksPanelBadge } = intent.args
 
+  // Debug logging per quick-links-generic-disambiguation-fix.md
+  void debugLog({
+    component: 'IntentResolver',
+    action: 'show_quick_links_start',
+    metadata: {
+      explicitBadge: quickLinksPanelBadge || null,
+      currentEntryId: context.currentEntryId,
+      forcePreviewMode: context.forcePreviewMode || false,
+    },
+  })
+
   // Note: forcePreviewMode is applied AFTER disambiguation (at the end of this function)
   // Per plan: "list my quick links" without badge should ask which panel when multiple exist
 
@@ -1623,6 +1655,18 @@ async function resolveShowQuickLinks(
 
   const panelsResult = await serverPool.query(panelQuery, params)
 
+  // Debug logging: panel query results
+  void debugLog({
+    component: 'IntentResolver',
+    action: 'show_quick_links_panels_found',
+    metadata: {
+      panelCount: panelsResult.rows.length,
+      badges: panelsResult.rows.map((p: { badge?: string }) => p.badge || 'none'),
+      dashboardWorkspaceId,
+      explicitBadgeFilter: quickLinksPanelBadge || null,
+    },
+  })
+
   if (panelsResult.rows.length === 0) {
     if (quickLinksPanelBadge) {
       return {
@@ -1642,7 +1686,25 @@ async function resolveShowQuickLinks(
   // When multiple panels exist and no specific badge requested, ALWAYS show selection.
   // Don't use lastQuickLinksBadge to auto-pick (that's only for "my last quick links").
   // This treats "quick links" as a collection, not a specific badge.
-  if (panelsResult.rows.length > 1 && !quickLinksPanelBadge) {
+  const shouldDisambiguate = panelsResult.rows.length > 1 && !quickLinksPanelBadge
+
+  // Debug logging: disambiguation decision
+  void debugLog({
+    component: 'IntentResolver',
+    action: 'show_quick_links_disambiguation_decision',
+    metadata: {
+      panelCount: panelsResult.rows.length,
+      hasExplicitBadge: !!quickLinksPanelBadge,
+      shouldDisambiguate,
+      reason: shouldDisambiguate
+        ? 'multiple panels, no explicit badge'
+        : panelsResult.rows.length === 1
+          ? 'single panel'
+          : 'explicit badge provided',
+    },
+  })
+
+  if (shouldDisambiguate) {
     const panels = panelsResult.rows
     return {
       success: true,
@@ -1799,6 +1861,89 @@ function resolveReshowOptions(
     success: true,
     action: 'reshow_options',
     message: 'Here are your options:',
+  }
+}
+
+/**
+ * Resolve answer_from_context intent.
+ * Per llm-chat-context-first-plan.md: pass through the LLM's answer as-is.
+ * No side effects - just returns a message.
+ */
+function resolveAnswerFromContext(
+  intent: IntentResponse
+): IntentResolutionResult {
+  const contextAnswer = intent.args.contextAnswer
+
+  if (!contextAnswer) {
+    return {
+      success: false,
+      action: 'error',
+      message: "I don't have enough context to answer that. What would you like to do?",
+    }
+  }
+
+  return {
+    success: true,
+    action: 'answer_from_context',
+    message: contextAnswer,
+  }
+}
+
+/**
+ * Resolve need_context intent.
+ * Per llm-context-retrieval-general-answers-plan.md:
+ * The LLM needs more context to answer a question.
+ * Server will fetch the requested context and re-call the LLM.
+ */
+function resolveNeedContext(
+  intent: IntentResponse
+): IntentResolutionResult {
+  const contextRequest = intent.args.contextRequest
+
+  if (!contextRequest) {
+    return {
+      success: false,
+      action: 'error',
+      message: "I'm not sure what additional context I need. Could you rephrase your question?",
+    }
+  }
+
+  return {
+    success: true,
+    action: 'need_context',
+    contextRequest,
+    message: 'Fetching additional context...',
+  }
+}
+
+/**
+ * Resolve general_answer intent.
+ * Per llm-context-retrieval-general-answers-plan.md:
+ * Handle non-app questions (time, math, static knowledge).
+ * - Time: Server will replace placeholder with actual server time
+ * - Math: LLM computed the answer
+ * - General: LLM provided static knowledge answer
+ */
+function resolveGeneralAnswer(
+  intent: IntentResponse
+): IntentResolutionResult {
+  const { generalAnswer, answerType } = intent.args
+
+  if (!generalAnswer) {
+    return {
+      success: false,
+      action: 'error',
+      message: "I couldn't compute an answer to that. Could you rephrase your question?",
+    }
+  }
+
+  // For time questions, the server will replace the placeholder with actual time
+  // For math and general, the LLM's answer is used directly
+  return {
+    success: true,
+    action: 'general_answer',
+    generalAnswerType: answerType || 'general',
+    message: generalAnswer,
   }
 }
 
