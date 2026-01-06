@@ -43,6 +43,8 @@ export const IntentType = z.enum([
   // Phase 8: Context retrieval and general answers
   'need_context',         // LLM needs more context to answer (triggers server-side retrieval)
   'general_answer',       // Non-app question: time, math, static knowledge (no side effects)
+  // Phase 9: App data retrieval (DB lookup for entities not in chat)
+  'retrieve_from_app',    // Query DB for widgets/workspaces/notes/entries not shown in chat
   'unsupported',
 ])
 
@@ -113,6 +115,10 @@ export const IntentArgs = z.object({
   // For general_answer: non-app question (time/math/static knowledge)
   generalAnswer: z.string().optional(),
   answerType: z.enum(['time', 'math', 'general']).optional(),
+
+  // For retrieve_from_app: query DB for entities not shown in chat
+  entityType: z.enum(['widget', 'workspace', 'note', 'entry']).optional(),
+  entityQuery: z.string().optional(),  // e.g., "Quick Links F", "Sales Dashboard"
 })
 
 export type IntentArgs = z.infer<typeof IntentArgs>

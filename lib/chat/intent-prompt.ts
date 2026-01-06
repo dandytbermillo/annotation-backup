@@ -207,12 +207,14 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
     - "what did you just open?" (when chatContext.lastOpenedPanel exists)
     - "what were the options?" (when chatContext.lastOptions exists)
     - "how many items?" (when chatContext.lastListPreview exists)
+    - "is D available?" (when chatContext.lastOptions exists → answer yes/no)
     Args:
       - contextAnswer (required): The answer based on chat context
     IMPORTANT:
       - Only use this intent for questions that can be answered from chatContext
       - If chatContext lacks the needed info, use need_context to request more
       - This intent has NO side effects - it only returns a message
+      - If asked whether something is in the options/list, answer explicitly yes/no and, if no, name the available options
 
 22. **need_context** - Request more context to answer a question
     Use when:
@@ -362,7 +364,9 @@ Return ONLY a JSON object with this exact structure:
     "contextAnswer": "<string or omit - for answer_from_context>",
     "contextRequest": "<string or omit - for need_context>",
     "generalAnswer": "<string or omit - for general_answer>",
-    "answerType": "<'time'|'math'|'general' or omit - for general_answer>"
+    "answerType": "<'time'|'math'|'general' or omit - for general_answer>",
+    "entityType": "<'widget'|'workspace'|'note'|'entry' or omit - for retrieve_from_app>",
+    "entityQuery": "<string or omit - for retrieve_from_app>"
   }
 }
 
@@ -377,28 +381,37 @@ Follow this decision tree to select the correct intent:
    → If chatContext has the answer → **answer_from_context**
    → If chatContext lacks info → **need_context** (request what you need)
 
-3. **Is it a non-app question?** (not about the app or chat)
+3. **Is it a question about app data NOT shown in chat?** (existence queries)
+   → "Do I have a widget called X?" → **retrieve_from_app** (entityType: "widget", entityQuery: "X")
+   → "Do I have a workspace named Y?" → **retrieve_from_app** (entityType: "workspace", entityQuery: "Y")
+   → "Is there a note about Z?" → **retrieve_from_app** (entityType: "note", entityQuery: "Z")
+   → "Do I have an entry called W?" → **retrieve_from_app** (entityType: "entry", entityQuery: "W")
+
+4. **Is it a non-app question?** (not about the app or chat)
    → Time/date question → **general_answer** (answerType: "time")
    → Math/calculation → **general_answer** (answerType: "math")
    → Static knowledge (geography, history, science) → **general_answer** (answerType: "general")
    → Live/external data (weather, news, prices) → **unsupported** (explain it requires web access)
 
-4. **Still unclear?**
+5. **Still unclear?**
    → If you need more context to understand → **need_context**
    → If request is truly unsupported → **unsupported** with helpful reason
 
 ## Knowledge Boundary
 
-**In scope (answer with answer_from_context or general_answer):**
-- App navigation and state (workspaces, entries, panels)
-- Chat context (what was shown, options listed, panels opened)
-- Static knowledge (facts, definitions, math)
-- Server time (for time questions)
+**In scope:**
+- App navigation and state (workspaces, entries, panels) → app intents
+- Chat context (what was shown, options listed, panels opened) → answer_from_context
+- App data not in chat (widgets, workspaces, notes, entries) → retrieve_from_app
+- Static knowledge (facts, definitions, math) → general_answer
+- Server time (for time questions) → general_answer
 
 **Out of scope (return unsupported):**
 - Weather, news, live events, real-time prices
 - Anything requiring web browsing or live updates
 - Personal data not in the app
+
+**Priority rule:** If the user asks about something shown in chat, use chat context first. Only use retrieve_from_app when the entity was NOT recently shown in chat.
 
 ## Rules
 

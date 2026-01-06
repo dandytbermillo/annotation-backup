@@ -226,6 +226,10 @@ export async function resolveIntent(
     case 'general_answer':
       return resolveGeneralAnswer(intent)
 
+    // Phase 9: App data retrieval (DB lookup)
+    case 'retrieve_from_app':
+      return resolveRetrieveFromApp(intent, context)
+
     case 'unsupported':
     default:
       return {
@@ -1944,6 +1948,188 @@ function resolveGeneralAnswer(
     action: 'general_answer',
     generalAnswerType: answerType || 'general',
     message: generalAnswer,
+  }
+}
+
+// =============================================================================
+// Phase 9: App Data Retrieval (DB Lookup)
+// =============================================================================
+
+/**
+ * Resolve retrieve_from_app intent.
+ * Per llm-layered-chat-experience-plan.md:
+ * Query DB for entities (widgets, workspaces, notes, entries) not shown in chat.
+ */
+async function resolveRetrieveFromApp(
+  intent: IntentResponse,
+  context: ResolutionContext
+): Promise<IntentResolutionResult> {
+  const { entityType, entityQuery } = intent.args
+
+  if (!entityType || !entityQuery) {
+    return {
+      success: false,
+      action: 'error',
+      message: "I'm not sure what you're looking for. Could you specify the type and name?",
+    }
+  }
+
+  const userId = context.userId
+  if (!userId) {
+    return {
+      success: false,
+      action: 'error',
+      message: "I couldn't determine your user context.",
+    }
+  }
+
+  try {
+    let result: { found: boolean; name?: string; count?: number }
+
+    switch (entityType) {
+      case 'widget': {
+        // Search installed_widgets (Widget Manager) - the source of truth for widgets
+        // Note: 'panels' is the legacy canvas table, not Widget Manager
+        const widgetResult = await serverPool.query(
+          `SELECT name, slug FROM installed_widgets
+           WHERE (user_id = $1 OR user_id IS NULL)
+             AND enabled = true
+             AND (name ILIKE $2 OR slug ILIKE $2)
+           ORDER BY
+             CASE
+               WHEN LOWER(name) = LOWER($3) THEN 0
+               WHEN LOWER(slug) = LOWER($3) THEN 0
+               ELSE 1
+             END,
+             updated_at DESC NULLS LAST
+           LIMIT 5`,
+          [userId, `%${entityQuery}%`, entityQuery]
+        )
+        if (widgetResult.rows.length > 0) {
+          result = { found: true, name: widgetResult.rows[0].name, count: widgetResult.rows.length }
+        } else {
+          result = { found: false }
+        }
+        break
+      }
+
+      case 'workspace': {
+        // Search note_workspaces - same table as workspace-resolver.ts uses
+        // Matches the chat resolver's data source for consistency
+        const currentEntryId = context.currentEntryId
+
+        let wsResult
+        if (currentEntryId) {
+          // If in entry context, search within current entry first
+          wsResult = await serverPool.query(
+            `SELECT nw.id, nw.name, i.name as entry_name
+             FROM note_workspaces nw
+             LEFT JOIN items i ON nw.item_id = i.id AND i.deleted_at IS NULL
+             WHERE nw.user_id = $1
+               AND nw.item_id = $2
+               AND nw.name ILIKE $3
+             ORDER BY
+               CASE WHEN LOWER(nw.name) = LOWER($4) THEN 0 ELSE 1 END,
+               nw.updated_at DESC NULLS LAST
+             LIMIT 5`,
+            [userId, currentEntryId, `%${entityQuery}%`, entityQuery]
+          )
+        } else {
+          // No entry context - search all user workspaces
+          wsResult = await serverPool.query(
+            `SELECT nw.id, nw.name, i.name as entry_name
+             FROM note_workspaces nw
+             LEFT JOIN items i ON nw.item_id = i.id AND i.deleted_at IS NULL
+             WHERE nw.user_id = $1
+               AND nw.name ILIKE $2
+             ORDER BY
+               CASE WHEN LOWER(nw.name) = LOWER($3) THEN 0 ELSE 1 END,
+               nw.updated_at DESC NULLS LAST
+             LIMIT 5`,
+            [userId, `%${entityQuery}%`, entityQuery]
+          )
+        }
+
+        if (wsResult.rows.length > 0) {
+          const row = wsResult.rows[0]
+          const entryInfo = row.entry_name ? ` (in ${row.entry_name})` : ''
+          result = { found: true, name: `${row.name}${entryInfo}`, count: wsResult.rows.length }
+        } else {
+          result = { found: false }
+        }
+        break
+      }
+
+      case 'note': {
+        // Search items table for notes
+        const noteResult = await serverPool.query(
+          `SELECT name, id FROM items
+           WHERE user_id = $1
+             AND type = 'note'
+             AND deleted_at IS NULL
+             AND name ILIKE $2
+           LIMIT 5`,
+          [userId, `%${entityQuery}%`]
+        )
+        if (noteResult.rows.length > 0) {
+          result = { found: true, name: noteResult.rows[0].name, count: noteResult.rows.length }
+        } else {
+          result = { found: false }
+        }
+        break
+      }
+
+      case 'entry': {
+        // Search items table for entries (folders)
+        const entryResult = await serverPool.query(
+          `SELECT name, id FROM items
+           WHERE user_id = $1
+             AND type = 'folder'
+             AND deleted_at IS NULL
+             AND name ILIKE $2
+           LIMIT 5`,
+          [userId, `%${entityQuery}%`]
+        )
+        if (entryResult.rows.length > 0) {
+          result = { found: true, name: entryResult.rows[0].name, count: entryResult.rows.length }
+        } else {
+          result = { found: false }
+        }
+        break
+      }
+
+      default:
+        return {
+          success: false,
+          action: 'error',
+          message: `I don't know how to search for "${entityType}" entities.`,
+        }
+    }
+
+    // Format response
+    if (result.found) {
+      const countNote = result.count && result.count > 1
+        ? ` (found ${result.count} matches, showing "${result.name}")`
+        : ''
+      return {
+        success: true,
+        action: 'answer_from_context',
+        message: `Yes, you have a ${entityType} called "${result.name}"${countNote}.`,
+      }
+    } else {
+      return {
+        success: true,
+        action: 'answer_from_context',
+        message: `I don't see a ${entityType} called "${entityQuery}" in your workspace.`,
+      }
+    }
+  } catch (error) {
+    console.error('[resolveRetrieveFromApp] DB error:', error)
+    return {
+      success: false,
+      action: 'error',
+      message: "I couldn't search for that right now. Please try again.",
+    }
   }
 }
 

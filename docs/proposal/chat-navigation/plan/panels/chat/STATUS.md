@@ -4,7 +4,7 @@ This index keeps all chat plans available on disk, but clarifies which plans are
 Status notes are based on the latest reports/tests; adjust if anything changed.
 
 ## Active / Current
-- `llm-layered-chat-experience-plan.md` — **Current umbrella plan** (preferred reference).
+- `llm-layered-chat-experience-plan.md` — **Current umbrella plan** (implemented 2026-01-06).
 - `pending-options-message-source-plan.md` — Implemented; still relevant for options-as-source-of-truth.
 - `pending-options-explicit-command-bypass.md` — Implemented; still relevant to avoid blocking explicit commands.
 - `pending-options-reshow-grace-window.md` — Implemented; still relevant for re-showing options.
@@ -35,4 +35,5 @@ Status notes are based on the latest reports/tests; adjust if anything changed.
 - `dynamic_typo_suggestions_plan_report/2026-01-05-implementation-report.md`
 - `suggestion_rejection_handling_plan_report/2026-01-05-implementation-report.md`
 - `llm_context_retrieval_general_answers_plan_report/2026-01-05-implementation-report.md`
+- `llm_layered_chat_experience_plan_report/2026-01-06-implementation-report.md`
 

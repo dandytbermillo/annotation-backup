@@ -157,6 +157,19 @@ interface PendingOptionState {
 const RESHOW_WINDOW_MS = 60_000
 
 /**
+ * Recency decay windows for different context types.
+ * Per llm-layered-chat-experience-plan.md:
+ * - Options expire faster (shortest window)
+ * - Opened panel can persist longer
+ * Note: lastAssistantMessage/lastUserMessage are not decayed (always available)
+ */
+const CONTEXT_DECAY = {
+  options: 60_000,       // 60 seconds - options expire fast
+  listPreview: 90_000,   // 90 seconds - list previews slightly longer
+  openedPanel: 180_000,  // 3 minutes - panels persist longer
+} as const
+
+/**
  * Last preview state for "show all" shortcut
  */
 interface LastPreviewState {
@@ -321,6 +334,7 @@ function findLastOptionsMessage(messages: ChatMessage[]): {
 /**
  * ChatContext for LLM clarification answers.
  * Per llm-chat-context-first-plan.md
+ * Extended with recency info per llm-layered-chat-experience-plan.md
  */
 interface ChatContext {
   lastAssistantMessage?: string
@@ -330,18 +344,29 @@ interface ChatContext {
   lastShownContent?: { type: 'preview' | 'panel' | 'list'; title: string; count?: number }
   lastErrorMessage?: string
   lastUserMessage?: string
+  // Recency indicators (for stale context detection)
+  optionsAge?: number      // ms since options were shown
+  openedPanelAge?: number  // ms since panel was opened
+  isStale?: boolean        // true if all relevant context is stale
 }
 
 /**
  * Build ChatContext from chat messages.
  * Per llm-chat-context-first-plan.md - derive from chat messages (source of truth).
+ * Extended with recency decay per llm-layered-chat-experience-plan.md.
  */
 function buildChatContext(messages: ChatMessage[]): ChatContext {
   const context: ChatContext = {}
+  const now = Date.now()
+
+  // Track timestamps for recency checks
+  let optionsTimestamp: number | null = null
+  let openedPanelTimestamp: number | null = null
 
   // Scan from newest to oldest
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i]
+    const msgAge = now - msg.timestamp.getTime()
 
     // Last user message
     if (!context.lastUserMessage && msg.role === 'user' && msg.content) {
@@ -359,40 +384,46 @@ function buildChatContext(messages: ChatMessage[]): ChatContext {
     }
 
     // Check for options in ANY assistant message (not just the newest)
-    // This ensures options from earlier messages aren't lost when follow-up questions are asked
+    // Apply recency decay - only include if within options window
     if (!context.lastOptions && msg.role === 'assistant' && msg.options && msg.options.length > 0) {
-      context.lastOptions = msg.options.map(opt => ({
-        label: opt.label,
-        sublabel: opt.sublabel,
-      }))
+      if (msgAge <= CONTEXT_DECAY.options) {
+        context.lastOptions = msg.options.map(opt => ({
+          label: opt.label,
+          sublabel: opt.sublabel,
+        }))
+        optionsTimestamp = msg.timestamp.getTime()
+      }
     }
 
     // Check for list preview in ANY assistant message
+    // Apply recency decay
     if (!context.lastListPreview && msg.role === 'assistant') {
-      if (msg.previewItems && msg.previewItems.length > 0) {
-        context.lastListPreview = {
-          title: msg.viewPanelContent?.title || 'List',
-          count: msg.totalCount || msg.previewItems.length,
-          items: msg.previewItems.map((item: ViewListItem) => item.name),
-        }
-        if (!context.lastShownContent) {
-          context.lastShownContent = {
-            type: 'preview',
-            title: msg.viewPanelContent?.title || 'items',
+      if (msgAge <= CONTEXT_DECAY.listPreview) {
+        if (msg.previewItems && msg.previewItems.length > 0) {
+          context.lastListPreview = {
+            title: msg.viewPanelContent?.title || 'List',
             count: msg.totalCount || msg.previewItems.length,
+            items: msg.previewItems.map((item: ViewListItem) => item.name),
           }
-        }
-      } else if (msg.viewPanelContent?.items && msg.viewPanelContent.items.length > 0) {
-        context.lastListPreview = {
-          title: msg.viewPanelContent.title,
-          count: msg.viewPanelContent.items.length,
-          items: msg.viewPanelContent.items.map((item: ViewListItem) => item.name),
-        }
-        if (!context.lastShownContent) {
-          context.lastShownContent = {
-            type: 'list',
+          if (!context.lastShownContent) {
+            context.lastShownContent = {
+              type: 'preview',
+              title: msg.viewPanelContent?.title || 'items',
+              count: msg.totalCount || msg.previewItems.length,
+            }
+          }
+        } else if (msg.viewPanelContent?.items && msg.viewPanelContent.items.length > 0) {
+          context.lastListPreview = {
             title: msg.viewPanelContent.title,
             count: msg.viewPanelContent.items.length,
+            items: msg.viewPanelContent.items.map((item: ViewListItem) => item.name),
+          }
+          if (!context.lastShownContent) {
+            context.lastShownContent = {
+              type: 'list',
+              title: msg.viewPanelContent.title,
+              count: msg.viewPanelContent.items.length,
+            }
           }
         }
       }
@@ -400,25 +431,31 @@ function buildChatContext(messages: ChatMessage[]): ChatContext {
 
     // Check for "Found X items" pattern in ANY assistant message
     if (!context.lastShownContent && msg.role === 'assistant' && msg.content) {
-      const foundMatch = msg.content.match(/Found\s+(\d+)\s+(.+?)(?:\s+items?)?\.?$/i)
-      if (foundMatch) {
-        context.lastShownContent = {
-          type: 'preview',
-          title: foundMatch[2].trim(),
-          count: parseInt(foundMatch[1], 10),
+      if (msgAge <= CONTEXT_DECAY.listPreview) {
+        const foundMatch = msg.content.match(/Found\s+(\d+)\s+(.+?)(?:\s+items?)?\.?$/i)
+        if (foundMatch) {
+          context.lastShownContent = {
+            type: 'preview',
+            title: foundMatch[2].trim(),
+            count: parseInt(foundMatch[1], 10),
+          }
         }
       }
     }
 
     // Check for opened panel in ANY assistant message
+    // Opened panels persist longer
     if (!context.lastOpenedPanel && msg.role === 'assistant' && msg.content) {
-      const openingMatch = msg.content.match(/Opening\s+(?:panel\s+)?(.+?)\.?$/i)
-      if (openingMatch) {
-        context.lastOpenedPanel = { title: openingMatch[1] }
-        if (!context.lastShownContent) {
-          context.lastShownContent = {
-            type: 'panel',
-            title: openingMatch[1],
+      if (msgAge <= CONTEXT_DECAY.openedPanel) {
+        const openingMatch = msg.content.match(/Opening\s+(?:panel\s+)?(.+?)\.?$/i)
+        if (openingMatch) {
+          context.lastOpenedPanel = { title: openingMatch[1] }
+          openedPanelTimestamp = msg.timestamp.getTime()
+          if (!context.lastShownContent) {
+            context.lastShownContent = {
+              type: 'panel',
+              title: openingMatch[1],
+            }
           }
         }
       }
@@ -438,6 +475,18 @@ function buildChatContext(messages: ChatMessage[]): ChatContext {
       break
     }
   }
+
+  // Add recency age indicators
+  if (optionsTimestamp) {
+    context.optionsAge = now - optionsTimestamp
+  }
+  if (openedPanelTimestamp) {
+    context.openedPanelAge = now - openedPanelTimestamp
+  }
+
+  // Mark as stale if no relevant context was found within decay windows
+  const hasRelevantContext = context.lastOptions || context.lastListPreview || context.lastOpenedPanel
+  context.isStale = !hasRelevantContext && messages.length > 0
 
   return context
 }

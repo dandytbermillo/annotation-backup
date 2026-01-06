@@ -435,6 +435,9 @@ export async function POST(request: NextRequest) {
     const normalizedInput = userMessage.toLowerCase().replace(/\s+/g, ' ').trim()
     const VERB_REGEX = /\b(open|show|view|display|list|go|back|rename|delete|create|add|remove|close)\b/i
     const hasVerb = VERB_REGEX.test(normalizedInput)
+    const QUESTION_REGEX =
+      /^(what|why|how|where|when|who|which|do|does|did|is|are|was|were|can|could|should|would|may|might)\b/i
+    const isQuestionLike = QUESTION_REGEX.test(normalizedInput) || normalizedInput.endsWith('?')
 
     // Verify query guard: "did I open/rename/delete..." should go to LLM, not typo fallback
     // These are verify_action or verify_request intents that the LLM should handle
@@ -446,7 +449,7 @@ export async function POST(request: NextRequest) {
         // Replace generic error with friendly suggestion
         resolution.message = suggestions.message
       }
-    } else if (!hasVerb && !isVerifyQuery) {
+    } else if (!hasVerb && !isVerifyQuery && !isQuestionLike) {
       // If the input has no verb and is not a verify query, don't let the LLM guess.
       // Only override when the input is not an exact match to a known command.
       const typoSuggestion = getSuggestions(userMessage, suggestionContext)
