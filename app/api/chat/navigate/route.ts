@@ -271,6 +271,8 @@ export async function POST(request: NextRequest) {
       focusedPanelId: context.focusedPanelId,
       // Chat context for LLM clarification answers (per llm-chat-context-first-plan.md)
       chatContext: context.chatContext,
+      // UI context for current screen visibility
+      uiContext: context.uiContext,
     } : undefined
 
     // Check if OpenAI is configured

@@ -107,7 +107,7 @@ export function DashboardView({
   const isDrawerOpen = drawerPanel !== null
 
   // Chat Navigation: Get functions to track view mode and workspace opens
-  const { setCurrentLocation, incrementOpenCount } = useChatNavigationContext()
+  const { setCurrentLocation, incrementOpenCount, setUiContext } = useChatNavigationContext()
 
   // Debug: Track mount/unmount and initial state
   useEffect(() => {
@@ -163,6 +163,17 @@ export function DashboardView({
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false)
   const [deletingWorkspaceId, setDeletingWorkspaceId] = useState<string | null>(null)
 
+  const visibleWidgets = useMemo(() => {
+    return panels
+      .filter((panel) => panel.isVisible && !panel.deletedAt)
+      .slice(0, 10)
+      .map((panel) => ({
+        id: panel.id,
+        title: panel.title ?? panel.panelType,
+        type: panel.panelType,
+      }))
+  }, [panels])
+
   // Chat Navigation: Update location tracking when view mode changes
   useEffect(() => {
     const currentWorkspace = workspaces.find(ws => ws.id === activeWorkspaceId)
@@ -181,6 +192,47 @@ export function DashboardView({
   const [draggingPanelId, setDraggingPanelId] = useState<string | null>(null)
   const [activePanelId, setActivePanelId] = useState<string | null>(null)
   const dragStartRef = useRef<{ x: number; y: number; panelX: number; panelY: number } | null>(null)
+
+  useEffect(() => {
+    if (viewMode === 'dashboard') {
+      setUiContext({
+        mode: 'dashboard',
+        dashboard: {
+          entryId,
+          entryName,
+          visibleWidgets,
+          openDrawer: drawerPanel
+            ? {
+                panelId: drawerPanel.id,
+                title: drawerPanel.title ?? drawerPanel.panelType,
+                type: drawerPanel.panelType,
+              }
+            : undefined,
+          focusedPanelId: activePanelId,
+        },
+      })
+      return
+    }
+
+    const currentWorkspace = workspaces.find(ws => ws.id === activeWorkspaceId)
+    setUiContext({
+      mode: 'workspace',
+      workspace: {
+        workspaceId: activeWorkspaceId ?? undefined,
+        workspaceName: currentWorkspace?.name,
+      },
+    })
+  }, [
+    viewMode,
+    entryId,
+    entryName,
+    visibleWidgets,
+    drawerPanel,
+    activePanelId,
+    activeWorkspaceId,
+    workspaces,
+    setUiContext,
+  ])
 
   // Snap-to-grid placeholder state
   const [snapPlaceholder, setSnapPlaceholder] = useState<{

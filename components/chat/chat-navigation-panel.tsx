@@ -925,6 +925,7 @@ function ChatNavigationPanelContent({
     // Panel visibility (Gap 2) - read from context instead of props
     visiblePanels,
     focusedPanelId,
+    uiContext,
     // Suggestion rejection handling
     lastSuggestion,
     setLastSuggestion,
@@ -1867,6 +1868,8 @@ function ChatNavigationPanelContent({
             focusedPanelId,
             // Chat context for LLM clarification answers
             chatContext,
+            // UI context for current screen visibility
+            uiContext,
             // Full chat history for need_context retrieval loop
             // Per llm-context-retrieval-general-answers-plan.md
             fullChatHistory: messages.slice(-50).map(m => ({

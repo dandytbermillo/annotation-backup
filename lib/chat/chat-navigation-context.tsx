@@ -14,7 +14,7 @@
 
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
 import type { WorkspaceMatch, NoteMatch, EntryMatch } from './resolution-types'
-import type { SessionState } from './intent-prompt'
+import type { SessionState, UIContext } from './intent-prompt'
 import type { ViewPanelContent, ViewListItem } from './view-panel-types'
 
 // =============================================================================
@@ -137,6 +137,9 @@ interface ChatNavigationContextValue {
   setFocusedPanelId: (panelId: string | null) => void
   registerVisiblePanel: (panelId: string) => void
   unregisterVisiblePanel: (panelId: string) => void
+  // UI context for current screen visibility
+  uiContext: UIContext | null
+  setUiContext: (context: UIContext | null) => void
   // Suggestion rejection handling (ephemeral, not persisted)
   lastSuggestion: LastSuggestionState | null
   rejectedSuggestions: Set<string>
@@ -343,6 +346,7 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
   // Panel visibility state for intent prioritization (Gap 2)
   const [visiblePanels, setVisiblePanelsState] = useState<string[]>([])
   const [focusedPanelId, setFocusedPanelIdState] = useState<string | null>(null)
+  const [uiContext, setUiContextState] = useState<UIContext | null>(null)
 
   // Suggestion rejection handling (ephemeral, not persisted)
   const [lastSuggestion, setLastSuggestionState] = useState<LastSuggestionState | null>(null)
@@ -770,6 +774,10 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     setFocusedPanelIdState(panelId)
   }, [])
 
+  const setUiContext = useCallback((context: UIContext | null) => {
+    setUiContextState(context)
+  }, [])
+
   // Register/unregister individual panels (for use in panel mount/unmount effects)
   const registerVisiblePanel = useCallback((panelId: string) => {
     setVisiblePanelsState((prev) => {
@@ -839,6 +847,8 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         setFocusedPanelId,
         registerVisiblePanel,
         unregisterVisiblePanel,
+        uiContext,
+        setUiContext,
         // Suggestion rejection handling
         lastSuggestion,
         rejectedSuggestions,

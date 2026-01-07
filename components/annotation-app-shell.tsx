@@ -48,7 +48,7 @@ import { useOverlayDragHandlers } from "@/lib/hooks/annotation/use-overlay-drag-
 import { useWorkspaceOverlayPersistence } from "@/lib/hooks/annotation/use-workspace-overlay-persistence"
 import { useWorkspaceOverlayInteractions } from "@/lib/hooks/annotation/use-workspace-overlay-interactions"
 import { useWorkspaceSidebarState } from "@/lib/hooks/annotation/use-workspace-sidebar-state"
-import { useChatNavigationListener } from "@/lib/chat"
+import { useChatNavigationContext, useChatNavigationListener } from "@/lib/chat"
 import { AnnotationWorkspaceView } from "@/components/annotation-workspace-view"
 import { getActiveWorkspaceContext, subscribeToActiveWorkspaceContext, setActiveWorkspaceContext } from "@/lib/note-workspaces/state"
 import type { AnnotationWorkspaceViewProps } from "@/components/annotation-workspace-view/types"
@@ -198,6 +198,7 @@ function AnnotationAppContent({
 
   // Chat navigation listener - handles 'chat-navigate-note' events from ChatNavigationPanel
   useChatNavigationListener({ enabled: true })
+  const { setUiContext } = useChatNavigationContext()
 
   // DEBUG: Trace when openNotes changes in component
   useEffect(() => {
@@ -1294,6 +1295,36 @@ const initialWorkspaceSyncRef = useRef(false)
     if (noteId.length <= 8) return noteId
     return `${noteId.slice(0, 4)}…${noteId.slice(-3)}`
   }, [])
+
+  const openNotesForContext = useMemo(() => {
+    return openNotes.slice(0, 5).map((note) => ({
+      id: note.noteId,
+      title: formatNoteLabel(note.noteId),
+      active: note.noteId === activeNoteId,
+    }))
+  }, [openNotes, activeNoteId, formatNoteLabel])
+
+  useEffect(() => {
+    if (isHidden || !isEntryActive) return
+    setUiContext({
+      mode: 'workspace',
+      workspace: {
+        workspaceId: noteWorkspaceState.currentWorkspaceId ?? openNotesWorkspaceId ?? undefined,
+        workspaceName: noteWorkspaceStatusLabel,
+        openNotes: openNotesForContext,
+        activeNoteId,
+      },
+    })
+  }, [
+    isHidden,
+    isEntryActive,
+    noteWorkspaceState.currentWorkspaceId,
+    openNotesWorkspaceId,
+    noteWorkspaceStatusLabel,
+    openNotesForContext,
+    activeNoteId,
+    setUiContext,
+  ])
 
   const { handleNoteSelect, handleCloseNote: handleCloseNoteBase, handleCenterNote } = useWorkspaceNoteSelection({
     activeNoteId,

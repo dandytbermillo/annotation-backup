@@ -213,6 +213,7 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
     IMPORTANT:
       - Only use this intent for questions that can be answered from chatContext
       - If chatContext lacks the needed info, use need_context to request more
+      - If the question is about what's currently visible on screen, use uiContext
       - This intent has NO side effects - it only returns a message
       - If asked whether something is in the options/list, answer explicitly yes/no and, if no, name the available options
 
@@ -377,9 +378,9 @@ Follow this decision tree to select the correct intent:
 1. **Is it an app command?** (navigation, panel, workspace operations)
    → Use the appropriate app intent (open_workspace, list_workspaces, panel_intent, etc.)
 
-2. **Is it a question about what's in the chat?** (options, lists, what was shown)
-   → If chatContext has the answer → **answer_from_context**
-   → If chatContext lacks info → **need_context** (request what you need)
+2. **Is it a question about what's in the chat or on the current screen?** (options, lists, visible widgets)
+   → If chatContext or uiContext has the answer → **answer_from_context**
+   → If both lack info → **need_context** (request what you need)
 
 3. **Is it a question about app data NOT shown in chat?** (existence queries)
    → "Do I have a widget called X?" → **retrieve_from_app** (entityType: "widget", entityQuery: "X")
@@ -411,7 +412,7 @@ Follow this decision tree to select the correct intent:
 - Anything requiring web browsing or live updates
 - Personal data not in the app
 
-**Priority rule:** If the user asks about something shown in chat, use chat context first. Only use retrieve_from_app when the entity was NOT recently shown in chat.
+**Priority rule:** If the user asks about something shown in chat or visible on the screen, use chatContext/uiContext first. Only use retrieve_from_app when the entity was NOT recently shown or visible.
 
 ## Rules
 
@@ -508,6 +509,27 @@ export interface ChatContext {
 }
 
 /**
+ * UIContext for what's visible right now (dashboard/workspace).
+ * This is a live snapshot, not historical.
+ */
+export interface UIContext {
+  mode: 'dashboard' | 'workspace'
+  dashboard?: {
+    entryId?: string
+    entryName?: string
+    visibleWidgets?: Array<{ id: string; title: string; type: string }>
+    openDrawer?: { panelId: string; title: string; type?: string }
+    focusedPanelId?: string | null
+  }
+  workspace?: {
+    workspaceId?: string
+    workspaceName?: string
+    openNotes?: Array<{ id: string; title: string; active?: boolean }>
+    activeNoteId?: string | null
+  }
+}
+
+/**
  * Context type for conversation history
  */
 export interface ConversationContext {
@@ -521,6 +543,8 @@ export interface ConversationContext {
   focusedPanelId?: string | null    // ID of the focused panel (for priority)
   // Chat context for answering clarification questions
   chatContext?: ChatContext
+  // UI context for current screen visibility
+  uiContext?: UIContext
 }
 
 /**
@@ -578,7 +602,8 @@ export async function buildIntentMessages(
     context.lastAssistantQuestion ||
     context.sessionState ||
     context.pendingOptions?.length ||
-    context.chatContext
+    context.chatContext ||
+    context.uiContext
   )
 
   if (hasContext) {
@@ -625,6 +650,41 @@ export async function buildIntentMessages(
           ? cc.lastAssistantMessage.substring(0, 200) + '...'
           : cc.lastAssistantMessage
         contextBlock += `  lastAssistantMessage: "${truncated}"\n`
+      }
+    }
+
+    // Add UI context for what's visible right now
+    if (context.uiContext) {
+      const uc = context.uiContext
+      contextBlock += '\nUI Context (current screen):\n'
+      contextBlock += `  mode: ${uc.mode}\n`
+      if (uc.dashboard) {
+        contextBlock += `  dashboard:\n`
+        if (uc.dashboard.entryName) {
+          contextBlock += `    entryName: "${uc.dashboard.entryName}"\n`
+        }
+        if (uc.dashboard.openDrawer) {
+          contextBlock += `    openDrawer: "${uc.dashboard.openDrawer.title}"\n`
+        }
+        if (uc.dashboard.visibleWidgets && uc.dashboard.visibleWidgets.length > 0) {
+          contextBlock += `    visibleWidgets:\n`
+          uc.dashboard.visibleWidgets.forEach((widget) => {
+            contextBlock += `      - "${widget.title}" (${widget.type})\n`
+          })
+        }
+      }
+      if (uc.workspace) {
+        contextBlock += `  workspace:\n`
+        if (uc.workspace.workspaceName) {
+          contextBlock += `    workspaceName: "${uc.workspace.workspaceName}"\n`
+        }
+        if (uc.workspace.openNotes && uc.workspace.openNotes.length > 0) {
+          contextBlock += `    openNotes:\n`
+          uc.workspace.openNotes.forEach((note) => {
+            const activeLabel = note.active ? ' [active]' : ''
+            contextBlock += `      - "${note.title}"${activeLabel}\n`
+          })
+        }
       }
     }
 
