@@ -1,5 +1,6 @@
 # Widget Chat State Contract - Implementation Plan
 
+
 Goal: make chat aware of widget-specific internal state (view, selection, filters)
 by standardizing state reporting from widgets and storing it in UIContext.
 
