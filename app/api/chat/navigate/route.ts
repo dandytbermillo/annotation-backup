@@ -448,23 +448,39 @@ export async function POST(request: NextRequest) {
     const normalizedInput = userMessage.toLowerCase().replace(/\s+/g, ' ').trim()
     const VERB_REGEX = /\b(open|show|view|display|list|go|back|rename|delete|create|add|remove|close)\b/i
     const hasVerb = VERB_REGEX.test(normalizedInput)
-    const QUESTION_REGEX =
+
+    // Phase 1: Expanded question detector
+    // Matches: starts with question word, ends with "?", contains question phrases,
+    // or starts with "tell me/give me" + question cue
+    const QUESTION_START_REGEX =
       /^(what|why|how|where|when|who|which|do|does|did|is|are|was|were|can|could|should|would|may|might)\b/i
-    const isQuestionLike = QUESTION_REGEX.test(normalizedInput) || normalizedInput.endsWith('?')
+    const QUESTION_PHRASE_REGEX = /(what's|what is|which one|how many|is there|are there)/i
+    // "tell me/give me" + question cue pattern (e.g., "tell me what widgets are visible")
+    const TELL_GIVE_WITH_CUE_REGEX = /^(tell me|give me)\b.*\b(what|which|how many|is there|are there)\b/i
+    const isQuestionLike =
+      QUESTION_START_REGEX.test(normalizedInput) ||
+      normalizedInput.endsWith('?') ||
+      QUESTION_PHRASE_REGEX.test(normalizedInput) ||
+      TELL_GIVE_WITH_CUE_REGEX.test(normalizedInput)
 
     // Verify query guard: "did I open/rename/delete..." should go to LLM, not typo fallback
     // These are verify_action or verify_request intents that the LLM should handle
     const isVerifyQuery = /^did\s+i\b/i.test(normalizedInput)
 
-    if (!resolution.success && resolution.action === 'error') {
+    // Phase 1a: Error Message Preservation
+    // Only apply typo fallback when:
+    // 1. LLM returned 'unsupported' intent (not a valid intent that failed resolution)
+    // 2. AND input is not a question (questions should get LLM's unsupported reason, not typo suggestions)
+    if (!resolution.success && resolution.action === 'error' && intent.intent === 'unsupported' && !isQuestionLike) {
       suggestions = getSuggestions(userMessage, suggestionContext)
       if (suggestions) {
-        // Replace generic error with friendly suggestion
+        // Replace generic unsupported message with friendly suggestion
         resolution.message = suggestions.message
       }
-    } else if (!hasVerb && !isVerifyQuery && !isQuestionLike) {
+    } else if (!hasVerb && !isVerifyQuery && !isQuestionLike && !context?.pendingOptions?.length) {
       // If the input has no verb and is not a verify query, don't let the LLM guess.
       // Only override when the input is not an exact match to a known command.
+      // Phase 2a.2: Skip typo fallback when pendingOptions exist - let LLM handle with context
       const typoSuggestion = getSuggestions(userMessage, suggestionContext)
       const topCandidate = typoSuggestion?.candidates[0]
       const isExactMatch = Boolean(

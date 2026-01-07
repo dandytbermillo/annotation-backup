@@ -151,6 +151,8 @@ interface PendingOptionState {
   sublabel?: string
   type: string
   id: string
+  // Phase 2a: Flag to trigger auto-answer with open notes after workspace selection
+  notesScopeFollowUp?: boolean
   data: unknown
 }
 
@@ -768,6 +770,30 @@ function findExactOptionMatch(
     return containsMatches[0]
   }
 
+  // Phase 2a.1: Label matching for visible options
+  // Try "starts with" match - label starts with input
+  // e.g., "workspace 6" matches "Workspace 6 (Home)"
+  // Only match if exactly one option starts with the input (avoid ambiguity)
+  const startsWithMatches = options.filter(opt =>
+    opt.label.toLowerCase().startsWith(normalized)
+  )
+  if (startsWithMatches.length === 1) {
+    return startsWithMatches[0]
+  }
+
+  // Phase 2a.1: Try "label contains input" match
+  // e.g., "workspace 6" is found within "Workspace 6 (Home)"
+  // Require minimum 3 chars to avoid false positives
+  // Only match if exactly one option contains the input (avoid ambiguity)
+  if (normalized.length >= 3) {
+    const labelContainsMatches = options.filter(opt =>
+      opt.label.toLowerCase().includes(normalized)
+    )
+    if (labelContainsMatches.length === 1) {
+      return labelContainsMatches[0]
+    }
+  }
+
   return undefined
 }
 
@@ -925,6 +951,8 @@ function ChatNavigationPanelContent({
   const [pendingOptionsMessageId, setPendingOptionsMessageId] = useState<string | null>(null)
   // Grace window: allow one extra turn after selection to reuse options
   const [pendingOptionsGraceCount, setPendingOptionsGraceCount] = useState(0)
+  // Phase 2a: Track when workspace picker is for notes-scope auto-answer
+  const [notesScopeFollowUpActive, setNotesScopeFollowUpActive] = useState(false)
 
   // Last preview state for "show all" shortcut
   const [lastPreview, setLastPreview] = useState<LastPreviewState | null>(null)
@@ -964,12 +992,24 @@ function ChatNavigationPanelContent({
     addRejectedSuggestions,
     clearRejectedSuggestions,
     isRejectedSuggestion,
+    // Clarification follow-up handling (Phase 2a)
+    lastClarification,
+    setLastClarification,
   } = useChatNavigationContext()
 
   const { executeAction, selectOption, openPanelDrawer: openPanelDrawerBase } = useChatNavigation({
     onNavigationComplete: () => {
       onNavigationComplete?.()
       setOpen(false)
+    },
+    // Phase 1b.1: Track panel opens from executeAction (e.g., disambiguation selection)
+    onPanelDrawerOpen: (panelId, panelTitle) => {
+      setLastAction({
+        type: 'open_panel',
+        panelId,
+        panelTitle: panelTitle || panelId,
+        timestamp: Date.now(),
+      })
     },
   })
 
@@ -1235,6 +1275,46 @@ function ChatNavigationPanelContent({
                 showWorkspaceOpenedToast(workspaceData.name, workspaceData.entryName)
                 // Note: incrementOpenCount is NOT called here - DashboardView.handleWorkspaceSelectById
                 // is the single source of truth for open counts (avoids double-counting)
+
+                // Phase 2a: Auto-answer with open notes if this was a notes-scope follow-up
+                if (notesScopeFollowUpActive) {
+                  setNotesScopeFollowUpActive(false)
+                  // Fetch workspace details including open notes
+                  try {
+                    const wsResponse = await fetch(`/api/note-workspaces/${workspaceData.id}`)
+                    if (wsResponse.ok) {
+                      const wsData = await wsResponse.json()
+                      // openNotes is inside payload (NoteWorkspacePayload structure)
+                      const openNotes = wsData.workspace?.payload?.openNotes || []
+
+                      let notesAnswer: string
+                      if (openNotes.length === 0) {
+                        notesAnswer = `${workspaceData.name} has no open notes.`
+                      } else if (openNotes.length === 1) {
+                        // openNotes items have noteId and noteTitle properties
+                        const noteName = openNotes[0].noteTitle || openNotes[0].noteId || 'Untitled'
+                        notesAnswer = `${workspaceData.name} has 1 open note: ${noteName}.`
+                      } else {
+                        const noteNames = openNotes.map((n: { noteTitle?: string; noteId?: string }) => n.noteTitle || n.noteId || 'Untitled').join(', ')
+                        notesAnswer = `${workspaceData.name} has ${openNotes.length} open notes: ${noteNames}.`
+                      }
+
+                      const autoAnswerMessage: ChatMessage = {
+                        id: `assistant-${Date.now()}`,
+                        role: 'assistant',
+                        content: notesAnswer,
+                        timestamp: new Date(),
+                        isError: false,
+                      }
+                      addMessage(autoAnswerMessage)
+                      setIsLoading(false)
+                      return // Skip the default result message
+                    }
+                  } catch (fetchError) {
+                    console.error('[ChatNavigation] Failed to fetch workspace for notes auto-answer:', fetchError)
+                    // Fall through to default message
+                  }
+                }
               } else if (option.type === 'entry') {
                 const entryData = option.data as { id?: string; name?: string }
                 if (entryData.id && entryData.name) {
@@ -1313,7 +1393,7 @@ function ChatNavigationPanelContent({
         setIsLoading(false)
       }
     },
-    [selectOption, addMessage, setLastAction, setLastQuickLinksBadge]
+    [selectOption, addMessage, setLastAction, setLastQuickLinksBadge, incrementOpenCount, notesScopeFollowUpActive]
   )
 
   // ---------------------------------------------------------------------------
@@ -1536,6 +1616,93 @@ function ChatNavigationPanelContent({
             },
           }
           addMessage(assistantMessage)
+          setIsLoading(false)
+          return
+        }
+      }
+
+      // ---------------------------------------------------------------------------
+      // Phase 2a: Handle "yes" to notes-scope clarification (show workspace picker)
+      // ---------------------------------------------------------------------------
+      if (!lastSuggestion && lastClarification?.type === 'notes_scope' && isAffirmationPhrase(trimmedInput)) {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'notes_scope_clarification_yes',
+          metadata: { userInput: trimmedInput, clarificationType: lastClarification.type },
+        })
+
+        // Clear clarification state
+        setLastClarification(null)
+
+        // Fetch workspaces for current entry (priority: entry workspaces → recent → all)
+        // Uses /api/dashboard/workspaces/search which handles both cases
+        try {
+          const workspacesUrl = currentEntryId
+            ? `/api/dashboard/workspaces/search?entryId=${currentEntryId}&limit=10`
+            : `/api/dashboard/workspaces/search?limit=10`
+          const workspacesResponse = await fetch(workspacesUrl)
+          if (!workspacesResponse.ok) {
+            throw new Error('Failed to fetch workspaces')
+          }
+          const workspacesData = await workspacesResponse.json()
+          const workspaces = workspacesData.workspaces || []
+
+          if (workspaces.length === 0) {
+            // No workspaces available
+            const noWorkspacesMessage: ChatMessage = {
+              id: `assistant-${Date.now()}`,
+              role: 'assistant',
+              content: 'No workspaces found. Create a workspace first to view open notes.',
+              timestamp: new Date(),
+              isError: false,
+            }
+            addMessage(noWorkspacesMessage)
+            setIsLoading(false)
+            return
+          }
+
+          // Present workspace options as pills
+          const messageId = `assistant-${Date.now()}`
+          const workspaceOptions: SelectionOption[] = workspaces.map((ws: { id: string; name: string; isDefault?: boolean; noteCount?: number; entryName?: string }) => ({
+            type: 'workspace' as const,
+            id: ws.id,
+            label: ws.isDefault ? `${ws.name} (Default)` : ws.name,
+            sublabel: ws.entryName || `${ws.noteCount || 0} notes`,
+            data: ws,
+          }))
+
+          const workspacePickerMessage: ChatMessage = {
+            id: messageId,
+            role: 'assistant',
+            content: 'Sure — which workspace?',
+            timestamp: new Date(),
+            isError: false,
+            options: workspaceOptions,
+          }
+          addMessage(workspacePickerMessage)
+
+          // Set pending options for selection handling
+          setPendingOptions(workspaceOptions.map((opt, idx) => ({
+            index: idx + 1,
+            ...opt,
+          })) as PendingOptionState[])
+          setPendingOptionsMessageId(messageId)
+          setPendingOptionsGraceCount(0)
+          // Phase 2a: Mark that this workspace selection should auto-answer with open notes
+          setNotesScopeFollowUpActive(true)
+
+          setIsLoading(false)
+          return
+        } catch (error) {
+          console.error('[ChatNavigation] Failed to fetch workspaces for clarification:', error)
+          const errorMessage: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: 'Sorry, I couldn\'t load workspaces. Please try again.',
+            timestamp: new Date(),
+            isError: true,
+          }
+          addMessage(errorMessage)
           setIsLoading(false)
           return
         }
@@ -1786,8 +1953,39 @@ function ChatNavigationPanelContent({
           return
         }
 
-        // Not a pure selection - fall through to LLM with context
+        // Phase 2a.1: Try label matching for visible options
+        // e.g., "workspace 6" matches "Workspace 6 (Home)"
+        const labelMatch = findExactOptionMatch(trimmedInput, pendingOptions)
+        if (labelMatch) {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'label_match_selection',
+            metadata: {
+              input: trimmedInput,
+              matchedLabel: labelMatch.label,
+            },
+          })
+
+          // Use grace window: keep options for one more turn
+          setPendingOptionsGraceCount(1)
+
+          // Execute the selection directly
+          const optionToSelect: SelectionOption = {
+            type: labelMatch.type as SelectionOption['type'],
+            id: labelMatch.id,
+            label: labelMatch.label,
+            sublabel: labelMatch.sublabel,
+            data: labelMatch.data as SelectionOption['data'],
+          }
+
+          setIsLoading(false)
+          handleSelectOption(optionToSelect)
+          return
+        }
+
+        // Not a pure selection or label match - fall through to LLM with context
         // The LLM can handle: "is D available?", "what are the options?", etc.
+        // Per Phase 2a.1: If no label match, fall back to LLM with pendingOptions context
         void debugLog({
           component: 'ChatNavigation',
           action: 'selection_guard_passthrough_to_llm',
@@ -2377,8 +2575,9 @@ function ChatNavigationPanelContent({
       const assistantMessageId = `assistant-${Date.now()}`
       // Override message content if all suggestions were filtered out (user rejected them)
       // Per suggestion-fallback-polish-plan.md: filter rejected labels from fallback
+      // Phase 2a.2: Skip typo fallback when pendingOptions exist - let LLM handle with context
       let messageContent = result.message
-      if (allSuggestionsFiltered) {
+      if (allSuggestionsFiltered && pendingOptions.length === 0) {
         const baseFallbackLabels = ['recent', 'quick links', 'workspaces']
         const filteredFallbackLabels = baseFallbackLabels.filter(
           (label) => !isRejectedSuggestion(label)
@@ -2425,6 +2624,20 @@ function ChatNavigationPanelContent({
         setLastSuggestion(null)
       }
 
+      // Phase 2a: Track notes-scope clarification for "yes" follow-up
+      const NOTES_SCOPE_CLARIFICATION = 'Notes live inside workspaces'
+      if (messageContent.includes(NOTES_SCOPE_CLARIFICATION)) {
+        setLastClarification({
+          type: 'notes_scope',
+          originalIntent: 'list_open_notes',
+          messageId: assistantMessageId,
+          timestamp: Date.now(),
+        })
+      } else {
+        // Clear clarification if this is a different response
+        setLastClarification(null)
+      }
+
       // Store lastPreview for "show all" shortcut
       if (resolution.viewPanelContent && resolution.previewItems && resolution.previewItems.length > 0) {
         setLastPreview({
@@ -2454,7 +2667,7 @@ function ChatNavigationPanelContent({
     } finally {
       setIsLoading(false)
     }
-  }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction, messages, addMessage, setInput, sessionState, setLastAction, setLastQuickLinksBadge, appendRequestHistory, openPanelWithTracking, openPanelDrawer, conversationSummary, pendingOptions, pendingOptionsGraceCount, handleSelectOption, lastPreview, lastSuggestion, setLastSuggestion, addRejectedSuggestions, clearRejectedSuggestions, isRejectedSuggestion, uiContext, visiblePanels, focusedPanelId])
+  }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction, messages, addMessage, setInput, sessionState, setLastAction, setLastQuickLinksBadge, appendRequestHistory, openPanelWithTracking, openPanelDrawer, conversationSummary, pendingOptions, pendingOptionsGraceCount, handleSelectOption, lastPreview, lastSuggestion, setLastSuggestion, addRejectedSuggestions, clearRejectedSuggestions, isRejectedSuggestion, uiContext, visiblePanels, focusedPanelId, lastClarification, setLastClarification, setNotesScopeFollowUpActive])
 
   // ---------------------------------------------------------------------------
   // Handle Key Press

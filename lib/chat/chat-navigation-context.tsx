@@ -61,6 +61,14 @@ export interface LastSuggestionState {
   messageId: string
 }
 
+/** Last clarification state for follow-up handling (Phase 2a) */
+export interface LastClarificationState {
+  type: 'notes_scope'
+  originalIntent: 'list_open_notes'
+  messageId: string
+  timestamp: number
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
@@ -147,6 +155,9 @@ interface ChatNavigationContextValue {
   addRejectedSuggestions: (labels: string[]) => void
   clearRejectedSuggestions: () => void
   isRejectedSuggestion: (label: string) => boolean
+  // Clarification follow-up handling (Phase 2a: notes-scope clarification)
+  lastClarification: LastClarificationState | null
+  setLastClarification: (clarification: LastClarificationState | null) => void
 }
 
 // =============================================================================
@@ -351,6 +362,9 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
   // Suggestion rejection handling (ephemeral, not persisted)
   const [lastSuggestion, setLastSuggestionState] = useState<LastSuggestionState | null>(null)
   const [rejectedSuggestions, setRejectedSuggestions] = useState<Set<string>>(new Set())
+
+  // Clarification follow-up handling (Phase 2a: notes-scope clarification)
+  const [lastClarification, setLastClarificationState] = useState<LastClarificationState | null>(null)
 
   // Debounce refs for session state persistence
   const DEBOUNCE_MS = 1000
@@ -815,6 +829,11 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     return rejectedSuggestions.has(label.toLowerCase())
   }, [rejectedSuggestions])
 
+  // Clarification follow-up handler (Phase 2a)
+  const setLastClarification = useCallback((clarification: LastClarificationState | null) => {
+    setLastClarificationState(clarification)
+  }, [])
+
   return (
     <ChatNavigationContext.Provider
       value={{
@@ -856,6 +875,9 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         addRejectedSuggestions,
         clearRejectedSuggestions,
         isRejectedSuggestion,
+        // Clarification follow-up handling (Phase 2a)
+        lastClarification,
+        setLastClarification,
       }}
     >
       {children}

@@ -810,6 +810,14 @@ function resolveLastAction(
         message: `You opened entry "${lastAction.entryName}" ${timeAgo}.`,
       }
 
+    // Phase 1b: Format open_panel actions
+    case 'open_panel':
+      return {
+        success: true,
+        action: 'inform',
+        message: `You opened "${lastAction.panelTitle || 'a panel'}" ${timeAgo}.`,
+      }
+
     case 'rename_workspace':
       return {
         success: true,

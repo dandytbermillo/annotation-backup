@@ -209,15 +209,19 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
     - "how many items?" (when chatContext.lastListPreview exists)
     - "is D available?" (when chatContext.lastOptions exists → answer yes/no)
     - "what panel is open?" (when uiContext.dashboard.openDrawer exists)
+    - "what widgets are visible?" (when uiContext.dashboard.visibleWidgets or widgetStates exists → list widget names)
+    - "which notes are open?" (when uiContext.workspace.openNotes exists → list note names; if on dashboard, explain notes live in workspaces)
     Args:
       - contextAnswer (required): The answer based on chat context
     IMPORTANT:
-      - Only use this intent for questions that can be answered from chatContext
+      - Only use this intent for questions that can be answered from chatContext or uiContext
       - If chatContext lacks the needed info, use need_context to request more
       - If the question is about what's currently visible on screen, use uiContext
       - This intent has NO side effects - it only returns a message
       - If asked whether something is in the options/list, answer explicitly yes/no and, if no, name the available options
       - If asked about an open drawer/panel and uiContext.dashboard.openDrawer is missing, answer that no panel drawer is open
+      - For "what widgets are visible?": use widgetStates summaries or visibleWidgets list to answer
+      - For "which notes are open?" on dashboard: respond "Notes live inside workspaces. Would you like to open a workspace to see your notes?"
 
 22. **need_context** - Request more context to answer a question
     Use when:

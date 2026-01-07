@@ -30,6 +30,8 @@ export interface UseChatNavigationOptions {
   onNavigationComplete?: (result: ChatNavigationResult) => void
   /** Called when an error occurs */
   onError?: (error: Error) => void
+  /** Called when a panel drawer is opened (Phase 1b.1: for lastAction tracking) */
+  onPanelDrawerOpen?: (panelId: string, panelTitle?: string) => void
   /** Current entry ID for context */
   currentEntryId?: string
   /** Current workspace ID for context */
@@ -58,7 +60,7 @@ export interface UseChatNavigationOptions {
  * ```
  */
 export function useChatNavigation(options: UseChatNavigationOptions = {}) {
-  const { onNavigationComplete, onError } = options
+  const { onNavigationComplete, onError, onPanelDrawerOpen } = options
 
   // ---------------------------------------------------------------------------
   // Navigate to Workspace
@@ -595,6 +597,8 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
         // Widget Architecture: Open panel in drawer
         case 'open_panel_drawer':
           if (resolution.panelId) {
+            // Phase 1b.1: Notify caller for lastAction tracking
+            onPanelDrawerOpen?.(resolution.panelId, resolution.panelTitle)
             return openPanelDrawer(resolution.panelId)
           }
           return {
