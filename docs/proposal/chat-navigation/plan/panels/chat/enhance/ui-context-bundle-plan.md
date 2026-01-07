@@ -74,6 +74,7 @@ Add a short rule in the prompt:
 - Add `uiContext` to the chat request payload.
 - Add prompt guidance for UIContext priority.
 - Validate payload size stays small (no content bodies).
+- Ensure chat request uses fresh UIContext (include `uiContext`, `visiblePanels`, `focusedPanelId` in sendMessage deps or equivalent ref).
 
 ## Acceptance Tests
 1. Dashboard: open Quick Links D drawer → ask “what’s open on the right?” → answer uses `uiContext.openDrawer`.

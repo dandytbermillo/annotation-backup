@@ -48,6 +48,7 @@ import {
   handleSendMessage,
   type ChatWriteCallbacks,
 } from './bridge-api/chat-write'
+import { upsertWidgetState, type WidgetStateInput } from './widget-state-store'
 
 // =============================================================================
 // Types
@@ -225,6 +226,13 @@ export function useSandboxHandlers(options: UseSandboxHandlersOptions): BridgeHa
     return handleSendMessage(params, writeCallbacks?.chat || {})
   }, [writeCallbacks?.chat])
 
+  // Widget Chat State: Report internal state for LLM context
+  // No rate limiting - widgets should report state freely on view/selection changes
+  const widgetReportState = useCallback(async (params: WidgetStateInput): Promise<{ success: boolean }> => {
+    const success = upsertWidgetState(params)
+    return { success }
+  }, [])
+
   // UI handlers
   const uiShowToast = useCallback(async (params: { message: string; type?: string }) => {
     const variant = params.type === 'error' ? 'destructive' : 'default'
@@ -256,6 +264,8 @@ export function useSandboxHandlers(options: UseSandboxHandlersOptions): BridgeHa
     'notes.createNote': notesCreateNote,
     'notes.deleteNote': notesDeleteNote,
     'chat.sendMessage': chatSendMessage,
+    // Widget Chat State handler
+    'widget.reportState': widgetReportState,
     // UI handlers
     'ui.showToast': uiShowToast,
     'ui.requestResize': uiRequestResize,
@@ -271,6 +281,7 @@ export function useSandboxHandlers(options: UseSandboxHandlersOptions): BridgeHa
     notesCreateNote,
     notesDeleteNote,
     chatSendMessage,
+    widgetReportState,
     uiShowToast,
     uiRequestResize,
   ])

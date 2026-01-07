@@ -275,6 +275,17 @@ export async function POST(request: NextRequest) {
       uiContext: context.uiContext,
     } : undefined
 
+    // DEBUG: Log context received from client
+    void debugLog({
+      component: 'ChatNavigateAPI',
+      action: 'context_received',
+      metadata: {
+        chatContextLastOpenedPanel: context?.chatContext?.lastOpenedPanel?.title ?? null,
+        uiContextOpenDrawer: context?.uiContext?.dashboard?.openDrawer?.title ?? null,
+        uiContextMode: context?.uiContext?.mode ?? null,
+      },
+    })
+
     // Check if OpenAI is configured
     const apiKey = getOpenAIApiKey()
     if (!apiKey) {

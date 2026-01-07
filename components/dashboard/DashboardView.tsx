@@ -27,6 +27,7 @@ import type { WorkspacePanel, PanelConfig } from "@/lib/dashboard/panel-registry
 import { snapToGrid, GRID_CELL_SIZE, GRID_GAP, GRID_OFFSET } from "@/lib/dashboard/grid-snap"
 import { cn } from "@/lib/utils"
 import { debugLog } from "@/lib/utils/debug-logger"
+import { pruneStaleWidgetStates, getAllWidgetStates } from "@/lib/widgets/widget-state-store"
 import { RefreshCw, ChevronRight, LayoutDashboard, Loader2 } from "lucide-react"
 import { useAutoScroll } from "@/components/canvas/use-auto-scroll"
 
@@ -107,7 +108,7 @@ export function DashboardView({
   const isDrawerOpen = drawerPanel !== null
 
   // Chat Navigation: Get functions to track view mode and workspace opens
-  const { setCurrentLocation, incrementOpenCount, setUiContext } = useChatNavigationContext()
+  const { setCurrentLocation, incrementOpenCount, setUiContext, setLastAction } = useChatNavigationContext()
 
   // Debug: Track mount/unmount and initial state
   useEffect(() => {
@@ -194,7 +195,27 @@ export function DashboardView({
   const dragStartRef = useRef<{ x: number; y: number; panelX: number; panelY: number } | null>(null)
 
   useEffect(() => {
+    if (!isEntryActive) {
+      void debugLog({
+        component: 'DashboardView',
+        action: 'setUiContext_inactive',
+        metadata: { isEntryActive, viewMode },
+      })
+      setUiContext(null)
+      return
+    }
     if (viewMode === 'dashboard') {
+      const openDrawerTitle = drawerPanel?.title ?? drawerPanel?.panelType ?? null
+      void debugLog({
+        component: 'DashboardView',
+        action: 'setUiContext_dashboard',
+        metadata: {
+          viewMode,
+          drawerPanelId: drawerPanel?.id,
+          openDrawerTitle,
+          hasDraw: !!drawerPanel,
+        },
+      })
       setUiContext({
         mode: 'dashboard',
         dashboard: {
@@ -209,6 +230,7 @@ export function DashboardView({
               }
             : undefined,
           focusedPanelId: activePanelId,
+          widgetStates: getAllWidgetStates(),
         },
       })
       return
@@ -232,6 +254,7 @@ export function DashboardView({
     activeWorkspaceId,
     workspaces,
     setUiContext,
+    isEntryActive,
   ])
 
   // Snap-to-grid placeholder state
@@ -958,12 +981,35 @@ export function DashboardView({
   // Widget Architecture: Handle widget double-click to open drawer
   const handleWidgetDoubleClick = useCallback((panel: WorkspacePanel) => {
     setDrawerPanel(panel)
+    if (isEntryActive) {
+      setUiContext({
+        mode: 'dashboard',
+        dashboard: {
+          entryId,
+          entryName,
+          visibleWidgets,
+          openDrawer: {
+            panelId: panel.id,
+            title: panel.title ?? panel.panelType,
+            type: panel.panelType,
+          },
+          focusedPanelId: activePanelId,
+          widgetStates: getAllWidgetStates(),
+        },
+      })
+    }
+    setLastAction({
+      type: 'open_panel',
+      panelTitle: panel.title ?? panel.panelType,
+      panelId: panel.id,
+      timestamp: Date.now(),
+    })
     void debugLog({
       component: "DashboardView",
       action: "drawer_opened",
       metadata: { panelId: panel.id, panelType: panel.panelType },
     })
-  }, [])
+  }, [activePanelId, entryId, entryName, isEntryActive, setLastAction, setUiContext, visibleWidgets])
 
   // Widget Architecture: Handle drawer close
   const handleDrawerClose = useCallback(() => {
@@ -1518,6 +1564,28 @@ export function DashboardView({
         clearTimeout(modeSwitchTimeoutRef.current)
       }
     }
+  }, [])
+
+  // Widget Chat State: Prune stale widget states every 30 seconds
+  // Marks entries older than 60s as stale, removes entries older than 5 minutes
+  useEffect(() => {
+    const PRUNE_INTERVAL_MS = 30_000 // 30 seconds
+    const STALE_TTL_MS = 60_000 // 60 seconds (mark as stale)
+    const REMOVE_TTL_MS = 300_000 // 5 minutes (remove entirely)
+
+    const intervalId = setInterval(() => {
+      const now = Date.now()
+      const result = pruneStaleWidgetStates(now, STALE_TTL_MS, REMOVE_TTL_MS)
+      if (result.markedStale > 0 || result.removed > 0) {
+        void debugLog({
+          component: "DashboardView",
+          action: "widget_state_pruned",
+          metadata: { markedStale: result.markedStale, removed: result.removed },
+        })
+      }
+    }, PRUNE_INTERVAL_MS)
+
+    return () => clearInterval(intervalId)
   }, [])
 
   // Safety mechanism: Reset isModeSwitching if it's stuck for too long (1 second max)

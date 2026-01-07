@@ -34,6 +34,7 @@ import { ViewPanel } from './view-panel'
 import { MessageResultPreview } from './message-result-preview'
 import { getActiveEntryContext } from '@/lib/entry/entry-context'
 import { getActiveWorkspaceContext } from '@/lib/note-workspaces/state'
+import type { UIContext } from '@/lib/chat/intent-prompt'
 import {
   showWorkspaceOpenedToast,
   showWorkspaceCreatedToast,
@@ -355,7 +356,7 @@ interface ChatContext {
  * Per llm-chat-context-first-plan.md - derive from chat messages (source of truth).
  * Extended with recency decay per llm-layered-chat-experience-plan.md.
  */
-function buildChatContext(messages: ChatMessage[]): ChatContext {
+function buildChatContext(messages: ChatMessage[], uiContext?: UIContext | null): ChatContext {
   const context: ChatContext = {}
   const now = Date.now()
 
@@ -476,6 +477,25 @@ function buildChatContext(messages: ChatMessage[]): ChatContext {
     }
   }
 
+  // Prefer live UI drawer context over chat-derived panel open
+  if (uiContext?.mode === 'dashboard' && uiContext.dashboard?.openDrawer?.title) {
+    context.lastOpenedPanel = { title: uiContext.dashboard.openDrawer.title }
+    context.lastShownContent = {
+      type: 'panel',
+      title: uiContext.dashboard.openDrawer.title,
+    }
+    openedPanelTimestamp = now
+    // DEBUG: Log UIContext override
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'buildChatContext_uiOverride',
+      metadata: {
+        overrideTitle: uiContext.dashboard.openDrawer.title,
+        uiMode: uiContext.mode,
+      },
+    })
+  }
+
   // Add recency age indicators
   if (optionsTimestamp) {
     context.optionsAge = now - optionsTimestamp
@@ -487,6 +507,18 @@ function buildChatContext(messages: ChatMessage[]): ChatContext {
   // Mark as stale if no relevant context was found within decay windows
   const hasRelevantContext = context.lastOptions || context.lastListPreview || context.lastOpenedPanel
   context.isStale = !hasRelevantContext && messages.length > 0
+
+  // DEBUG: Log final chatContext
+  void debugLog({
+    component: 'ChatNavigation',
+    action: 'buildChatContext_result',
+    metadata: {
+      lastOpenedPanel: context.lastOpenedPanel?.title ?? null,
+      lastShownContentTitle: context.lastShownContent?.title ?? null,
+      hasUiContext: !!uiContext,
+      uiOpenDrawer: uiContext?.dashboard?.openDrawer?.title ?? null,
+    },
+  })
 
   return context
 }
@@ -1849,7 +1881,17 @@ function ChatNavigationPanelContent({
         : undefined
 
       // Build chat context for LLM clarification answers (per llm-chat-context-first-plan.md)
-      const chatContext = buildChatContext(messages)
+      // DEBUG: Trace uiContext to diagnose stale closure issue
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'sendMessage_uiContext',
+        metadata: {
+          mode: uiContext?.mode,
+          openDrawer: uiContext?.dashboard?.openDrawer?.title,
+          hasUiContext: !!uiContext,
+        },
+      })
+      const chatContext = buildChatContext(messages, uiContext)
 
       // Call the navigate API with normalized message, context, and session state
       const response = await fetch('/api/chat/navigate', {
@@ -2412,7 +2454,7 @@ function ChatNavigationPanelContent({
     } finally {
       setIsLoading(false)
     }
-  }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction, messages, addMessage, setInput, sessionState, setLastAction, setLastQuickLinksBadge, appendRequestHistory, openPanelWithTracking, openPanelDrawer, conversationSummary, pendingOptions, pendingOptionsGraceCount, handleSelectOption, lastPreview, lastSuggestion, setLastSuggestion, addRejectedSuggestions, clearRejectedSuggestions, isRejectedSuggestion])
+  }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction, messages, addMessage, setInput, sessionState, setLastAction, setLastQuickLinksBadge, appendRequestHistory, openPanelWithTracking, openPanelDrawer, conversationSummary, pendingOptions, pendingOptionsGraceCount, handleSelectOption, lastPreview, lastSuggestion, setLastSuggestion, addRejectedSuggestions, clearRejectedSuggestions, isRejectedSuggestion, uiContext, visiblePanels, focusedPanelId])
 
   // ---------------------------------------------------------------------------
   // Handle Key Press

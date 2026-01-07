@@ -208,6 +208,7 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
     - "what were the options?" (when chatContext.lastOptions exists)
     - "how many items?" (when chatContext.lastListPreview exists)
     - "is D available?" (when chatContext.lastOptions exists → answer yes/no)
+    - "what panel is open?" (when uiContext.dashboard.openDrawer exists)
     Args:
       - contextAnswer (required): The answer based on chat context
     IMPORTANT:
@@ -216,6 +217,7 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
       - If the question is about what's currently visible on screen, use uiContext
       - This intent has NO side effects - it only returns a message
       - If asked whether something is in the options/list, answer explicitly yes/no and, if no, name the available options
+      - If asked about an open drawer/panel and uiContext.dashboard.openDrawer is missing, answer that no panel drawer is open
 
 22. **need_context** - Request more context to answer a question
     Use when:
@@ -520,6 +522,17 @@ export interface UIContext {
     visibleWidgets?: Array<{ id: string; title: string; type: string }>
     openDrawer?: { panelId: string; title: string; type?: string }
     focusedPanelId?: string | null
+    /** Widget internal states reported via widget.reportState() - for LLM context */
+    widgetStates?: Record<string, {
+      widgetId: string
+      instanceId: string
+      title: string
+      view: string | null
+      selection: { id: string; label: string } | null
+      summary: string | null
+      updatedAt: number
+      stale?: boolean
+    }>
   }
   workspace?: {
     workspaceId?: string
@@ -670,6 +683,23 @@ export async function buildIntentMessages(
           contextBlock += `    visibleWidgets:\n`
           uc.dashboard.visibleWidgets.forEach((widget) => {
             contextBlock += `      - "${widget.title}" (${widget.type})\n`
+          })
+        }
+        // Widget internal states (reported via widget.reportState)
+        if (uc.dashboard.widgetStates && Object.keys(uc.dashboard.widgetStates).length > 0) {
+          contextBlock += `    widgetStates:\n`
+          Object.values(uc.dashboard.widgetStates).forEach((ws) => {
+            const staleWarning = ws.stale ? ' [STALE]' : ''
+            contextBlock += `      - "${ws.title}"${staleWarning}:\n`
+            if (ws.view) {
+              contextBlock += `          view: "${ws.view}"\n`
+            }
+            if (ws.selection) {
+              contextBlock += `          selection: "${ws.selection.label}"\n`
+            }
+            if (ws.summary) {
+              contextBlock += `          summary: "${ws.summary}"\n`
+            }
           })
         }
       }

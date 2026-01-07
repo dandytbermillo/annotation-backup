@@ -79,8 +79,9 @@ let rateWindowCount = 0;
 let rateLimitWarned = false;
 
 const shouldEmitDebugLog = () => {
+  // Server-side: always allow (no rate limiting on server)
   if (typeof window === 'undefined') {
-    return false;
+    return DEFAULT_DEBUG_LOGGING_ENABLED;
   }
   if (!isDebugEnabled()) {
     return false;

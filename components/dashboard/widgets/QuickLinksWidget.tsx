@@ -10,10 +10,11 @@
  * - macOS widget style (no header/footer)
  */
 
-import React, { useMemo } from 'react'
+import React, { useMemo, useEffect } from 'react'
 import { Link2 } from 'lucide-react'
 import type { WorkspacePanel, PanelConfig } from '@/lib/dashboard/panel-registry'
 import { usePanelChatVisibility } from '@/lib/hooks/use-panel-chat-visibility'
+import { upsertWidgetState, removeWidgetState } from '@/lib/widgets/widget-state-store'
 import {
   BaseWidget,
   WidgetLabel,
@@ -111,6 +112,28 @@ export function QuickLinksWidget({
   const links = useMemo(() => {
     return parseLinksFromContent(config.content)
   }, [config.content])
+
+  // Widget Chat State: Report internal state for LLM context
+  useEffect(() => {
+    const widgetTitle = badge ? `Quick Links ${badge}` : 'Quick Links'
+    upsertWidgetState({
+      _version: 1,
+      widgetId: 'quick-links',
+      instanceId: panel.id,
+      title: widgetTitle,
+      view: 'list',
+      selection: null,
+      summary: links.length === 0
+        ? 'No links configured'
+        : `Showing ${Math.min(links.length, WIDGET_LINK_LIMIT)} of ${links.length} links`,
+      updatedAt: Date.now(),
+      counts: { total: links.length, visible: Math.min(links.length, WIDGET_LINK_LIMIT) },
+    })
+
+    return () => {
+      removeWidgetState(panel.id)
+    }
+  }, [panel.id, badge, links.length])
 
   return (
     <BaseWidget

@@ -64,6 +64,21 @@ export interface BridgeHandlers {
   'ui.requestResize'?: (params: { width: number; height: number }) => Promise<void>
   'storage.get'?: (params: { key: string }) => Promise<unknown>
   'storage.set'?: (params: { key: string; value: unknown }) => Promise<void>
+  // Widget Chat State: Report internal state for LLM context
+  'widget.reportState'?: (params: {
+    _version: 1
+    widgetId: string
+    instanceId: string
+    title: string
+    view?: string | null
+    selection?: { id: string; label: string } | null
+    summary?: string | null
+    updatedAt: number
+    filters?: string[]
+    counts?: Record<string, number>
+    actions?: string[]
+    contextTags?: string[]
+  }) => Promise<{ success: boolean }>
   // Allow dynamic method lookup while preserving type safety for known methods
   [key: string]: AnyHandler | undefined
 }

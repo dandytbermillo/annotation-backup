@@ -18,6 +18,7 @@ import { Settings, Power, MessageCircle, ExternalLink, Plus, Trash2, RefreshCw, 
 import { cn } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
 import type { WorkspacePanel } from '@/lib/dashboard/panel-registry'
+import { upsertWidgetState, removeWidgetState } from '@/lib/widgets/widget-state-store'
 import {
   BaseWidget,
   WidgetLabel,
@@ -349,6 +350,39 @@ export function WidgetManager({
   const builtinWidgets = widgets.filter((w) => w.source_type === 'builtin')
   const customWidgets = widgets.filter((w) => w.source_type !== 'builtin')
   const enabledCount = widgets.filter((w) => w.enabled).length
+
+  // Widget Chat State: Report internal state for LLM context
+  useEffect(() => {
+    // Only report once loaded
+    if (loading) return
+
+    const summary = error
+      ? 'Error loading widgets'
+      : widgets.length === 0
+        ? 'No widgets installed'
+        : `${enabledCount} of ${widgets.length} widgets enabled`
+
+    upsertWidgetState({
+      _version: 1,
+      widgetId: 'widget-manager',
+      instanceId: panel.id,
+      title: 'Widget Manager',
+      view: showInstallForm ? 'install_form' : 'list',
+      selection: null,
+      summary,
+      updatedAt: Date.now(),
+      counts: {
+        total: widgets.length,
+        enabled: enabledCount,
+        builtin: builtinWidgets.length,
+        custom: customWidgets.length,
+      },
+    })
+
+    return () => {
+      removeWidgetState(panel.id)
+    }
+  }, [panel.id, loading, error, widgets.length, enabledCount, builtinWidgets.length, customWidgets.length, showInstallForm])
 
   return (
     <BaseWidget

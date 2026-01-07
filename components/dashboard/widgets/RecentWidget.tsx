@@ -13,6 +13,7 @@
 import React, { useEffect, useState } from 'react'
 import type { WorkspacePanel } from '@/lib/dashboard/panel-registry'
 import { usePanelChatVisibility } from '@/lib/hooks/use-panel-chat-visibility'
+import { upsertWidgetState, removeWidgetState } from '@/lib/widgets/widget-state-store'
 import {
   BaseWidget,
   WidgetLabel,
@@ -93,6 +94,34 @@ export function RecentWidget({
   const getInitial = (name: string): string => {
     return name.charAt(0).toUpperCase()
   }
+
+  // Widget Chat State: Report internal state for LLM context
+  useEffect(() => {
+    // Only report once loaded (avoid reporting loading state)
+    if (isLoading) return
+
+    const summary = error
+      ? 'Error loading recent items'
+      : workspaces.length === 0
+        ? 'No recent items'
+        : `Showing ${Math.min(workspaces.length, WIDGET_ITEM_LIMIT)} of ${workspaces.length} recent items`
+
+    upsertWidgetState({
+      _version: 1,
+      widgetId: 'recent',
+      instanceId: panel.id,
+      title: 'Recent',
+      view: 'list',
+      selection: null,
+      summary,
+      updatedAt: Date.now(),
+      counts: { total: workspaces.length, visible: Math.min(workspaces.length, WIDGET_ITEM_LIMIT) },
+    })
+
+    return () => {
+      removeWidgetState(panel.id)
+    }
+  }, [panel.id, isLoading, error, workspaces.length])
 
   return (
     <BaseWidget
