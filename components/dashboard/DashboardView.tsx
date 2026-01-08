@@ -235,15 +235,9 @@ export function DashboardView({
       })
       return
     }
-
-    const currentWorkspace = workspaces.find(ws => ws.id === activeWorkspaceId)
-    setUiContext({
-      mode: 'workspace',
-      workspace: {
-        workspaceId: activeWorkspaceId ?? undefined,
-        workspaceName: currentWorkspace?.name,
-      },
-    })
+    // Phase 3: Workspace mode uiContext is owned exclusively by AnnotationAppShell.
+    // DashboardView must not set workspace uiContext to prevent race conditions.
+    // AnnotationAppShell has access to openNotes from the dock, which DashboardView lacks.
   }, [
     viewMode,
     entryId,
@@ -251,8 +245,6 @@ export function DashboardView({
     visibleWidgets,
     drawerPanel,
     activePanelId,
-    activeWorkspaceId,
-    workspaces,
     setUiContext,
     isEntryActive,
   ])

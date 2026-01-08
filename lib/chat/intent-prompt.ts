@@ -222,6 +222,7 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
       - If asked about an open drawer/panel and uiContext.dashboard.openDrawer is missing, answer that no panel drawer is open
       - For "what widgets are visible?": use widgetStates summaries or visibleWidgets list to answer
       - For "which notes are open?" on dashboard: respond "Notes live inside workspaces. Would you like to open a workspace to see your notes?"
+      - For "which notes are open?" when uiContext.workspace.isStale is true: respond "The workspace is still loading. Please try again in a moment."
 
 22. **need_context** - Request more context to answer a question
     Use when:
@@ -543,6 +544,8 @@ export interface UIContext {
     workspaceName?: string
     openNotes?: Array<{ id: string; title: string; active?: boolean }>
     activeNoteId?: string | null
+    /** Phase 3: True during hydration/loading or workspace switch - data may be provisional */
+    isStale?: boolean
   }
 }
 
@@ -718,6 +721,10 @@ export async function buildIntentMessages(
             const activeLabel = note.active ? ' [active]' : ''
             contextBlock += `      - "${note.title}"${activeLabel}\n`
           })
+        }
+        // Phase 3: Include isStale flag so LLM knows data may be provisional
+        if (uc.workspace.isStale) {
+          contextBlock += `    isStale: true (workspace is loading, data may be provisional)\n`
         }
       }
     }

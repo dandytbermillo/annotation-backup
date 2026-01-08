@@ -575,14 +575,32 @@ export async function POST(request: NextRequest) {
     }
     let clarification: ClarificationMetadata | undefined
 
-    // Detect notes-scope clarification (dashboard asking about open notes)
-    const NOTES_SCOPE_PATTERN = /notes live inside workspaces/i
-    if (resolution.message && NOTES_SCOPE_PATTERN.test(resolution.message)) {
+    // Detect notes-scope clarification (intent-based, not text-based)
+    // Conditions:
+    // 1. User asked about notes (open notes, which notes, etc.)
+    // 2. AND we're on the dashboard (not in a workspace)
+    // 3. AND the LLM returned answer_from_context (clarification response)
+    const NOTES_QUESTION_PATTERN = /\b(open\s+notes?|which\s+notes?|what\s+notes?|notes?\s+(are\s+)?open|list\s+(the\s+)?notes?)\b/i
+    const isNotesQuestion = NOTES_QUESTION_PATTERN.test(userMessage)
+    const isOnDashboard = context?.uiContext?.mode === 'dashboard'
+    const isAnswerFromContext = intent.intent === 'answer_from_context'
+
+    if (isNotesQuestion && isOnDashboard && isAnswerFromContext) {
       clarification = {
         id: 'notes_scope',
         nextAction: 'show_workspace_picker',
         originalIntent: 'list_open_notes',
       }
+
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'notes_scope_clarification_detected',
+        metadata: {
+          userMessage: userMessage.substring(0, 50),
+          uiMode: context?.uiContext?.mode,
+          intent: intent.intent,
+        },
+      })
     }
 
     return NextResponse.json({

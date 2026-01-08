@@ -117,6 +117,33 @@ Acceptance:
 - "not now" -> LLM interprets NO -> "Okay — what would you like instead?"
 - "hmm" -> LLM returns UNCLEAR -> re-ask clarification.
 
+### Phase 2a.4: Clarification Explanation Requests
+
+Goal: When the user asks for an explanation ("what do you mean?", "explain workspace"),
+reply with a short explanation and re-ask the same clarification question.
+
+Behavior:
+1) When lastClarification is active, detect explanation requests.
+2) Respond with a brief explanation (1-2 sentences).
+3) Re-ask the clarification question.
+4) Keep clarification state active.
+
+Detection (examples):
+- "what do you mean"
+- "explain"
+- "explain workspace"
+- "what is a workspace"
+- "help me understand"
+
+Response template (notes scope):
+- "Notes live inside workspaces. A workspace is where your notes are grouped in an entry.
+   Would you like to open a workspace to see your notes? (yes/no)"
+
+Acceptance:
+- Dashboard: "give me open notes" -> clarification
+- User: "what do you mean" -> explanation + re-ask clarification
+- User: "yes please" -> show workspace picker
+
 ### Workspace option source (priority)
 1. Current entry workspaces (default)
 2. Recent workspaces (fallback)
@@ -167,6 +194,27 @@ Acceptance:
 - Strip leading verbs and fillers before ordinal parsing.
 - Only clear pending options after selection matching fails.
 
+### Recognized patterns
+- Exact ordinals and numbers only (no verb/filler expansion).
+- Ordinals: first/1, second/2, third/3, fourth/4, fifth/5
+
+### Examples
+- "open the second" -> option 2
+- "select the first option" -> option 1
+- "go with the third one" -> option 3
+- "I'll take the second please" -> option 2
+- "the second" -> option 2 (verb optional)
+
+### Edge cases
+- "open workspace 2" -> handled by exact number match
+- If local parsing fails -> route to LLM with pendingOptions context (no typo fallback)
+
+### Guard interaction
+- Do not clear pendingOptions for verb+ordinal inputs (e.g., "open the second").
+- Either:
+  - Add a verb+ordinal exception to isExplicitCommand, or
+  - Move the explicit-command clearing after selection/LLM fallback.
+
 ### Acceptance
 - Options shown -> "open the second" -> selects option 2.
 - Options shown -> "select the first option" -> selects option 1.
@@ -176,21 +224,56 @@ Acceptance:
 ## Phase 3: Open Notes Source of Truth
 
 ### Requirement
-- uiContext.workspace.openNotes must reflect workspace toolbar state.
-- Update whenever note tabs change.
+- uiContext.workspace.openNotes must reflect the **Open Notes dock panel** state.
+- Use the dock list as the authoritative source (the same list shown in the dock popover).
+- Update whenever the dock’s open-notes list changes (open, close, reorder, active note change).
+- **Single owner:** AnnotationAppShell owns workspace uiContext. DashboardView must not set workspace uiContext.
+
+### Canonical source
+- `CanvasWorkspaceContext.openNotes` via `useCanvasWorkspace()` (same list used by the Open Notes dock).
+- Map this through `openNotesForContext` in AnnotationAppShell.
+
+### Data shape
+- `openNotes: Array<{ id: string; title: string; active?: boolean }>`
+
+### Workspace switch guard
+- Only update uiContext when:
+  - `openNotesWorkspaceId === noteWorkspaceState.currentWorkspaceId`
+  - Prevents stale notes from the previous workspace during transitions.
+
+### Hydration handling (decision)
+- Option A: set `isStale: true` during hydration and respond "Notes are loading…"
+- Option B: skip uiContext updates during hydration and keep the last valid state.
+- Decision: **Option A** (isStale flag) - prevents showing wrong workspace's notes during transitions.
 
 ### Acceptance
 - Opening/closing notes in the toolbar changes answers on first ask.
+- Rapid workspace switch -> "Which notes are open?" returns correct workspace notes (not empty, not previous).
+- During hydration -> "Notes are loading..." message (via isStale flag), never empty/wrong data.
 
 ---
 
 ## Phase 4: Dashboard/Workspace State Reporting (WidgetStates)
+
+### Prerequisites
+- Phase 3 must be stable enough to prevent stale workspace/drawer state from being reported.
+- If Phase 3 is simplified, it still must enforce single ownership + switch guard so widgetStates are correct.
 
 ### Change
 - Dashboard and workspace report summaries to widgetStates via `upsertWidgetState`.
 - Use instanceIds to avoid collisions:
   - `dashboard-${entryId}`
   - `workspace-${workspaceId}`
+
+### Reporting triggers (required)
+- On mount: initial summary so chat works immediately after reload.
+- On change:
+  - Dashboard: visible widgets change, drawer open/close, focused panel change.
+  - Workspace: open notes change, active note change, workspace switch complete.
+
+### Prompt preference
+- For “what’s visible/open?” questions, prefer widgetStates summaries first.
+- If widgetStates missing/stale, fall back to uiContext or ask to retry.
 
 ### Expected summaries
 - Dashboard: "Home dashboard with 7 widgets"
@@ -200,6 +283,7 @@ Acceptance:
 - "What widgets are visible?" -> uses dashboard widgetState summary.
 - "What panel is open?" -> matches open drawer + dashboard summary.
 - "Which notes are open?" -> matches workspace widgetState + openNotes list.
+- After reload, "What widgets are visible?" should respond correctly before any interaction.
 
 ---
 

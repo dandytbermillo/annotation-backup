@@ -3,7 +3,7 @@
 **Date:** 2026-01-07
 **Feature:** Question-First Routing + Notes Context
 **Phase:** 2a - Clarification "Yes" Handling (Workspace Picker)
-**Status:** Completed (includes Phase 2a.1, 2a.2, 2a.3)
+**Status:** Completed (includes Phase 2a.1, 2a.2, 2a.3, 2a.4)
 
 ---
 
@@ -71,11 +71,19 @@ export type { LastClarificationState } from './chat-navigation-context'
 
 #### 3. `app/api/chat/navigate/route.ts`
 
-**Phase 2a.3: Added clarification metadata to API response:**
+**Phase 2a.4: Intent-based clarification detection (replaces text matching):**
 ```typescript
-// Detect notes-scope clarification and add metadata
-const NOTES_SCOPE_PATTERN = /notes live inside workspaces/i
-if (resolution.message && NOTES_SCOPE_PATTERN.test(resolution.message)) {
+// Detect notes-scope clarification (intent-based, not text-based)
+// Conditions:
+// 1. User asked about notes (open notes, which notes, etc.)
+// 2. AND we're on the dashboard (not in a workspace)
+// 3. AND the LLM returned answer_from_context (clarification response)
+const NOTES_QUESTION_PATTERN = /\b(open\s+notes?|which\s+notes?|what\s+notes?|notes?\s+(are\s+)?open|list\s+(the\s+)?notes?)\b/i
+const isNotesQuestion = NOTES_QUESTION_PATTERN.test(userMessage)
+const isOnDashboard = context?.uiContext?.mode === 'dashboard'
+const isAnswerFromContext = intent.intent === 'answer_from_context'
+
+if (isNotesQuestion && isOnDashboard && isAnswerFromContext) {
   clarification = {
     id: 'notes_scope',
     nextAction: 'show_workspace_picker',
@@ -178,6 +186,24 @@ if (apiClarification) {
 }
 ```
 
+**Phase 2a.4: State preservation fix (don't auto-clear on every response):**
+```typescript
+// Before (broken): cleared on every response without metadata
+if (apiClarification) { setLastClarification(...) }
+else { setLastClarification(null) }  // ← wiped state prematurely
+
+// After (fixed): only clear on explicit actions
+if (apiClarification) {
+  setLastClarification({...})
+} else if (resolution.success && resolution.action !== 'error' && resolution.action !== 'answer_from_context') {
+  // Only clear when an explicit action is executed (navigation, panel open, etc.)
+  // NOT on every response without metadata - that would break the clarification flow
+  setLastClarification(null)
+}
+// If response is an error or answer_from_context without clarification metadata,
+// preserve lastClarification so user can still reply to the original clarification
+```
+
 ---
 
 ## User Flow
@@ -215,6 +241,40 @@ Bot: "Sure — which workspace?" + pills  ✅ (Tier 1 local match)
 User: "nope"
 Bot: "Okay — what would you like instead?"  ✅ (Tier 1b rejection)
 ```
+
+---
+
+## Phase 2a.4: Reliability Fixes
+
+### Problem
+The initial implementation (2a.3) was text-fragile:
+1. **Server**: Clarification metadata was set by regex-matching `resolution.message` against `"notes live inside workspaces"`. If the LLM generated slightly different wording, metadata wasn't set.
+2. **Client**: `lastClarification` was cleared on every API response without metadata, breaking the clarification flow.
+
+### Solution
+
+**Server-side: Intent-based detection**
+```
+                 Old (fragile)                    New (robust)
+─────────────────────────────────────────────────────────────────
+Detect by:   Regex on LLM message text     →   Intent + Context
+Pattern:     /notes live inside.../        →   isNotesQuestion &&
+                                               isOnDashboard &&
+                                               isAnswerFromContext
+```
+
+**Client-side: State preservation**
+```
+                 Old (broken)                     New (fixed)
+─────────────────────────────────────────────────────────────────
+Clear when:  Every response without        →   Only on explicit actions
+             apiClarification                   (navigation, panel open)
+```
+
+### Result
+- Clarification metadata is now reliably set based on what the user asked + where they are
+- `lastClarification` persists until the user replies or takes an explicit action
+- All tested affirmations now work: "yes of course", "do it", "yes pls do it", "ya", etc.
 
 ---
 
@@ -289,6 +349,10 @@ Per `question-first-routing-notes-context-plan.md` Phase 2a:
 | User: "please do" → workspace pills (Tier 2 LLM) | ✅ |
 | User: "yes pleas" (typo) → workspace pills (Tier 2 LLM) | ✅ |
 | User: "go ahead please" → workspace pills | ✅ |
+| User: "yes of course" → workspace pills (Tier 2 LLM) | ✅ |
+| User: "do it" → workspace pills (Tier 1 local) | ✅ |
+| User: "yes pls do it" → workspace pills (Tier 2 LLM) | ✅ |
+| User: "ya" → workspace pills (Tier 1 local) | ✅ |
 | User: "nope" → cancel clarification | ✅ |
 | User selects workspace → navigates + notes list | ✅ |
 
@@ -302,6 +366,10 @@ Per `question-first-routing-notes-context-plan.md` Phase 2a:
 - [x] Reply "yes" → workspace pills
 - [x] Reply "go ahead please" → workspace pills
 - [x] Reply "yes pleas" (typo) → workspace pills
+- [x] Reply "yes of course" → workspace pills (Tier 2 LLM)
+- [x] Reply "do it" → workspace pills (Tier 1 local)
+- [x] Reply "yes pls do it" → workspace pills (Tier 2 LLM)
+- [x] Reply "ya" → workspace pills (Tier 1 local)
 - [x] Reply "nope" → cancel message
 - [x] Click a workspace → navigation + notes list
 
@@ -329,7 +397,7 @@ $ npm run type-check
 
 2. **Pattern expansion:** As users discover edge cases, the local pattern lists may need expansion. Monitor debug logs for `clarification_tier2_llm` actions.
 
-3. **Clarification metadata detection:** Still uses regex matching on response message to detect clarification. If LLM wording changes significantly, may need adjustment.
+3. ~~**Clarification metadata detection:** Still uses regex matching on response message to detect clarification.~~ **Fixed in Phase 2a.4:** Now uses intent-based detection (user question + uiContext.mode + intent type), not LLM message text matching.
 
 ---
 
@@ -356,3 +424,4 @@ $ npm run type-check
 | 2026-01-07 | 2a.1 | Label matching for visible options |
 | 2026-01-07 | 2a.2 | Typo fallback guards for pendingOptions/lastClarification |
 | 2026-01-07 | 2a.3 | Complete clarification-mode routing with two-tier interpreter |
+| 2026-01-07 | 2a.4 | Reliability fixes: intent-based detection + state preservation |

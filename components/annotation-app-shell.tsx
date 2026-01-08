@@ -1306,13 +1306,26 @@ const initialWorkspaceSyncRef = useRef(false)
 
   useEffect(() => {
     if (isHidden || !isEntryActive) return
+
+    // Phase 3: Workspace switch guard - prevent stale notes from previous workspace
+    // Only update when openNotes matches the current workspace
+    const currentWorkspaceId = noteWorkspaceState.currentWorkspaceId ?? openNotesWorkspaceId
+    const workspaceIdsMismatch = Boolean(
+      openNotesWorkspaceId && currentWorkspaceId && openNotesWorkspaceId !== currentWorkspaceId
+    )
+
+    // Phase 3: isStale flag during hydration/loading or workspace mismatch
+    // Allows LLM to respond appropriately ("Notes are loading...")
+    const isStale = isHydrating || isWorkspaceLoading || workspaceIdsMismatch || undefined
+
     setUiContext({
       mode: 'workspace',
       workspace: {
-        workspaceId: noteWorkspaceState.currentWorkspaceId ?? openNotesWorkspaceId ?? undefined,
+        workspaceId: currentWorkspaceId ?? undefined,
         workspaceName: noteWorkspaceStatusLabel,
         openNotes: openNotesForContext,
         activeNoteId,
+        isStale,
       },
     })
   }, [
@@ -1324,6 +1337,8 @@ const initialWorkspaceSyncRef = useRef(false)
     openNotesForContext,
     activeNoteId,
     setUiContext,
+    isHydrating,
+    isWorkspaceLoading,
   ])
 
   const { handleNoteSelect, handleCloseNote: handleCloseNoteBase, handleCenterNote } = useWorkspaceNoteSelection({

@@ -1,0 +1,33 @@
+*** Begin Patch
+*** Update File: docs/proposal/chat-navigation/plan/panels/widget_manager/widget_chat_state_contract_implementation_plan/question-first-routing-notes-context-plan.md
+@@
+ ## Phase 3: Open Notes Source of Truth
+ 
+ ### Requirement
+ - uiContext.workspace.openNotes must reflect the **Open Notes dock panel** state.
+ - Use the dock list as the authoritative source (the same list shown in the dock popover).
+ - Update whenever the dock’s open-notes list changes (open, close, reorder, active note change).
+ - **Single owner:** AnnotationAppShell owns workspace uiContext. DashboardView must not set workspace uiContext.
+ 
++### Canonical source
++- `CanvasWorkspaceContext.openNotes` via `useCanvasWorkspace()` (same list used by the Open Notes dock).
++- Map this through `openNotesForContext` in AnnotationAppShell.
++
++### Data shape
++- `openNotes: Array<{ id: string; title: string; active?: boolean }>`
++
++### Workspace switch guard
++- Only update uiContext when:
++  - `openNotesWorkspaceId === noteWorkspaceState.currentWorkspaceId`
++  - Prevents stale notes from the previous workspace during transitions.
++
++### Hydration handling (decision)
++- Option A: set `isStale: true` during hydration and respond “Notes are loading…”
++- Option B: skip uiContext updates during hydration and keep the last valid state.
++- Decision: **TBD** (pick one before implementation).
++
+ ### Acceptance
+ - Opening/closing notes in the toolbar changes answers on first ask.
++- Rapid workspace switch -> "Which notes are open?" returns correct workspace notes (not empty, not previous).
++- During hydration -> either “notes loading” (Option A) or previous valid state (Option B), but never empty/wrong data.
+*** End Patch

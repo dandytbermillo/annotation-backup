@@ -1,0 +1,31 @@
+*** Begin Patch
+*** Update File: docs/proposal/chat-navigation/plan/panels/widget_manager/widget_chat_state_contract_implementation_plan/question-first-routing-notes-context-plan.md
+@@
+-### Prerequisites
+-- Phase 3 must be complete and stable (single owner for workspace uiContext, switch guard, isStale handling).
++### Prerequisites
++- Phase 3 must be stable enough to prevent stale workspace/drawer state from being reported.
++- If Phase 3 is simplified, it still must enforce single ownership + switch guard so widgetStates are correct.
+@@
+ ### Change
+ - Dashboard and workspace report summaries to widgetStates via `upsertWidgetState`.
+ - Use instanceIds to avoid collisions:
+   - `dashboard-${entryId}`
+   - `workspace-${workspaceId}`
+@@
+ ### Reporting triggers (required)
+ - On mount: initial summary so chat works immediately after reload.
+ - On change:
+   - Dashboard: visible widgets change, drawer open/close, focused panel change.
+   - Workspace: open notes change, active note change, workspace switch complete.
+@@
+ ### Prompt preference
+ - For “what’s visible/open?” questions, prefer widgetStates summaries first.
+ - If widgetStates missing/stale, fall back to uiContext or ask to retry.
+@@
+ ### Acceptance
+ - "What widgets are visible?" -> uses dashboard widgetState summary.
+ - "What panel is open?" -> matches open drawer + dashboard summary.
+ - "Which notes are open?" -> matches workspace widgetState + openNotes list.
+ - After reload, "What widgets are visible?" should respond correctly before any interaction.
+*** End Patch

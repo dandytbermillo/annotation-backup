@@ -649,9 +649,21 @@ function hasActionVerb(input: string): boolean {
  *
  * This is broader than hasActionVerb - it catches commands like "open demo widget"
  * that should not be blocked by the options guard.
+ *
+ * Phase 2b: verb+ordinal patterns ("open the second") are NOT explicit commands.
+ * They're selection attempts that should go to LLM with pendingOptions context.
  */
 function isExplicitCommand(input: string): boolean {
   const normalized = input.toLowerCase()
+
+  // Phase 2b: If input contains ordinal/number language, treat as selection attempt
+  // "open the first one", "please open the second", "can you please open the first one for me"
+  // All should preserve pendingOptions even though they contain action verbs
+  // This simple check replaces complex prefix pattern matching
+  const hasOrdinal = /\b(first|second|third|fourth|fifth|last|[1-9])\b/i.test(normalized)
+  if (hasOrdinal) {
+    return false
+  }
 
   // Action verbs that indicate a new command
   const actionVerbs = [
@@ -1540,9 +1552,13 @@ function ChatNavigationPanelContent({
               openPanelDrawer(resolution.panelId, resolution.panelTitle)
             }
 
-            // Handle 'select' action: set pendingOptions so pills render and guard works
+            // Handle actions that return selectable options: set pendingOptions so pills render
             // Per suggestion-confirm-yes-plan.md: set pendingOptions when options are shown
-            const hasSelectOptions = resolution.action === 'select' && resolution.options && resolution.options.length > 0
+            // Phase 2b: Also include 'list_workspaces' which returns workspace pills
+            const hasSelectOptions = (
+              resolution.action === 'select' ||
+              resolution.action === 'list_workspaces'
+            ) && resolution.options && resolution.options.length > 0
             if (hasSelectOptions) {
               const newPendingOptions: PendingOptionState[] = resolution.options!.map((opt, idx) => ({
                 index: idx + 1,
@@ -2504,8 +2520,17 @@ function ChatNavigationPanelContent({
       // ---------------------------------------------------------------------------
       // Update pending options based on result
       // ---------------------------------------------------------------------------
-      // Handle both 'select' (disambiguation) and 'clarify_type' (entry vs workspace conflict)
-      if ((resolution.action === 'select' || resolution.action === 'clarify_type') && resolution.options && resolution.options.length > 0) {
+      // Handle actions that return selectable options:
+      // - 'select': disambiguation options
+      // - 'clarify_type': entry vs workspace conflict
+      // - 'list_workspaces': workspace list with selectable pills (Phase 2b)
+      const hasSelectableOptions = (
+        resolution.action === 'select' ||
+        resolution.action === 'clarify_type' ||
+        resolution.action === 'list_workspaces'
+      ) && resolution.options && resolution.options.length > 0
+
+      if (hasSelectableOptions && resolution.options) {
         // Store new pending options for hybrid selection
         const newPendingOptions: PendingOptionState[] = resolution.options.map((opt, idx) => ({
           index: idx + 1,
@@ -2538,7 +2563,7 @@ function ChatNavigationPanelContent({
           'delete_workspace',
           'open_panel_drawer',
           'confirm_delete',
-          'list_workspaces',
+          // Note: list_workspaces removed - it now stores its own options (Phase 2b)
         ]
         const shouldClear = resolution.action && explicitActionsThatClearOptions.includes(resolution.action)
 
@@ -2730,10 +2755,14 @@ function ChatNavigationPanelContent({
           messageId: assistantMessageId,
           timestamp: Date.now(),
         })
-      } else {
-        // Clear clarification if this is a different response
+      } else if (resolution.success && resolution.action !== 'error' && resolution.action !== 'answer_from_context') {
+        // Only clear clarification when an explicit action is executed (navigation, panel open, etc.)
+        // NOT on every response without metadata - that would break the clarification flow
+        // The clarification-mode intercept handles clearing in executeNextAction() and handleRejection()
         setLastClarification(null)
       }
+      // If response is an error or answer_from_context without clarification metadata,
+      // preserve lastClarification so user can still reply to the original clarification
 
       // Store lastPreview for "show all" shortcut
       if (resolution.viewPanelContent && resolution.previewItems && resolution.previewItems.length > 0) {
