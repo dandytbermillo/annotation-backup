@@ -65,6 +65,8 @@ export interface LastSuggestionState {
 export interface LastClarificationState {
   type: 'notes_scope'
   originalIntent: 'list_open_notes'
+  /** Generic action to execute when user affirms (Phase 2a deterministic handler) */
+  nextAction: 'show_workspace_picker'
   messageId: string
   timestamp: number
 }

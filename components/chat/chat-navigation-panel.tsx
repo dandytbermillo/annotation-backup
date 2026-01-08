@@ -221,37 +221,31 @@ function matchesShowAllHeuristic(input: string): boolean {
 }
 
 /**
- * Check if input is a rejection phrase.
- * Per suggestion-rejection-handling-plan.md:
- * - Exact: "no", "nope", "not that", "cancel", "never mind"
- * - Or it begins with "no,"
- */
-function isRejectionPhrase(input: string): boolean {
-  const normalized = input.toLowerCase().trim()
-
-  // Exact rejection phrases
-  const rejectionPhrases = ['no', 'nope', 'not that', 'cancel', 'never mind', 'nevermind']
-  if (rejectionPhrases.includes(normalized)) {
-    return true
-  }
-
-  // Begins with "no,"
-  if (normalized.startsWith('no,')) {
-    return true
-  }
-
-  return false
-}
-
-/**
  * Check if input is an affirmation phrase.
- * Per suggestion-fallback-polish-plan.md:
- * Used to detect "yes" when there's no active suggestion to confirm.
+ * Per Phase 2a.3: Expanded affirmation patterns for clarification responses.
+ * Categories:
+ * - Explicit: yes, yeah, yep, yup, sure, ok, okay
+ * - Polite: please, go ahead, do it, proceed
+ * - Confirmations: correct, right, exactly, confirm, confirmed
+ * - Casual: k, ya, ye, yea, mhm, uh huh
+ * All patterns support optional "please" suffix.
  */
 function isAffirmationPhrase(input: string): boolean {
   const normalized = input.toLowerCase().trim()
-  const affirmationPhrases = ['yes', 'yeah', 'yep', 'yup', 'sure', 'ok', 'okay']
-  return affirmationPhrases.includes(normalized)
+  // Core affirmations with optional "please" suffix
+  const AFFIRMATION_PATTERN = /^(yes|yeah|yep|yup|sure|ok|okay|k|ya|ye|yea|mhm|uh\s*huh|go ahead|do it|proceed|correct|right|exactly|confirm|confirmed)(\s+please)?$/
+  return AFFIRMATION_PATTERN.test(normalized)
+}
+
+/**
+ * Check if input is a rejection phrase.
+ * Per Phase 2a.3: Rejection patterns for clarification responses.
+ */
+function isRejectionPhrase(input: string): boolean {
+  const normalized = input.toLowerCase().trim()
+  // Rejection patterns: explicit no, cancel intent, soft rejection
+  const REJECTION_PATTERN = /^(no|nope|nah|negative|cancel|stop|abort|never\s*mind|forget it|don't|not now|skip|pass|wrong|incorrect|not that)$/
+  return REJECTION_PATTERN.test(normalized)
 }
 
 /**
@@ -1622,90 +1616,185 @@ function ChatNavigationPanelContent({
       }
 
       // ---------------------------------------------------------------------------
-      // Phase 2a: Handle "yes" to notes-scope clarification (show workspace picker)
+      // Phase 2a.3: CLARIFICATION-MODE INTERCEPT
+      // When clarification is active, ALL input goes through this handler.
+      // No fall-through to normal routing - prevents "please do" being treated as new command.
       // ---------------------------------------------------------------------------
-      if (!lastSuggestion && lastClarification?.type === 'notes_scope' && isAffirmationPhrase(trimmedInput)) {
+      if (!lastSuggestion && lastClarification?.nextAction) {
         void debugLog({
           component: 'ChatNavigation',
-          action: 'notes_scope_clarification_yes',
-          metadata: { userInput: trimmedInput, clarificationType: lastClarification.type },
+          action: 'clarification_mode_intercept',
+          metadata: { userInput: trimmedInput, nextAction: lastClarification.nextAction },
         })
 
-        // Clear clarification state
-        setLastClarification(null)
+        // Helper: Execute nextAction (show workspace picker for notes_scope)
+        const executeNextAction = async () => {
+          // Clear clarification state
+          setLastClarification(null)
 
-        // Fetch workspaces for current entry (priority: entry workspaces → recent → all)
-        // Uses /api/dashboard/workspaces/search which handles both cases
-        try {
-          const workspacesUrl = currentEntryId
-            ? `/api/dashboard/workspaces/search?entryId=${currentEntryId}&limit=10`
-            : `/api/dashboard/workspaces/search?limit=10`
-          const workspacesResponse = await fetch(workspacesUrl)
-          if (!workspacesResponse.ok) {
-            throw new Error('Failed to fetch workspaces')
-          }
-          const workspacesData = await workspacesResponse.json()
-          const workspaces = workspacesData.workspaces || []
+          // Fetch workspaces for current entry (priority: entry workspaces → recent → all)
+          try {
+            const workspacesUrl = currentEntryId
+              ? `/api/dashboard/workspaces/search?entryId=${currentEntryId}&limit=10`
+              : `/api/dashboard/workspaces/search?limit=10`
+            const workspacesResponse = await fetch(workspacesUrl)
+            if (!workspacesResponse.ok) {
+              throw new Error('Failed to fetch workspaces')
+            }
+            const workspacesData = await workspacesResponse.json()
+            const workspaces = workspacesData.workspaces || []
 
-          if (workspaces.length === 0) {
-            // No workspaces available
-            const noWorkspacesMessage: ChatMessage = {
-              id: `assistant-${Date.now()}`,
+            if (workspaces.length === 0) {
+              const noWorkspacesMessage: ChatMessage = {
+                id: `assistant-${Date.now()}`,
+                role: 'assistant',
+                content: 'No workspaces found. Create a workspace first to view open notes.',
+                timestamp: new Date(),
+                isError: false,
+              }
+              addMessage(noWorkspacesMessage)
+              return
+            }
+
+            // Present workspace options as pills
+            const messageId = `assistant-${Date.now()}`
+            const workspaceOptions: SelectionOption[] = workspaces.map((ws: { id: string; name: string; isDefault?: boolean; noteCount?: number; entryName?: string }) => ({
+              type: 'workspace' as const,
+              id: ws.id,
+              label: ws.isDefault ? `${ws.name} (Default)` : ws.name,
+              sublabel: ws.entryName || `${ws.noteCount || 0} notes`,
+              data: ws,
+            }))
+
+            const workspacePickerMessage: ChatMessage = {
+              id: messageId,
               role: 'assistant',
-              content: 'No workspaces found. Create a workspace first to view open notes.',
+              content: 'Sure — which workspace?',
               timestamp: new Date(),
               isError: false,
+              options: workspaceOptions,
             }
-            addMessage(noWorkspacesMessage)
-            setIsLoading(false)
-            return
+            addMessage(workspacePickerMessage)
+
+            // Set pending options for selection handling
+            setPendingOptions(workspaceOptions.map((opt, idx) => ({
+              index: idx + 1,
+              ...opt,
+            })) as PendingOptionState[])
+            setPendingOptionsMessageId(messageId)
+            setPendingOptionsGraceCount(0)
+            setNotesScopeFollowUpActive(true)
+          } catch (error) {
+            console.error('[ChatNavigation] Failed to fetch workspaces for clarification:', error)
+            const errorMessage: ChatMessage = {
+              id: `assistant-${Date.now()}`,
+              role: 'assistant',
+              content: 'Sorry, I couldn\'t load workspaces. Please try again.',
+              timestamp: new Date(),
+              isError: true,
+            }
+            addMessage(errorMessage)
           }
+        }
 
-          // Present workspace options as pills
-          const messageId = `assistant-${Date.now()}`
-          const workspaceOptions: SelectionOption[] = workspaces.map((ws: { id: string; name: string; isDefault?: boolean; noteCount?: number; entryName?: string }) => ({
-            type: 'workspace' as const,
-            id: ws.id,
-            label: ws.isDefault ? `${ws.name} (Default)` : ws.name,
-            sublabel: ws.entryName || `${ws.noteCount || 0} notes`,
-            data: ws,
-          }))
-
-          const workspacePickerMessage: ChatMessage = {
-            id: messageId,
-            role: 'assistant',
-            content: 'Sure — which workspace?',
-            timestamp: new Date(),
-            isError: false,
-            options: workspaceOptions,
-          }
-          addMessage(workspacePickerMessage)
-
-          // Set pending options for selection handling
-          setPendingOptions(workspaceOptions.map((opt, idx) => ({
-            index: idx + 1,
-            ...opt,
-          })) as PendingOptionState[])
-          setPendingOptionsMessageId(messageId)
-          setPendingOptionsGraceCount(0)
-          // Phase 2a: Mark that this workspace selection should auto-answer with open notes
-          setNotesScopeFollowUpActive(true)
-
-          setIsLoading(false)
-          return
-        } catch (error) {
-          console.error('[ChatNavigation] Failed to fetch workspaces for clarification:', error)
-          const errorMessage: ChatMessage = {
+        // Helper: Handle rejection (cancel clarification)
+        const handleRejection = () => {
+          setLastClarification(null)
+          const cancelMessage: ChatMessage = {
             id: `assistant-${Date.now()}`,
             role: 'assistant',
-            content: 'Sorry, I couldn\'t load workspaces. Please try again.',
+            content: 'Okay — what would you like instead?',
             timestamp: new Date(),
-            isError: true,
+            isError: false,
           }
-          addMessage(errorMessage)
+          addMessage(cancelMessage)
+        }
+
+        // Helper: Handle unclear response (re-ask clarification)
+        const handleUnclear = () => {
+          // Keep clarification state active
+          const reaskMessage: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: 'I didn\'t quite catch that. Would you like to open a workspace to see your notes? (yes/no)',
+            timestamp: new Date(),
+            isError: false,
+          }
+          addMessage(reaskMessage)
+        }
+
+        // Tier 1: Local affirmation check
+        if (isAffirmationPhrase(trimmedInput)) {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'clarification_tier1_affirmation',
+            metadata: { userInput: trimmedInput },
+          })
+          await executeNextAction()
           setIsLoading(false)
           return
         }
+
+        // Tier 1b: Local rejection check
+        if (isRejectionPhrase(trimmedInput)) {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'clarification_tier1_rejection',
+            metadata: { userInput: trimmedInput },
+          })
+          handleRejection()
+          setIsLoading(false)
+          return
+        }
+
+        // Tier 2: LLM interpretation for unclear responses
+        // Call API with clarification-mode flag to get YES/NO/UNCLEAR interpretation
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'clarification_tier2_llm',
+          metadata: { userInput: trimmedInput },
+        })
+
+        try {
+          const interpretResponse = await fetch('/api/chat/navigate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message: trimmedInput,
+              clarificationMode: true,  // Special flag for clarification interpretation
+              clarificationQuestion: 'Would you like to open a workspace to see your notes?',
+            }),
+          })
+
+          if (interpretResponse.ok) {
+            const interpretResult = await interpretResponse.json()
+            const interpretation = interpretResult.clarificationInterpretation
+
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'clarification_tier2_result',
+              metadata: { interpretation },
+            })
+
+            if (interpretation === 'YES') {
+              await executeNextAction()
+            } else if (interpretation === 'NO') {
+              handleRejection()
+            } else {
+              // UNCLEAR or missing
+              handleUnclear()
+            }
+          } else {
+            // API error - treat as unclear
+            handleUnclear()
+          }
+        } catch (error) {
+          console.error('[ChatNavigation] Clarification interpretation failed:', error)
+          handleUnclear()
+        }
+
+        setIsLoading(false)
+        return  // IMPORTANT: No fall-through to normal routing
       }
 
       // ---------------------------------------------------------------------------
@@ -2110,6 +2199,8 @@ function ChatNavigationPanelContent({
             chatContext,
             // UI context for current screen visibility
             uiContext,
+            // Phase 2a: Clarification context for "yes please" / affirmation handling
+            lastClarification,
             // Full chat history for need_context retrieval loop
             // Per llm-context-retrieval-general-answers-plan.md
             fullChatHistory: messages.slice(-50).map(m => ({
@@ -2124,9 +2215,15 @@ function ChatNavigationPanelContent({
         throw new Error('Failed to process request')
       }
 
-      const { resolution, suggestions: rawSuggestions } = (await response.json()) as {
+      const { resolution, suggestions: rawSuggestions, clarification: apiClarification } = (await response.json()) as {
         resolution: IntentResolutionResult
         suggestions?: ChatSuggestions
+        // Phase 2a.3: Clarification metadata from API
+        clarification?: {
+          id: string
+          nextAction: 'show_workspace_picker'
+          originalIntent: string
+        }
       }
 
       // Filter out rejected candidates from suggestions
@@ -2624,12 +2721,12 @@ function ChatNavigationPanelContent({
         setLastSuggestion(null)
       }
 
-      // Phase 2a: Track notes-scope clarification for "yes" follow-up
-      const NOTES_SCOPE_CLARIFICATION = 'Notes live inside workspaces'
-      if (messageContent.includes(NOTES_SCOPE_CLARIFICATION)) {
+      // Phase 2a.3: Set clarification from API metadata (not text matching)
+      if (apiClarification) {
         setLastClarification({
-          type: 'notes_scope',
-          originalIntent: 'list_open_notes',
+          type: apiClarification.id as 'notes_scope',
+          originalIntent: apiClarification.originalIntent as 'list_open_notes',
+          nextAction: apiClarification.nextAction,
           messageId: assistantMessageId,
           timestamp: Date.now(),
         })

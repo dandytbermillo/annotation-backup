@@ -233,6 +233,57 @@ async function fetchEntryName(entryId: string): Promise<string | undefined> {
 }
 
 // =============================================================================
+// Clarification Interpretation (Phase 2a.3)
+// =============================================================================
+
+/**
+ * Interpret user reply to a clarification question as YES/NO/UNCLEAR.
+ * Uses a dedicated LLM prompt constrained to only return one of those values.
+ */
+async function interpretClarificationReply(
+  client: OpenAI,
+  userReply: string,
+  clarificationQuestion: string
+): Promise<'YES' | 'NO' | 'UNCLEAR'> {
+  try {
+    const completion = await client.chat.completions.create({
+      model: LLM_CONFIG.model,
+      temperature: 0,
+      max_tokens: 10,
+      messages: [
+        {
+          role: 'system',
+          content: `You interpret user responses to clarification questions.
+Respond with EXACTLY one word: YES, NO, or UNCLEAR.
+
+- YES: User is affirming, agreeing, or wants to proceed (e.g., "yes", "sure", "please do", "go ahead", "I guess so")
+- NO: User is declining, rejecting, or wants to cancel (e.g., "no", "nope", "cancel", "never mind", "not really")
+- UNCLEAR: User's intent is ambiguous or they're asking a different question
+
+Do not explain. Just output YES, NO, or UNCLEAR.`,
+        },
+        {
+          role: 'user',
+          content: `Clarification question: "${clarificationQuestion}"
+User replied: "${userReply}"
+
+Is this YES, NO, or UNCLEAR?`,
+        },
+      ],
+    })
+
+    const content = completion.choices[0]?.message?.content?.trim().toUpperCase()
+    if (content === 'YES' || content === 'NO' || content === 'UNCLEAR') {
+      return content
+    }
+    return 'UNCLEAR'
+  } catch (error) {
+    console.error('[ChatNavigation] Clarification interpretation error:', error)
+    return 'UNCLEAR'
+  }
+}
+
+// =============================================================================
 // POST /api/chat/navigate
 //
 // Combined endpoint: parse intent + resolve to actionable data
@@ -248,13 +299,30 @@ export async function POST(request: NextRequest) {
 
     // Parse request body
     const body = await request.json()
-    const { message, currentEntryId, currentWorkspaceId, context } = body
+    const { message, currentEntryId, currentWorkspaceId, context, clarificationMode, clarificationQuestion } = body
 
     if (!message || typeof message !== 'string' || message.trim().length === 0) {
       return NextResponse.json(
         { error: 'Message is required' },
         { status: 400 }
       )
+    }
+
+    // Phase 2a.3: Handle clarification-mode interpretation
+    // When clarificationMode is true, just interpret the reply as YES/NO/UNCLEAR
+    if (clarificationMode && clarificationQuestion) {
+      const client = getOpenAIClient()
+      const interpretation = await interpretClarificationReply(client, message, clarificationQuestion)
+
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'clarification_interpretation',
+        metadata: { userReply: message, clarificationQuestion, interpretation },
+      })
+
+      return NextResponse.json({
+        clarificationInterpretation: interpretation,
+      })
     }
 
     const userMessage = message.trim()
@@ -471,16 +539,17 @@ export async function POST(request: NextRequest) {
     // Only apply typo fallback when:
     // 1. LLM returned 'unsupported' intent (not a valid intent that failed resolution)
     // 2. AND input is not a question (questions should get LLM's unsupported reason, not typo suggestions)
-    if (!resolution.success && resolution.action === 'error' && intent.intent === 'unsupported' && !isQuestionLike) {
+    // 3. AND no active clarification (Phase 2a.3: let LLM interpret clarification replies)
+    if (!resolution.success && resolution.action === 'error' && intent.intent === 'unsupported' && !isQuestionLike && !context?.lastClarification) {
       suggestions = getSuggestions(userMessage, suggestionContext)
       if (suggestions) {
         // Replace generic unsupported message with friendly suggestion
         resolution.message = suggestions.message
       }
-    } else if (!hasVerb && !isVerifyQuery && !isQuestionLike && !context?.pendingOptions?.length) {
+    } else if (!hasVerb && !isVerifyQuery && !isQuestionLike && !context?.pendingOptions?.length && !context?.lastClarification) {
       // If the input has no verb and is not a verify query, don't let the LLM guess.
       // Only override when the input is not an exact match to a known command.
-      // Phase 2a.2: Skip typo fallback when pendingOptions exist - let LLM handle with context
+      // Phase 2a.2: Skip typo fallback when pendingOptions or lastClarification exist - let LLM handle with context
       const typoSuggestion = getSuggestions(userMessage, suggestionContext)
       const topCandidate = typoSuggestion?.candidates[0]
       const isExactMatch = Boolean(
@@ -497,6 +566,25 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Phase 2a.3: Detect clarification questions and add metadata
+    // This allows frontend to set clarification state from metadata, not text matching
+    type ClarificationMetadata = {
+      id: string
+      nextAction: 'show_workspace_picker'
+      originalIntent: string
+    }
+    let clarification: ClarificationMetadata | undefined
+
+    // Detect notes-scope clarification (dashboard asking about open notes)
+    const NOTES_SCOPE_PATTERN = /notes live inside workspaces/i
+    if (resolution.message && NOTES_SCOPE_PATTERN.test(resolution.message)) {
+      clarification = {
+        id: 'notes_scope',
+        nextAction: 'show_workspace_picker',
+        originalIntent: 'list_open_notes',
+      }
+    }
+
     return NextResponse.json({
       intent,
       resolution,
@@ -510,6 +598,8 @@ export async function POST(request: NextRequest) {
           primaryAction: c.primaryAction,
         })),
       } : undefined,
+      // Phase 2a.3: Clarification metadata for deterministic handling
+      clarification,
     })
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)

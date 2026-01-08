@@ -91,7 +91,31 @@ Examples
 ### Change
 - Track when the notes-scope clarification is shown.
 - If user replies "yes" to that clarification, show workspace options instead of "Yes to which option?"
+- Use a generic clarification contract: lastClarification.nextAction determines the local follow-up (not a hard-coded notes-specific check).
+- Accept bounded affirmations locally (e.g., yes/yeah/yep/sure/ok/okay/go ahead, optional "please").
+- Suggested pattern: ^(yes|yeah|yep|sure|ok|okay|go ahead)(\s+please)?$
+- If reply is not a bounded affirmation, route to LLM with clarification context (no typo fallback).
 - If a clarification is active and the reply is not an explicit selection, bypass typo fallback and route the reply to the LLM with clarification context.
+
+### Phase 2a.3: Clarification Reply Interpretation (Local + LLM)
+
+Goal: Make clarification replies conversational without hard-coded expansion.
+
+Behavior:
+1) Local fast path:
+   - If reply matches bounded affirmation -> execute lastClarification.nextAction.
+   - If reply matches bounded rejection -> cancel clarification ("Okay — what would you like instead?").
+2) LLM fallback:
+   - For any other reply, send to LLM with clarification context.
+   - LLM returns one of: YES / NO / UNCLEAR.
+     - YES -> execute nextAction.
+     - NO -> cancel clarification.
+     - UNCLEAR -> re-ask the clarification question.
+
+Acceptance:
+- "please do" / "yes pls" / "yap" -> LLM interprets YES -> shows workspace picker.
+- "not now" -> LLM interprets NO -> "Okay — what would you like instead?"
+- "hmm" -> LLM returns UNCLEAR -> re-ask clarification.
 
 ### Workspace option source (priority)
 1. Current entry workspaces (default)
@@ -106,6 +130,7 @@ Examples
 - Dashboard: "Give me the open notes" -> clarification
 - User: "yes" -> "Sure — which workspace?" + workspace pills
 - User selects workspace -> navigates + immediate notes list
+- User: "yes please" / "please do" -> LLM interprets YES -> workspace pills
 
 ---
 
@@ -126,6 +151,8 @@ Examples
 
 ### Change
 - When pending options exist, **do not trigger typo fallback**. Route unmatched input to the LLM with pendingOptions context.
+- Also skip typo fallback when lastClarification is present; send to LLM with clarification context.
+- Typo fallback should only run when no pendingOptions and no lastClarification context exist.
 - Prevents typo suggestions from short-circuiting selection flows when the user misspells a visible option.
 
 ### Acceptance
