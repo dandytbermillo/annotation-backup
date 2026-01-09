@@ -256,9 +256,12 @@ async function interpretClarificationReply(
           content: `You interpret user responses to clarification questions.
 Respond with EXACTLY one word: YES, NO, or UNCLEAR.
 
-- YES: User is affirming, agreeing, or wants to proceed (e.g., "yes", "sure", "please do", "go ahead", "I guess so")
-- NO: User is declining, rejecting, or wants to cancel (e.g., "no", "nope", "cancel", "never mind", "not really")
-- UNCLEAR: User's intent is ambiguous or they're asking a different question
+- YES: User is affirming, agreeing, or wants to proceed. Examples:
+  - Direct: "yes", "yeah", "yep", "sure", "ok", "okay", "please do", "go ahead", "I guess so"
+  - Question-style affirmations: "can you do that?", "could you?", "would you?", "can you?", "is that possible?"
+  - These question forms mean "yes, please do it" in context
+- NO: User is declining, rejecting, or wants to cancel (e.g., "no", "nope", "cancel", "never mind", "not really", "no thanks")
+- UNCLEAR: User's intent is truly ambiguous or they're asking a completely different/unrelated question
 
 Do not explain. Just output YES, NO, or UNCLEAR.`,
         },

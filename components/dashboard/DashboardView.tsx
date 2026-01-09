@@ -27,7 +27,7 @@ import type { WorkspacePanel, PanelConfig } from "@/lib/dashboard/panel-registry
 import { snapToGrid, GRID_CELL_SIZE, GRID_GAP, GRID_OFFSET } from "@/lib/dashboard/grid-snap"
 import { cn } from "@/lib/utils"
 import { debugLog } from "@/lib/utils/debug-logger"
-import { pruneStaleWidgetStates, getAllWidgetStates } from "@/lib/widgets/widget-state-store"
+import { pruneStaleWidgetStates, getAllWidgetStates, upsertWidgetState, removeWidgetState } from "@/lib/widgets/widget-state-store"
 import { RefreshCw, ChevronRight, LayoutDashboard, Loader2 } from "lucide-react"
 import { useAutoScroll } from "@/components/canvas/use-auto-scroll"
 
@@ -206,6 +206,13 @@ export function DashboardView({
     }
     if (viewMode === 'dashboard') {
       const openDrawerTitle = drawerPanel?.title ?? drawerPanel?.panelType ?? null
+      // Phase 4: Filter out workspace widgetStates when on dashboard
+      // This prevents stale workspace data from being sent to the LLM
+      // Filter by widgetId (not instanceId prefix) to avoid hiding third-party widgets
+      const allWidgetStates = getAllWidgetStates()
+      const dashboardWidgetStates = Object.fromEntries(
+        Object.entries(allWidgetStates).filter(([, state]) => state.widgetId !== 'workspace')
+      )
       void debugLog({
         component: 'DashboardView',
         action: 'setUiContext_dashboard',
@@ -214,6 +221,9 @@ export function DashboardView({
           drawerPanelId: drawerPanel?.id,
           openDrawerTitle,
           hasDraw: !!drawerPanel,
+          allWidgetStatesCount: Object.keys(allWidgetStates).length,
+          dashboardWidgetStatesCount: Object.keys(dashboardWidgetStates).length,
+          filteredOutWorkspaceStates: Object.entries(allWidgetStates).filter(([, s]) => s.widgetId === 'workspace').map(([k]) => k),
         },
       })
       setUiContext({
@@ -230,7 +240,7 @@ export function DashboardView({
               }
             : undefined,
           focusedPanelId: activePanelId,
-          widgetStates: getAllWidgetStates(),
+          widgetStates: dashboardWidgetStates,
         },
       })
       return
@@ -248,6 +258,46 @@ export function DashboardView({
     setUiContext,
     isEntryActive,
   ])
+
+  // Phase 4: Dashboard state reporting via widgetStates
+  // Reports dashboard state for LLM context (same contract as widgets)
+  useEffect(() => {
+    // Only report in dashboard mode when entry is active
+    if (viewMode !== 'dashboard' || !isEntryActive) {
+      // Clean up when leaving dashboard mode
+      removeWidgetState(`dashboard-${entryId}`)
+      return
+    }
+
+    const openDrawerTitle = drawerPanel?.title ?? drawerPanel?.panelType ?? null
+    const widgetCount = visibleWidgets.length
+    const summary = openDrawerTitle
+      ? `${entryName} dashboard with ${widgetCount} widgets, "${openDrawerTitle}" drawer open`
+      : `${entryName} dashboard with ${widgetCount} widgets`
+
+    void debugLog({
+      component: 'DashboardView',
+      action: 'report_dashboard_widgetState',
+      metadata: { entryId, widgetCount, openDrawerTitle, summary },
+    })
+
+    upsertWidgetState({
+      _version: 1,
+      widgetId: 'dashboard',
+      instanceId: `dashboard-${entryId}`,
+      title: `${entryName} Dashboard`,
+      view: openDrawerTitle ? 'drawer' : 'main',
+      selection: openDrawerTitle ? { id: drawerPanel?.id ?? '', label: openDrawerTitle } : null,
+      summary,
+      updatedAt: Date.now(),
+      counts: { widgets: widgetCount },
+      contextTags: ['entry-dashboard', `entry-${entryId}`],
+    })
+
+    return () => {
+      removeWidgetState(`dashboard-${entryId}`)
+    }
+  }, [viewMode, entryId, entryName, visibleWidgets, drawerPanel, isEntryActive])
 
   // Snap-to-grid placeholder state
   const [snapPlaceholder, setSnapPlaceholder] = useState<{
@@ -974,6 +1024,12 @@ export function DashboardView({
   const handleWidgetDoubleClick = useCallback((panel: WorkspacePanel) => {
     setDrawerPanel(panel)
     if (isEntryActive) {
+      // Phase 4: Filter out workspace widgetStates when on dashboard (same as main effect)
+      // Filter by widgetId (not instanceId prefix) to avoid hiding third-party widgets
+      const allWidgetStates = getAllWidgetStates()
+      const dashboardWidgetStates = Object.fromEntries(
+        Object.entries(allWidgetStates).filter(([, state]) => state.widgetId !== 'workspace')
+      )
       setUiContext({
         mode: 'dashboard',
         dashboard: {
@@ -986,7 +1042,7 @@ export function DashboardView({
             type: panel.panelType,
           },
           focusedPanelId: activePanelId,
-          widgetStates: getAllWidgetStates(),
+          widgetStates: dashboardWidgetStates,
         },
       })
     }

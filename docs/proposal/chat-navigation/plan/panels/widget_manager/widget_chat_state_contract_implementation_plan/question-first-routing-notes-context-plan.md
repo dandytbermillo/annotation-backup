@@ -285,6 +285,19 @@ Acceptance:
 - "Which notes are open?" -> matches workspace widgetState + openNotes list.
 - After reload, "What widgets are visible?" should respond correctly before any interaction.
 
+### Implementation Notes (2026-01-08)
+**Status: COMPLETED**
+
+Implementation included additional fixes beyond the original plan:
+
+1. **Filtering:** Dashboard mode filters out `workspace-*` states from `getAllWidgetStates()`
+2. **Ref-based cleanup:** Workspace uses `lastWorkspaceIdRef` for guaranteed cleanup even when `currentWorkspaceId` is null
+3. **Mode guards:** `intent-prompt.ts` only includes `uiContext.workspace` and `sessionState.currentWorkspaceName` when `mode === 'workspace'`
+4. **handleWidgetDoubleClick fix:** Added filtering to drawer-opening callback (was leaking unfiltered widgetStates)
+5. **Clarification loop fix:** New questions/commands now exit clarification mode instead of getting stuck in "I didn't quite catch that" loop
+
+See: `report/2026-01-08-phase4-widgetstates-reporting-report.md`
+
 ---
 
 ## Prompt Example Additions

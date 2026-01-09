@@ -1,0 +1,30 @@
+*** Begin Patch
+*** Update File: components/dashboard/DashboardView.tsx
+@@
+     if (viewMode === 'dashboard') {
+       const openDrawerTitle = drawerPanel?.title ?? drawerPanel?.panelType ?? null
++      const allWidgetStates = getAllWidgetStates()
++      const dashboardWidgetStates = Object.fromEntries(
++        Object.entries(allWidgetStates).filter(([, state]) => state.widgetId !== 'workspace')
++      )
+       void debugLog({
+         component: 'DashboardView',
+         action: 'setUiContext_dashboard',
+         metadata: {
+           viewMode,
+@@
+       setUiContext({
+         mode: 'dashboard',
+         dashboard: {
+           entryId,
+           entryName,
+           visibleWidgets,
+@@
+           focusedPanelId: activePanelId,
+-          widgetStates: getAllWidgetStates(),
++          widgetStates: dashboardWidgetStates,
+         },
+       })
+       return
+     }
+*** End Patch

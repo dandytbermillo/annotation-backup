@@ -69,6 +69,7 @@ import {
   emitDegradedModeNotification,
 } from "@/lib/notification-center"
 import { WorkspaceToastProvider, useWorkspaceToast } from "@/components/canvas/workspace-toast"
+import { upsertWidgetState, removeWidgetState } from "@/lib/widgets/widget-state-store"
 // Entry context is now managed inside useNoteWorkspaces hook
 
 const FOLDER_CACHE_MAX_AGE_MS = 30000
@@ -1337,6 +1338,85 @@ const initialWorkspaceSyncRef = useRef(false)
     openNotesForContext,
     activeNoteId,
     setUiContext,
+    isHydrating,
+    isWorkspaceLoading,
+  ])
+
+  // Phase 4: Ref to track last workspace ID for guaranteed cleanup
+  // When switching to dashboard, currentWorkspaceId may become null before cleanup runs
+  // This ref ensures we can always clean up the correct workspace state
+  const lastWorkspaceIdRef = useRef<string | null>(null)
+
+  // Phase 4: Workspace state reporting via widgetStates
+  // Reports workspace state for LLM context (same contract as widgets)
+  useEffect(() => {
+    const currentWorkspaceId = noteWorkspaceState.currentWorkspaceId ?? openNotesWorkspaceId
+
+    // Clean up when leaving workspace mode (isHidden) or inactive
+    // Use the ref to ensure cleanup even if currentWorkspaceId is null
+    if (isHidden || !isEntryActive) {
+      if (lastWorkspaceIdRef.current) {
+        void debugLog({
+          component: 'AnnotationAppShell',
+          action: 'cleanup_workspace_widgetState',
+          metadata: { lastWorkspaceId: lastWorkspaceIdRef.current, isHidden, isEntryActive },
+        })
+        removeWidgetState(`workspace-${lastWorkspaceIdRef.current}`)
+        lastWorkspaceIdRef.current = null
+      }
+      return
+    }
+
+    // No workspace ID available yet
+    if (!currentWorkspaceId) {
+      return
+    }
+
+    // Track the workspace ID when active (for cleanup)
+    lastWorkspaceIdRef.current = currentWorkspaceId
+
+    const noteCount = openNotesForContext.length
+    const activeNoteName = openNotesForContext.find(n => n.active)?.title ?? null
+    const isLoading = isHydrating || isWorkspaceLoading
+
+    const summary = isLoading
+      ? `${noteWorkspaceStatusLabel} loading...`
+      : noteCount === 0
+        ? `${noteWorkspaceStatusLabel} with no open notes`
+        : activeNoteName
+          ? `${noteWorkspaceStatusLabel} with ${noteCount} open note${noteCount !== 1 ? 's' : ''}, active: "${activeNoteName}"`
+          : `${noteWorkspaceStatusLabel} with ${noteCount} open note${noteCount !== 1 ? 's' : ''}`
+
+    void debugLog({
+      component: 'AnnotationAppShell',
+      action: 'report_workspace_widgetState',
+      metadata: { currentWorkspaceId, noteCount, activeNoteName, summary, isLoading },
+    })
+
+    upsertWidgetState({
+      _version: 1,
+      widgetId: 'workspace',
+      instanceId: `workspace-${currentWorkspaceId}`,
+      title: noteWorkspaceStatusLabel,
+      view: isLoading ? 'loading' : 'canvas',
+      selection: activeNoteName ? { id: activeNoteId ?? '', label: activeNoteName } : null,
+      summary,
+      updatedAt: Date.now(),
+      counts: { openNotes: noteCount },
+      contextTags: ['entry-workspace', `workspace-${currentWorkspaceId}`],
+    })
+
+    return () => {
+      removeWidgetState(`workspace-${currentWorkspaceId}`)
+    }
+  }, [
+    isHidden,
+    isEntryActive,
+    noteWorkspaceState.currentWorkspaceId,
+    openNotesWorkspaceId,
+    noteWorkspaceStatusLabel,
+    openNotesForContext,
+    activeNoteId,
     isHydrating,
     isWorkspaceLoading,
   ])

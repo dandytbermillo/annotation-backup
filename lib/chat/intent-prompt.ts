@@ -216,12 +216,20 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
     IMPORTANT:
       - Only use this intent for questions that can be answered from chatContext or uiContext
       - If chatContext lacks the needed info, use need_context to request more
-      - If the question is about what's currently visible on screen, use uiContext
+      - If the question is about what's currently visible on screen, use uiContext and widgetStates
       - This intent has NO side effects - it only returns a message
       - If asked whether something is in the options/list, answer explicitly yes/no and, if no, name the available options
       - If asked about an open drawer/panel and uiContext.dashboard.openDrawer is missing, answer that no panel drawer is open
-      - For "what widgets are visible?": use widgetStates summaries or visibleWidgets list to answer
-      - For "which notes are open?" on dashboard: respond "Notes live inside workspaces. Would you like to open a workspace to see your notes?"
+      - PHASE 4 PRIORITY: For "what's visible/open" questions, prefer widgetStates summaries:
+        - Look for widgetStates with instanceIds like "dashboard-{entryId}" or "workspace-{workspaceId}"
+        - Dashboard state: use summary from dashboard widgetState (e.g., "Home dashboard with 7 widgets")
+        - Workspace state: use summary from workspace widgetState (e.g., "Workspace 6 with 3 open notes")
+        - If widgetStates missing or stale, fall back to uiContext
+      - For "what widgets are visible?": use dashboard widgetState summary first, then visibleWidgets list
+      - For "which notes are open?":
+        - If workspace widgetState exists: use its summary and openNotes count
+        - If workspace widgetState has view="loading": respond "The workspace is still loading. Please try again in a moment."
+        - If uiContext.mode is 'dashboard' (no workspace widgetState): respond "Notes live inside workspaces. Would you like to open a workspace to see your notes?"
       - For "which notes are open?" when uiContext.workspace.isStale is true: respond "The workspace is still loading. Please try again in a moment."
 
 22. **need_context** - Request more context to answer a question
@@ -710,7 +718,9 @@ export async function buildIntentMessages(
           })
         }
       }
-      if (uc.workspace) {
+      // Phase 4: Only include workspace info when mode is 'workspace'
+      // This prevents stale workspace data from confusing the LLM on dashboard
+      if (uc.mode === 'workspace' && uc.workspace) {
         contextBlock += `  workspace:\n`
         if (uc.workspace.workspaceName) {
           contextBlock += `    workspaceName: "${uc.workspace.workspaceName}"\n`
@@ -737,7 +747,9 @@ export async function buildIntentMessages(
       if (ss.currentEntryName) {
         contextBlock += `  currentEntryName: "${ss.currentEntryName}"\n`
       }
-      if (ss.currentWorkspaceName) {
+      // Phase 4: Only include currentWorkspaceName when in workspace mode
+      // Prevents LLM from inferring workspace info when on dashboard
+      if (ss.currentViewMode === 'workspace' && ss.currentWorkspaceName) {
         contextBlock += `  currentWorkspaceName: "${ss.currentWorkspaceName}"\n`
       }
       if (ss.lastAction) {

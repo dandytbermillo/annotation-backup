@@ -1633,9 +1633,19 @@ function ChatNavigationPanelContent({
 
       // ---------------------------------------------------------------------------
       // Phase 2a.3: CLARIFICATION-MODE INTERCEPT
-      // When clarification is active, ALL input goes through this handler.
-      // No fall-through to normal routing - prevents "please do" being treated as new command.
+      // When clarification is active, ALL input goes through this handler first.
+      // Clarification handling runs BEFORE new-intent detection to avoid premature exit.
       // ---------------------------------------------------------------------------
+      // Pattern definitions for new-intent detection (used in UNCLEAR fallback)
+      const QUESTION_START_PATTERN = /^(what|which|where|when|how|why|who|is|are|do|does|did|can|could|should|would)\b/i
+      const COMMAND_START_PATTERN = /^(open|show|go|list|create|close|delete|rename|back|home)\b/i
+      const isNewQuestionOrCommand =
+        QUESTION_START_PATTERN.test(trimmedInput) ||
+        COMMAND_START_PATTERN.test(trimmedInput) ||
+        trimmedInput.endsWith('?')
+
+      // Run clarification handler FIRST when clarification is active
+      // Only fall back to normal routing if interpreter returns UNCLEAR AND input looks like new intent
       if (!lastSuggestion && lastClarification?.nextAction) {
         void debugLog({
           component: 'ChatNavigation',
@@ -1726,9 +1736,20 @@ function ChatNavigationPanelContent({
           addMessage(cancelMessage)
         }
 
-        // Helper: Handle unclear response (re-ask clarification)
-        const handleUnclear = () => {
-          // Keep clarification state active
+        // Helper: Handle unclear response
+        // Returns true if we should fall through to normal routing, false if handled here
+        const handleUnclear = (): boolean => {
+          // If input looks like a new question/command, exit clarification and route normally
+          if (isNewQuestionOrCommand) {
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'clarification_exit_unclear_new_intent',
+              metadata: { userInput: trimmedInput },
+            })
+            setLastClarification(null)
+            return true  // Fall through to normal routing
+          }
+          // Otherwise re-ask clarification
           const reaskMessage: ChatMessage = {
             id: `assistant-${Date.now()}`,
             role: 'assistant',
@@ -1737,6 +1758,7 @@ function ChatNavigationPanelContent({
             isError: false,
           }
           addMessage(reaskMessage)
+          return false  // Handled here, don't fall through
         }
 
         // Tier 1: Local affirmation check
@@ -1794,23 +1816,37 @@ function ChatNavigationPanelContent({
 
             if (interpretation === 'YES') {
               await executeNextAction()
+              setIsLoading(false)
+              return
             } else if (interpretation === 'NO') {
               handleRejection()
+              setIsLoading(false)
+              return
             } else {
-              // UNCLEAR or missing
-              handleUnclear()
+              // UNCLEAR or missing - check if we should fall through to normal routing
+              if (!handleUnclear()) {
+                setIsLoading(false)
+                return
+              }
+              // handleUnclear returned true - fall through to normal routing below
             }
           } else {
             // API error - treat as unclear
-            handleUnclear()
+            if (!handleUnclear()) {
+              setIsLoading(false)
+              return
+            }
+            // handleUnclear returned true - fall through to normal routing below
           }
         } catch (error) {
           console.error('[ChatNavigation] Clarification interpretation failed:', error)
-          handleUnclear()
+          if (!handleUnclear()) {
+            setIsLoading(false)
+            return
+          }
+          // handleUnclear returned true - fall through to normal routing below
         }
-
-        setIsLoading(false)
-        return  // IMPORTANT: No fall-through to normal routing
+        // If we reach here, handleUnclear returned true - continue to normal routing
       }
 
       // ---------------------------------------------------------------------------
