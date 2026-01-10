@@ -347,6 +347,12 @@ export async function POST(request: NextRequest) {
     } : undefined
 
     // DEBUG: Log context received from client
+    console.log('[ChatNavigateAPI] context_received:', {
+      chatContextLastOpenedPanel: context?.chatContext?.lastOpenedPanel?.title ?? null,
+      uiContextOpenDrawer: context?.uiContext?.dashboard?.openDrawer?.title ?? null,
+      uiContextOpenDrawerId: context?.uiContext?.dashboard?.openDrawer?.panelId ?? null,
+      uiContextMode: context?.uiContext?.mode ?? null,
+    })
     void debugLog({
       component: 'ChatNavigateAPI',
       action: 'context_received',
@@ -395,6 +401,13 @@ export async function POST(request: NextRequest) {
     }
 
     let intent: IntentResponse = llmResult.intent
+
+    // DEBUG: Log LLM response for "what panel is open?" questions
+    console.log('[ChatNavigateAPI] LLM_intent_response:', {
+      intent: intent.intent,
+      contextAnswer: intent.args?.contextAnswer ?? null,
+      userMessage,
+    })
 
     // Step 1.5: Handle need_context loop
     // Per llm-context-retrieval-general-answers-plan.md:
@@ -483,6 +496,8 @@ export async function POST(request: NextRequest) {
       homeEntryId,
       sessionState: conversationContext?.sessionState,
       visiblePanels: context?.visiblePanels,
+      // Visible widgets with panel IDs for exact-match resolution (Step 1 of ambiguity guard)
+      visibleWidgets: context?.uiContext?.dashboard?.visibleWidgets,
       // Panel write confirmation bypass (from confirm_panel_write flow)
       bypassPanelWriteConfirmation: context?.bypassPanelWriteConfirmation,
       pendingPanelIntent: context?.pendingPanelIntent,

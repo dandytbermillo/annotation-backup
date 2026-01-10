@@ -653,9 +653,9 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
 
   const selectOption = useCallback(
     async (option: {
-      type: 'workspace' | 'note' | 'entry' | 'confirm_delete' | 'quick_links_panel' | 'confirm_panel_write'
+      type: 'workspace' | 'note' | 'entry' | 'confirm_delete' | 'quick_links_panel' | 'confirm_panel_write' | 'panel_drawer'
       id: string
-      data: WorkspaceMatch | NoteMatch | EntryMatch | (WorkspaceMatch & { pendingDelete?: boolean; pendingNewName?: string }) | { panelId: string; badge: string; panelType: 'quick_links' } | { panelId: string; intentName: string; params: Record<string, unknown> }
+      data: WorkspaceMatch | NoteMatch | EntryMatch | (WorkspaceMatch & { pendingDelete?: boolean; pendingNewName?: string }) | { panelId: string; badge: string; panelType: 'quick_links' } | { panelId: string; intentName: string; params: Record<string, unknown> } | { panelId: string; panelTitle: string; panelType: string }
     }): Promise<ChatNavigationResult> => {
       switch (option.type) {
         case 'workspace':
@@ -739,6 +739,22 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
             success: true,
             message: 'Executing action...',
             action: 'selected',
+          }
+        case 'panel_drawer':
+          // User selected a panel from disambiguation - open it in drawer
+          // Uses existing 'open-panel-drawer' event that DashboardView already listens to
+          const drawerData = option.data as { panelId: string; panelTitle: string; panelType: string }
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('open-panel-drawer', {
+              detail: {
+                panelId: drawerData.panelId,
+              },
+            }))
+          }
+          return {
+            success: true,
+            message: `Opening ${drawerData.panelTitle}...`,
+            action: 'navigated',
           }
         default:
           return {

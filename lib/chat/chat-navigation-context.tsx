@@ -33,12 +33,18 @@ export interface PanelIntentData {
   params: Record<string, unknown>
 }
 
+export interface PanelDrawerData {
+  panelId: string
+  panelTitle: string
+  panelType: string
+}
+
 export interface SelectionOption {
-  type: 'workspace' | 'note' | 'entry' | 'confirm_delete' | 'quick_links_panel' | 'confirm_panel_write'
+  type: 'workspace' | 'note' | 'entry' | 'confirm_delete' | 'quick_links_panel' | 'confirm_panel_write' | 'panel_drawer'
   id: string
   label: string
   sublabel?: string
-  data: WorkspaceMatch | NoteMatch | EntryMatch | QuickLinksPanelData | PanelIntentData
+  data: WorkspaceMatch | NoteMatch | EntryMatch | QuickLinksPanelData | PanelIntentData | PanelDrawerData
 }
 
 /** Suggestion candidate for typo fallback */

@@ -2221,6 +2221,12 @@ function ChatNavigationPanelContent({
 
       // Build chat context for LLM clarification answers (per llm-chat-context-first-plan.md)
       // DEBUG: Trace uiContext to diagnose stale closure issue
+      console.log('[ChatNavigation] sendMessage_uiContext:', {
+        mode: uiContext?.mode,
+        openDrawer: uiContext?.dashboard?.openDrawer?.title,
+        openDrawerId: uiContext?.dashboard?.openDrawer?.panelId,
+        hasUiContext: !!uiContext,
+      })
       void debugLog({
         component: 'ChatNavigation',
         action: 'sendMessage_uiContext',

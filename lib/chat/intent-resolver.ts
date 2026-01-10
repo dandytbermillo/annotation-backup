@@ -94,7 +94,7 @@ export interface IntentResolutionResult {
 
   // For select (multiple matches) and list_workspaces
   options?: Array<{
-    type: 'workspace' | 'note' | 'entry' | 'confirm_delete' | 'quick_links_panel' | 'confirm_panel_write'
+    type: 'workspace' | 'note' | 'entry' | 'confirm_delete' | 'quick_links_panel' | 'confirm_panel_write' | 'panel_drawer'
     id: string
     label: string
     sublabel?: string
@@ -2354,13 +2354,31 @@ async function resolvePanelIntent(
   }
 
   const requestedMode = typeof resolvedParams?.mode === 'string' ? resolvedParams.mode : undefined
-  const isListDrawerCandidate =
+
+  // Check if this is a "show/open" intent that should open a drawer
+  // Known patterns: recent + list_recent, quick-links-* + show_links
+  // For unknown panelIds: treat "show" or "open" intents as drawer candidates
+  // Use startsWith/includes for more lenient matching (e.g., "open_panel" matches "open")
+  const isOpenIntent = ['show', 'open', 'list', 'view'].some(
+    verb => resolvedIntentName.startsWith(verb) || resolvedIntentName.includes(verb)
+  )
+  const isKnownDrawerPattern =
     (panelId === 'recent' && resolvedIntentName === 'list_recent') ||
     (panelId.startsWith('quick-links-') && resolvedIntentName === 'show_links')
 
+  // For unknown panelIds without manifests, try dynamic drawer resolution
+  const isUnknownPanelId = panelId !== 'recent' && !panelId.startsWith('quick-links-')
+  const isListDrawerCandidate = isKnownDrawerPattern || (isUnknownPanelId && isOpenIntent)
+
   // Resolve panel instance for drawer usage (current entry dashboard)
-  const resolveDrawerPanelTarget = async (): Promise<{ panelId: string; panelTitle: string; semanticPanelId: string } | null> => {
-    if (!context.currentEntryId) return null
+  type DrawerResolutionResult =
+    | { status: 'found'; panelId: string; panelTitle: string; semanticPanelId: string }
+    | { status: 'confirm'; panelId: string; panelTitle: string; panelType: string; semanticPanelId: string }
+    | { status: 'multiple'; panels: Array<{ id: string; title: string; panel_type: string }> }
+    | { status: 'not_found' }
+
+  const resolveDrawerPanelTarget = async (): Promise<DrawerResolutionResult> => {
+    if (!context.currentEntryId) return { status: 'not_found' }
 
     const dashboardResult = await serverPool.query(
       `SELECT id FROM note_workspaces
@@ -2369,7 +2387,7 @@ async function resolvePanelIntent(
       [context.currentEntryId, context.userId]
     )
 
-    if (dashboardResult.rows.length === 0) return null
+    if (dashboardResult.rows.length === 0) return { status: 'not_found' }
 
     const dashboardWorkspaceId = dashboardResult.rows[0].id
 
@@ -2385,18 +2403,56 @@ async function resolvePanelIntent(
         [dashboardWorkspaceId]
       )
 
-      if (recentResult.rows.length === 0) return null
+      if (recentResult.rows.length === 0) return { status: 'not_found' }
 
       return {
+        status: 'found' as const,
         panelId: recentResult.rows[0].id,
         panelTitle: recentResult.rows[0].title || 'Recent',
-        // Semantic ID for action tracking
         semanticPanelId: 'recent',
       }
     }
 
-    if (panelId.startsWith('quick-links-')) {
-      const badge = panelId.replace('quick-links-', '')
+    if (panelId === 'quick-links' || panelId.startsWith('quick-links-')) {
+      const badge = panelId === 'quick-links' ? null : panelId.replace('quick-links-', '')
+
+      // If no badge specified, get all Quick Links panels for disambiguation
+      if (!badge) {
+        const allQuickLinksResult = await serverPool.query(
+          `SELECT id, title, badge, panel_type
+           FROM workspace_panels
+           WHERE workspace_id = $1
+             AND panel_type IN ('links_note', 'links_note_tiptap')
+             AND deleted_at IS NULL
+           ORDER BY badge ASC, created_at ASC`,
+          [dashboardWorkspaceId]
+        )
+
+        if (allQuickLinksResult.rows.length === 0) return { status: 'not_found' }
+
+        if (allQuickLinksResult.rows.length === 1) {
+          const row = allQuickLinksResult.rows[0]
+          const panelTitle = row.badge ? `Quick Links ${row.badge.toUpperCase()}` : (row.title || 'Quick Links')
+          return {
+            status: 'found' as const,
+            panelId: row.id,
+            panelTitle,
+            semanticPanelId: `quick-links-${row.badge?.toLowerCase() || 'd'}`,
+          }
+        }
+
+        // Multiple Quick Links → disambiguation
+        return {
+          status: 'multiple' as const,
+          panels: allQuickLinksResult.rows.map((r: { id: string; title: string; badge: string; panel_type: string }) => ({
+            id: r.id,
+            title: r.badge ? `Quick Links ${r.badge.toUpperCase()}` : (r.title || 'Quick Links'),
+            panel_type: r.panel_type,
+          })),
+        }
+      }
+
+      // Badge specified - find specific Quick Links panel
       const quickLinksResult = await serverPool.query(
         `SELECT id, title, badge
          FROM workspace_panels
@@ -2409,21 +2465,151 @@ async function resolvePanelIntent(
         [dashboardWorkspaceId, badge]
       )
 
-      if (quickLinksResult.rows.length === 0) return null
+      if (quickLinksResult.rows.length === 0) return { status: 'not_found' }
 
       const row = quickLinksResult.rows[0]
-      // Use badge-based title for user-friendly display and tracking
       const panelTitle = row.badge ? `Quick Links ${row.badge.toUpperCase()}` : (row.title || 'Quick Links')
 
       return {
+        status: 'found' as const,
         panelId: row.id,
         panelTitle,
-        // Semantic ID for action tracking (matches user query patterns like "quick-links-d")
         semanticPanelId: `quick-links-${row.badge?.toLowerCase() || 'd'}`,
       }
     }
 
-    return null
+    // Dynamic fallback: Production-style prioritized matching (Ambiguity Guard)
+    // Step 0: Exact visibleWidgets match wins (uses known panel ID from context)
+    // Step 1: Exact panel_type match
+    // Step 2: Exact title match (case-insensitive)
+    // Step 3: Multiple matches → return 'multiple' for disambiguation
+    // Step 4: Fuzzy match only if it yields exactly one result
+
+    // Step 0: Check visibleWidgets for exact title match (no DB query needed)
+    if (context.visibleWidgets && context.visibleWidgets.length > 0) {
+      const normalizedPanelId = panelId.toLowerCase().replace(/-/g, ' ')
+      const exactMatch = context.visibleWidgets.find(
+        (w) => w.title.toLowerCase() === normalizedPanelId ||
+               w.title.toLowerCase().replace(/[^a-z0-9]/g, '') === panelId.toLowerCase().replace(/[^a-z0-9]/g, '')
+      )
+      if (exactMatch) {
+        return {
+          status: 'found' as const,
+          panelId: exactMatch.id,
+          panelTitle: exactMatch.title,
+          semanticPanelId: panelId,
+        }
+      }
+    }
+
+    // Step 1: Exact panel_type match
+    const normalizedPanelType = panelId.replace(/-/g, '_').toLowerCase()
+
+    // Helper: Format panel title with badge if available (for Quick Links disambiguation)
+    const formatPanelTitle = (row: { title: string; badge?: string; panel_type: string }) => {
+      if (row.badge && (row.panel_type === 'links_note' || row.panel_type === 'links_note_tiptap')) {
+        return `Quick Links ${row.badge.toUpperCase()}`
+      }
+      return row.title || panelId
+    }
+
+    // Step 1: Try exact panel_type match
+    const exactTypeResult = await serverPool.query(
+      `SELECT id, title, panel_type, badge
+       FROM workspace_panels
+       WHERE workspace_id = $1
+         AND deleted_at IS NULL
+         AND panel_type = $2`,
+      [dashboardWorkspaceId, normalizedPanelType]
+    )
+
+    if (exactTypeResult.rows.length === 1) {
+      const row = exactTypeResult.rows[0]
+      return {
+        status: 'found' as const,
+        panelId: row.id,
+        panelTitle: formatPanelTitle(row),
+        semanticPanelId: panelId,
+      }
+    }
+
+    if (exactTypeResult.rows.length > 1) {
+      return {
+        status: 'multiple' as const,
+        panels: exactTypeResult.rows.map((r: { id: string; title: string; badge?: string; panel_type: string }) => ({
+          id: r.id,
+          title: formatPanelTitle(r),
+          panel_type: r.panel_type,
+        })),
+      }
+    }
+
+    // Step 2: Try exact title match (case-insensitive)
+    const exactTitleResult = await serverPool.query(
+      `SELECT id, title, panel_type, badge
+       FROM workspace_panels
+       WHERE workspace_id = $1
+         AND deleted_at IS NULL
+         AND LOWER(title) = LOWER($2)`,
+      [dashboardWorkspaceId, panelId]
+    )
+
+    if (exactTitleResult.rows.length === 1) {
+      const row = exactTitleResult.rows[0]
+      return {
+        status: 'found' as const,
+        panelId: row.id,
+        panelTitle: formatPanelTitle(row),
+        semanticPanelId: panelId,
+      }
+    }
+
+    if (exactTitleResult.rows.length > 1) {
+      return {
+        status: 'multiple' as const,
+        panels: exactTitleResult.rows.map((r: { id: string; title: string; badge?: string; panel_type: string }) => ({
+          id: r.id,
+          title: formatPanelTitle(r),
+          panel_type: r.panel_type,
+        })),
+      }
+    }
+
+    // Step 3: Fuzzy match - requires confirmation (never auto-open)
+    const fuzzyResult = await serverPool.query(
+      `SELECT id, title, panel_type, badge
+       FROM workspace_panels
+       WHERE workspace_id = $1
+         AND deleted_at IS NULL
+         AND title ILIKE $2`,
+      [dashboardWorkspaceId, `%${panelId}%`]
+    )
+
+    if (fuzzyResult.rows.length === 1) {
+      // Single fuzzy match: show confirm pill ("Did you mean X?")
+      const row = fuzzyResult.rows[0]
+      return {
+        status: 'confirm' as const,
+        panelId: row.id,
+        panelTitle: formatPanelTitle(row),
+        panelType: row.panel_type,
+        semanticPanelId: panelId,
+      }
+    }
+
+    if (fuzzyResult.rows.length > 1) {
+      // Multiple fuzzy matches: show disambiguation pills
+      return {
+        status: 'multiple' as const,
+        panels: fuzzyResult.rows.map((r: { id: string; title: string; badge?: string; panel_type: string }) => ({
+          id: r.id,
+          title: formatPanelTitle(r),
+          panel_type: r.panel_type,
+        })),
+      }
+    }
+
+    return { status: 'not_found' as const }
   }
 
   // Default to drawer for list-style panel intents unless:
@@ -2434,18 +2620,52 @@ async function resolvePanelIntent(
     !context.forcePreviewMode
 
   if (shouldOpenDrawer) {
-    const drawerTarget = await resolveDrawerPanelTarget()
-    if (drawerTarget) {
+    const drawerResult = await resolveDrawerPanelTarget()
+
+    if (drawerResult.status === 'found') {
       return {
         success: true,
         action: 'open_panel_drawer',
-        panelId: drawerTarget.panelId,
-        panelTitle: drawerTarget.panelTitle,
-        // Semantic ID for action tracking (e.g., "recent", "quick-links-d")
-        semanticPanelId: drawerTarget.semanticPanelId,
-        message: `Opening ${drawerTarget.panelTitle}...`,
+        panelId: drawerResult.panelId,
+        panelTitle: drawerResult.panelTitle,
+        semanticPanelId: drawerResult.semanticPanelId,
+        message: `Opening ${drawerResult.panelTitle}...`,
       }
     }
+
+    if (drawerResult.status === 'confirm') {
+      // Single fuzzy match - show confirm pill ("Did you mean X?")
+      return {
+        success: true,
+        action: 'select',
+        options: [{
+          type: 'panel_drawer' as const,
+          id: drawerResult.panelId,
+          label: drawerResult.panelTitle,
+          sublabel: drawerResult.panelType,
+          data: { panelId: drawerResult.panelId, panelTitle: drawerResult.panelTitle, panelType: drawerResult.panelType },
+        }],
+        message: `Did you mean "${drawerResult.panelTitle}"?`,
+      }
+    }
+
+    if (drawerResult.status === 'multiple') {
+      // Multiple panels match - show disambiguation pills
+      return {
+        success: true,
+        action: 'select',
+        options: drawerResult.panels.map((p: { id: string; title: string; panel_type: string }) => ({
+          type: 'panel_drawer' as const, // Panel drawer type for proper handling
+          id: p.id,
+          label: p.title,
+          sublabel: p.panel_type,
+          data: { panelId: p.id, panelTitle: p.title, panelType: p.panel_type },
+        })),
+        message: `Multiple panels match "${panelId}". Which one would you like to open?`,
+      }
+    }
+
+    // status === 'not_found' - fall through to panel registry
   }
 
   // Check if this is a write intent that needs confirmation
@@ -2502,7 +2722,10 @@ async function resolvePanelIntent(
 
   // Handle different result types from panel handlers
   if (result.items && Array.isArray(result.items)) {
-    const drawerTarget = isListDrawerCandidate ? await resolveDrawerPanelTarget() : null
+    const drawerResult = isListDrawerCandidate ? await resolveDrawerPanelTarget() : null
+    const resolvedPanelId = drawerResult?.status === 'found' ? drawerResult.panelId : undefined
+    const resolvedPanelTitle = drawerResult?.status === 'found' ? drawerResult.panelTitle : undefined
+
     // Transform panel items to ViewListItem format
     const viewItems: ViewListItem[] = result.items.map(item => ({
       id: item.id,
@@ -2523,8 +2746,8 @@ async function resolvePanelIntent(
     return {
       success: true,
       action: 'show_view_panel',
-      panelId: drawerTarget?.panelId,
-      panelTitle: drawerTarget?.panelTitle,
+      panelId: resolvedPanelId,
+      panelTitle: resolvedPanelTitle,
       viewPanelContent: {
         type: ViewContentType.MIXED_LIST,
         title: result.title || `${panelId} results`,

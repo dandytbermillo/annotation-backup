@@ -195,6 +195,23 @@ export function DashboardView({
   const dragStartRef = useRef<{ x: number; y: number; panelX: number; panelY: number } | null>(null)
 
   useEffect(() => {
+    // Debug: Track when this effect runs and what triggered it
+    console.log('[DashboardView] uiContext_effect_entered:', {
+      isEntryActive,
+      viewMode,
+      drawerPanelId: drawerPanel?.id ?? null,
+      drawerPanelTitle: drawerPanel?.title ?? drawerPanel?.panelType ?? null,
+    })
+    void debugLog({
+      component: 'DashboardView',
+      action: 'uiContext_effect_entered',
+      metadata: {
+        isEntryActive,
+        viewMode,
+        drawerPanelId: drawerPanel?.id ?? null,
+        drawerPanelTitle: drawerPanel?.title ?? drawerPanel?.panelType ?? null,
+      },
+    })
     if (!isEntryActive) {
       void debugLog({
         component: 'DashboardView',
@@ -262,6 +279,23 @@ export function DashboardView({
   // Phase 4: Dashboard state reporting via widgetStates
   // Reports dashboard state for LLM context (same contract as widgets)
   useEffect(() => {
+    // Debug: Track when this effect runs
+    console.log('[DashboardView] widgetState_effect_entered:', {
+      viewMode,
+      isEntryActive,
+      drawerPanelId: drawerPanel?.id ?? null,
+      drawerPanelTitle: drawerPanel?.title ?? drawerPanel?.panelType ?? null,
+    })
+    void debugLog({
+      component: 'DashboardView',
+      action: 'widgetState_effect_entered',
+      metadata: {
+        viewMode,
+        isEntryActive,
+        drawerPanelId: drawerPanel?.id ?? null,
+        drawerPanelTitle: drawerPanel?.title ?? drawerPanel?.panelType ?? null,
+      },
+    })
     // Only report in dashboard mode when entry is active
     if (viewMode !== 'dashboard' || !isEntryActive) {
       // Clean up when leaving dashboard mode
@@ -1072,13 +1106,41 @@ export function DashboardView({
   // Widget Architecture: Listen for 'open-panel-drawer' events from chat
   useEffect(() => {
     const handleOpenDrawer = (e: CustomEvent<{ panelId: string }>) => {
+      console.log('[DashboardView] handleOpenDrawer_called:', {
+        requestedPanelId: e.detail.panelId,
+        panelsCount: panels.length,
+        currentDrawerPanelId: drawerPanel?.id ?? null,
+      })
+      void debugLog({
+        component: "DashboardView",
+        action: "handleOpenDrawer_called",
+        metadata: {
+          requestedPanelId: e.detail.panelId,
+          panelsCount: panels.length,
+          currentDrawerPanelId: drawerPanel?.id ?? null,
+        },
+      })
       const panel = panels.find(p => p.id === e.detail.panelId)
       if (panel) {
+        console.log('[DashboardView] setDrawerPanel_calling:', { panelId: panel.id, panelType: panel.panelType, panelTitle: panel.title })
+        void debugLog({
+          component: "DashboardView",
+          action: "setDrawerPanel_calling",
+          metadata: { panelId: panel.id, panelType: panel.panelType, panelTitle: panel.title },
+        })
         setDrawerPanel(panel)
+        console.log('[DashboardView] drawer_opened_from_chat:', { panelId: panel.id, panelType: panel.panelType })
         void debugLog({
           component: "DashboardView",
           action: "drawer_opened_from_chat",
           metadata: { panelId: panel.id, panelType: panel.panelType },
+        })
+      } else {
+        console.log('[DashboardView] handleOpenDrawer_panel_not_found:', { requestedPanelId: e.detail.panelId, availablePanelIds: panels.map(p => p.id) })
+        void debugLog({
+          component: "DashboardView",
+          action: "handleOpenDrawer_panel_not_found",
+          metadata: { requestedPanelId: e.detail.panelId, availablePanelIds: panels.map(p => p.id) },
         })
       }
     }

@@ -8,7 +8,7 @@ Eliminate the two remaining Phase 4 edge risks:
 ## Scope
 - No feature changes; tighten correctness + reduce false positives.
 - No new UI.
-e
+
 ## Fix 1: Replace prefix filter with widgetId check
 
 ### Why

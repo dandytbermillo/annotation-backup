@@ -11,6 +11,25 @@ import 'server-only'
 import { panelRegistry } from '@/lib/panels/panel-registry'
 import { getEnabledManifests } from '@/lib/widgets/widget-store'
 
+/**
+ * Sanitize user-provided strings before including in LLM prompts.
+ * Prevents prompt injection attacks by:
+ * - Removing control characters and newlines
+ * - Escaping quotes
+ * - Removing prompt marker characters (>>> <<<)
+ * - Limiting length
+ */
+function sanitizeForPrompt(input: string | undefined | null, maxLength = 100): string {
+  if (!input) return ''
+  return input
+    .replace(/[\r\n\t]/g, ' ')           // Replace newlines/tabs with space
+    .replace(/[<>]/g, '')                 // Remove < > to prevent marker injection
+    .replace(/"/g, '\\"')                 // Escape quotes
+    .replace(/\s+/g, ' ')                 // Collapse multiple spaces
+    .trim()
+    .slice(0, maxLength)                  // Limit length
+}
+
 export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-taking application. Your ONLY job is to parse user requests and return a JSON object indicating their intent.
 
 ## Supported Intents
@@ -208,7 +227,7 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
     - "what were the options?" (when chatContext.lastOptions exists)
     - "how many items?" (when chatContext.lastListPreview exists)
     - "is D available?" (when chatContext.lastOptions exists → answer yes/no)
-    - "what panel is open?" (when uiContext.dashboard.openDrawer exists)
+    - "what panel is open?" (ALWAYS read uiContext.dashboard.openDrawer - this is the CURRENT open panel, do NOT use previous conversation answers)
     - "what widgets are visible?" (when uiContext.dashboard.visibleWidgets or widgetStates exists → list widget names)
     - "which notes are open?" (when uiContext.workspace.openNotes exists → list note names; if on dashboard, explain notes live in workspaces)
     Args:
@@ -317,6 +336,32 @@ IMPORTANT: Only set quickLinksPanelBadge if the user explicitly says a letter (A
 - "open quick links" → NO badge
 - "show me quick link E" → badge = "E"
 Do NOT infer a badge from context, history, or session state. If no explicit letter is present, omit the badge entirely.
+
+## CRITICAL: "open links" / "open quick links" Disambiguation
+
+**STOP - READ THIS CAREFULLY:** When user says "open links", "open quick links", "links", or any similar phrase WITHOUT an explicit letter (A, B, C, D, E, etc.), you MUST:
+
+For show_quick_links intent:
+  - NEVER set quickLinksPanelBadge
+  - Let the server disambiguate
+
+For panel_intent with Quick Links:
+  - Use panelId: "quick-links" (NO badge suffix like -d, -e, -s)
+  - The server will show disambiguation pills if multiple panels exist
+
+**EXPLICIT EXAMPLES - FOLLOW EXACTLY:**
+- "open links" → { "intent": "panel_intent", "args": { "panelId": "quick-links", "intentName": "open_drawer", "params": { "mode": "drawer" } } }
+- "open quick links" → { "intent": "panel_intent", "args": { "panelId": "quick-links", "intentName": "open_drawer", "params": { "mode": "drawer" } } }
+- "links" → { "intent": "panel_intent", "args": { "panelId": "quick-links", "intentName": "open_drawer", "params": { "mode": "drawer" } } }
+- "show links" → { "intent": "show_quick_links", "args": { } }  (NO badge)
+- "open links d" → { "intent": "panel_intent", "args": { "panelId": "quick-links-d", ... } }  (user explicitly said "d")
+- "quick links e" → { "intent": "show_quick_links", "args": { "quickLinksPanelBadge": "E" } }  (user explicitly said "e")
+
+**FORBIDDEN - NEVER DO THIS:**
+- ❌ panelId: "quick-links-d" (when user just said "open links")
+- ❌ panelId: "quick-links-s" (when user just said "links")
+- ❌ quickLinksPanelBadge: "D" (when user didn't say a letter)
+- ❌ Guessing a badge from visible widgets or context
 
 ## Typo Tolerance
 
@@ -428,6 +473,14 @@ Follow this decision tree to select the correct intent:
 - Personal data not in the app
 
 **Priority rule:** If the user asks about something shown in chat or visible on the screen, use chatContext/uiContext first. Only use retrieve_from_app when the entity was NOT recently shown or visible.
+
+**CRITICAL - uiContext is ALWAYS FRESH:** The uiContext provided in Context block shows the CURRENT state of the UI right now. For questions like "what panel is open?", ALWAYS read uiContext.dashboard.openDrawer - do NOT copy your previous answer from conversation history. The user may have changed panels since your last answer, so uiContext is the only source of truth for current UI state.
+
+**IMPORTANT - "open X" with visible widgets:** When user says "open X" (e.g., "open Navigator", "open Quick Capture"), check if X matches a widget name in uiContext.dashboard.visibleWidgets. If it matches, use **panel_intent** to open that widget as a drawer:
+\`\`\`json
+{ "intent": "panel_intent", "args": { "panelId": "<widget-type>", "intentName": "open_drawer", "params": { "mode": "drawer", "title": "<widget-title>" } } }
+\`\`\`
+Do NOT use resolve_name or open_workspace for visible widget names. The panelId should be the widget type (e.g., "navigator", "quick-capture", "links-overview", "continue", "widget-manager").
 
 ## Rules
 
@@ -645,59 +698,68 @@ export async function buildIntentMessages(
       if (cc.lastOptions && cc.lastOptions.length > 0) {
         contextBlock += `  lastOptions:\n`
         cc.lastOptions.forEach((opt, i) => {
-          const sublabelPart = opt.sublabel ? ` (${opt.sublabel})` : ''
-          contextBlock += `    ${i + 1}. "${opt.label}"${sublabelPart}\n`
+          const sublabelPart = opt.sublabel ? ` (${sanitizeForPrompt(opt.sublabel)})` : ''
+          contextBlock += `    ${i + 1}. "${sanitizeForPrompt(opt.label)}"${sublabelPart}\n`
         })
       }
 
       if (cc.lastListPreview) {
         contextBlock += `  lastListPreview:\n`
-        contextBlock += `    title: "${cc.lastListPreview.title}"\n`
+        contextBlock += `    title: "${sanitizeForPrompt(cc.lastListPreview.title)}"\n`
         contextBlock += `    count: ${cc.lastListPreview.count}\n`
         if (cc.lastListPreview.items.length > 0) {
-          contextBlock += `    items: ${cc.lastListPreview.items.slice(0, 10).map(i => `"${i}"`).join(', ')}\n`
+          contextBlock += `    items: ${cc.lastListPreview.items.slice(0, 10).map(i => `"${sanitizeForPrompt(i)}"`).join(', ')}\n`
         }
       }
 
       if (cc.lastOpenedPanel) {
-        contextBlock += `  lastOpenedPanel: "${cc.lastOpenedPanel.title}"\n`
+        contextBlock += `  lastOpenedPanel: "${sanitizeForPrompt(cc.lastOpenedPanel.title)}"\n`
       }
 
       if (cc.lastShownContent) {
         contextBlock += `  lastShownContent:\n`
-        contextBlock += `    type: "${cc.lastShownContent.type}"\n`
-        contextBlock += `    title: "${cc.lastShownContent.title}"\n`
+        contextBlock += `    type: "${sanitizeForPrompt(cc.lastShownContent.type)}"\n`
+        contextBlock += `    title: "${sanitizeForPrompt(cc.lastShownContent.title)}"\n`
         if (cc.lastShownContent.count !== undefined) {
           contextBlock += `    count: ${cc.lastShownContent.count}\n`
         }
       }
 
       if (cc.lastAssistantMessage) {
-        // Truncate long messages
-        const truncated = cc.lastAssistantMessage.length > 200
-          ? cc.lastAssistantMessage.substring(0, 200) + '...'
-          : cc.lastAssistantMessage
-        contextBlock += `  lastAssistantMessage: "${truncated}"\n`
+        // Truncate and sanitize long messages
+        contextBlock += `  lastAssistantMessage: "${sanitizeForPrompt(cc.lastAssistantMessage, 200)}"\n`
       }
     }
 
     // Add UI context for what's visible right now
     if (context.uiContext) {
       const uc = context.uiContext
+      // DEBUG: Log uiContext being added to LLM prompt
+      console.log('[IntentPrompt] uiContext being added:', {
+        mode: uc.mode,
+        openDrawer: uc.dashboard?.openDrawer?.title ?? null,
+        openDrawerId: uc.dashboard?.openDrawer?.panelId ?? null,
+      })
+      // CRITICAL: Put openDrawer FIRST and make it very prominent
+      // This helps the LLM see the current panel before anything else
+      if (uc.dashboard?.openDrawer) {
+        const sanitizedTitle = sanitizeForPrompt(uc.dashboard.openDrawer.title)
+        contextBlock += `\n[CURRENT OPEN PANEL] Answer "what panel is open?" with: "${sanitizedTitle}"\n`
+      }
       contextBlock += '\nUI Context (current screen):\n'
       contextBlock += `  mode: ${uc.mode}\n`
       if (uc.dashboard) {
         contextBlock += `  dashboard:\n`
         if (uc.dashboard.entryName) {
-          contextBlock += `    entryName: "${uc.dashboard.entryName}"\n`
+          contextBlock += `    entryName: "${sanitizeForPrompt(uc.dashboard.entryName)}"\n`
         }
         if (uc.dashboard.openDrawer) {
-          contextBlock += `    openDrawer: "${uc.dashboard.openDrawer.title}"\n`
+          contextBlock += `    openDrawer: "${sanitizeForPrompt(uc.dashboard.openDrawer.title)}"\n`
         }
         if (uc.dashboard.visibleWidgets && uc.dashboard.visibleWidgets.length > 0) {
           contextBlock += `    visibleWidgets:\n`
           uc.dashboard.visibleWidgets.forEach((widget) => {
-            contextBlock += `      - "${widget.title}" (${widget.type})\n`
+            contextBlock += `      - "${sanitizeForPrompt(widget.title)}" (${sanitizeForPrompt(widget.type)})\n`
           })
         }
         // Widget internal states (reported via widget.reportState)
@@ -705,15 +767,15 @@ export async function buildIntentMessages(
           contextBlock += `    widgetStates:\n`
           Object.values(uc.dashboard.widgetStates).forEach((ws) => {
             const staleWarning = ws.stale ? ' [STALE]' : ''
-            contextBlock += `      - "${ws.title}"${staleWarning}:\n`
+            contextBlock += `      - "${sanitizeForPrompt(ws.title)}"${staleWarning}:\n`
             if (ws.view) {
-              contextBlock += `          view: "${ws.view}"\n`
+              contextBlock += `          view: "${sanitizeForPrompt(ws.view)}"\n`
             }
             if (ws.selection) {
-              contextBlock += `          selection: "${ws.selection.label}"\n`
+              contextBlock += `          selection: "${sanitizeForPrompt(ws.selection.label)}"\n`
             }
             if (ws.summary) {
-              contextBlock += `          summary: "${ws.summary}"\n`
+              contextBlock += `          summary: "${sanitizeForPrompt(ws.summary, 200)}"\n`
             }
           })
         }
@@ -723,13 +785,13 @@ export async function buildIntentMessages(
       if (uc.mode === 'workspace' && uc.workspace) {
         contextBlock += `  workspace:\n`
         if (uc.workspace.workspaceName) {
-          contextBlock += `    workspaceName: "${uc.workspace.workspaceName}"\n`
+          contextBlock += `    workspaceName: "${sanitizeForPrompt(uc.workspace.workspaceName)}"\n`
         }
         if (uc.workspace.openNotes && uc.workspace.openNotes.length > 0) {
           contextBlock += `    openNotes:\n`
           uc.workspace.openNotes.forEach((note) => {
             const activeLabel = note.active ? ' [active]' : ''
-            contextBlock += `      - "${note.title}"${activeLabel}\n`
+            contextBlock += `      - "${sanitizeForPrompt(note.title)}"${activeLabel}\n`
           })
         }
         // Phase 3: Include isStale flag so LLM knows data may be provisional
@@ -745,33 +807,33 @@ export async function buildIntentMessages(
       contextBlock += '\nSession State:\n'
       contextBlock += `  currentViewMode: ${ss.currentViewMode || 'unknown'}\n`
       if (ss.currentEntryName) {
-        contextBlock += `  currentEntryName: "${ss.currentEntryName}"\n`
+        contextBlock += `  currentEntryName: "${sanitizeForPrompt(ss.currentEntryName)}"\n`
       }
       // Phase 4: Only include currentWorkspaceName when in workspace mode
       // Prevents LLM from inferring workspace info when on dashboard
       if (ss.currentViewMode === 'workspace' && ss.currentWorkspaceName) {
-        contextBlock += `  currentWorkspaceName: "${ss.currentWorkspaceName}"\n`
+        contextBlock += `  currentWorkspaceName: "${sanitizeForPrompt(ss.currentWorkspaceName)}"\n`
       }
       if (ss.lastAction) {
         contextBlock += `  lastAction:\n`
         contextBlock += `    type: ${ss.lastAction.type}\n`
         if (ss.lastAction.workspaceName) {
-          contextBlock += `    workspaceName: "${ss.lastAction.workspaceName}"\n`
+          contextBlock += `    workspaceName: "${sanitizeForPrompt(ss.lastAction.workspaceName)}"\n`
         }
         if (ss.lastAction.entryName) {
-          contextBlock += `    entryName: "${ss.lastAction.entryName}"\n`
+          contextBlock += `    entryName: "${sanitizeForPrompt(ss.lastAction.entryName)}"\n`
         }
         if (ss.lastAction.fromName) {
-          contextBlock += `    fromName: "${ss.lastAction.fromName}"\n`
+          contextBlock += `    fromName: "${sanitizeForPrompt(ss.lastAction.fromName)}"\n`
         }
         if (ss.lastAction.toName) {
-          contextBlock += `    toName: "${ss.lastAction.toName}"\n`
+          contextBlock += `    toName: "${sanitizeForPrompt(ss.lastAction.toName)}"\n`
         }
       }
       if (ss.openCounts && Object.keys(ss.openCounts).length > 0) {
         contextBlock += `  openCounts:\n`
         for (const [_id, data] of Object.entries(ss.openCounts)) {
-          contextBlock += `    "${data.name}" (${data.type}): ${data.count} times\n`
+          contextBlock += `    "${sanitizeForPrompt(data.name)}" (${data.type}): ${data.count} times\n`
         }
       }
     }
@@ -780,24 +842,24 @@ export async function buildIntentMessages(
     if (context.pendingOptions && context.pendingOptions.length > 0) {
       contextBlock += '\nPending Options (user can select from these):\n'
       for (const opt of context.pendingOptions) {
-        const sublabelPart = opt.sublabel ? ` (${opt.sublabel})` : ''
-        contextBlock += `  ${opt.index}. "${opt.label}"${sublabelPart} [${opt.type}]\n`
+        const sublabelPart = opt.sublabel ? ` (${sanitizeForPrompt(opt.sublabel)})` : ''
+        contextBlock += `  ${opt.index}. "${sanitizeForPrompt(opt.label)}"${sublabelPart} [${opt.type}]\n`
       }
     }
 
     if (context.summary) {
-      contextBlock += `\nConversation Summary: "${context.summary}"\n`
+      contextBlock += `\nConversation Summary: "${sanitizeForPrompt(context.summary, 500)}"\n`
     }
 
     if (context.recentUserMessages && context.recentUserMessages.length > 0) {
       contextBlock += '\nRecent user messages:\n'
       context.recentUserMessages.forEach((msg, i) => {
-        contextBlock += `  ${i + 1}) "${msg}"\n`
+        contextBlock += `  ${i + 1}) "${sanitizeForPrompt(msg, 200)}"\n`
       })
     }
 
     if (context.lastAssistantQuestion) {
-      contextBlock += `\nLast assistant question: "${context.lastAssistantQuestion}"\n`
+      contextBlock += `\nLast assistant question: "${sanitizeForPrompt(context.lastAssistantQuestion, 200)}"\n`
     }
 
     contextBlock += '\nCurrent request:'

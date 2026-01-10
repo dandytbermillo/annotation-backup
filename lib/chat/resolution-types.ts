@@ -84,6 +84,8 @@ export interface ResolutionContext {
   userId: string
   sessionState?: SessionState
   visiblePanels?: string[]
+  // Visible widgets with panel IDs for exact-match resolution (Step 1 of ambiguity guard)
+  visibleWidgets?: Array<{ id: string; title: string; type: string }>
   // For panel write confirmation bypass
   bypassPanelWriteConfirmation?: boolean
   pendingPanelIntent?: {
