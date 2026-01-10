@@ -67,14 +67,28 @@ export interface LastSuggestionState {
   messageId: string
 }
 
+/** Clarification option for multi-choice clarifications (per options-visible-clarification-sync-plan.md) */
+export interface ClarificationOption {
+  id: string
+  label: string
+  sublabel?: string
+  type: string
+}
+
 /** Last clarification state for follow-up handling (Phase 2a) */
 export interface LastClarificationState {
-  type: 'notes_scope'
-  originalIntent: 'list_open_notes'
-  /** Generic action to execute when user affirms (Phase 2a deterministic handler) */
-  nextAction: 'show_workspace_picker'
+  type: 'notes_scope' | 'option_selection'
+  originalIntent: string
+  /** Generic action to execute when user affirms (Phase 2a deterministic handler) - optional for option_selection */
+  nextAction?: string
   messageId: string
   timestamp: number
+  /** META response count for loop limit (max 2 before escape hatch) */
+  metaCount?: number
+  /** Original clarification question for re-asking */
+  clarificationQuestion?: string
+  /** Options for multi-choice clarifications (per options-visible-clarification-sync-plan.md) */
+  options?: ClarificationOption[]
 }
 
 export interface ChatMessage {

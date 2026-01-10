@@ -249,6 +249,34 @@ function isRejectionPhrase(input: string): boolean {
 }
 
 /**
+ * Check if input is a META phrase (request for explanation).
+ * Per clarification-meta-response-plan.md: Handle "what do you mean?" style queries.
+ * Only triggers when clarification is already active.
+ */
+function isMetaPhrase(input: string): boolean {
+  const normalized = input.toLowerCase().trim()
+  // META patterns: requests for explanation or clarification
+  const META_PATTERNS = [
+    /^what(\s+do\s+you)?\s+mean\??$/,                    // "what do you mean?" / "what mean?"
+    /^explain(\s+that)?(\s+please)?$/,                   // "explain" / "explain that"
+    /^help(\s+me)?(\s+understand)?$/,                    // "help" / "help me understand"
+    /^what\s+are\s+(my\s+)?options\??$/,                 // "what are my options?"
+    /^what('s|s|\s+is)\s+the\s+difference\??$/,          // "what's the difference?"
+    /^huh\??$/,                                          // "huh?"
+    /^\?+$/,                                             // "?" / "??"
+    /^what\??$/,                                         // "what?" / "what"
+    /^(i('m|m)?\s+)?not\s+sure$/,                        // "not sure" / "I'm not sure"
+    /^i\s+don('t|t)\s+know$/,                            // "I don't know"
+    /^(can\s+you\s+)?tell\s+me\s+more\??$/,              // "tell me more" / "can you tell me more?"
+    /^what\s+is\s+that\??$/,                             // "what is that?"
+    /^i('m|m)?\s+not\s+sure\s+what\s+that\s+(does|means)\??$/,  // "I'm not sure what that does"
+    /^clarify(\s+please)?$/,                             // "clarify"
+    /^options\??$/,                                      // "options?"
+  ]
+  return META_PATTERNS.some(pattern => pattern.test(normalized))
+}
+
+/**
  * Match ordinal phrases to option index.
  * Returns 0-based index or undefined if no match.
  */
@@ -1245,6 +1273,10 @@ function ChatNavigationPanelContent({
     async (option: SelectionOption) => {
       setIsLoading(true)
 
+      // Per options-visible-clarification-sync-plan.md: clear lastClarification when option is selected
+      // The clarification is resolved once user makes a selection
+      setLastClarification(null)
+
       try {
         // Check if this is a pending delete selection (disambiguation for delete)
         const workspaceData = option.data as WorkspaceMatch & { pendingDelete?: boolean }
@@ -1572,6 +1604,22 @@ function ChatNavigationPanelContent({
               setPendingOptionsMessageId(`assistant-${Date.now()}`)
               setPendingOptionsGraceCount(0)
               // Note: lastOptions state removed - now using findLastOptionsMessage() as source of truth
+
+              // Per options-visible-clarification-sync-plan.md: sync lastClarification with options
+              setLastClarification({
+                type: 'option_selection',
+                originalIntent: resolution.action || 'select',
+                messageId: `assistant-${Date.now()}`,
+                timestamp: Date.now(),
+                clarificationQuestion: resolution.message || 'Which one would you like?',
+                options: resolution.options!.map(opt => ({
+                  id: opt.id,
+                  label: opt.label,
+                  sublabel: opt.sublabel,
+                  type: opt.type,
+                })),
+                metaCount: 0,
+              })
             }
 
             // Add assistant message (include options for 'select' action)
@@ -1646,11 +1694,18 @@ function ChatNavigationPanelContent({
 
       // Run clarification handler FIRST when clarification is active
       // Only fall back to normal routing if interpreter returns UNCLEAR AND input looks like new intent
-      if (!lastSuggestion && lastClarification?.nextAction) {
+      // Per options-visible-clarification-sync-plan.md: also enter if options exist (option_selection type)
+      const hasClarificationContext = lastClarification?.nextAction || (lastClarification?.options && lastClarification.options.length > 0)
+      if (!lastSuggestion && hasClarificationContext) {
         void debugLog({
           component: 'ChatNavigation',
           action: 'clarification_mode_intercept',
-          metadata: { userInput: trimmedInput, nextAction: lastClarification.nextAction },
+          metadata: {
+            userInput: trimmedInput,
+            nextAction: lastClarification?.nextAction,
+            hasOptions: !!(lastClarification?.options?.length),
+            clarificationType: lastClarification?.type,
+          },
         })
 
         // Helper: Execute nextAction (show workspace picker for notes_scope)
@@ -1710,6 +1765,23 @@ function ChatNavigationPanelContent({
             setPendingOptionsMessageId(messageId)
             setPendingOptionsGraceCount(0)
             setNotesScopeFollowUpActive(true)
+
+            // Per options-visible-clarification-sync-plan.md: sync lastClarification with options
+            // This enables META responses like "what is that?" to explain the options
+            setLastClarification({
+              type: 'option_selection',
+              originalIntent: 'list_open_notes',
+              messageId,
+              timestamp: Date.now(),
+              clarificationQuestion: 'Sure — which workspace?',
+              options: workspaceOptions.map(opt => ({
+                id: opt.id,
+                label: opt.label,
+                sublabel: opt.sublabel,
+                type: opt.type,
+              })),
+              metaCount: 0,
+            })
           } catch (error) {
             console.error('[ChatNavigation] Failed to fetch workspaces for clarification:', error)
             const errorMessage: ChatMessage = {
@@ -1723,13 +1795,18 @@ function ChatNavigationPanelContent({
           }
         }
 
-        // Helper: Handle rejection (cancel clarification)
+        // Helper: Handle rejection/cancel (clear clarification and pending options)
+        // Per clarification-exit-and-cancel-fix-plan.md
         const handleRejection = () => {
           setLastClarification(null)
+          // Also clear pending options since user is canceling the selection
+          setPendingOptions([])
+          setPendingOptionsMessageId(null)
+          setPendingOptionsGraceCount(0)
           const cancelMessage: ChatMessage = {
             id: `assistant-${Date.now()}`,
             role: 'assistant',
-            content: 'Okay — what would you like instead?',
+            content: 'Okay — let me know what you want to do.',
             timestamp: new Date(),
             isError: false,
           }
@@ -1761,8 +1838,87 @@ function ChatNavigationPanelContent({
           return false  // Handled here, don't fall through
         }
 
+        // Helper: Handle META response (explanation request)
+        // Per clarification-meta-response-plan.md
+        const handleMeta = () => {
+          const currentMetaCount = lastClarification.metaCount ?? 0
+          const META_LOOP_LIMIT = 2
+
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'clarification_meta_response',
+            metadata: { userInput: trimmedInput, metaCount: currentMetaCount },
+          })
+
+          // Check if we've hit the META loop limit
+          if (currentMetaCount >= META_LOOP_LIMIT) {
+            // Escape hatch: offer to skip or show options
+            const escapeMessage: ChatMessage = {
+              id: `assistant-${Date.now()}`,
+              role: 'assistant',
+              content: 'I can show both options, or we can skip this for now. What would you like?',
+              timestamp: new Date(),
+              isError: false,
+            }
+            addMessage(escapeMessage)
+            // DON'T clear clarification - keep it active so "skip"/"no" can be handled by rejection check
+            // Reset metaCount to prevent immediate re-escape on next META phrase
+            setLastClarification({
+              ...lastClarification,
+              metaCount: 0,
+            })
+            return
+          }
+
+          // Generate explanation based on clarification type
+          // Per options-visible-clarification-sync-plan.md: handle option_selection with options list
+          let explanation: string
+          let messageOptions: typeof lastClarification.options | undefined
+
+          if (lastClarification.options && lastClarification.options.length > 0) {
+            // Multi-choice clarification: list the options
+            const optionsList = lastClarification.options
+              .map((opt, i) => `${i + 1}. ${opt.label}${opt.sublabel ? ` (${opt.sublabel})` : ''}`)
+              .join('\n')
+            explanation = `Here are your options:\n${optionsList}\n\nJust say a number or name to select one.`
+            // Re-show the option pills
+            messageOptions = lastClarification.options
+          } else if (lastClarification.type === 'notes_scope') {
+            explanation = 'I\'m asking because notes are organized within workspaces. To show which notes are open, I need to know which workspace to check. Would you like to pick a workspace? (yes/no)'
+          } else {
+            // Generic fallback
+            explanation = `I'm asking: ${lastClarification.clarificationQuestion ?? 'Would you like to proceed?'} (yes/no)`
+          }
+
+          const metaMessage: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: explanation,
+            timestamp: new Date(),
+            isError: false,
+            // Re-show options as pills if this is a multi-choice clarification
+            options: messageOptions ? messageOptions.map(opt => ({
+              type: opt.type as SelectionOption['type'],
+              id: opt.id,
+              label: opt.label,
+              sublabel: opt.sublabel,
+              data: {} as SelectionOption['data'],  // Minimal data - selection will use pendingOptions
+            })) : undefined,
+          }
+          addMessage(metaMessage)
+
+          // Update META count in clarification state
+          setLastClarification({
+            ...lastClarification,
+            metaCount: currentMetaCount + 1,
+          })
+        }
+
         // Tier 1: Local affirmation check
-        if (isAffirmationPhrase(trimmedInput)) {
+        // Per options-visible-clarification-sync-plan.md: skip affirmation if multi-choice (options exist)
+        // User must select an option, not just say "yes"
+        const hasMultipleOptions = lastClarification.options && lastClarification.options.length > 0
+        if (isAffirmationPhrase(trimmedInput) && !hasMultipleOptions) {
           void debugLog({
             component: 'ChatNavigation',
             action: 'clarification_tier1_affirmation',
@@ -1785,68 +1941,105 @@ function ChatNavigationPanelContent({
           return
         }
 
-        // Tier 2: LLM interpretation for unclear responses
-        // Call API with clarification-mode flag to get YES/NO/UNCLEAR interpretation
-        void debugLog({
-          component: 'ChatNavigation',
-          action: 'clarification_tier2_llm',
-          metadata: { userInput: trimmedInput },
-        })
+        // Tier 1b.5: New intent escape - exit clarification for new questions/commands
+        // Per clarification-exit-and-cancel-fix-plan.md: "where am I?" should route normally
+        if (isNewQuestionOrCommand) {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'clarification_exit_new_intent',
+            metadata: { userInput: trimmedInput },
+          })
+          // Clear clarification state and fall through to normal routing
+          setLastClarification(null)
+          // Don't return - continue to normal routing below
+        }
 
-        try {
-          const interpretResponse = await fetch('/api/chat/navigate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              message: trimmedInput,
-              clarificationMode: true,  // Special flag for clarification interpretation
-              clarificationQuestion: 'Would you like to open a workspace to see your notes?',
-            }),
+        // Tier 1c: Local META check (explanation request)
+        // Per clarification-meta-response-plan.md
+        // Only check if we didn't already exit via new intent
+        if (lastClarification && isMetaPhrase(trimmedInput)) {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'clarification_tier1_meta',
+            metadata: { userInput: trimmedInput },
+          })
+          handleMeta()
+          setIsLoading(false)
+          return
+        }
+
+        // Tier 2: LLM interpretation for unclear responses
+        // Call API with clarification-mode flag to get YES/NO/META/UNCLEAR interpretation
+        // Skip if we already exited via new intent (lastClarification was cleared)
+        if (lastClarification) {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'clarification_tier2_llm',
+            metadata: { userInput: trimmedInput },
           })
 
-          if (interpretResponse.ok) {
-            const interpretResult = await interpretResponse.json()
-            const interpretation = interpretResult.clarificationInterpretation
-
-            void debugLog({
-              component: 'ChatNavigation',
-              action: 'clarification_tier2_result',
-              metadata: { interpretation },
+          try {
+            const interpretResponse = await fetch('/api/chat/navigate', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                message: trimmedInput,
+                clarificationMode: true,  // Special flag for clarification interpretation
+                clarificationQuestion: 'Would you like to open a workspace to see your notes?',
+              }),
             })
 
-            if (interpretation === 'YES') {
-              await executeNextAction()
-              setIsLoading(false)
-              return
-            } else if (interpretation === 'NO') {
-              handleRejection()
-              setIsLoading(false)
-              return
+            if (interpretResponse.ok) {
+              const interpretResult = await interpretResponse.json()
+              const interpretation = interpretResult.clarificationInterpretation
+
+              void debugLog({
+                component: 'ChatNavigation',
+                action: 'clarification_tier2_result',
+                metadata: { interpretation },
+              })
+
+              if (interpretation === 'YES') {
+                await executeNextAction()
+                setIsLoading(false)
+                return
+              } else if (interpretation === 'NO') {
+                handleRejection()
+                setIsLoading(false)
+                return
+              } else if (interpretation === 'META') {
+                // META: User wants explanation - handle via handleMeta
+                handleMeta()
+                setIsLoading(false)
+                return
+              } else {
+                // UNCLEAR or missing - check if we should fall through to normal routing
+                if (!handleUnclear()) {
+                  setIsLoading(false)
+                  return
+                }
+                // handleUnclear returned true - fall through to normal routing below
+              }
             } else {
-              // UNCLEAR or missing - check if we should fall through to normal routing
+              // API error - treat as unclear
               if (!handleUnclear()) {
                 setIsLoading(false)
                 return
               }
               // handleUnclear returned true - fall through to normal routing below
             }
-          } else {
-            // API error - treat as unclear
+          } catch (error) {
+            console.error('[ChatNavigation] Clarification interpretation failed:', error)
             if (!handleUnclear()) {
               setIsLoading(false)
               return
             }
             // handleUnclear returned true - fall through to normal routing below
           }
-        } catch (error) {
-          console.error('[ChatNavigation] Clarification interpretation failed:', error)
-          if (!handleUnclear()) {
-            setIsLoading(false)
-            return
-          }
-          // handleUnclear returned true - fall through to normal routing below
         }
-        // If we reach here, handleUnclear returned true - continue to normal routing
+        // If we reach here, either:
+        // - New intent was detected (lastClarification cleared, skip Tier 2)
+        // - handleUnclear returned true - continue to normal routing
       }
 
       // ---------------------------------------------------------------------------
@@ -1912,6 +2105,22 @@ function ChatNavigationPanelContent({
           setPendingOptions(lastOptionsMessage.options)
           setPendingOptionsMessageId(messageId)
           setPendingOptionsGraceCount(0)
+
+          // Per options-visible-clarification-sync-plan.md: sync lastClarification on re-show
+          setLastClarification({
+            type: 'option_selection',
+            originalIntent: 'reshow_options',
+            messageId,
+            timestamp: Date.now(),
+            clarificationQuestion: 'Here are your options:',
+            options: lastOptionsMessage.options.map(opt => ({
+              id: opt.id,
+              label: opt.label,
+              sublabel: opt.sublabel,
+              type: opt.type,
+            })),
+            metaCount: 0,
+          })
 
           setIsLoading(false)
           return
@@ -2533,6 +2742,22 @@ function ChatNavigationPanelContent({
           setPendingOptionsMessageId(messageId)
           setPendingOptionsGraceCount(0)
 
+          // Per options-visible-clarification-sync-plan.md: sync lastClarification on re-show
+          setLastClarification({
+            type: 'option_selection',
+            originalIntent: 'reshow_options',
+            messageId,
+            timestamp: Date.now(),
+            clarificationQuestion: resolution.message || 'Here are your options:',
+            options: optionsToShow.map(opt => ({
+              id: opt.id,
+              label: opt.label,
+              sublabel: opt.sublabel,
+              type: opt.type,
+            })),
+            metaCount: 0,
+          })
+
           setIsLoading(false)
           return
         } else {
@@ -2586,6 +2811,22 @@ function ChatNavigationPanelContent({
         setPendingOptionsMessageId(`assistant-${Date.now()}`)
         setPendingOptionsGraceCount(0)  // Fresh options, no grace yet
         // Note: lastOptions state removed - now using findLastOptionsMessage() as source of truth
+
+        // Per options-visible-clarification-sync-plan.md: sync lastClarification with options
+        setLastClarification({
+          type: 'option_selection',
+          originalIntent: resolution.action || 'select',
+          messageId: `assistant-${Date.now()}`,
+          timestamp: Date.now(),
+          clarificationQuestion: resolution.message || 'Which one would you like?',
+          options: resolution.options.map(opt => ({
+            id: opt.id,
+            label: opt.label,
+            sublabel: opt.sublabel,
+            type: opt.type,
+          })),
+          metaCount: 0,
+        })
 
         void debugLog({
           component: 'ChatNavigation',

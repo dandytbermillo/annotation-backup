@@ -131,31 +131,7 @@ Keep explanations short and predictable:
 - User: “what do you mean?”
 - Expected: normal routing (no META handling), LLM handles as a general question
 
-4) META loop limit reached
-- Bot: “Which one — Quick Links D or E?”
-- User: “explain”
-- Bot: explanation + re-ask
-- User: “what’s the difference?”
-- Expected: escape hatch: “I can show both options, or we can skip this for now. What would you like?”
-
-5) User cancels after META
-- Bot: “Which one — Quick Links D or E?”
-- User: “explain”
-- Bot: explanation + re-ask
-- User: “no”
-- Expected: clarification cancelled (NO path)
-
-6) LLM META interpretation
-- Bot: “Close this widget?”
-- User: “I’m not sure what that does”
-- Expected: LLM classifies as META → explanation + re-ask
-
 ---
 
 ## Rollback
 - Remove META detection and treat all clarification follow-ups via YES/NO/UNCLEAR logic.
-
-## Metrics (Optional)
-- META trigger rate (% of clarifications with META response)
-- Resolution after META (% that resolve vs cancel after explanation)
-- Loop limit hit rate (how often users hit the 2-response cap)

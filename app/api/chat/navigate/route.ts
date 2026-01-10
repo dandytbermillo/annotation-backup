@@ -237,14 +237,15 @@ async function fetchEntryName(entryId: string): Promise<string | undefined> {
 // =============================================================================
 
 /**
- * Interpret user reply to a clarification question as YES/NO/UNCLEAR.
+ * Interpret user reply to a clarification question as YES/NO/META/UNCLEAR.
  * Uses a dedicated LLM prompt constrained to only return one of those values.
+ * Per clarification-meta-response-plan.md: META handles explanation requests.
  */
 async function interpretClarificationReply(
   client: OpenAI,
   userReply: string,
   clarificationQuestion: string
-): Promise<'YES' | 'NO' | 'UNCLEAR'> {
+): Promise<'YES' | 'NO' | 'META' | 'UNCLEAR'> {
   try {
     const completion = await client.chat.completions.create({
       model: LLM_CONFIG.model,
@@ -254,29 +255,34 @@ async function interpretClarificationReply(
         {
           role: 'system',
           content: `You interpret user responses to clarification questions.
-Respond with EXACTLY one word: YES, NO, or UNCLEAR.
+Respond with EXACTLY one word: YES, NO, META, or UNCLEAR.
 
 - YES: User is affirming, agreeing, or wants to proceed. Examples:
   - Direct: "yes", "yeah", "yep", "sure", "ok", "okay", "please do", "go ahead", "I guess so"
   - Question-style affirmations: "can you do that?", "could you?", "would you?", "can you?", "is that possible?"
   - These question forms mean "yes, please do it" in context
 - NO: User is declining, rejecting, or wants to cancel (e.g., "no", "nope", "cancel", "never mind", "not really", "no thanks")
+- META: User is asking for explanation or clarification about the question itself. Examples:
+  - "what do you mean?", "explain", "help me understand"
+  - "what are my options?", "what's the difference?"
+  - "I'm not sure what that does", "can you tell me more?"
+  - "huh?", "what?", "I don't know"
 - UNCLEAR: User's intent is truly ambiguous or they're asking a completely different/unrelated question
 
-Do not explain. Just output YES, NO, or UNCLEAR.`,
+Do not explain. Just output YES, NO, META, or UNCLEAR.`,
         },
         {
           role: 'user',
           content: `Clarification question: "${clarificationQuestion}"
 User replied: "${userReply}"
 
-Is this YES, NO, or UNCLEAR?`,
+Is this YES, NO, META, or UNCLEAR?`,
         },
       ],
     })
 
     const content = completion.choices[0]?.message?.content?.trim().toUpperCase()
-    if (content === 'YES' || content === 'NO' || content === 'UNCLEAR') {
+    if (content === 'YES' || content === 'NO' || content === 'META' || content === 'UNCLEAR') {
       return content
     }
     return 'UNCLEAR'
