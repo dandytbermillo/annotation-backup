@@ -374,3 +374,87 @@ type DrawerResolutionResult =
 The Panel Intent Ambiguity Guard is fully implemented and tested. The system now gracefully handles ambiguous panel references by showing user-friendly disambiguation pills with badge-differentiated labels. The LLM prompt hardening ensures consistent behavior across multiple requests.
 
 **All acceptance criteria verified and passing.**
+
+---
+
+## Full Manifest Implementation (Phase 2)
+
+**Date:** 2025-01-09
+**Status:** COMPLETE
+
+### What Was Added
+
+Upgraded from Temporary Bridge to full manifest approach:
+
+#### Files Created
+
+| File | Description |
+|------|-------------|
+| `app/api/panels/open-drawer/route.ts` | Shared open-drawer API handler (Option B from plan) |
+| `lib/panels/manifests/navigator-panel.ts` | Navigator panel manifest |
+| `lib/panels/manifests/quick-capture-panel.ts` | Quick Capture panel manifest |
+| `lib/panels/manifests/links-overview-panel.ts` | Links Overview panel manifest |
+| `lib/panels/manifests/continue-panel.ts` | Continue panel manifest |
+| `lib/panels/manifests/widget-manager-panel.ts` | Widget Manager panel manifest |
+
+#### Files Modified
+
+| File | Change |
+|------|--------|
+| `lib/panels/panel-registry.ts` | Added imports and registration for all 5 widget manifests |
+
+### Handler Details
+
+The shared `/api/panels/open-drawer` handler:
+
+1. Maps semantic panelId to panel_type:
+   - `navigator` → `navigator`
+   - `quick-capture` → `quick_capture`
+   - `links-overview` → `category_navigator`
+   - `continue` → `continue`
+   - `widget-manager` → `widget_manager`
+
+2. Looks up the panel by panel_type in the dashboard workspace
+
+3. Returns `{ success: true, action: 'open_panel_drawer', panelId, panelTitle }`
+
+### Benefits of Full Manifests
+
+1. **LLM Prompt Context**: Manifests add intent examples to the LLM prompt, improving recognition
+2. **Fallback Path**: If Step 0 (visibleWidgets) fails, `executePanelIntent()` provides a backup
+3. **Extensibility**: Easy to add more intents (list, add, etc.) per widget in the future
+4. **Standardization**: Consistent pattern with other panels (Recent, Quick Links)
+
+### Verification
+
+- Type-check: PASS
+- Manifests registered: 5/5
+- Plan file updated with implementation details
+
+### Final Test Results (2025-01-09)
+
+All commands tested with drawer opening verified:
+
+| Command | Intent Routing | Drawer Opened | Status |
+|---------|---------------|---------------|--------|
+| "open quick capture" | ✅ | ✅ | PASS |
+| "open widget manager pls" | ✅ | ✅ | PASS |
+| "can you pls open recents" | ✅ | ✅ | PASS |
+| "open continue" | ✅ | ✅ | PASS |
+| "open navigator pls" | ✅ | ✅ | PASS |
+
+**Evidence:** Screenshot showing:
+- Chat panel (left): All 6 commands returned "Opening panel..."
+- Navigator drawer (right): Open with "Knowledge Base" folder content visible
+- Dashboard (center): All widgets visible (Continue, Recent, Quick Capture, Categories/Links Overview)
+
+### Implementation Complete
+
+The full manifest implementation is now complete with:
+
+1. **Temporary Bridge (Step 0)** - Fast path via visibleWidgets match
+2. **Full Panel Manifests** - LLM prompt examples for all 5 widgets
+3. **Shared API Handler** - `/api/panels/open-drawer` as fallback
+4. **Panel Registry** - All 5 manifests registered
+
+**All acceptance criteria verified and passing.**

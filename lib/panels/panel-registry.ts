@@ -21,6 +21,11 @@ import {
 // Import built-in manifests
 import { recentPanelManifest } from './manifests/recent-panel'
 import { quickLinksPanelManifests, createQuickLinksManifest } from './manifests/quick-links-panel'
+import { navigatorPanelManifest } from './manifests/navigator-panel'
+import { quickCapturePanelManifest } from './manifests/quick-capture-panel'
+import { linksOverviewPanelManifest } from './manifests/links-overview-panel'
+import { continuePanelManifest } from './manifests/continue-panel'
+import { widgetManagerPanelManifest } from './manifests/widget-manager-panel'
 
 // Note: DB manifest loading moved to server routes (lib/chat/intent-prompt.ts)
 // to avoid bundling pg into client code
@@ -59,6 +64,13 @@ class PanelIntentRegistry {
     for (const manifest of quickLinksPanelManifests) {
       this.register(manifest)
     }
+
+    // Widget panels (Navigator, Quick Capture, Links Overview, Continue, Widget Manager)
+    this.register(navigatorPanelManifest)
+    this.register(quickCapturePanelManifest)
+    this.register(linksOverviewPanelManifest)
+    this.register(continuePanelManifest)
+    this.register(widgetManagerPanelManifest)
 
     // Note: Demo widget was moved to custom_widgets/demo_widget
     // Install via: http://localhost:3000/api/widgets/demo-manifest
