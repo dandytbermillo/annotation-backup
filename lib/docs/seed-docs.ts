@@ -1,8 +1,9 @@
 /**
  * Documentation Seeding Service
- * Part of: cursor-style-doc-retrieval-plan.md (Phase 0)
+ * Part of: cursor-style-doc-retrieval-plan.md (Phase 0 + Phase 2)
  *
  * Seeds documentation from the meta/documentation folder into the docs_knowledge table.
+ * Phase 2: Also chunks documents into docs_knowledge_chunks for finer-grained retrieval.
  * Idempotent: safe to run multiple times, only updates if content changes.
  */
 
@@ -13,6 +14,11 @@ import * as crypto from 'crypto'
 
 // Documentation source path (relative to project root)
 const DOCS_PATH = 'docs/proposal/chat-navigation/plan/panels/chat/meta/documentation'
+
+// Target chunk size in tokens (approximate: 1 token ≈ 4 chars)
+const TARGET_CHUNK_TOKENS = 400
+const MAX_CHUNK_TOKENS = 500
+const CHARS_PER_TOKEN = 4
 
 interface DocMetadata {
   title: string
@@ -26,6 +32,17 @@ interface DocEntry {
   content: string
   keywords: string[]
   contentHash: string
+}
+
+interface ChunkEntry {
+  docSlug: string
+  category: string
+  title: string
+  headerPath: string
+  chunkIndex: number
+  content: string
+  keywords: string[]
+  chunkHash: string
 }
 
 // Stopwords to exclude from auto-extracted keywords
@@ -258,4 +275,317 @@ export async function getDocBySlug(slug: string): Promise<DocEntry | null> {
     [slug]
   )
   return result.rows[0] || null
+}
+
+// =============================================================================
+// Phase 2: Chunking Pipeline
+// =============================================================================
+
+interface HeaderSection {
+  header: string
+  level: number
+  content: string
+}
+
+/**
+ * Parse markdown into sections by headers
+ */
+function parseMarkdownSections(content: string): HeaderSection[] {
+  const sections: HeaderSection[] = []
+  const lines = content.split('\n')
+
+  let currentHeader = ''
+  let currentLevel = 0
+  let currentContent: string[] = []
+
+  for (const line of lines) {
+    const headerMatch = line.match(/^(#{1,6})\s+(.+)$/)
+
+    if (headerMatch) {
+      // Save previous section if exists
+      if (currentContent.length > 0 || currentHeader) {
+        sections.push({
+          header: currentHeader,
+          level: currentLevel,
+          content: currentContent.join('\n').trim(),
+        })
+      }
+
+      currentHeader = headerMatch[2]
+      currentLevel = headerMatch[1].length
+      currentContent = []
+    } else {
+      currentContent.push(line)
+    }
+  }
+
+  // Save final section
+  if (currentContent.length > 0 || currentHeader) {
+    sections.push({
+      header: currentHeader,
+      level: currentLevel,
+      content: currentContent.join('\n').trim(),
+    })
+  }
+
+  return sections
+}
+
+/**
+ * Build header path from section hierarchy
+ * e.g., "Home > Overview" or "Widgets > Quick Links > Editing"
+ */
+function buildHeaderPath(docTitle: string, sections: HeaderSection[], currentIndex: number): string {
+  const path: string[] = [docTitle]
+  const currentSection = sections[currentIndex]
+
+  if (!currentSection || !currentSection.header) {
+    return docTitle
+  }
+
+  // Walk backwards to find parent headers
+  const parentStack: string[] = []
+  let targetLevel = currentSection.level
+
+  for (let i = currentIndex; i >= 0; i--) {
+    const section = sections[i]
+    if (section.header && section.level < targetLevel) {
+      parentStack.unshift(section.header)
+      targetLevel = section.level
+    }
+  }
+
+  // Add current header
+  path.push(...parentStack, currentSection.header)
+
+  return path.join(' > ')
+}
+
+/**
+ * Estimate token count (approximate: 1 token ≈ 4 chars)
+ */
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / CHARS_PER_TOKEN)
+}
+
+/**
+ * Chunk a document into smaller pieces
+ * Strategy: Split by ## headers, then by paragraphs if still too large
+ */
+export function chunkDocument(doc: DocEntry): ChunkEntry[] {
+  const chunks: ChunkEntry[] = []
+  const sections = parseMarkdownSections(doc.content)
+
+  let chunkIndex = 0
+
+  for (let i = 0; i < sections.length; i++) {
+    const section = sections[i]
+    const headerPath = buildHeaderPath(doc.title, sections, i)
+
+    // Skip empty sections
+    if (!section.content.trim() && !section.header) {
+      continue
+    }
+
+    const sectionContent = section.header
+      ? `## ${section.header}\n${section.content}`
+      : section.content
+
+    const tokens = estimateTokens(sectionContent)
+
+    if (tokens <= MAX_CHUNK_TOKENS) {
+      // Section fits in one chunk
+      chunks.push({
+        docSlug: doc.slug,
+        category: doc.category,
+        title: doc.title,
+        headerPath,
+        chunkIndex,
+        content: sectionContent.trim(),
+        keywords: doc.keywords, // Inherit doc keywords
+        chunkHash: computeHash(sectionContent),
+      })
+      chunkIndex++
+    } else {
+      // Section too large, split by paragraphs
+      const paragraphs = sectionContent.split(/\n\n+/)
+      let currentChunk: string[] = []
+      let currentTokens = 0
+
+      for (const para of paragraphs) {
+        const paraTokens = estimateTokens(para)
+
+        if (currentTokens + paraTokens > TARGET_CHUNK_TOKENS && currentChunk.length > 0) {
+          // Save current chunk
+          const chunkContent = currentChunk.join('\n\n')
+          chunks.push({
+            docSlug: doc.slug,
+            category: doc.category,
+            title: doc.title,
+            headerPath,
+            chunkIndex,
+            content: chunkContent.trim(),
+            keywords: doc.keywords,
+            chunkHash: computeHash(chunkContent),
+          })
+          chunkIndex++
+          currentChunk = [para]
+          currentTokens = paraTokens
+        } else {
+          currentChunk.push(para)
+          currentTokens += paraTokens
+        }
+      }
+
+      // Save remaining content
+      if (currentChunk.length > 0) {
+        const chunkContent = currentChunk.join('\n\n')
+        chunks.push({
+          docSlug: doc.slug,
+          category: doc.category,
+          title: doc.title,
+          headerPath,
+          chunkIndex,
+          content: chunkContent.trim(),
+          keywords: doc.keywords,
+          chunkHash: computeHash(chunkContent),
+        })
+        chunkIndex++
+      }
+    }
+  }
+
+  // If no chunks were created (e.g., very short doc), create one chunk for entire doc
+  if (chunks.length === 0) {
+    chunks.push({
+      docSlug: doc.slug,
+      category: doc.category,
+      title: doc.title,
+      headerPath: doc.title,
+      chunkIndex: 0,
+      content: doc.content.trim(),
+      keywords: doc.keywords,
+      chunkHash: computeHash(doc.content),
+    })
+  }
+
+  return chunks
+}
+
+/**
+ * Seed chunks into docs_knowledge_chunks table
+ * Upserts by (doc_slug, chunk_index), updates if chunk_hash differs
+ * Cleans up stale chunks (removed sections)
+ */
+export async function seedChunks(docs: DocEntry[]): Promise<{ inserted: number; updated: number; unchanged: number; deleted: number }> {
+  let inserted = 0
+  let updated = 0
+  let unchanged = 0
+  let deleted = 0
+
+  for (const doc of docs) {
+    try {
+      const chunks = chunkDocument(doc)
+      const maxChunkIndex = chunks.length - 1
+
+      // Upsert each chunk
+      for (const chunk of chunks) {
+        const existing = await serverPool.query(
+          'SELECT id, chunk_hash FROM docs_knowledge_chunks WHERE doc_slug = $1 AND chunk_index = $2',
+          [chunk.docSlug, chunk.chunkIndex]
+        )
+
+        if (existing.rows.length === 0) {
+          // Insert new chunk
+          await serverPool.query(
+            `INSERT INTO docs_knowledge_chunks
+             (doc_slug, category, title, header_path, chunk_index, content, keywords, chunk_hash)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            [chunk.docSlug, chunk.category, chunk.title, chunk.headerPath,
+             chunk.chunkIndex, chunk.content, chunk.keywords, chunk.chunkHash]
+          )
+          inserted++
+        } else if (existing.rows[0].chunk_hash !== chunk.chunkHash) {
+          // Update if hash differs
+          await serverPool.query(
+            `UPDATE docs_knowledge_chunks
+             SET category = $2, title = $3, header_path = $4, content = $5,
+                 keywords = $6, chunk_hash = $7, updated_at = NOW()
+             WHERE doc_slug = $1 AND chunk_index = $8`,
+            [chunk.docSlug, chunk.category, chunk.title, chunk.headerPath,
+             chunk.content, chunk.keywords, chunk.chunkHash, chunk.chunkIndex]
+          )
+          updated++
+        } else {
+          unchanged++
+        }
+      }
+
+      // Delete stale chunks (chunk_index > maxChunkIndex for this doc)
+      const deleteResult = await serverPool.query(
+        'DELETE FROM docs_knowledge_chunks WHERE doc_slug = $1 AND chunk_index > $2',
+        [doc.slug, maxChunkIndex]
+      )
+      deleted += deleteResult.rowCount || 0
+
+      if (chunks.length > 0) {
+        console.log(`[SeedChunks] ${doc.slug}: ${chunks.length} chunks`)
+      }
+    } catch (error) {
+      console.error(`[SeedChunks] Error processing ${doc.slug}:`, error)
+    }
+  }
+
+  console.log(`[SeedChunks] Complete: ${inserted} inserted, ${updated} updated, ${unchanged} unchanged, ${deleted} deleted`)
+  return { inserted, updated, unchanged, deleted }
+}
+
+/**
+ * Seed both docs and chunks (Phase 2 combined seeding)
+ */
+export async function seedDocsAndChunks(basePath?: string): Promise<{
+  docs: { inserted: number; updated: number; unchanged: number };
+  chunks: { inserted: number; updated: number; unchanged: number; deleted: number };
+}> {
+  const projectRoot = basePath || process.cwd()
+  const docs = loadDocsFromFilesystem(projectRoot)
+
+  // Seed docs first (Phase 0/1)
+  const docsResult = await seedDocs(basePath)
+
+  // Seed chunks (Phase 2)
+  const chunksResult = await seedChunks(docs)
+
+  return {
+    docs: docsResult,
+    chunks: chunksResult,
+  }
+}
+
+/**
+ * Get all chunks from database (for Phase 2 retrieval)
+ */
+export async function getAllChunks(): Promise<ChunkEntry[]> {
+  const result = await serverPool.query(
+    `SELECT doc_slug as "docSlug", category, title, header_path as "headerPath",
+            chunk_index as "chunkIndex", content, keywords, chunk_hash as "chunkHash"
+     FROM docs_knowledge_chunks
+     ORDER BY doc_slug, chunk_index`
+  )
+  return result.rows
+}
+
+/**
+ * Get chunks by doc slug
+ */
+export async function getChunksByDocSlug(docSlug: string): Promise<ChunkEntry[]> {
+  const result = await serverPool.query(
+    `SELECT doc_slug as "docSlug", category, title, header_path as "headerPath",
+            chunk_index as "chunkIndex", content, keywords, chunk_hash as "chunkHash"
+     FROM docs_knowledge_chunks
+     WHERE doc_slug = $1
+     ORDER BY chunk_index`,
+    [docSlug]
+  )
+  return result.rows
 }

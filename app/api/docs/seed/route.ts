@@ -2,20 +2,24 @@
  * API: Seed Documentation
  * POST /api/docs/seed
  *
- * Seeds documentation from docs/knowledge into the database.
- * Part of: cursor-style-doc-retrieval-plan.md (Phase 0)
+ * Seeds documentation from meta/documentation folder into the database.
+ * Phase 0/1: Seeds whole docs into docs_knowledge
+ * Phase 2: Also seeds chunks into docs_knowledge_chunks
+ *
+ * Part of: cursor-style-doc-retrieval-plan.md (Phase 0 + Phase 2)
  */
 
 import { NextResponse } from 'next/server'
-import { seedDocs } from '@/lib/docs/seed-docs'
+import { seedDocsAndChunks } from '@/lib/docs/seed-docs'
 
 export async function POST() {
   try {
-    const result = await seedDocs()
+    const result = await seedDocsAndChunks()
 
     return NextResponse.json({
       success: true,
-      ...result,
+      docs: result.docs,
+      chunks: result.chunks,
     })
   } catch (error) {
     console.error('[API] Seed docs error:', error)

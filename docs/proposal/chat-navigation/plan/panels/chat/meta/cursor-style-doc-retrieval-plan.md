@@ -282,6 +282,7 @@ Seed pipeline should upsert chunks by `(doc_slug, chunk_index)` and update if `c
 - Flip `DOC_RETRIEVAL_PHASE=1` to revert to Phase 1 retrieval.
 - Keep Phase 2 tables (no data loss) for later re‑enable.
 
+
 ---
 
 ## Phase 3 — Embeddings (Cursor‑style)
@@ -430,12 +431,14 @@ Notes:
 
 | File | Description |
 |------|-------------|
-| `migrations/062_create_docs_knowledge.up.sql` | DB table for documentation |
+| `migrations/062_create_docs_knowledge.up.sql` | DB table for documentation (Phase 0) |
 | `migrations/062_create_docs_knowledge.down.sql` | Rollback migration |
-| `lib/docs/seed-docs.ts` | Documentation seeding service (with auto-keyword extraction) |
-| `lib/docs/keyword-retrieval.ts` | Keyword retrieval service |
-| `app/api/docs/seed/route.ts` | Seed API endpoint |
-| `app/api/docs/retrieve/route.ts` | Retrieve API endpoint |
+| `migrations/063_create_docs_knowledge_chunks.up.sql` | DB table for chunks (Phase 2) |
+| `migrations/063_create_docs_knowledge_chunks.down.sql` | Rollback migration |
+| `lib/docs/seed-docs.ts` | Seeding service (docs + chunks with auto-keyword extraction) |
+| `lib/docs/keyword-retrieval.ts` | Retrieval service (Phase 1 docs + Phase 2 chunks) |
+| `app/api/docs/seed/route.ts` | Seed API endpoint (seeds both docs and chunks) |
+| `app/api/docs/retrieve/route.ts` | Retrieve API endpoint (supports mode=chunks, phase param) |
 
 ### Documentation Source (Existing Files)
 
@@ -468,8 +471,38 @@ npm run type-check → PASS
    - `workspace` → Tier 1 cache hit: "A workspace is where your notes live..."
    - `navigation` → Tier 2 DB hit: "Navigation Actions" with confidence 0.6
 
-### Phase 2-4: Deferred
+### Phase 2: Chunk-Level Retrieval ✅ COMPLETE (2026-01-11)
 
-- Phase 2 (Chunking): Not needed yet
+| Item | Status | File |
+|------|--------|------|
+| Migration (docs_knowledge_chunks) | ✅ | `migrations/063_create_docs_knowledge_chunks.up.sql` |
+| Rollback migration | ✅ | `migrations/063_create_docs_knowledge_chunks.down.sql` |
+| Chunking pipeline | ✅ | `lib/docs/seed-docs.ts` (chunkDocument, seedChunks) |
+| Upsert + cleanup | ✅ | `lib/docs/seed-docs.ts` (seedChunks with stale chunk deletion) |
+| Chunk scoring | ✅ | `lib/docs/keyword-retrieval.ts` (scoreChunk, retrieveChunks) |
+| De-dupe logic | ✅ | `lib/docs/keyword-retrieval.ts` (dedupeChunks, MAX_CHUNKS_PER_DOC=2) |
+| Evidence objects | ✅ | `ChunkRetrievalResult` interface with header_path, chunk_index |
+| Feature flag | ✅ | `DOC_RETRIEVAL_PHASE` env var (default: 2) |
+| Phase 1 fallback | ✅ | `smartRetrieve()` falls back to `retrieveDocs()` on error |
+| Metrics logging | ✅ | Console log with latency, matched/total, deduped counts |
+| Seed API updated | ✅ | `app/api/docs/seed/route.ts` now seeds both docs and chunks |
+| Retrieve API updated | ✅ | `app/api/docs/retrieve/route.ts` supports mode=chunks, phase param |
+
+#### Phase 2 Verification
+
+```bash
+# Seed chunks (114 chunks from 19 docs)
+curl -X POST http://localhost:3000/api/docs/seed
+# → {"docs":{"unchanged":19},"chunks":{"inserted":114}}
+
+# Test chunk retrieval
+curl -X POST http://localhost:3000/api/docs/retrieve \
+  -H "Content-Type: application/json" \
+  -d '{"query":"home overview","mode":"chunks"}'
+# → Phase 2 response with header_path, metrics, de-dupe
+```
+
+### Phase 3-4: Deferred
+
 - Phase 3 (Embeddings): Not needed yet
 - Phase 4 (Context Builder): Not needed yet

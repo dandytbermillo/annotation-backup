@@ -1,6 +1,9 @@
 /**
  * Keyword Retrieval Service
- * Part of: cursor-style-doc-retrieval-plan.md (Phase 1)
+ * Part of: cursor-style-doc-retrieval-plan.md (Phase 1 + Phase 2)
+ *
+ * Phase 1: Whole-document retrieval with keyword scoring
+ * Phase 2: Chunk-level retrieval with header_path context and de-dupe
  *
  * Provides keyword-based document retrieval with scoring and confidence.
  * No embeddings required - uses term matching with weighted scoring.
@@ -37,6 +40,7 @@ const SYNONYMS: Record<string, string> = {
   history: 'recent',
   bookmarks: 'quick links',
   favorites: 'quick links',
+  navigate: 'navigation',
 }
 
 // Scoring weights
@@ -114,7 +118,14 @@ export function normalizeQuery(query: string): string[] {
   return result.map(t => {
     if (t.length < 4) return t
     if (t.endsWith('ies')) return t.slice(0, -3) + 'y'
-    if (t.endsWith('es') && t.length > 4) return t.slice(0, -2)
+    // Only strip 'es' for proper suffixes (ches, shes, xes, zes, oes)
+    // This avoids "notes" → "not" (should be "note" via the 's' rule)
+    if (t.length > 4 && (
+      t.endsWith('ches') || t.endsWith('shes') ||
+      t.endsWith('xes') || t.endsWith('zes') || t.endsWith('oes')
+    )) {
+      return t.slice(0, -2)
+    }
     if (t.endsWith('s') && !t.endsWith('ss')) return t.slice(0, -1)
     return t
   })
@@ -405,6 +416,399 @@ export function getCachedExplanation(query: string): string | null {
   const singular = withoutPrefix.replace(/s$/, '')
   if (CORE_CONCEPTS[singular]) {
     return CORE_CONCEPTS[singular]
+  }
+
+  return null
+}
+
+// =============================================================================
+// Phase 2: Chunk-Level Retrieval
+// =============================================================================
+
+// Feature flag for Phase 2 (can be set via env)
+const DOC_RETRIEVAL_PHASE = parseInt(process.env.DOC_RETRIEVAL_PHASE || '2', 10)
+
+// De-dupe config: max chunks per doc
+const MAX_CHUNKS_PER_DOC = 2
+const DEFAULT_TOP_K = 5
+
+interface ChunkRow {
+  doc_slug: string
+  category: string
+  title: string
+  header_path: string
+  chunk_index: number
+  content: string
+  keywords: string[]
+  chunk_hash: string
+}
+
+export interface ChunkRetrievalResult {
+  doc_slug: string
+  chunk_index: number
+  header_path: string
+  title: string
+  category: string
+  snippet: string
+  score: number
+  rawScore: number
+  chunk_hash: string
+  matched_terms: string[]
+  source: 'keyword' | 'hybrid' | 'embedding'
+  match_explain?: string[]
+  confidence?: number
+}
+
+export interface ChunkRetrievalResponse {
+  status: 'found' | 'ambiguous' | 'weak' | 'no_match'
+  results: ChunkRetrievalResult[]
+  clarification?: string
+  confidence: number
+  phase: number
+  metrics?: {
+    totalChunks: number
+    matchedChunks: number
+    dedupedChunks: number
+    retrievalTimeMs: number
+  }
+}
+
+/**
+ * Score a chunk against query tokens
+ */
+function scoreChunk(chunk: ChunkRow, queryTokens: string[]): { score: number; matchedTerms: string[]; explain: string[] } {
+  let score = 0
+  const matchedTerms: string[] = []
+  const explain: string[] = []
+
+  const titleLower = chunk.title.toLowerCase()
+  const headerPathLower = chunk.header_path.toLowerCase()
+  const contentLower = chunk.content.toLowerCase()
+  const keywordsLower = chunk.keywords.map(k => k.toLowerCase())
+
+  // Check for exact phrase match in title or header_path
+  const queryPhrase = queryTokens.join(' ')
+  if ((titleLower.includes(queryPhrase) || headerPathLower.includes(queryPhrase)) && queryTokens.length > 1) {
+    score += SCORE_TITLE_EXACT
+    matchedTerms.push(...queryTokens)
+    explain.push(`Exact phrase "${queryPhrase}" in title/header: +${SCORE_TITLE_EXACT}`)
+  }
+
+  for (const token of queryTokens) {
+    if (matchedTerms.includes(token)) continue // Already matched in phrase
+
+    // Title token match
+    if (titleLower.includes(token)) {
+      score += SCORE_TITLE_TOKEN
+      matchedTerms.push(token)
+      explain.push(`Token "${token}" in title: +${SCORE_TITLE_TOKEN}`)
+      continue
+    }
+
+    // Header path match (same weight as title)
+    if (headerPathLower.includes(token)) {
+      score += SCORE_TITLE_TOKEN
+      matchedTerms.push(token)
+      explain.push(`Token "${token}" in header_path: +${SCORE_TITLE_TOKEN}`)
+      continue
+    }
+
+    // Keyword match
+    if (keywordsLower.some(k => k.includes(token) || token.includes(k))) {
+      score += SCORE_KEYWORD
+      matchedTerms.push(token)
+      explain.push(`Token "${token}" in keywords: +${SCORE_KEYWORD}`)
+      continue
+    }
+
+    // Content match
+    if (contentLower.includes(token)) {
+      score += SCORE_CONTENT
+      matchedTerms.push(token)
+      explain.push(`Token "${token}" in content: +${SCORE_CONTENT}`)
+    }
+  }
+
+  // Normalize by content length (sqrt to reduce penalty)
+  const contentTokenCount = contentLower.split(/\s+/).length
+  const normalizedScore = score / Math.sqrt(Math.max(contentTokenCount / 50, 1))
+
+  return {
+    score: Math.round(normalizedScore * 100) / 100,
+    matchedTerms: [...new Set(matchedTerms)],
+    explain,
+  }
+}
+
+/**
+ * De-duplicate chunks: limit to MAX_CHUNKS_PER_DOC per document
+ */
+function dedupeChunks(chunks: ChunkRetrievalResult[]): { results: ChunkRetrievalResult[]; dedupedCount: number } {
+  const docCounts: Record<string, number> = {}
+  const results: ChunkRetrievalResult[] = []
+  let dedupedCount = 0
+
+  for (const chunk of chunks) {
+    const count = docCounts[chunk.doc_slug] || 0
+    if (count < MAX_CHUNKS_PER_DOC) {
+      results.push(chunk)
+      docCounts[chunk.doc_slug] = count + 1
+    } else {
+      dedupedCount++
+    }
+  }
+
+  return { results, dedupedCount }
+}
+
+/**
+ * Retrieve relevant chunks for a query (Phase 2)
+ */
+export async function retrieveChunks(query: string, topK: number = DEFAULT_TOP_K): Promise<ChunkRetrievalResponse> {
+  const startTime = Date.now()
+  const queryTokens = normalizeQuery(query)
+
+  if (queryTokens.length === 0) {
+    return {
+      status: 'no_match',
+      results: [],
+      clarification: 'Which part would you like me to explain?',
+      confidence: 0,
+      phase: 2,
+    }
+  }
+
+  // Fetch all chunks
+  const result = await serverPool.query(
+    `SELECT doc_slug, category, title, header_path, chunk_index, content, keywords, chunk_hash
+     FROM docs_knowledge_chunks`
+  )
+
+  const chunks: ChunkRow[] = result.rows
+  const totalChunks = chunks.length
+
+  // Score all chunks
+  const scored: ChunkRetrievalResult[] = []
+
+  for (const chunk of chunks) {
+    const { score, matchedTerms, explain } = scoreChunk(chunk, queryTokens)
+
+    if (score > 0) {
+      scored.push({
+        doc_slug: chunk.doc_slug,
+        chunk_index: chunk.chunk_index,
+        header_path: chunk.header_path,
+        title: chunk.title,
+        category: chunk.category,
+        snippet: extractSnippet(chunk.content),
+        score,
+        rawScore: score,
+        chunk_hash: chunk.chunk_hash,
+        matched_terms: matchedTerms,
+        source: 'keyword',
+        match_explain: explain,
+      })
+    }
+  }
+
+  // Sort by score descending
+  scored.sort((a, b) => b.score - a.score)
+
+  // No matches
+  if (scored.length === 0) {
+    const noMatchMetrics = {
+      totalChunks,
+      matchedChunks: 0,
+      dedupedChunks: 0,
+      retrievalTimeMs: Date.now() - startTime,
+    }
+    console.log(`[Retrieval] Phase 2: query="${query}" status=no_match latency=${noMatchMetrics.retrievalTimeMs}ms`)
+    return {
+      status: 'no_match',
+      results: [],
+      clarification: 'Which part would you like me to explain?',
+      confidence: 0,
+      phase: 2,
+      metrics: noMatchMetrics,
+    }
+  }
+
+  // De-dupe and limit to top K
+  const { results: dedupedResults, dedupedCount } = dedupeChunks(scored)
+  const topResults = dedupedResults.slice(0, topK)
+
+  const topResult = topResults[0]
+  const secondScore = topResults.length > 1 ? topResults[1].score : 0
+
+  // Calculate confidence
+  const confidence = secondScore > 0
+    ? (topResult.score - secondScore) / topResult.score
+    : 1
+
+  // Add confidence to top result
+  topResult.confidence = confidence
+
+  const metrics = {
+    totalChunks,
+    matchedChunks: scored.length,
+    dedupedChunks: dedupedCount,
+    retrievalTimeMs: Date.now() - startTime,
+  }
+
+  // Apply confidence rules (same as Phase 1)
+  const hasTitleOrKeywordHit = topResult.match_explain?.some(e =>
+    e.includes('title') || e.includes('keywords') || e.includes('header_path')
+  )
+
+  if (topResult.matched_terms.length < MIN_MATCHED_TERMS) {
+    return {
+      status: 'weak',
+      results: topResults.slice(0, 3),
+      clarification: `I'm not sure which feature you mean. Are you asking about "${topResult.header_path}"?`,
+      confidence,
+      phase: 2,
+      metrics,
+    }
+  }
+
+  if (!hasTitleOrKeywordHit) {
+    return {
+      status: 'weak',
+      results: topResults.slice(0, 3),
+      clarification: `I found a possible match in "${topResult.header_path}". Is that what you're asking about?`,
+      confidence,
+      phase: 2,
+      metrics,
+    }
+  }
+
+  if (topResult.score < MIN_SCORE) {
+    return {
+      status: 'weak',
+      results: topResults.slice(0, 3),
+      clarification: `I think you mean "${topResult.header_path}". Is that right?`,
+      confidence,
+      phase: 2,
+      metrics,
+    }
+  }
+
+  // Same-doc tie collapse: if top two results are from the same doc, treat as weak
+  // instead of ambiguous (avoids confusing "Home > Home" vs "Home > Overview" prompts)
+  if (topResults.length > 1 &&
+      topResults[0].doc_slug === topResults[1].doc_slug &&
+      (topResult.score - secondScore) < MIN_GAP) {
+    return {
+      status: 'weak',
+      results: [topResult],
+      clarification: `I found info in "${topResult.header_path}". Is that what you meant?`,
+      confidence,
+      phase: 2,
+      metrics,
+    }
+  }
+
+  // Cross-doc ambiguity: different docs with close scores
+  if (topResults.length > 1 && (topResult.score - secondScore) < MIN_GAP) {
+    return {
+      status: 'ambiguous',
+      results: topResults.slice(0, 2),
+      clarification: `Do you mean "${topResult.header_path}" or "${topResults[1].header_path}"?`,
+      confidence,
+      phase: 2,
+      metrics,
+    }
+  }
+
+  if (confidence < MIN_CONFIDENCE) {
+    return {
+      status: 'ambiguous',
+      results: topResults.slice(0, 2),
+      clarification: `Do you mean "${topResult.header_path}" or "${topResults[1].header_path}"?`,
+      confidence,
+      phase: 2,
+      metrics,
+    }
+  }
+
+  // Strong match
+  const response: ChunkRetrievalResponse = {
+    status: 'found',
+    results: topResults,
+    confidence,
+    phase: 2,
+    metrics,
+  }
+
+  // Log retrieval metrics for observability
+  console.log(`[Retrieval] Phase 2: query="${query}" status=${response.status} ` +
+    `topScore=${topResult.score} confidence=${confidence.toFixed(2)} ` +
+    `matched=${metrics.matchedChunks}/${metrics.totalChunks} deduped=${metrics.dedupedChunks} ` +
+    `latency=${metrics.retrievalTimeMs}ms`)
+
+  return response
+}
+
+/**
+ * Get a short explanation from chunks (Phase 2)
+ */
+export async function getChunkExplanation(concept: string): Promise<string | null> {
+  const response = await retrieveChunks(concept, 1)
+
+  if (response.status === 'found' && response.results.length > 0) {
+    const chunk = response.results[0]
+    // Return snippet with header context
+    return `${chunk.header_path}: ${chunk.snippet}`
+  }
+
+  if (response.status === 'ambiguous' || response.status === 'weak') {
+    return response.clarification || null
+  }
+
+  return null
+}
+
+/**
+ * Smart retrieval: uses Phase 1 or Phase 2 based on feature flag
+ * Falls back to Phase 1 if Phase 2 fails
+ */
+export async function smartRetrieve(query: string): Promise<RetrievalResponse | ChunkRetrievalResponse> {
+  if (DOC_RETRIEVAL_PHASE >= 2) {
+    try {
+      return await retrieveChunks(query)
+    } catch (error) {
+      console.error('[Retrieval] Phase 2 failed, falling back to Phase 1:', error)
+      // Fall through to Phase 1
+    }
+  }
+
+  return await retrieveDocs(query)
+}
+
+/**
+ * Get explanation using smart retrieval (Tier 1 cache → Phase 2 → Phase 1)
+ */
+export async function getSmartExplanation(concept: string): Promise<string | null> {
+  // Tier 1: Check cache first
+  const cached = getCachedExplanation(concept)
+  if (cached) return cached
+
+  // Tier 2: Try smart retrieval
+  const response = await smartRetrieve(concept)
+
+  if (response.status === 'found' && response.results.length > 0) {
+    const result = response.results[0]
+    if ('header_path' in result) {
+      // Phase 2 chunk result
+      return `${result.header_path}: ${result.snippet}`
+    } else {
+      // Phase 1 doc result
+      return result.snippet.split('\n\n')[0] || result.snippet
+    }
+  }
+
+  if (response.status === 'ambiguous' || response.status === 'weak') {
+    return response.clarification || null
   }
 
   return null

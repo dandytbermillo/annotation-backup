@@ -33,6 +33,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS trigger_docs_knowledge_updated_at ON docs_knowledge;
 CREATE TRIGGER trigger_docs_knowledge_updated_at
   BEFORE UPDATE ON docs_knowledge
   FOR EACH ROW

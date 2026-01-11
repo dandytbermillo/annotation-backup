@@ -3,16 +3,25 @@
  * POST /api/docs/retrieve
  *
  * Retrieves relevant documentation for a query using keyword matching.
- * Part of: cursor-style-doc-retrieval-plan.md (Phase 1)
+ * Phase 1: Whole-doc retrieval
+ * Phase 2: Chunk-level retrieval with header_path context
+ *
+ * Part of: cursor-style-doc-retrieval-plan.md (Phase 1 + Phase 2)
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { retrieveDocs, getCachedExplanation, getExplanation } from '@/lib/docs/keyword-retrieval'
+import {
+  getCachedExplanation,
+  getSmartExplanation,
+  smartRetrieve,
+  retrieveChunks,
+  retrieveDocs,
+} from '@/lib/docs/keyword-retrieval'
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { query, mode } = body
+    const { query, mode, phase } = body
 
     if (!query || typeof query !== 'string') {
       return NextResponse.json(
@@ -23,6 +32,7 @@ export async function POST(request: NextRequest) {
 
     // Mode: 'explain' returns just a short explanation string
     // Mode: 'full' returns full retrieval results with scores
+    // Mode: 'chunks' returns chunk-level results (Phase 2 only)
     if (mode === 'explain') {
       // Try cache first (Tier 1)
       const cached = getCachedExplanation(query)
@@ -30,21 +40,42 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
           success: true,
           source: 'cache',
+          phase: 0,
           explanation: cached,
         })
       }
 
-      // Fall back to database retrieval (Tier 2)
-      const explanation = await getExplanation(query)
+      // Fall back to smart retrieval (Phase 2 → Phase 1)
+      const explanation = await getSmartExplanation(query)
       return NextResponse.json({
         success: true,
         source: 'database',
+        phase: 2,
         explanation: explanation || 'Which part would you like me to explain?',
       })
     }
 
-    // Full retrieval mode
-    const result = await retrieveDocs(query)
+    // Explicit chunk retrieval mode
+    if (mode === 'chunks') {
+      const result = await retrieveChunks(query)
+      return NextResponse.json({
+        success: true,
+        ...result,
+      })
+    }
+
+    // Full retrieval mode - use specified phase or smart default
+    if (phase === 1) {
+      const result = await retrieveDocs(query)
+      return NextResponse.json({
+        success: true,
+        phase: 1,
+        ...result,
+      })
+    }
+
+    // Default: smart retrieval (Phase 2 with Phase 1 fallback)
+    const result = await smartRetrieve(query)
 
     return NextResponse.json({
       success: true,
