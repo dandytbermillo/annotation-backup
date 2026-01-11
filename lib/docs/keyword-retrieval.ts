@@ -622,7 +622,10 @@ export async function retrieveChunks(query: string, topK: number = DEFAULT_TOP_K
       dedupedChunks: 0,
       retrievalTimeMs: Date.now() - startTime,
     }
+    // Production typo metric: log no_match queries for Phase 3 decision
+    // Filter logs with: grep "\[Retrieval:NoMatch\]" to track typo/miss rate
     console.log(`[Retrieval] Phase 2: query="${query}" status=no_match latency=${noMatchMetrics.retrievalTimeMs}ms`)
+    console.log(`[Retrieval:NoMatch] query="${query}" tokens=${JSON.stringify(queryTokens)} timestamp=${new Date().toISOString()}`)
     return {
       status: 'no_match',
       results: [],

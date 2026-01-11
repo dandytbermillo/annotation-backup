@@ -488,6 +488,12 @@ npm run type-check → PASS
 | Seed API updated | ✅ | `app/api/docs/seed/route.ts` now seeds both docs and chunks |
 | Retrieve API updated | ✅ | `app/api/docs/retrieve/route.ts` supports mode=chunks, phase param |
 
+#### Phase 2.1 Follow-ups (Applied)
+
+- ✅ Same-doc tie collapse: treat top-two chunks from the same doc as `weak` (single clarification) instead of `ambiguous` A/B.
+- ✅ Stemming fix: `notes`/`files` no longer stem to `not`/`fil` (only strip `-es` for `ches/shes/xes/zes/oes`).
+- ✅ Synonym: `navigate → navigation` to fix the natural-language miss in metrics baseline.
+
 #### Phase 2 Verification
 
 ```bash

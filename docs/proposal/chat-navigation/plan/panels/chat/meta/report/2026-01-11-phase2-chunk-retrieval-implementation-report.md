@@ -1100,6 +1100,27 @@ if (topResults.length > 1 &&
 
 ---
 
+## Bug Fix: Synonym Gap (Post-Baseline)
+
+**Date:** 2026-01-11
+**Status:** ✅ FIXED
+
+- **Issue:** Query "how do I navigate" returned `no_match` (identified in metrics baseline)
+- **Root cause:** Missing synonym mapping from `navigate` → `navigation`
+- **Fix:** Added `navigate: 'navigation'` to SYNONYMS map
+- **Location:** `lib/docs/keyword-retrieval.ts:43`
+
+**Verification:**
+
+| Query | Before | After |
+|-------|--------|-------|
+| "how do I navigate" | no_match | weak ✅ |
+| "navigation actions" | weak | weak ✅ (unchanged) |
+
+**Impact:** Natural language success rate 80% → 100%
+
+---
+
 ## Files Created/Modified
 
 | File | Type | Description |
@@ -1218,6 +1239,13 @@ curl -s -X POST http://localhost:3000/api/docs/retrieve \
 ---
 
 ## Next Steps
+
+## Follow-up Applied (Phase 2.1)
+
+These refinements were applied after verification:
+- Same-doc tie collapse → returns `weak` with a single clarification instead of `ambiguous` A/B.
+- Stemming fix (`notes`, `files`) → only strip `-es` for `ches/shes/xes/zes/oes`.
+- Synonym `navigate → navigation` to fix the natural-language miss from the baseline.
 
 1. **Monitor metrics** in production to track:
    - Keyword match rate
