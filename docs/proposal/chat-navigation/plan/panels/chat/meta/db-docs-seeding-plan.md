@@ -28,6 +28,31 @@ Create a `docs_knowledge` table:
   - title (first heading)
   - content (full markdown)
 
+## Seed Content Manifest (Minimum Viable)
+Seed at least the following docs so Phase 1 retrieval has coverage:
+
+| Slug | Category | Title | Must Cover |
+|---|---|---|---|
+| `home` | `concepts` | Home | What Home is, what it shows, how to return |
+| `dashboard` | `concepts` | Dashboard | Widgets/panels overview, drawers |
+| `entry` | `concepts` | Entry | Entry vs workspace, dashboard per entry |
+| `workspace` | `concepts` | Workspace | Notes live here, open notes, dock |
+| `notes` | `concepts` | Notes | Creating/opening notes, open notes list |
+| `widgets` | `concepts` | Widgets | What widgets are, visible widgets |
+| `panels` | `concepts` | Panels | Drawer panels, open panel state |
+| `recent` | `widgets` | Recent | What it shows, how to open |
+| `quick-links` | `widgets` | Quick Links | Badges, list vs drawer |
+| `navigator` | `widgets` | Navigator | Purpose and open behavior |
+| `quick-capture` | `widgets` | Quick Capture | Purpose and open behavior |
+| `links-overview` | `widgets` | Links Overview | Purpose and open behavior |
+| `continue` | `widgets` | Continue | Purpose and open behavior |
+| `widget-manager` | `widgets` | Widget Manager | Install/enable/disable widgets |
+| `navigation-actions` | `actions` | Navigation | open/list/go home/dashboard/workspace |
+| `note-actions` | `actions` | Notes Actions | create/open/rename/delete notes |
+
+Optional expansions (Phase 2+):
+- `entries` (concepts), `quick-links-editing` (widgets), `workspaces-search` (actions)
+
 ## Seeding Strategy
 1) On app startup (server side), run `seedDocs()`
 2) For each doc:

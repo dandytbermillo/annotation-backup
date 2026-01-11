@@ -328,6 +328,68 @@ function matchesReshowPhrases(input: string): boolean {
 }
 
 /**
+ * Check if input is a meta-explain phrase OUTSIDE of clarification mode.
+ * Per meta-explain-outside-clarification-plan.md (Tiered Plan)
+ * Handles: "explain", "what do you mean?", "explain home", etc.
+ */
+function isMetaExplainOutsideClarification(input: string): boolean {
+  // Strip trailing punctuation for matching
+  const normalized = input.trim().toLowerCase().replace(/[?!.]+$/, '')
+
+  // Direct meta phrases
+  if (
+    normalized === 'explain' ||
+    normalized === 'what do you mean' ||
+    normalized === 'explain that' ||
+    normalized === 'help me understand' ||
+    normalized === 'what is that' ||
+    normalized === 'tell me more'
+  ) {
+    return true
+  }
+
+  // "explain <concept>" pattern
+  if (normalized.startsWith('explain ')) {
+    return true
+  }
+
+  // "what is <concept>" pattern
+  if (normalized.startsWith('what is ') || normalized.startsWith('what are ')) {
+    return true
+  }
+
+  return false
+}
+
+/**
+ * Extract the concept from a meta-explain phrase.
+ * Returns null if no specific concept is mentioned.
+ */
+function extractMetaExplainConcept(input: string): string | null {
+  const normalized = input.trim().toLowerCase().replace(/[?!.]+$/, '')
+
+  // "explain <concept>"
+  if (normalized.startsWith('explain ') && normalized !== 'explain that') {
+    const concept = normalized.replace(/^explain\s+/, '').trim()
+    if (concept && concept !== 'that') return concept
+  }
+
+  // "what is <concept>"
+  if (normalized.startsWith('what is ')) {
+    const concept = normalized.replace(/^what is\s+(a\s+|an\s+|the\s+)?/, '').trim()
+    if (concept) return concept
+  }
+
+  // "what are <concepts>"
+  if (normalized.startsWith('what are ')) {
+    const concept = normalized.replace(/^what are\s+(the\s+)?/, '').trim()
+    if (concept) return concept
+  }
+
+  return null
+}
+
+/**
  * Find the most recent assistant message that contains options (pills).
  * Per pending-options-message-source-plan.md: use chat as source of truth.
  * Returns the options and timestamp, or null if no options message exists.
@@ -2040,6 +2102,88 @@ function ChatNavigationPanelContent({
         // If we reach here, either:
         // - New intent was detected (lastClarification cleared, skip Tier 2)
         // - handleUnclear returned true - continue to normal routing
+      }
+
+      // ---------------------------------------------------------------------------
+      // Meta-Explain Outside Clarification: Handle "explain", "what do you mean?"
+      // Per meta-explain-outside-clarification-plan.md (Tiered Plan)
+      // Tier 1: Local cache for common concepts
+      // Tier 2: Database retrieval for long tail
+      // ---------------------------------------------------------------------------
+      if (!lastClarification && isMetaExplainOutsideClarification(trimmedInput)) {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'meta_explain_outside_clarification',
+          metadata: { userInput: trimmedInput },
+        })
+
+        try {
+          // Extract specific concept or use last assistant message context
+          const concept = extractMetaExplainConcept(trimmedInput)
+          let queryTerm = concept
+
+          // If no specific concept, try to infer from last assistant message
+          if (!queryTerm) {
+            const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant')
+            if (lastAssistant?.content) {
+              // Extract key terms from last answer (e.g., "dashboard of Home" → "home")
+              const contentLower = lastAssistant.content.toLowerCase()
+              if (contentLower.includes('dashboard') && contentLower.includes('home')) {
+                queryTerm = 'home'
+              } else if (contentLower.includes('workspace')) {
+                queryTerm = 'workspace'
+              } else if (contentLower.includes('recent')) {
+                queryTerm = 'recent'
+              } else if (contentLower.includes('quick links')) {
+                queryTerm = 'quick links'
+              } else if (contentLower.includes('navigator')) {
+                queryTerm = 'navigator'
+              } else if (contentLower.includes('panel') || contentLower.includes('drawer')) {
+                queryTerm = 'drawer'
+              }
+            }
+          }
+
+          // Call retrieval API
+          const retrieveResponse = await fetch('/api/docs/retrieve', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              query: queryTerm || trimmedInput,
+              mode: 'explain',
+            }),
+          })
+
+          if (retrieveResponse.ok) {
+            const result = await retrieveResponse.json()
+            const explanation = result.explanation || 'Which part would you like me to explain?'
+
+            const assistantMessage: ChatMessage = {
+              id: `assistant-${Date.now()}`,
+              role: 'assistant',
+              content: explanation,
+              timestamp: new Date(),
+              isError: false,
+            }
+            addMessage(assistantMessage)
+            setIsLoading(false)
+            return
+          }
+        } catch (error) {
+          console.error('[ChatNavigation] Meta-explain retrieval error:', error)
+        }
+
+        // Fallback if retrieval fails
+        const fallbackMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: 'Which part would you like me to explain?',
+          timestamp: new Date(),
+          isError: false,
+        }
+        addMessage(fallbackMessage)
+        setIsLoading(false)
+        return
       }
 
       // ---------------------------------------------------------------------------

@@ -1,0 +1,411 @@
+/**
+ * Keyword Retrieval Service
+ * Part of: cursor-style-doc-retrieval-plan.md (Phase 1)
+ *
+ * Provides keyword-based document retrieval with scoring and confidence.
+ * No embeddings required - uses term matching with weighted scoring.
+ */
+
+import { serverPool } from '@/lib/db/pool'
+
+// =============================================================================
+// Configuration
+// =============================================================================
+
+const STOPWORDS = new Set([
+  'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+  'what', 'how', 'why', 'when', 'where', 'which', 'who', 'whom',
+  'my', 'your', 'our', 'their', 'its', 'do', 'does', 'did', 'can', 'could',
+  'will', 'would', 'should', 'may', 'might', 'must', 'shall',
+  'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'as',
+  'and', 'or', 'but', 'if', 'then', 'so', 'than', 'that', 'this',
+  'i', 'me', 'you', 'he', 'she', 'it', 'we', 'they',
+  'have', 'has', 'had', 'get', 'got', 'go', 'going', 'went',
+  'tell', 'about', 'please', 'just', 'like', 'know',
+])
+
+const SYNONYMS: Record<string, string> = {
+  shortcuts: 'quick links',
+  homepage: 'home',
+  main: 'home',
+  docs: 'notes',
+  documents: 'notes',
+  files: 'notes',
+  folder: 'navigator',
+  folders: 'navigator',
+  tree: 'navigator',
+  history: 'recent',
+  bookmarks: 'quick links',
+  favorites: 'quick links',
+}
+
+// Scoring weights
+const SCORE_TITLE_EXACT = 5
+const SCORE_TITLE_TOKEN = 3
+const SCORE_KEYWORD = 2
+const SCORE_CONTENT = 1
+
+// Confidence thresholds
+const MIN_SCORE = 3
+const MIN_CONFIDENCE = 0.3
+const MIN_GAP = 2
+const MIN_MATCHED_TERMS = 1
+
+// =============================================================================
+// Types
+// =============================================================================
+
+export interface RetrievalResult {
+  doc_slug: string
+  title: string
+  category: string
+  snippet: string
+  score: number
+  content_hash: string
+  matched_terms: string[]
+  source: 'keyword' | 'hybrid' | 'embedding'
+  match_explain?: string[]
+  confidence?: number
+}
+
+export interface RetrievalResponse {
+  status: 'found' | 'ambiguous' | 'weak' | 'no_match'
+  results: RetrievalResult[]
+  clarification?: string
+  confidence: number
+}
+
+// =============================================================================
+// Query Normalization
+// =============================================================================
+
+/**
+ * Normalize query: lowercase, strip punctuation, remove stopwords
+ */
+export function normalizeQuery(query: string): string[] {
+  // Apply phrase synonyms first
+  let normalized = query.toLowerCase()
+  for (const [from, to] of Object.entries(SYNONYMS)) {
+    if (from.includes(' ')) {
+      normalized = normalized.replace(new RegExp(from, 'g'), to)
+    }
+  }
+
+  // Tokenize
+  const tokens = normalized
+    .replace(/[^\w\s]/g, ' ')
+    .split(/\s+/)
+    .filter(t => t.length > 0)
+
+  // Apply single-word synonyms and filter stopwords
+  const result: string[] = []
+  for (const token of tokens) {
+    if (STOPWORDS.has(token)) continue
+    const mapped = SYNONYMS[token] || token
+    // Handle multi-word synonym results
+    if (mapped.includes(' ')) {
+      result.push(...mapped.split(' '))
+    } else {
+      result.push(mapped)
+    }
+  }
+
+  // Conservative stemming: only strip common suffixes from longer words
+  return result.map(t => {
+    if (t.length < 4) return t
+    if (t.endsWith('ies')) return t.slice(0, -3) + 'y'
+    if (t.endsWith('es') && t.length > 4) return t.slice(0, -2)
+    if (t.endsWith('s') && !t.endsWith('ss')) return t.slice(0, -1)
+    return t
+  })
+}
+
+/**
+ * Extract first N words from content as snippet
+ */
+function extractSnippet(content: string, maxWords: number = 30): string {
+  const words = content.split(/\s+/).slice(0, maxWords)
+  return words.join(' ') + (words.length >= maxWords ? '...' : '')
+}
+
+// =============================================================================
+// Scoring
+// =============================================================================
+
+interface DocRow {
+  slug: string
+  category: string
+  title: string
+  content: string
+  keywords: string[]
+  content_hash: string
+}
+
+/**
+ * Score a document against query tokens
+ */
+function scoreDocument(doc: DocRow, queryTokens: string[]): { score: number; matchedTerms: string[]; explain: string[] } {
+  let score = 0
+  const matchedTerms: string[] = []
+  const explain: string[] = []
+
+  const titleLower = doc.title.toLowerCase()
+  const contentLower = doc.content.toLowerCase()
+  const keywordsLower = doc.keywords.map(k => k.toLowerCase())
+
+  // Check for exact phrase match in title
+  const queryPhrase = queryTokens.join(' ')
+  if (titleLower.includes(queryPhrase) && queryTokens.length > 1) {
+    score += SCORE_TITLE_EXACT
+    matchedTerms.push(...queryTokens)
+    explain.push(`Exact phrase "${queryPhrase}" in title: +${SCORE_TITLE_EXACT}`)
+  }
+
+  for (const token of queryTokens) {
+    if (matchedTerms.includes(token)) continue // Already matched in phrase
+
+    // Title token match
+    if (titleLower.includes(token)) {
+      score += SCORE_TITLE_TOKEN
+      matchedTerms.push(token)
+      explain.push(`Token "${token}" in title: +${SCORE_TITLE_TOKEN}`)
+      continue
+    }
+
+    // Keyword match
+    if (keywordsLower.some(k => k.includes(token) || token.includes(k))) {
+      score += SCORE_KEYWORD
+      matchedTerms.push(token)
+      explain.push(`Token "${token}" in keywords: +${SCORE_KEYWORD}`)
+      continue
+    }
+
+    // Content match
+    if (contentLower.includes(token)) {
+      score += SCORE_CONTENT
+      matchedTerms.push(token)
+      explain.push(`Token "${token}" in content: +${SCORE_CONTENT}`)
+    }
+  }
+
+  // Normalize by content length (sqrt to reduce penalty)
+  const contentTokenCount = contentLower.split(/\s+/).length
+  const normalizedScore = score / Math.sqrt(Math.max(contentTokenCount / 100, 1))
+
+  return {
+    score: Math.round(normalizedScore * 100) / 100,
+    matchedTerms: [...new Set(matchedTerms)],
+    explain,
+  }
+}
+
+// =============================================================================
+// Main Retrieval Function
+// =============================================================================
+
+/**
+ * Retrieve relevant documents for a query
+ */
+export async function retrieveDocs(query: string): Promise<RetrievalResponse> {
+  const queryTokens = normalizeQuery(query)
+
+  if (queryTokens.length === 0) {
+    return {
+      status: 'no_match',
+      results: [],
+      clarification: 'Which part would you like me to explain?',
+      confidence: 0,
+    }
+  }
+
+  // Fetch all docs (for Phase 1, we score in-memory; Phase 2+ will use SQL)
+  const result = await serverPool.query(
+    `SELECT slug, category, title, content, keywords, content_hash
+     FROM docs_knowledge`
+  )
+
+  const docs: DocRow[] = result.rows
+
+  // Score all documents
+  const scored: Array<RetrievalResult & { rawScore: number }> = []
+
+  for (const doc of docs) {
+    const { score, matchedTerms, explain } = scoreDocument(doc, queryTokens)
+
+    if (score > 0) {
+      scored.push({
+        doc_slug: doc.slug,
+        title: doc.title,
+        category: doc.category,
+        snippet: extractSnippet(doc.content),
+        score,
+        rawScore: score,
+        content_hash: doc.content_hash,
+        matched_terms: matchedTerms,
+        source: 'keyword',
+        match_explain: explain,
+      })
+    }
+  }
+
+  // Sort by score descending
+  scored.sort((a, b) => b.score - a.score)
+
+  // No matches
+  if (scored.length === 0) {
+    return {
+      status: 'no_match',
+      results: [],
+      clarification: 'Which part would you like me to explain?',
+      confidence: 0,
+    }
+  }
+
+  const topResult = scored[0]
+  const secondScore = scored.length > 1 ? scored[1].score : 0
+
+  // Calculate confidence
+  const confidence = secondScore > 0
+    ? (topResult.score - secondScore) / topResult.score
+    : 1
+
+  // Add confidence to top result
+  topResult.confidence = confidence
+
+  // Apply confidence rules
+  const hasTitleOrKeywordHit = topResult.match_explain?.some(e =>
+    e.includes('title') || e.includes('keywords')
+  )
+
+  // Rule: Not enough matched terms
+  if (topResult.matched_terms.length < MIN_MATCHED_TERMS) {
+    return {
+      status: 'weak',
+      results: scored.slice(0, 3),
+      clarification: `I'm not sure which feature you mean. Are you asking about "${topResult.title}"?`,
+      confidence,
+    }
+  }
+
+  // Rule: No title/keyword hit (content-only match)
+  if (!hasTitleOrKeywordHit) {
+    return {
+      status: 'weak',
+      results: scored.slice(0, 3),
+      clarification: `I found a possible match for "${topResult.title}". Is that what you're asking about?`,
+      confidence,
+    }
+  }
+
+  // Rule: Score too low
+  if (topResult.score < MIN_SCORE) {
+    return {
+      status: 'weak',
+      results: scored.slice(0, 3),
+      clarification: `I think you mean "${topResult.title}". Is that right?`,
+      confidence,
+    }
+  }
+
+  // Rule: Ambiguous (gap too small)
+  if (scored.length > 1 && (topResult.score - secondScore) < MIN_GAP) {
+    return {
+      status: 'ambiguous',
+      results: scored.slice(0, 2),
+      clarification: `Do you mean "${topResult.title}" (${topResult.category}) or "${scored[1].title}" (${scored[1].category})?`,
+      confidence,
+    }
+  }
+
+  // Rule: Low confidence
+  if (confidence < MIN_CONFIDENCE) {
+    return {
+      status: 'ambiguous',
+      results: scored.slice(0, 2),
+      clarification: `Do you mean "${topResult.title}" or "${scored[1].title}"?`,
+      confidence,
+    }
+  }
+
+  // Strong match
+  return {
+    status: 'found',
+    results: [topResult],
+    confidence,
+  }
+}
+
+/**
+ * Get a short explanation for a concept (for meta-explain integration)
+ */
+export async function getExplanation(concept: string): Promise<string | null> {
+  const response = await retrieveDocs(concept)
+
+  if (response.status === 'found' && response.results.length > 0) {
+    const doc = response.results[0]
+    // Return first paragraph or snippet
+    const firstPara = doc.snippet.split('\n\n')[0]
+    return firstPara || doc.snippet
+  }
+
+  if (response.status === 'ambiguous' || response.status === 'weak') {
+    return response.clarification || null
+  }
+
+  return null
+}
+
+// =============================================================================
+// Core Concepts Cache (Tier 1)
+// =============================================================================
+
+/**
+ * Static cache of core concept explanations for instant responses
+ * Used by meta-explain before hitting the database
+ */
+export const CORE_CONCEPTS: Record<string, string> = {
+  home: 'Home is your main entry dashboard. It shows your widgets and quick links.',
+  dashboard: 'The dashboard is the main view of an entry, displaying widgets you can interact with.',
+  workspace: 'A workspace is where your notes live. You can create, edit, and organize notes there.',
+  notes: 'Notes are the core content units. Each note contains rich text you can edit and annotate.',
+  note: 'A note is a document containing rich text. Notes live inside workspaces.',
+  recent: 'Recent shows your most recently opened items in this entry.',
+  widget: 'Widgets are interactive panels on the dashboard showing different types of content.',
+  widgets: 'Widgets are interactive panels on the dashboard showing different types of content.',
+  panel: 'A panel is a container that can display widgets or content in the drawer.',
+  drawer: 'The drawer is a side panel that opens to show widget details or expanded content.',
+  navigator: 'The Navigator lets you browse your folder structure and Knowledge Base hierarchy.',
+  'quick links': 'Quick Links provides shortcuts to your bookmarked or frequently used items.',
+  'links overview': 'Links Overview shows all your Quick Links categories at a glance.',
+  continue: 'The Continue widget helps you pick up where you left off in your last session.',
+  'widget manager': 'The Widget Manager lets you customize your dashboard by adding or removing widgets.',
+}
+
+/**
+ * Try to get explanation from cache first (Tier 1)
+ */
+export function getCachedExplanation(query: string): string | null {
+  const normalized = query.toLowerCase().trim()
+
+  // Direct match
+  if (CORE_CONCEPTS[normalized]) {
+    return CORE_CONCEPTS[normalized]
+  }
+
+  // Try without common prefixes
+  const withoutPrefix = normalized
+    .replace(/^(explain|what is|what's|tell me about)\s+/i, '')
+    .trim()
+
+  if (CORE_CONCEPTS[withoutPrefix]) {
+    return CORE_CONCEPTS[withoutPrefix]
+  }
+
+  // Try singular/plural variations
+  const singular = withoutPrefix.replace(/s$/, '')
+  if (CORE_CONCEPTS[singular]) {
+    return CORE_CONCEPTS[singular]
+  }
+
+  return null
+}

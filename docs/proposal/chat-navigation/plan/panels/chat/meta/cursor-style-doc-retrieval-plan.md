@@ -174,14 +174,113 @@ If 2+ strong matches and the query is clearly multi‑intent:
 ### Chunking Strategy
 - Split markdown by headers (`##`), then paragraphs.
 - Cap chunks at ~400–500 tokens.
+- Preserve header hierarchy for context (`header_path`).
+
+### Stable IDs (Required)
+- Chunk ID format: `{doc_slug}#chunk-{index}` (or hash of header_path + index).
+- Include `chunk_hash` for change detection (MD5 of chunk content).
+- Maintain `chunk_index` for deterministic ordering within a doc.
 
 ### Metadata
 - `title`, `category`, `keywords`, `source`.
+- `header_path` (e.g., `Widgets > Quick Links > Editing`).
+- `chunk_index`, `chunk_hash`, `doc_slug`.
 - Use `category` for scoped retrieval (concepts/widgets/actions).
+
+### Storage (Phase 2 Schema)
+Add a chunk table (suggested):
+```
+docs_knowledge_chunks(
+  id uuid pk,
+  doc_slug text,
+  category text,
+  title text,
+  header_path text,
+  chunk_index int,
+  content text,
+  keywords text[],
+  chunk_hash text,
+  created_at timestamptz,
+  updated_at timestamptz
+)
+```
+Seed pipeline should upsert chunks by `(doc_slug, chunk_index)` and update if `chunk_hash` changes.
+
+### Retrieval Rules (Phase 2)
+- Score **chunks**, not whole docs.
+- Return top K chunks (default 3–5).
+- **De‑dupe**: avoid returning >2 chunks from the same doc unless the query is multi‑intent.
+- Keep `header_path` in evidence for explanation clarity.
 
 ### Acceptance Tests
 - “explain notes” returns note‑specific chunk.
 - “what is quick links” returns widget chunk.
+ - “open notes + quick links” returns two chunks from different docs (multi‑intent).
+ - “explain workspace” returns chunk with `header_path` in response evidence.
+
+### Phase 2 Implementation Checklist
+- [ ] Add `docs_knowledge_chunks` migration (schema above).
+- [ ] Update seed/index pipeline to chunk docs and compute `chunk_hash`, `chunk_index`, `header_path`.
+- [ ] Upsert chunks by `(doc_slug, chunk_index)`; update rows when `chunk_hash` changes.
+- [ ] Add cleanup for removed chunks (doc sections deleted/renamed).
+- [ ] Update retrieval to score chunks (not whole docs), then de‑dupe per doc.
+- [ ] Include `doc_slug`, `chunk_index`, `header_path`, `chunk_hash` in evidence objects.
+- [ ] Gate with `DOC_RETRIEVAL_PHASE=2` (fallback to Phase 1 on errors).
+- [ ] Log retrieval metrics: latency p50/p95, match counts, top scores, phase.
+- [ ] Add tests: header_path present, de‑dupe per doc, multi‑intent, no‑match.
+
+### Phase 2 Implementation Plan (Step‑by‑Step)
+**Goal**: Switch retrieval from whole‑doc scoring to chunk‑level scoring with stable IDs and header context.
+
+#### Step 1 — Schema + Migration
+- Create migration for `docs_knowledge_chunks`.
+- Include indices on `(doc_slug, chunk_index)` and `(category)` for retrieval.
+- Add a unique constraint on `(doc_slug, chunk_index)` to support idempotent upserts.
+- Acceptance: Migration applies cleanly and table exists.
+
+#### Step 2 — Chunking Pipeline
+- Add/extend the doc seeding pipeline to:
+  - Split by `##` headers → paragraphs → chunk size ~400–500 tokens.
+  - Compute `header_path`, `chunk_index`, `chunk_hash` (content hash).
+  - Persist `doc_slug`, `category`, `title`, `keywords`, `content`.
+- Acceptance: Each doc produces deterministic chunk IDs across runs.
+
+#### Step 3 — Upsert + Cleanup
+- Upsert chunk rows by `(doc_slug, chunk_index)`.
+- Update rows when `chunk_hash` changes.
+- Delete rows for chunks removed from a doc (stale `chunk_index`).
+- Acceptance: Re‑seeding updates changed chunks only.
+
+#### Step 4 — Retrieval (Chunk‑Level)
+- Change retrieval to score chunks instead of whole docs.
+- Return top K chunks (default 3–5).
+- De‑dupe: no more than 2 chunks per doc unless query is multi‑intent.
+- Acceptance: “explain notes” returns note‑specific chunk with `header_path`.
+
+#### Step 5 — Evidence Objects
+- Extend evidence objects with:
+  - `doc_slug`, `chunk_index`, `header_path`, `chunk_hash`.
+- Keep `score`, `matched_terms`, `category`, `title`.
+- Acceptance: Evidence is emitted in logs and available to diagnostics.
+
+#### Step 6 — Feature Flags + Fallback
+- Gate with `DOC_RETRIEVAL_PHASE=2`.
+- On error: fall back to Phase 1 keyword retrieval.
+- Acceptance: Disabling Phase 2 reverts to Phase 1 without user‑visible errors.
+
+#### Step 7 — Metrics + Observability
+- Log retrieval latency (p50/p95), top scores, phase used, and no‑match rate.
+- Track de‑dupe rate (how often multiple chunks from a single doc are trimmed).
+- Acceptance: Metrics emitted for every retrieval call.
+
+#### Step 8 — Tests
+- Unit: chunker produces stable `header_path` and `chunk_index`.
+- Integration: retrieval returns top chunks with evidence fields.
+- Behavior: multi‑intent returns two chunks from different docs; no‑match returns clarification.
+
+#### Rollback
+- Flip `DOC_RETRIEVAL_PHASE=1` to revert to Phase 1 retrieval.
+- Keep Phase 2 tables (no data loss) for later re‑enable.
 
 ---
 
@@ -297,3 +396,80 @@ Notes:
 - Doc schema version bump
 - Manual admin refresh
 - Embedding model upgrade (Phase 3+)
+
+---
+
+## Implementation Status (2026-01-10)
+
+### Phase 0: Prerequisites ✅ COMPLETE
+
+| Item | Status | File |
+|------|--------|------|
+| Migration created | ✅ | `migrations/062_create_docs_knowledge.up.sql` |
+| Rollback migration | ✅ | `migrations/062_create_docs_knowledge.down.sql` |
+| Migration executed | ✅ | Via Docker: `annotation_postgres` |
+| Seed documentation | ✅ | `docs/proposal/chat-navigation/plan/panels/chat/meta/documentation/{concepts,widgets,actions}/*.md` |
+| Seed service | ✅ | `lib/docs/seed-docs.ts` (with auto-keyword extraction) |
+| Seed API | ✅ | `app/api/docs/seed/route.ts` |
+| Docs seeded | ✅ | 19 documents (7 concepts, 8 widgets, 4 actions) |
+
+### Phase 1: Keyword Retrieval ✅ COMPLETE
+
+| Item | Status | File |
+|------|--------|------|
+| Query normalization | ✅ | `lib/docs/keyword-retrieval.ts` |
+| Stopwords + synonyms | ✅ | `lib/docs/keyword-retrieval.ts` |
+| Scoring formula | ✅ | `lib/docs/keyword-retrieval.ts` |
+| Confidence thresholds | ✅ | `lib/docs/keyword-retrieval.ts` |
+| Evidence objects | ✅ | `RetrievalResult` interface |
+| Core concepts cache (Tier 1) | ✅ | `CORE_CONCEPTS` constant |
+| Retrieve API | ✅ | `app/api/docs/retrieve/route.ts` |
+| Meta-explain integration | ✅ | `components/chat/chat-navigation-panel.tsx` |
+
+### Files Created
+
+| File | Description |
+|------|-------------|
+| `migrations/062_create_docs_knowledge.up.sql` | DB table for documentation |
+| `migrations/062_create_docs_knowledge.down.sql` | Rollback migration |
+| `lib/docs/seed-docs.ts` | Documentation seeding service (with auto-keyword extraction) |
+| `lib/docs/keyword-retrieval.ts` | Keyword retrieval service |
+| `app/api/docs/seed/route.ts` | Seed API endpoint |
+| `app/api/docs/retrieve/route.ts` | Retrieve API endpoint |
+
+### Documentation Source (Existing Files)
+
+Documentation is seeded from: `docs/proposal/chat-navigation/plan/panels/chat/meta/documentation/`
+
+| Category | Count | Examples |
+|----------|-------|----------|
+| concepts | 7 | home, dashboard, workspace, entry, notes, widgets, panels |
+| widgets | 8 | recent, quick-links, navigator, continue, widget-manager, links-overview, quick-capture, demo-widget |
+| actions | 4 | navigation, notes, workspaces, widgets |
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `components/chat/chat-navigation-panel.tsx` | Added `isMetaExplainOutsideClarification()`, `extractMetaExplainConcept()`, meta-explain handler |
+
+### Type Check
+
+```
+npm run type-check → PASS
+```
+
+### Completed Steps ✅
+
+1. ✅ Migration executed via Docker: `docker exec -i annotation_postgres psql -U postgres -d annotation_dev < migrations/062_create_docs_knowledge.up.sql`
+2. ✅ Docs seeded: `curl -X POST http://localhost:3000/api/docs/seed` → 19 documents inserted
+3. ✅ Retrieval tested:
+   - `home` → Tier 1 cache hit: "Home is your main entry dashboard..."
+   - `workspace` → Tier 1 cache hit: "A workspace is where your notes live..."
+   - `navigation` → Tier 2 DB hit: "Navigation Actions" with confidence 0.6
+
+### Phase 2-4: Deferred
+
+- Phase 2 (Chunking): Not needed yet
+- Phase 3 (Embeddings): Not needed yet
+- Phase 4 (Context Builder): Not needed yet
