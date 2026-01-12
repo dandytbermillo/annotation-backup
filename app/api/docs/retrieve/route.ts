@@ -16,12 +16,23 @@ import {
   smartRetrieve,
   retrieveChunks,
   retrieveDocs,
+  retrieveByDocSlug,
 } from '@/lib/docs/keyword-retrieval'
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { query, mode, phase } = body
+    const { query, mode, phase, docSlug } = body
+
+    // DocSlug mode: retrieve specific doc by slug (disambiguation follow-up)
+    // Per general-doc-retrieval-routing-plan.md
+    if (docSlug && typeof docSlug === 'string') {
+      const result = await retrieveByDocSlug(docSlug)
+      return NextResponse.json({
+        success: true,
+        ...result,
+      })
+    }
 
     if (!query || typeof query !== 'string') {
       return NextResponse.json(

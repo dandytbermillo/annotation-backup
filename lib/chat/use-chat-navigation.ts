@@ -653,9 +653,9 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
 
   const selectOption = useCallback(
     async (option: {
-      type: 'workspace' | 'note' | 'entry' | 'confirm_delete' | 'quick_links_panel' | 'confirm_panel_write' | 'panel_drawer'
+      type: 'workspace' | 'note' | 'entry' | 'confirm_delete' | 'quick_links_panel' | 'confirm_panel_write' | 'panel_drawer' | 'doc'
       id: string
-      data: WorkspaceMatch | NoteMatch | EntryMatch | (WorkspaceMatch & { pendingDelete?: boolean; pendingNewName?: string }) | { panelId: string; badge: string; panelType: 'quick_links' } | { panelId: string; intentName: string; params: Record<string, unknown> } | { panelId: string; panelTitle: string; panelType: string }
+      data: WorkspaceMatch | NoteMatch | EntryMatch | (WorkspaceMatch & { pendingDelete?: boolean; pendingNewName?: string }) | { panelId: string; badge: string; panelType: 'quick_links' } | { panelId: string; intentName: string; params: Record<string, unknown> } | { panelId: string; panelTitle: string; panelType: string } | { docSlug: string }
     }): Promise<ChatNavigationResult> => {
       switch (option.type) {
         case 'workspace':
@@ -755,6 +755,20 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
             success: true,
             message: `Opening ${drawerData.panelTitle}...`,
             action: 'navigated',
+          }
+        case 'doc':
+          // User selected a doc from disambiguation - fetch doc content
+          // Per general-doc-retrieval-routing-plan.md: use docSlug to scope retrieval
+          const docData = option.data as { docSlug: string }
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('chat-select-doc', {
+              detail: { docSlug: docData.docSlug },
+            }))
+          }
+          return {
+            success: true,
+            message: 'Loading documentation...',
+            action: 'selected',
           }
         default:
           return {

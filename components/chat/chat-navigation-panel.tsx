@@ -390,6 +390,155 @@ function extractMetaExplainConcept(input: string): string | null {
 }
 
 /**
+ * Check if input is a general doc-style query that should use retrieval.
+ * Per general-doc-retrieval-routing-plan.md
+ * Handles: "what is X", "how do I X", "tell me about X", etc.
+ *
+ * Returns false if:
+ * - Contains action verbs (open/list/show/go/create/rename/delete)
+ * - Is already handled by meta-explain (bare "explain", "what do you mean")
+ */
+function isDocStyleQuery(input: string): boolean {
+  const normalized = input.trim().toLowerCase().replace(/[?!.]+$/, '')
+
+  // Skip if contains action verbs (these are navigation commands, not doc queries)
+  const actionVerbs = /\b(open|list|show|go|create|rename|delete|close|switch|navigate)\b/i
+  if (actionVerbs.test(normalized)) {
+    return false
+  }
+
+  // Skip bare meta-explain phrases (handled by existing meta-explain handler)
+  const bareMetaPhrases = ['explain', 'what do you mean', 'explain that', 'help me understand', 'what is that', 'tell me more']
+  if (bareMetaPhrases.includes(normalized)) {
+    return false
+  }
+
+  // Doc-style query patterns
+  const docPatterns = [
+    /^what (is|are)\s+/i,
+    /^how (do i|to|can i)\s+/i,
+    /^tell me about\s+/i,
+    /^explain\s+/i,
+    /^what does\s+/i,
+    /^where can i\s+/i,
+    /^how can i\s+/i,
+  ]
+
+  for (const pattern of docPatterns) {
+    if (pattern.test(normalized)) {
+      return true
+    }
+  }
+
+  // Check for help/guide/instructions without action verbs (already checked above)
+  if (/\b(help|guide|instructions?|documentation)\b/i.test(normalized)) {
+    return true
+  }
+
+  return false
+}
+
+/**
+ * Extract the query term from a doc-style query.
+ * E.g., "how do I add a widget" → "add widget"
+ */
+function extractDocQueryTerm(input: string): string {
+  const normalized = input.trim().toLowerCase().replace(/[?!.]+$/, '')
+
+  // Remove common prefixes
+  let term = normalized
+    .replace(/^what (is|are)\s+(a\s+|an\s+|the\s+)?/i, '')
+    .replace(/^how (do i|to|can i)\s+/i, '')
+    .replace(/^tell me about\s+(a\s+|an\s+|the\s+)?/i, '')
+    .replace(/^explain\s+(a\s+|an\s+|the\s+)?/i, '')
+    .replace(/^what does\s+(a\s+|an\s+|the\s+)?/i, '')
+    .replace(/^where can i\s+(find\s+|see\s+)?/i, '')
+    .replace(/^how can i\s+/i, '')
+    .trim()
+
+  return term || normalized
+}
+
+/**
+ * Action nouns that should bypass doc retrieval and use normal routing.
+ * These are navigation shortcuts that users expect to execute actions, not show docs.
+ * Per general-doc-retrieval-routing-plan.md: bare-noun guard with action-noun bypass.
+ */
+const ACTION_NOUNS = new Set([
+  'recent',
+  'recents',
+  'quick links',
+  'quicklinks',
+  'quick link',
+  'workspaces',
+  'workspace',
+  'dashboard',
+  'home',
+  'settings',
+  'search',
+])
+
+/**
+ * Check if input matches a visible widget title or type.
+ * Used to bypass doc retrieval for widget navigation commands.
+ */
+function matchesVisibleWidget(input: string, uiContext?: UIContext | null): boolean {
+  const normalized = input.trim().toLowerCase()
+  const widgets = uiContext?.dashboard?.visibleWidgets
+  if (!widgets?.length) return false
+
+  return widgets.some(w =>
+    w.title.toLowerCase() === normalized ||
+    w.type.toLowerCase() === normalized ||
+    w.title.toLowerCase().includes(normalized) ||
+    normalized.includes(w.type.toLowerCase())
+  )
+}
+
+/**
+ * Check if input is a bare-noun query that should route to doc retrieval.
+ * Per general-doc-retrieval-routing-plan.md:
+ * - 1-3 tokens after normalization
+ * - No action verbs
+ * - No digits
+ * - Not in ACTION_NOUNS bypass list
+ * - Not matching a visible widget
+ */
+function isBareNounQuery(input: string, uiContext?: UIContext | null): boolean {
+  const normalized = input.trim().toLowerCase().replace(/[?!.]+$/, '')
+
+  // Bypass: static action nouns (navigation commands)
+  if (ACTION_NOUNS.has(normalized)) {
+    return false
+  }
+
+  // Bypass: matches visible widget (custom widget names)
+  if (matchesVisibleWidget(normalized, uiContext)) {
+    return false
+  }
+
+  // Guard: 1-3 tokens
+  const tokens = normalized.split(/\s+/).filter(t => t.length > 0)
+  if (tokens.length === 0 || tokens.length > 3) {
+    return false
+  }
+
+  // Guard: no digits (e.g., "workspace 6", "note 2")
+  if (/\d/.test(normalized)) {
+    return false
+  }
+
+  // Guard: no action verbs
+  const actionVerbs = /\b(open|list|show|go|create|rename|delete|close|switch|navigate)\b/i
+  if (actionVerbs.test(normalized)) {
+    return false
+  }
+
+  // Passes all guards - this is a bare noun that should try retrieval
+  return true
+}
+
+/**
  * Find the most recent assistant message that contains options (pills).
  * Per pending-options-message-source-plan.md: use chat as source of truth.
  * Returns the options and timestamp, or null if no options message exists.
@@ -1327,6 +1476,68 @@ function ChatNavigationPanelContent({
     }
   }, [currentEntryId, currentWorkspaceId, sessionState, executeAction, addMessage, openPanelWithTracking])
 
+  // Handle doc selection (from doc_disambiguation pill)
+  // Per general-doc-retrieval-routing-plan.md: use docSlug to scope retrieval
+  useEffect(() => {
+    const handleDocSelection = async (event: CustomEvent<{ docSlug: string }>) => {
+      const { docSlug } = event.detail
+
+      setIsLoading(true)
+      try {
+        // Call retrieve API with docSlug to get the doc content
+        const response = await fetch('/api/docs/retrieve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ docSlug }),
+        })
+
+        if (!response.ok) throw new Error('Failed to retrieve document')
+
+        const result = await response.json()
+
+        if (result.status === 'found' && result.results?.length > 0) {
+          const topResult = result.results[0]
+          const headerPath = topResult.header_path || topResult.title
+          const snippet = topResult.snippet || ''
+
+          const assistantMessage: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: `**${headerPath}**\n\n${snippet}`,
+            timestamp: new Date(),
+            isError: false,
+          }
+          addMessage(assistantMessage)
+        } else {
+          const errorMessage: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: 'Document not found.',
+            timestamp: new Date(),
+            isError: true,
+          }
+          addMessage(errorMessage)
+        }
+      } catch (error) {
+        const errorMessage: ChatMessage = {
+          id: `error-${Date.now()}`,
+          role: 'assistant',
+          content: 'Failed to load documentation.',
+          timestamp: new Date(),
+          isError: true,
+        }
+        addMessage(errorMessage)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    window.addEventListener('chat-select-doc', handleDocSelection as unknown as EventListener)
+    return () => {
+      window.removeEventListener('chat-select-doc', handleDocSelection as unknown as EventListener)
+    }
+  }, [addMessage])
+
   // ---------------------------------------------------------------------------
   // Handle Selection (moved before sendMessage for hybrid selection)
   // ---------------------------------------------------------------------------
@@ -2184,6 +2395,140 @@ function ChatNavigationPanelContent({
         addMessage(fallbackMessage)
         setIsLoading(false)
         return
+      }
+
+      // ---------------------------------------------------------------------------
+      // General Doc Retrieval Routing: Handle "what is X", "how do I X" queries
+      // AND bare nouns like "notes", "widgets" (not action nouns like "recent")
+      // Per general-doc-retrieval-routing-plan.md
+      // Routes doc-style questions through retrieval for grounded answers.
+      // ---------------------------------------------------------------------------
+      const isDocStyle = isDocStyleQuery(trimmedInput)
+      const isBareNoun = isBareNounQuery(trimmedInput, uiContext)
+
+      if (!lastClarification && (isDocStyle || isBareNoun)) {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'general_doc_retrieval',
+          metadata: { userInput: trimmedInput, isDocStyle, isBareNoun },
+        })
+
+        try {
+          // For doc-style queries, extract the term; for bare nouns, use as-is
+          const queryTerm = isDocStyle ? extractDocQueryTerm(trimmedInput) : trimmedInput.trim().toLowerCase()
+
+          // Call retrieval API
+          const retrieveResponse = await fetch('/api/docs/retrieve', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              query: queryTerm,
+            }),
+          })
+
+          if (retrieveResponse.ok) {
+            const result = await retrieveResponse.json()
+
+            // Handle different response statuses
+            if (result.status === 'found' && result.results?.length > 0) {
+              // Strong match - answer from docs
+              const topResult = result.results[0]
+              const snippet = topResult.snippet || topResult.content?.slice(0, 200)
+              const assistantMessage: ChatMessage = {
+                id: `assistant-${Date.now()}`,
+                role: 'assistant',
+                content: snippet + (snippet?.length >= 200 ? '...' : ''),
+                timestamp: new Date(),
+                isError: false,
+              }
+              addMessage(assistantMessage)
+              setIsLoading(false)
+              return
+            }
+
+            if (result.status === 'weak' && result.results?.length > 0) {
+              // Weak match - show best guess with confirmation
+              const topResult = result.results[0]
+              const headerPath = topResult.header_path || topResult.title
+              const assistantMessage: ChatMessage = {
+                id: `assistant-${Date.now()}`,
+                role: 'assistant',
+                content: result.clarification || `I found info about "${headerPath}". Is that what you meant?`,
+                timestamp: new Date(),
+                isError: false,
+              }
+              addMessage(assistantMessage)
+              setIsLoading(false)
+              return
+            }
+
+            if (result.status === 'ambiguous' && result.results?.length >= 2) {
+              // Ambiguous - show options as pills
+              const messageId = `assistant-${Date.now()}`
+              const options: SelectionOption[] = result.results.slice(0, 2).map((r: { doc_slug: string; header_path?: string; title: string; category: string }, idx: number) => ({
+                type: 'doc' as const,
+                id: r.doc_slug,
+                label: r.header_path || r.title,
+                sublabel: r.category,
+                data: { docSlug: r.doc_slug },
+              }))
+
+              const assistantMessage: ChatMessage = {
+                id: messageId,
+                role: 'assistant',
+                content: result.clarification || 'Which one do you mean?',
+                timestamp: new Date(),
+                isError: false,
+                options,
+              }
+              addMessage(assistantMessage)
+
+              // Set clarification state for selection handling
+              setPendingOptions(options.map((opt, idx) => ({
+                index: idx + 1,
+                label: opt.label,
+                sublabel: opt.sublabel,
+                type: opt.type,
+                id: opt.id,
+                data: opt.data,
+              })))
+              setPendingOptionsMessageId(messageId)
+
+              setLastClarification({
+                type: 'doc_disambiguation',
+                originalIntent: 'general_doc_retrieval',
+                messageId,
+                timestamp: Date.now(),
+                clarificationQuestion: result.clarification || 'Which one do you mean?',
+                options: options.map(opt => ({
+                  id: opt.id,
+                  label: opt.label,
+                  sublabel: opt.sublabel,
+                  type: opt.type,
+                })),
+                metaCount: 0,
+              })
+
+              setIsLoading(false)
+              return
+            }
+
+            // No match - ask for clarification
+            const noMatchMessage: ChatMessage = {
+              id: `assistant-${Date.now()}`,
+              role: 'assistant',
+              content: result.clarification || 'Which part would you like me to explain?',
+              timestamp: new Date(),
+              isError: false,
+            }
+            addMessage(noMatchMessage)
+            setIsLoading(false)
+            return
+          }
+        } catch (error) {
+          console.error('[ChatNavigation] General doc retrieval error:', error)
+          // Fall through to LLM on error
+        }
       }
 
       // ---------------------------------------------------------------------------

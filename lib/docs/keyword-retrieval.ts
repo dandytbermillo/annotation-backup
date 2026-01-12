@@ -753,6 +753,78 @@ export async function retrieveChunks(query: string, topK: number = DEFAULT_TOP_K
 }
 
 /**
+ * Retrieve the best chunk from a specific doc by slug.
+ * Used for disambiguation follow-up: user selects a doc, we return its best content.
+ * Per general-doc-retrieval-routing-plan.md: use docSlug to scope retrieval.
+ */
+export async function retrieveByDocSlug(docSlug: string): Promise<ChunkRetrievalResponse> {
+  const startTime = Date.now()
+
+  // Fetch chunks for this specific doc
+  const result = await serverPool.query(
+    `SELECT doc_slug, category, title, header_path, chunk_index, content, keywords, chunk_hash
+     FROM docs_knowledge_chunks
+     WHERE doc_slug = $1
+     ORDER BY chunk_index ASC`,
+    [docSlug]
+  )
+
+  const chunks: ChunkRow[] = result.rows
+  const totalChunks = chunks.length
+
+  if (chunks.length === 0) {
+    return {
+      status: 'no_match',
+      results: [],
+      clarification: 'Document not found.',
+      confidence: 0,
+      phase: 2,
+      metrics: {
+        totalChunks: 0,
+        matchedChunks: 0,
+        dedupedChunks: 0,
+        retrievalTimeMs: Date.now() - startTime,
+      },
+    }
+  }
+
+  // Return the first chunk (intro/overview) as the best content
+  const bestChunk = chunks[0]
+  const retrievalTimeMs = Date.now() - startTime
+
+  const topResult: ChunkRetrievalResult = {
+    doc_slug: bestChunk.doc_slug,
+    chunk_index: bestChunk.chunk_index,
+    header_path: bestChunk.header_path,
+    title: bestChunk.title,
+    category: bestChunk.category,
+    snippet: extractSnippet(bestChunk.content),
+    score: 10, // Fixed high score for direct lookup
+    rawScore: 10,
+    chunk_hash: bestChunk.chunk_hash,
+    matched_terms: ['direct_lookup'],
+    source: 'keyword',
+    match_explain: ['Direct doc lookup by slug'],
+  }
+
+  console.log(`[Retrieval] DocSlug lookup: slug="${docSlug}" chunks=${totalChunks} latency=${retrievalTimeMs}ms`)
+
+  return {
+    status: 'found',
+    results: [topResult],
+    clarification: null,
+    confidence: 1,
+    phase: 2,
+    metrics: {
+      totalChunks,
+      matchedChunks: totalChunks,
+      dedupedChunks: 1,
+      retrievalTimeMs,
+    },
+  }
+}
+
+/**
  * Get a short explanation from chunks (Phase 2)
  */
 export async function getChunkExplanation(concept: string): Promise<string | null> {

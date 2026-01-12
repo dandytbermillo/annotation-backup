@@ -77,7 +77,7 @@ export interface ClarificationOption {
 
 /** Last clarification state for follow-up handling (Phase 2a) */
 export interface LastClarificationState {
-  type: 'notes_scope' | 'option_selection'
+  type: 'notes_scope' | 'option_selection' | 'doc_disambiguation'
   originalIntent: string
   /** Generic action to execute when user affirms (Phase 2a deterministic handler) - optional for option_selection */
   nextAction?: string
