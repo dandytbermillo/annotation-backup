@@ -91,6 +91,24 @@ export interface LastClarificationState {
   options?: ClarificationOption[]
 }
 
+/**
+ * Doc retrieval conversation state for follow-ups and corrections.
+ * Per general-doc-retrieval-routing-plan.md (v4)
+ * Updated for v5 Hybrid Response Selection (lastChunkIdsShown for HS2)
+ */
+export interface DocRetrievalState {
+  /** Last doc slug from retrieval (for "tell me more" follow-ups) */
+  lastDocSlug?: string
+  /** Last topic tokens from query (for correction re-retrieval) */
+  lastTopicTokens?: string[]
+  /** Last retrieval mode: 'doc' | 'bare_noun' */
+  lastMode?: 'doc' | 'bare_noun'
+  /** Timestamp of last doc retrieval */
+  timestamp?: number
+  /** V5: Chunk IDs that have been shown (for HS2 follow-up expansion) */
+  lastChunkIdsShown?: string[]
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
@@ -180,6 +198,10 @@ interface ChatNavigationContextValue {
   // Clarification follow-up handling (Phase 2a: notes-scope clarification)
   lastClarification: LastClarificationState | null
   setLastClarification: (clarification: LastClarificationState | null) => void
+  // Doc retrieval conversation state (v4 plan)
+  docRetrievalState: DocRetrievalState | null
+  setDocRetrievalState: (state: DocRetrievalState | null) => void
+  updateDocRetrievalState: (update: Partial<DocRetrievalState>) => void
 }
 
 // =============================================================================
@@ -387,6 +409,9 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
 
   // Clarification follow-up handling (Phase 2a: notes-scope clarification)
   const [lastClarification, setLastClarificationState] = useState<LastClarificationState | null>(null)
+
+  // Doc retrieval conversation state (v4 plan)
+  const [docRetrievalState, setDocRetrievalStateInternal] = useState<DocRetrievalState | null>(null)
 
   // Debounce refs for session state persistence
   const DEBOUNCE_MS = 1000
@@ -856,6 +881,19 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     setLastClarificationState(clarification)
   }, [])
 
+  // Doc retrieval state handlers (v4 plan)
+  const setDocRetrievalState = useCallback((state: DocRetrievalState | null) => {
+    setDocRetrievalStateInternal(state)
+  }, [])
+
+  const updateDocRetrievalState = useCallback((update: Partial<DocRetrievalState>) => {
+    setDocRetrievalStateInternal((prev) => ({
+      ...prev,
+      ...update,
+      timestamp: Date.now(),
+    }))
+  }, [])
+
   return (
     <ChatNavigationContext.Provider
       value={{
@@ -900,6 +938,10 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         // Clarification follow-up handling (Phase 2a)
         lastClarification,
         setLastClarification,
+        // Doc retrieval conversation state (v4 plan)
+        docRetrievalState,
+        setDocRetrievalState,
+        updateDocRetrievalState,
       }}
     >
       {children}

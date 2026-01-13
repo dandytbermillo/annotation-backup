@@ -22,7 +22,7 @@ import {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { query, mode, phase, docSlug } = body
+    const { query, mode, phase, docSlug, excludeChunkIds, scopeDocSlug } = body
 
     // DocSlug mode: retrieve specific doc by slug (disambiguation follow-up)
     // Per general-doc-retrieval-routing-plan.md
@@ -40,6 +40,9 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       )
     }
+
+    // V5: Parse excludeChunkIds for follow-up expansion (HS2)
+    const excludeIds: string[] = Array.isArray(excludeChunkIds) ? excludeChunkIds : []
 
     // Mode: 'explain' returns just a short explanation string
     // Mode: 'full' returns full retrieval results with scores
@@ -66,9 +69,12 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Explicit chunk retrieval mode
+    // Explicit chunk retrieval mode (V5: supports excludeChunkIds)
     if (mode === 'chunks') {
-      const result = await retrieveChunks(query)
+      const result = await retrieveChunks(query, {
+        excludeChunkIds: excludeIds,
+        docSlug: scopeDocSlug,
+      })
       return NextResponse.json({
         success: true,
         ...result,
@@ -86,7 +92,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Default: smart retrieval (Phase 2 with Phase 1 fallback)
-    const result = await smartRetrieve(query)
+    // V5: Pass excludeChunkIds for follow-up expansion
+    const result = await smartRetrieve(query, { excludeChunkIds: excludeIds, docSlug: scopeDocSlug })
 
     return NextResponse.json({
       success: true,

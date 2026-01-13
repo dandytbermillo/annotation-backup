@@ -1,13 +1,99 @@
-# General Doc Retrieval Routing Plan (v4)
+# General Doc Retrieval Routing Plan (v5 — Hybrid Response Selection)
 
 ## Goal
-Route general, doc-style questions (e.g., “what is…”, “how do I…”, “tell me about…”) through the Cursor-style retrieval system so answers are grounded in app documentation (via `/api/docs/retrieve`), not ad hoc LLM guesses. This expands retrieval beyond the current meta-explain path.
+Route general, doc-style questions (e.g., “what is…”, “how do I…”, “tell me about…”) through the Cursor-style retrieval system so answers are grounded in app documentation (via `/api/docs/retrieve`), not ad hoc LLM guesses. This expands retrieval beyond the current meta-explain path and adds a deterministic response-selection layer to prevent low-quality snippets.
 
-This plan is **UI/router integration**. It assumes the **Cursor-Style Doc Retrieval Plan (Phased)** already defines:
+This plan is **UI/router integration + response selection**. It assumes the **Cursor-Style Doc Retrieval Plan (Phased)** already defines:
 - the docs store + indexing,
 - retrieval scoring + confidence,
 - `/api/docs/retrieve` response statuses (`found | weak | ambiguous | no_match`),
 - feature flags + rollback/kill-switch behavior.
+
+---
+
+## Experience Goals (ChatGPT/Claude Flow + Cursor Groundedness)
+- Human-like conversational flow with deterministic, grounded evidence.
+- Predictable outcomes: users can infer what happens next.
+- Minimal surprise: deterministic routing first, semantic fallback only when needed.
+
+## Mode Contract (User-Visible)
+Define a stable contract per mode so responses feel consistent.
+
+**Docs**
+- Answer grounded in docs.
+- Offer one natural next step: “Show more” or “Open doc.”
+
+**Action**
+- Execute or preview action.
+- If confirmation is needed, ask once.
+- Offer “Want details?” only after completion.
+
+**Personal data (notes/files)**
+- Search + cite results.
+- Apply privacy guardrails and never invent data.
+- If not implemented, fall back to clarification.
+
+**General**
+- Normal assistant response (non-app queries).
+
+## UX Affordances (Optional but Recommended)
+- “Show more / Open doc” button opens a panel with the full section, TOC, and highlighted chunk.
+- Optional “Sources” breadcrumb (e.g., `Workspace docs > Actions`).
+
+## Repair Loop (Expanded)
+- “not that” → re-run retrieval using `lastTopicTokens`.
+- Ordinals (“second one”) → select from current options.
+- “go back / start over” → clear clarification state and return to prompt.
+- “stop / nevermind” → cancel and ask a single follow-up question if needed.
+
+## Unified Retrieval (Docs + Notes/Files) — Future Phase
+Unify the retrieval interface while keeping policy separation per corpus.
+
+### Unified Interface
+```
+POST /api/retrieve
+{
+  "corpus": "docs" | "notes" | "files" | "auto",
+  "mode": "explain" | "search",
+  "query": "...",
+  "resourceId": "optional",
+  "docSlug": "optional",
+  "excludeChunkIds": ["optional"],
+  "cursor": "optional"
+}
+```
+
+### Corpus Relevance Gate
+Split app relevance into two signals:
+- `isDocsRelevant`: known terms, concepts, widgets.
+- `isPersonalRelevant`: “my notes/files”, filenames, note titles, “search/find”.
+
+Routing rules:
+- Docs if docs‑relevant and not personal‑relevant.
+- Notes/files if personal‑relevant and not docs‑relevant.
+- Ambiguous if both are true → show two options (max).
+- Classifier fallback if neither is clear.
+
+### Cross‑Corpus Ambiguity UX
+If top candidates from different corpora are close in score/confidence, show 2 pills:
+- Example: `Workspace (Docs > Concepts)` vs `Workspace (My Notes)`.
+
+### Shared HS1/HS2 Selection
+Apply HS1/HS2 to all corpora. Evidence objects must include:
+- `corpus`, `resourceId`, `chunkId`, `isHeadingOnly`, `bodyCharCount`, `nextChunkId`.
+
+### Policy Separation (Beyond Routing)
+- Personal data: show results list + “Open” actions, never invent.
+- Enforce permissions server‑side.
+- Ranking weights differ by corpus (e.g., recency/title for notes; keyword/concept for docs).
+
+### search_notes Prerequisites
+- Indexing approach (full‑text + metadata).
+- Chunking strategy for notes/files.
+- Permissions filter and visibility rules.
+- Runtime fallback: if personal-data signals are present but retrieval is not implemented, ask a clarifying question or fall back to `doc_explain`.
+
+---
 
 ---
 
@@ -16,11 +102,14 @@ This plan is **UI/router integration**. It assumes the **Cursor-Style Doc Retrie
 - Use `/api/docs/retrieve` for answers, ambiguity, and no-match handling.
 - Reuse existing disambiguation UX (option pills + clarification state).
 - Keep action/navigation intents unchanged.
+- Improve snippet/response selection so follow-ups like “tell me more” never return a bare heading.
 
 ## Non-Goals
-- No embeddings (Phase 3) changes (this plan is routing-only).
+- No embeddings (Phase 3) changes (this plan is routing + response selection only).
 - No document authoring changes.
 - No UI redesign of the chat panel.
+- No always-on LLM intent classifier. Semantic fallback is gated and feature-flagged (default-on).
+- LLM does not choose docs/chunks; it can only format a chosen snippet.
 
 ---
 
@@ -49,7 +138,7 @@ Normalization contract:
 - replace separators/punctuation-with-meaning (`- _ / , : ;`) with spaces
 - trim + collapse whitespace
 - strip trailing sentence punctuation (`? ! .`)
-- then apply (in real impl): **synonyms**, **conservative stemming**, **typo fix**
+- then apply: **synonyms**, **conservative stemming**, **typo fix**
 - then tokenize
 
 ### knownTerms contract
@@ -141,14 +230,35 @@ If it passes → route through the same doc retrieval pipeline as doc-style quer
 
 ## API Usage
 Call `/api/docs/retrieve` with:
-- `mode: "explain"`
+- `query` (default smart retrieval)
 - optional `docSlug` to scope retrieval after disambiguation
+- optional `cursor` / `excludeChunkIds` to support “tell me more” without repeats
 
 Expected response shapes:
 - `status: "found"` → render answer from returned snippet
 - `status: "weak"` → ask clarification or show top guess with caveat
 - `status: "ambiguous"` → show two options as pills
 - `status: "no_match"` → “Which part would you like me to explain?” + examples
+
+### Evidence Objects (Minimum Fields)
+Return enough structure to support snippet quality checks and follow-ups.
+
+```ts
+interface RetrievalChunk {
+  docSlug: string
+  title: string
+  category: string
+  chunkId: string            // e.g., `${docSlug}#chunk-${chunk_index}`
+  headerPath?: string
+  score: number
+  matchedTerms: string[]
+  snippet: string            // display-ready by default
+  chunkText?: string         // optional: full chunk
+  isHeadingOnly?: boolean    // optional: server-side heuristic
+  bodyCharCount?: number     // optional: server-side heuristic
+  nextChunkId?: string       // optional: adjacency for same-doc expansion
+}
+```
 
 ### Ambiguity Handling
 When ambiguous:
@@ -162,8 +272,107 @@ On selection:
 
 ---
 
+## Hybrid Response Selection Layer (NEW)
+
+### Why this exists
+Routing can be correct and retrieval can be “found”, yet the returned snippet can still be low quality (e.g., a bare heading). This layer guarantees responses contain meaningful body text before the response policy runs.
+
+### HS1 — Snippet Quality Guard (deterministic)
+Before rendering `found/weak` results, enforce minimum snippet quality.
+
+Defaults:
+- `MIN_BODY_CHARS = 80` (tune later)
+- `HEADING_ONLY_MAX_CHARS = 50`
+- `MAX_APPEND_CHUNKS = 1` (keep it surgical)
+
+Heuristic: snippet is low quality if any are true:
+- `isHeadingOnly === true`, OR
+- `bodyCharCount < MIN_BODY_CHARS`, OR
+- snippet has no sentence-like punctuation and is very short (e.g., `< 80 chars`)
+
+If low quality, upgrade using one of:
+1) Header-only scoring penalty: apply a 90% score reduction to header-only chunks so body chunks rank higher.
+2) Same-doc fallback search: re-run retrieval scoped to `docSlug` with `excludeChunkIds=[chunkId]`.
+3) Next-best chunk: select the next chunk candidate that passes quality.
+
+Guarantee:
+- For `status: found` and `status: weak`, the final displayed snippet must contain 1–2 real sentences (unless the doc genuinely has no body).
+
+Implementation notes:
+- HS1 is implemented via a header-only scoring penalty plus fallback search to avoid selecting empty headings.
+- HS2 tracks `lastChunkIdsShown[]` and uses `excludeChunkIds` to prevent repeats.
+
+### HS2 — Follow-up Expansion (“tell me more”)
+Maintain `lastDocSlug` + `lastChunkIdsShown[]`. When the user says:
+- “tell me more”, “more details”, “continue”, “go on”, “expand”
+
+Prefer:
+1) Retrieve a different chunk from the same doc (e.g., `excludeChunkIds` or cursor).
+2) Apply HS1 again.
+3) If no more chunks in that doc, fall back to query-based retrieval within the doc using `lastTopicTokens`.
+
+Goal: follow-ups are additive (new content), not a repeated header.
+
+### HS3 — Optional bounded LLM formatting (excerpt-only)
+Use an LLM only to format or summarize the already-selected snippet. It must not choose routing or content.
+
+Trigger formatting when:
+- the final snippet is long (e.g., > 600–900 chars), OR
+- the user asked for steps (“walk me through…”, “step by step”), OR
+- two chunks were appended and need condensation.
+
+Constraint prompt (example):
+“Summarize using only the excerpt. Do not add facts. If the excerpt doesn’t contain the answer, say so.”
+
+---
+
+## Semantic Fallback (Gated, Default-On)
+This phase improves human-like recall for app-relevant phrasing while keeping deterministic routing as the default. Enabled by default when the feature flag is on; can be disabled without affecting deterministic routing.
+
+### When to call the classifier (Pass 1)
+Only call the semantic classifier if all are true:
+- Deterministic routing returns `llm` (no confident route).
+- App relevance is unclear (no known-terms overlap and no widget/title match).
+- No clarification is active.
+- Not a fast-path selection reply (ordinal/label).
+
+### Classifier contract (strict JSON, one-shot)
+Return JSON only:
+```json
+{
+  "domain": "app" | "general",
+  "intent": "doc_explain" | "action" | "search_notes" | "other",
+  "confidence": 0.0,
+  "rewrite": "optional normalized user query",
+  "entities": {
+    "docTopic": "optional",
+    "widgetName": "optional",
+    "noteQuery": "optional"
+  },
+  "needs_clarification": true | false,
+  "clarify_question": "optional"
+}
+```
+
+Rules:
+- Max 1 classifier call per message.
+- If `confidence < 0.7` or `needs_clarification=true`, ask one clarifying question.
+- If `domain=general`, skip retrieval and go to general LLM response.
+- Timeout (e.g., 300–600ms). On timeout/error, skip classifier and fall back to deterministic handling.
+
+### Deterministic execution after Pass 1
+- `doc_explain` → call `/api/docs/retrieve` with `rewrite` or original query.
+- `action` → run action router; if unresolved (no target, multiple competing targets, or low-confidence match), fall back to doc retrieval or clarification.
+- `search_notes` → route to notes/files retrieval if implemented; otherwise ask a clarifying question or treat as `doc_explain`.
+- `general` → normal LLM response (no retrieval).
+
+### Pass 2 (HS3 formatting)
+Still excerpt-only: LLM may summarize only the selected snippet(s). It must not pick docs/chunks or rewrite evidence.
+
+---
+
 ## Response Policy Layer (Human-Like Output)
-This layer governs **how answers are phrased**, independent of routing. It is designed to make responses feel conversational while staying grounded and predictable.
+This layer governs **how answers are phrased** and runs **after** hybrid response selection. It is designed to make responses feel conversational while staying grounded and predictable.
 
 ### Match User Effort
 | User input style | Response style |
@@ -240,6 +449,7 @@ I don’t see docs for that exact term. Which feature are you asking about?
 Maintain minimal state to support follow-ups:
 - `activeMode: 'doc' | 'action' | 'llm'`
 - `lastDocSlug?: string`
+- `lastChunkIdsShown?: string[]`
 - `lastTopicTokens?: string[]`
 - `clarification?: { type, options, question }`
 
@@ -250,7 +460,7 @@ If the user says “no / not that / that’s wrong” after a `found` doc answer
 
 ### Pronoun follow-ups
 If the user asks “how does it work?” / “tell me more”:
-- scope retrieval to `lastDocSlug` when available
+- use HS2 same-doc expansion when `lastDocSlug` is available
 - otherwise reuse `lastTopicTokens`
 
 ### Optional preference learning (safe + deterministic)
@@ -274,7 +484,14 @@ Only learn from explicit user selections:
 7) Wire `/api/docs/retrieve`:
    - handle `found / weak / ambiguous / no_match`
    - `ambiguous` sets clarification state; selection calls `docSlug`
-8) Log routing + retrieval metrics.
+8) Implement Hybrid Response Selection:
+   - HS1 snippet quality guard
+   - HS2 follow-up expansion (same doc, avoid repeats)
+   - HS3 optional bounded LLM formatting (excerpt-only)
+9) Add Semantic Fallback classifier (feature-flagged, default-on):
+   - gated by deterministic `llm` route + unclear relevance
+   - strict JSON contract + timeout + fallback
+10) Log routing + retrieval + snippet-quality + classifier metrics.
 
 ---
 
@@ -287,19 +504,29 @@ Only learn from explicit user selections:
 5) “Tell me about home” → doc retrieval answer from concepts/home.
 6) “home” → **weak** if top-two chunks are from the same doc (same-doc tie collapse); otherwise **ambiguous** (two options). Selecting an option uses `docSlug`.
 
+### Hybrid response selection
+7) “tell me more” after a `found` answer → returns 1–2 sentences of body, not a heading.
+8) “tell me more” repeated twice → returns different chunks until doc exhausted.
+9) Top chunk is header-only → auto-append next chunk or select next candidate.
+
 ### Action routing
-7) “open workspace 6” → action.
-8) “workspace 6” → action (index-like reference).
-9) “note 2” → action (index-like reference).
-10) “recent” → action (action noun).
-11) Visible widget title (“widget manager”) → action.
+10) “open workspace 6” → action.
+11) “workspace 6” → action (index-like reference).
+12) “note 2” → action (index-like reference).
+13) “recent” → action (action noun).
+14) Visible widget title (“widget manager”) → action.
 
 ### LLM routing (non-app)
-12) “quantum physics” → skip retrieval → LLM.
-13) “tell me a joke” → skip retrieval → LLM.
+15) “quantum physics” → skip retrieval → LLM.
+16) “tell me a joke” → skip retrieval → LLM.
 
 ### Retrieval `no_match`
-14) “foobar widget” (contains “widget” so app-relevant) → retrieval `no_match` → “Which part would you like me to explain?” + examples.
+17) “foobar widget” (contains “widget” so app-relevant) → retrieval `no_match` → “Which part would you like me to explain?” + examples.
+
+### Unified retrieval (docs + notes/files)
+18) “search my notes for workspace” → notes corpus results.
+19) “workspace” when both doc concept and note title exist → cross-corpus 2-pill disambiguation.
+20) “tell me more” after a note snippet → HS2 returns next chunk from same note (no repeats).
 
 ---
 
@@ -315,6 +542,10 @@ Track these to measure conversational quality (not just retrieval correctness):
 | Doc-routing coverage | % of app-relevant queries that successfully route to doc retrieval (vs LLM) | Increase over time |
 | Pronoun follow-up success | % of follow-ups (“tell me more”, “how about that?”) resolved to the prior topic correctly | > 90% |
 | Groundedness sampling | Manual weekly check: answer matches retrieved docs | > 95% |
+| Snippet quality fail rate | % of `found/weak` where HS1 upgraded the snippet | Track + reduce |
+| Follow-up repeat rate | % of “tell me more” that repeats a prior chunk | ~0% |
+| Classifier usage rate | % of messages requiring semantic fallback | Track |
+| Added latency p95 | p95 overhead for classifier + HS3 path | Track |
 
 **Logging note:** include `route`, `status`, `docSlug` (if used), and whether the user corrected/accepted, so you can compute these rates reliably.
 
@@ -491,5 +722,5 @@ function routeInput(input: string, uiContext: UIContext, knownTerms: Set<string>
 ---
 
 ## Rollback
-- Remove the doc-style routing branch.
+- Remove the doc-style routing branch and Hybrid Response Selection layer.
 - Keep meta-explain and LLM routing unchanged.

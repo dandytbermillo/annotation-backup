@@ -132,11 +132,51 @@ export function normalizeQuery(query: string): string[] {
 }
 
 /**
- * Extract first N words from content as snippet
+ * Extract snippet from content preserving newlines for header detection.
+ * Uses char-based extraction to maintain structure.
+ * Ensures at least one body line is included if content has body after header.
  */
-function extractSnippet(content: string, maxWords: number = 30): string {
-  const words = content.split(/\s+/).slice(0, maxWords)
-  return words.join(' ') + (words.length >= maxWords ? '...' : '')
+function extractSnippet(content: string, maxChars: number = 400): string {
+  const trimmed = content.trim()
+  if (trimmed.length <= maxChars) return trimmed
+
+  // Initial char-based slice preserving newlines
+  let endIdx = maxChars
+  const wordEnd = trimmed.lastIndexOf(' ', maxChars)
+  if (wordEnd > maxChars * 0.7) {
+    endIdx = wordEnd
+  }
+
+  let snippet = trimmed.slice(0, endIdx).trim()
+
+  // Guard: ensure snippet has body content if possible
+  // If snippet only has header lines, extend to include first body line
+  if (snippet.startsWith('#')) {
+    const lines = snippet.split('\n')
+    const hasBodyLine = lines.some(line => {
+      const t = line.trim()
+      return t.length > 0 && !t.startsWith('#')
+    })
+
+    if (!hasBodyLine) {
+      // Find first non-header line in full content and include it
+      const fullLines = trimmed.split('\n')
+      let extendedSnippet = ''
+      for (const line of fullLines) {
+        extendedSnippet += (extendedSnippet ? '\n' : '') + line
+        const t = line.trim()
+        if (t.length > 0 && !t.startsWith('#')) {
+          // Found body line, include it and stop
+          break
+        }
+      }
+      if (extendedSnippet.length > snippet.length) {
+        snippet = extendedSnippet
+      }
+    }
+  }
+
+  return snippet + (snippet.length < trimmed.length ? '...' : '')
 }
 
 // =============================================================================
@@ -457,6 +497,11 @@ export interface ChunkRetrievalResult {
   source: 'keyword' | 'hybrid' | 'embedding'
   match_explain?: string[]
   confidence?: number
+  // V5 Hybrid Response Selection fields
+  chunkId: string              // e.g., `${doc_slug}#chunk-${chunk_index}`
+  isHeadingOnly?: boolean      // true if snippet is just a markdown header
+  bodyCharCount?: number       // character count excluding headers
+  nextChunkId?: string         // adjacent chunk in same doc for expansion
 }
 
 export interface ChunkRetrievalResponse {
@@ -471,6 +516,54 @@ export interface ChunkRetrievalResponse {
     dedupedChunks: number
     retrievalTimeMs: number
   }
+}
+
+// =============================================================================
+// V5 Hybrid Response Selection Helpers
+// =============================================================================
+
+/** V5 configurable thresholds */
+const MIN_BODY_CHARS = 80
+const HEADING_ONLY_MAX_CHARS = 50
+
+/**
+ * Generate a chunkId from doc_slug and chunk_index.
+ * Format: `${doc_slug}#chunk-${chunk_index}`
+ */
+function generateChunkId(docSlug: string, chunkIndex: number): string {
+  return `${docSlug}#chunk-${chunkIndex}`
+}
+
+/**
+ * Strip markdown headers from text for body char count.
+ * Removes lines starting with # to get actual body content.
+ */
+function stripMarkdownHeaders(text: string): string {
+  return text
+    .split('\n')
+    .filter(line => !line.trim().startsWith('#'))
+    .join('\n')
+    .trim()
+}
+
+/**
+ * Calculate body character count (excluding markdown headers).
+ */
+function calculateBodyCharCount(snippet: string): number {
+  return stripMarkdownHeaders(snippet).length
+}
+
+/**
+ * Detect if a snippet is heading-only (just a markdown header with no body).
+ * Per v5 plan: heading-only if starts with # and body chars < threshold.
+ */
+function detectIsHeadingOnly(snippet: string): boolean {
+  const trimmed = snippet.trim()
+  // Must start with a markdown header
+  if (!trimmed.startsWith('#')) return false
+  // Check body content after stripping headers
+  const bodyChars = calculateBodyCharCount(snippet)
+  return bodyChars < HEADING_ONLY_MAX_CHARS
 }
 
 /**
@@ -531,7 +624,15 @@ function scoreChunk(chunk: ChunkRow, queryTokens: string[]): { score: number; ma
 
   // Normalize by content length (sqrt to reduce penalty)
   const contentTokenCount = contentLower.split(/\s+/).length
-  const normalizedScore = score / Math.sqrt(Math.max(contentTokenCount / 50, 1))
+  let normalizedScore = score / Math.sqrt(Math.max(contentTokenCount / 50, 1))
+
+  // V5 HS1: Heavily penalize header-only chunks in scoring phase
+  // This ensures chunks with actual body content rank higher than section titles
+  const bodyText = stripMarkdownHeaders(chunk.content)
+  if (bodyText.length < HEADING_ONLY_MAX_CHARS) {
+    normalizedScore = normalizedScore * 0.1 // 90% penalty for header-only
+    explain.push(`Header-only penalty: score * 0.1`)
+  }
 
   return {
     score: Math.round(normalizedScore * 100) / 100,
@@ -562,9 +663,23 @@ function dedupeChunks(chunks: ChunkRetrievalResult[]): { results: ChunkRetrieval
 }
 
 /**
- * Retrieve relevant chunks for a query (Phase 2)
+ * Options for chunk retrieval (V5)
  */
-export async function retrieveChunks(query: string, topK: number = DEFAULT_TOP_K): Promise<ChunkRetrievalResponse> {
+export interface RetrieveChunksOptions {
+  topK?: number
+  excludeChunkIds?: string[]  // V5: filter out already-shown chunks for follow-ups
+  docSlug?: string            // V5: scope retrieval to a specific doc
+}
+
+/**
+ * Retrieve relevant chunks for a query (Phase 2)
+ * V5: Supports excludeChunkIds for follow-up expansion (HS2)
+ */
+export async function retrieveChunks(
+  query: string,
+  options: RetrieveChunksOptions = {}
+): Promise<ChunkRetrievalResponse> {
+  const { topK = DEFAULT_TOP_K, excludeChunkIds = [], docSlug } = options
   const startTime = Date.now()
   const queryTokens = normalizeQuery(query)
 
@@ -578,35 +693,67 @@ export async function retrieveChunks(query: string, topK: number = DEFAULT_TOP_K
     }
   }
 
-  // Fetch all chunks
-  const result = await serverPool.query(
-    `SELECT doc_slug, category, title, header_path, chunk_index, content, keywords, chunk_hash
+  // Build exclude set for efficient lookup
+  const excludeSet = new Set(excludeChunkIds)
+
+  // Fetch all chunks (optionally scoped to a specific doc)
+  let dbQuery = `SELECT doc_slug, category, title, header_path, chunk_index, content, keywords, chunk_hash
      FROM docs_knowledge_chunks`
-  )
+  const queryParams: string[] = []
+
+  if (docSlug) {
+    dbQuery += ` WHERE doc_slug = $1`
+    queryParams.push(docSlug)
+  }
+
+  const result = await serverPool.query(dbQuery, queryParams)
 
   const chunks: ChunkRow[] = result.rows
   const totalChunks = chunks.length
 
-  // Score all chunks
+  // Build a map of max chunk_index per doc for nextChunkId calculation
+  const maxChunkIndexByDoc = new Map<string, number>()
+  for (const chunk of chunks) {
+    const current = maxChunkIndexByDoc.get(chunk.doc_slug) ?? -1
+    if (chunk.chunk_index > current) {
+      maxChunkIndexByDoc.set(chunk.doc_slug, chunk.chunk_index)
+    }
+  }
+
+  // Score all chunks (V5: filter out excluded chunks for follow-ups)
   const scored: ChunkRetrievalResult[] = []
 
   for (const chunk of chunks) {
+    // V5: Skip excluded chunks (already shown in conversation)
+    const chunkId = generateChunkId(chunk.doc_slug, chunk.chunk_index)
+    if (excludeSet.has(chunkId)) continue
+
     const { score, matchedTerms, explain } = scoreChunk(chunk, queryTokens)
 
     if (score > 0) {
+      const snippet = extractSnippet(chunk.content)
+      const maxIndex = maxChunkIndexByDoc.get(chunk.doc_slug) ?? chunk.chunk_index
+
       scored.push({
         doc_slug: chunk.doc_slug,
         chunk_index: chunk.chunk_index,
         header_path: chunk.header_path,
         title: chunk.title,
         category: chunk.category,
-        snippet: extractSnippet(chunk.content),
+        snippet,
         score,
         rawScore: score,
         chunk_hash: chunk.chunk_hash,
         matched_terms: matchedTerms,
         source: 'keyword',
         match_explain: explain,
+        // V5 fields
+        chunkId,
+        isHeadingOnly: detectIsHeadingOnly(snippet),
+        bodyCharCount: calculateBodyCharCount(snippet),
+        nextChunkId: chunk.chunk_index < maxIndex
+          ? generateChunkId(chunk.doc_slug, chunk.chunk_index + 1)
+          : undefined,
       })
     }
   }
@@ -791,6 +938,8 @@ export async function retrieveByDocSlug(docSlug: string): Promise<ChunkRetrieval
   // Return the first chunk (intro/overview) as the best content
   const bestChunk = chunks[0]
   const retrievalTimeMs = Date.now() - startTime
+  const snippet = extractSnippet(bestChunk.content)
+  const maxChunkIndex = Math.max(...chunks.map(c => c.chunk_index))
 
   const topResult: ChunkRetrievalResult = {
     doc_slug: bestChunk.doc_slug,
@@ -798,13 +947,20 @@ export async function retrieveByDocSlug(docSlug: string): Promise<ChunkRetrieval
     header_path: bestChunk.header_path,
     title: bestChunk.title,
     category: bestChunk.category,
-    snippet: extractSnippet(bestChunk.content),
+    snippet,
     score: 10, // Fixed high score for direct lookup
     rawScore: 10,
     chunk_hash: bestChunk.chunk_hash,
     matched_terms: ['direct_lookup'],
     source: 'keyword',
     match_explain: ['Direct doc lookup by slug'],
+    // V5 fields
+    chunkId: generateChunkId(bestChunk.doc_slug, bestChunk.chunk_index),
+    isHeadingOnly: detectIsHeadingOnly(snippet),
+    bodyCharCount: calculateBodyCharCount(snippet),
+    nextChunkId: bestChunk.chunk_index < maxChunkIndex
+      ? generateChunkId(bestChunk.doc_slug, bestChunk.chunk_index + 1)
+      : undefined,
   }
 
   console.log(`[Retrieval] DocSlug lookup: slug="${docSlug}" chunks=${totalChunks} latency=${retrievalTimeMs}ms`)
@@ -812,7 +968,7 @@ export async function retrieveByDocSlug(docSlug: string): Promise<ChunkRetrieval
   return {
     status: 'found',
     results: [topResult],
-    clarification: null,
+    clarification: undefined,
     confidence: 1,
     phase: 2,
     metrics: {
@@ -828,7 +984,7 @@ export async function retrieveByDocSlug(docSlug: string): Promise<ChunkRetrieval
  * Get a short explanation from chunks (Phase 2)
  */
 export async function getChunkExplanation(concept: string): Promise<string | null> {
-  const response = await retrieveChunks(concept, 1)
+  const response = await retrieveChunks(concept, { topK: 1 })
 
   if (response.status === 'found' && response.results.length > 0) {
     const chunk = response.results[0]
@@ -847,10 +1003,13 @@ export async function getChunkExplanation(concept: string): Promise<string | nul
  * Smart retrieval: uses Phase 1 or Phase 2 based on feature flag
  * Falls back to Phase 1 if Phase 2 fails
  */
-export async function smartRetrieve(query: string): Promise<RetrievalResponse | ChunkRetrievalResponse> {
+export async function smartRetrieve(
+  query: string,
+  options: RetrieveChunksOptions = {}
+): Promise<RetrievalResponse | ChunkRetrievalResponse> {
   if (DOC_RETRIEVAL_PHASE >= 2) {
     try {
-      return await retrieveChunks(query)
+      return await retrieveChunks(query, options)
     } catch (error) {
       console.error('[Retrieval] Phase 2 failed, falling back to Phase 1:', error)
       // Fall through to Phase 1
@@ -887,4 +1046,132 @@ export async function getSmartExplanation(concept: string): Promise<string | nul
   }
 
   return null
+}
+
+// =============================================================================
+// Known Terms Builder (for app relevance gate)
+// Per general-doc-retrieval-routing-plan.md (v4)
+// =============================================================================
+
+/**
+ * Cache for known terms to avoid repeated DB queries
+ */
+let knownTermsCache: Set<string> | null = null
+let knownTermsCacheTimestamp: number = 0
+const KNOWN_TERMS_CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes
+
+/**
+ * Normalize a term for the knownTerms set.
+ * Uses the same normalization as routing for consistent matching.
+ */
+function normalizeTermForKnown(term: string): string {
+  return term
+    .toLowerCase()
+    .trim()
+    .replace(/[-_/,:;]+/g, ' ')
+    .replace(/\s+/g, ' ')
+}
+
+/**
+ * Build the knownTerms set from multiple sources:
+ * 1. CORE_CONCEPTS keys
+ * 2. docs_knowledge titles and keywords
+ * 3. Widget registry names (passed from UI context)
+ *
+ * Per v4 plan: knownTerms must be built once (cached) and shared.
+ */
+export async function buildKnownTerms(widgetTitles?: string[]): Promise<Set<string>> {
+  const now = Date.now()
+
+  // Return cached if still valid
+  if (knownTermsCache && (now - knownTermsCacheTimestamp) < KNOWN_TERMS_CACHE_TTL_MS) {
+    // Add widget titles to cache if provided (they may change)
+    if (widgetTitles?.length) {
+      const withWidgets = new Set(knownTermsCache)
+      for (const title of widgetTitles) {
+        withWidgets.add(normalizeTermForKnown(title))
+      }
+      return withWidgets
+    }
+    return knownTermsCache
+  }
+
+  const terms = new Set<string>()
+
+  // Source 1: CORE_CONCEPTS keys
+  for (const key of Object.keys(CORE_CONCEPTS)) {
+    terms.add(normalizeTermForKnown(key))
+    // Also add individual tokens for multi-word concepts
+    const tokens = key.split(/\s+/)
+    for (const token of tokens) {
+      if (token.length > 2) {
+        terms.add(normalizeTermForKnown(token))
+      }
+    }
+  }
+
+  // Source 2: docs_knowledge titles and keywords
+  try {
+    const result = await serverPool.query(
+      `SELECT title, keywords FROM docs_knowledge`
+    )
+
+    for (const row of result.rows) {
+      // Add title
+      if (row.title) {
+        terms.add(normalizeTermForKnown(row.title))
+        // Add title tokens
+        const titleTokens = row.title.split(/\s+/)
+        for (const token of titleTokens) {
+          if (token.length > 2) {
+            terms.add(normalizeTermForKnown(token))
+          }
+        }
+      }
+
+      // Add keywords
+      if (row.keywords && Array.isArray(row.keywords)) {
+        for (const keyword of row.keywords) {
+          terms.add(normalizeTermForKnown(keyword))
+        }
+      }
+    }
+  } catch (error) {
+    console.error('[KnownTerms] Error fetching docs:', error)
+    // Continue with what we have
+  }
+
+  // Source 3: Widget titles (if provided)
+  if (widgetTitles?.length) {
+    for (const title of widgetTitles) {
+      terms.add(normalizeTermForKnown(title))
+    }
+  }
+
+  // Update cache
+  knownTermsCache = terms
+  knownTermsCacheTimestamp = now
+
+  console.log(`[KnownTerms] Built ${terms.size} terms from sources`)
+
+  return terms
+}
+
+/**
+ * Get known terms synchronously (from cache only).
+ * Returns null if cache is empty - caller should use buildKnownTerms() first.
+ */
+export function getKnownTermsSync(): Set<string> | null {
+  if (knownTermsCache && (Date.now() - knownTermsCacheTimestamp) < KNOWN_TERMS_CACHE_TTL_MS) {
+    return knownTermsCache
+  }
+  return null
+}
+
+/**
+ * Clear the known terms cache (for testing or after doc updates)
+ */
+export function clearKnownTermsCache(): void {
+  knownTermsCache = null
+  knownTermsCacheTimestamp = 0
 }

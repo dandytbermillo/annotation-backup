@@ -44,6 +44,7 @@ import {
   showHomeToast,
   showEntryOpenedToast,
 } from '@/lib/chat/navigation-toast'
+import { getKnownTermsSync, fetchKnownTerms, isKnownTermsCacheValid } from '@/lib/docs/known-terms-client'
 
 export interface ChatNavigationPanelProps {
   /** Current entry ID for context */
@@ -389,49 +390,156 @@ function extractMetaExplainConcept(input: string): string | null {
   return null
 }
 
+// =============================================================================
+// V4 Doc Retrieval Routing Helpers
+// Per general-doc-retrieval-routing-plan.md (v4)
+// =============================================================================
+
 /**
- * Check if input is a general doc-style query that should use retrieval.
- * Per general-doc-retrieval-routing-plan.md
- * Handles: "what is X", "how do I X", "tell me about X", etc.
- *
- * Returns false if:
- * - Contains action verbs (open/list/show/go/create/rename/delete)
- * - Is already handled by meta-explain (bare "explain", "what do you mean")
+ * Route types for doc retrieval routing decision.
  */
-function isDocStyleQuery(input: string): boolean {
-  const normalized = input.trim().toLowerCase().replace(/[?!.]+$/, '')
+type DocRoute = 'doc' | 'action' | 'bare_noun' | 'llm'
 
-  // Skip if contains action verbs (these are navigation commands, not doc queries)
-  const actionVerbs = /\b(open|list|show|go|create|rename|delete|close|switch|navigate)\b/i
-  if (actionVerbs.test(normalized)) {
-    return false
-  }
+/**
+ * Action nouns that should bypass doc retrieval and use normal routing.
+ * Per v4 plan: minimal set of navigation shortcuts.
+ * Note: singular "workspace" is doc-routable, only plural "workspaces" is action.
+ */
+const ACTION_NOUNS = new Set<string>([
+  'recent',
+  'recents',
+  'quick links',
+  'quicklinks',
+  'workspaces', // plural only; keep singular "workspace" doc-routable
+])
 
-  // Skip bare meta-explain phrases (handled by existing meta-explain handler)
-  const bareMetaPhrases = ['explain', 'what do you mean', 'explain that', 'help me understand', 'what is that', 'tell me more']
-  if (bareMetaPhrases.includes(normalized)) {
-    return false
-  }
+/**
+ * Polite command prefixes that indicate an action request, not a doc question.
+ * Per v4 plan: "can you open..." is a command, but "can I rename?" is a question.
+ */
+const POLITE_COMMAND_PREFIXES = [
+  'can you',
+  'could you',
+  'would you',
+  'please',
+  'show me',
+]
 
-  // Doc-style query patterns
-  const docPatterns = [
-    /^what (is|are)\s+/i,
-    /^how (do i|to|can i)\s+/i,
-    /^tell me about\s+/i,
-    /^explain\s+/i,
-    /^what does\s+/i,
-    /^where can i\s+/i,
-    /^how can i\s+/i,
-  ]
+/**
+ * Doc-verb cues: low-churn list of verbs that indicate doc-style queries.
+ * Per v4 plan: these extend beyond question-word detection.
+ */
+const DOC_VERBS = new Set<string>([
+  'describe',
+  'clarify',
+  'define',
+  'overview',
+  'meaning',
+])
 
-  for (const pattern of docPatterns) {
-    if (pattern.test(normalized)) {
-      return true
-    }
-  }
+/**
+ * Check if string starts with any of the given prefixes.
+ */
+function startsWithAnyPrefix(normalized: string, prefixes: string[]): boolean {
+  return prefixes.some(p => normalized === p || normalized.startsWith(p + ' '))
+}
 
-  // Check for help/guide/instructions without action verbs (already checked above)
-  if (/\b(help|guide|instructions?|documentation)\b/i.test(normalized)) {
+/**
+ * Normalize user input for routing decisions.
+ * Per v4 plan: consistent normalization for both routing and retrieval.
+ */
+function normalizeInputForRouting(input: string): { normalized: string; tokens: string[] } {
+  const normalized = input
+    .toLowerCase()
+    .trim()
+    .replace(/[-_/,:;]+/g, ' ')
+    .replace(/[?!.]+$/, '')
+    .replace(/\s+/g, ' ')
+
+  // NOTE: In real impl apply synonyms + conservative stemming + typo fix BEFORE tokenization.
+  const tokens = normalized.split(/\s+/).filter(Boolean)
+  return { normalized, tokens }
+}
+
+/**
+ * Normalize a widget/doc title for comparison.
+ */
+function normalizeTitle(title: string): string {
+  return title
+    .toLowerCase()
+    .trim()
+    .replace(/[-_/,:;]+/g, ' ')
+    .replace(/[?!.]+$/, '')
+    .replace(/\s+/g, ' ')
+}
+
+/**
+ * Check if input has question intent (starts with question word or ends with ?).
+ * Per v4 plan: broad detection of question-like inputs.
+ */
+function hasQuestionIntent(normalized: string): boolean {
+  return (
+    /^(what|how|where|when|why|who|which|can|could|would|should|tell|explain|help|is|are|do|does)\b/i.test(
+      normalized
+    ) ||
+    normalized.endsWith('?')
+  )
+}
+
+/**
+ * Check if input contains action verbs.
+ * Per v4 plan: used for command detection.
+ */
+function hasActionVerb(normalized: string): boolean {
+  return /\b(open|close|show|list|go|create|rename|delete|remove|add|navigate|edit|modify|change|update)\b/i.test(
+    normalized
+  )
+}
+
+/**
+ * Check if input matches a visible widget title.
+ * Per v4 plan: visible widget bypass routes to action.
+ */
+function matchesVisibleWidgetTitle(normalized: string, uiContext?: UIContext | null): boolean {
+  const widgets = uiContext?.dashboard?.visibleWidgets
+  if (!widgets?.length) return false
+
+  return widgets.some(w => normalizeTitle(w.title) === normalized)
+}
+
+/**
+ * Check if input contains doc instruction cues.
+ * Per v4 plan: "how to", "show me how" are doc-style even with "show me" prefix.
+ */
+function containsDocInstructionCue(normalized: string): boolean {
+  return /\b(how to|how do i|tell me how|show me how|walk me through)\b/i.test(normalized)
+}
+
+/**
+ * Check if input looks like an index-like reference (e.g., "workspace 6", "note 2").
+ * Per v4 plan: these should route to action, not doc retrieval.
+ */
+function looksIndexLikeReference(normalized: string): boolean {
+  return /\b(workspace|note|page|entry)\s+\d+\b/i.test(normalized)
+}
+
+/**
+ * Check if input is command-like (should route to action).
+ * Per v4 plan: imperative commands + polite commands - doc instruction cues.
+ */
+function isCommandLike(normalized: string): boolean {
+  // Index-like selection should be action even without a verb: "note 2"
+  if (looksIndexLikeReference(normalized)) return true
+
+  // Imperative: action verb without question intent
+  if (hasActionVerb(normalized) && !hasQuestionIntent(normalized)) return true
+
+  // Polite command: prefix + action verb, unless it's clearly an instruction question
+  if (
+    startsWithAnyPrefix(normalized, POLITE_COMMAND_PREFIXES) &&
+    hasActionVerb(normalized) &&
+    !containsDocInstructionCue(normalized)
+  ) {
     return true
   }
 
@@ -439,103 +547,340 @@ function isDocStyleQuery(input: string): boolean {
 }
 
 /**
+ * Check if input is a doc-style query.
+ * Per v4 plan: question intent OR doc-verb cues, AND not command-like.
+ */
+function isDocStyleQuery(input: string, uiContext?: UIContext | null): boolean {
+  const { normalized, tokens } = normalizeInputForRouting(input)
+
+  // Skip bare meta-explain phrases (handled by existing meta-explain handler)
+  const bareMetaPhrases = ['explain', 'what do you mean', 'explain that', 'help me understand', 'what is that', 'tell me more']
+  if (bareMetaPhrases.includes(normalized)) {
+    return false
+  }
+
+  // Action noun bypass
+  if (ACTION_NOUNS.has(normalized)) return false
+
+  // Visible widget bypass
+  if (matchesVisibleWidgetTitle(normalized, uiContext)) return false
+
+  // Command-like bypass
+  if (isCommandLike(normalized)) return false
+
+  // Broad doc-style trigger: instruction cue OR question intent OR doc-verb cue
+  if (containsDocInstructionCue(normalized)) return true
+  if (hasQuestionIntent(normalized)) return true
+  return tokens.some(t => DOC_VERBS.has(t))
+}
+
+/**
  * Extract the query term from a doc-style query.
  * E.g., "how do I add a widget" → "add widget"
  */
 function extractDocQueryTerm(input: string): string {
-  const normalized = input.trim().toLowerCase().replace(/[?!.]+$/, '')
+  const { normalized } = normalizeInputForRouting(input)
 
   // Remove common prefixes
   let term = normalized
     .replace(/^what (is|are)\s+(a\s+|an\s+|the\s+)?/i, '')
     .replace(/^how (do i|to|can i)\s+/i, '')
-    .replace(/^tell me about\s+(a\s+|an\s+|the\s+)?/i, '')
+    .replace(/^tell me (about\s+)?(a\s+|an\s+|the\s+)?/i, '')
+    .replace(/^tell me how (to\s+)?/i, '')
     .replace(/^explain\s+(a\s+|an\s+|the\s+)?/i, '')
     .replace(/^what does\s+(a\s+|an\s+|the\s+)?/i, '')
     .replace(/^where can i\s+(find\s+|see\s+)?/i, '')
     .replace(/^how can i\s+/i, '')
+    .replace(/^show me how (to\s+)?/i, '')
+    .replace(/^walk me through\s+(how to\s+)?/i, '')
+    .replace(/^describe\s+(the\s+|a\s+|an\s+)?/i, '')
+    .replace(/^clarify\s+(the\s+|a\s+|an\s+)?/i, '')
+    .replace(/^define\s+(the\s+|a\s+|an\s+)?/i, '')
     .trim()
 
   return term || normalized
 }
 
 /**
- * Action nouns that should bypass doc retrieval and use normal routing.
- * These are navigation shortcuts that users expect to execute actions, not show docs.
- * Per general-doc-retrieval-routing-plan.md: bare-noun guard with action-noun bypass.
+ * Check if input passes the bare-noun guard for doc retrieval.
+ * Per v4 plan: 1-3 tokens, no action verbs, no digits, matches known terms,
+ * not action noun, not visible widget.
+ *
+ * Note: knownTerms parameter is optional for now; can be integrated later
+ * when the knownTerms builder is available.
  */
-const ACTION_NOUNS = new Set([
-  'recent',
-  'recents',
-  'quick links',
-  'quicklinks',
-  'quick link',
-  'workspaces',
-  'workspace',
-  'dashboard',
-  'home',
-  'settings',
-  'search',
-])
-
-/**
- * Check if input matches a visible widget title or type.
- * Used to bypass doc retrieval for widget navigation commands.
- */
-function matchesVisibleWidget(input: string, uiContext?: UIContext | null): boolean {
-  const normalized = input.trim().toLowerCase()
-  const widgets = uiContext?.dashboard?.visibleWidgets
-  if (!widgets?.length) return false
-
-  return widgets.some(w =>
-    w.title.toLowerCase() === normalized ||
-    w.type.toLowerCase() === normalized ||
-    w.title.toLowerCase().includes(normalized) ||
-    normalized.includes(w.type.toLowerCase())
-  )
-}
-
-/**
- * Check if input is a bare-noun query that should route to doc retrieval.
- * Per general-doc-retrieval-routing-plan.md:
- * - 1-3 tokens after normalization
- * - No action verbs
- * - No digits
- * - Not in ACTION_NOUNS bypass list
- * - Not matching a visible widget
- */
-function isBareNounQuery(input: string, uiContext?: UIContext | null): boolean {
-  const normalized = input.trim().toLowerCase().replace(/[?!.]+$/, '')
-
-  // Bypass: static action nouns (navigation commands)
-  if (ACTION_NOUNS.has(normalized)) {
-    return false
-  }
-
-  // Bypass: matches visible widget (custom widget names)
-  if (matchesVisibleWidget(normalized, uiContext)) {
-    return false
-  }
+function isBareNounQuery(
+  input: string,
+  uiContext?: UIContext | null,
+  knownTerms?: Set<string>
+): boolean {
+  const { normalized, tokens } = normalizeInputForRouting(input)
 
   // Guard: 1-3 tokens
-  const tokens = normalized.split(/\s+/).filter(t => t.length > 0)
-  if (tokens.length === 0 || tokens.length > 3) {
-    return false
-  }
-
-  // Guard: no digits (e.g., "workspace 6", "note 2")
-  if (/\d/.test(normalized)) {
-    return false
-  }
+  if (tokens.length === 0 || tokens.length > 3) return false
 
   // Guard: no action verbs
-  const actionVerbs = /\b(open|list|show|go|create|rename|delete|close|switch|navigate)\b/i
-  if (actionVerbs.test(normalized)) {
-    return false
+  if (hasActionVerb(normalized)) return false
+
+  // Guard: no digits (e.g., "workspace 6", "note 2")
+  if (/\d/.test(normalized)) return false
+
+  // If knownTerms provided, check for match
+  if (knownTerms) {
+    const matchesKnown =
+      tokens.some(t => knownTerms.has(t)) || knownTerms.has(normalized)
+    if (!matchesKnown) return false
   }
+
+  // Bypass: action noun
+  if (ACTION_NOUNS.has(normalized)) return false
+
+  // Bypass: visible widget
+  if (matchesVisibleWidgetTitle(normalized, uiContext)) return false
 
   // Passes all guards - this is a bare noun that should try retrieval
   return true
+}
+
+/**
+ * Main routing function for doc retrieval.
+ * Per v4 plan: determines if input should go to doc, action, bare_noun, or llm route.
+ *
+ * Now with full knownTerms integration for app relevance gate.
+ */
+function routeDocInput(
+  input: string,
+  uiContext?: UIContext | null,
+  knownTerms?: Set<string>
+): DocRoute {
+  const { normalized, tokens } = normalizeInputForRouting(input)
+
+  // Step 1: app relevance gate (v4 plan)
+  // If knownTerms available, check if query is app-relevant
+  if (knownTerms && knownTerms.size > 0) {
+    const isAppRelevant =
+      tokens.some(t => knownTerms.has(t)) ||
+      knownTerms.has(normalized) ||
+      ACTION_NOUNS.has(normalized) ||
+      matchesVisibleWidgetTitle(normalized, uiContext)
+
+    if (!isAppRelevant) {
+      // Not app-relevant - skip retrieval, go to LLM
+      return 'llm'
+    }
+  }
+
+  // Step 2: visible widget bypass
+  if (matchesVisibleWidgetTitle(normalized, uiContext)) return 'action'
+
+  // Step 3: action-noun bypass
+  if (ACTION_NOUNS.has(normalized)) return 'action'
+
+  // Step 4: command-like (includes index-like digits)
+  if (isCommandLike(normalized)) return 'action'
+
+  // Step 5: doc-style routing
+  if (isDocStyleQuery(input, uiContext)) return 'doc'
+
+  // Step 6: bare noun routing (stricter)
+  if (isBareNounQuery(input, uiContext, knownTerms)) return 'bare_noun'
+
+  return 'llm'
+}
+
+// =============================================================================
+// V4 Response Policy Helpers
+// Per general-doc-retrieval-routing-plan.md (v4)
+// =============================================================================
+
+/**
+ * Detect correction/rejection phrases.
+ * Per v4 plan: "no / not that / that's wrong" triggers re-retrieval.
+ */
+function isCorrectionPhrase(input: string): boolean {
+  const normalized = input.trim().toLowerCase()
+  const correctionPhrases = [
+    'no',
+    'nope',
+    'not that',
+    'not what i meant',
+    'not what i asked',
+    "that's wrong",
+    'thats wrong',
+    'wrong',
+    'incorrect',
+    'different',
+    'something else',
+    'try again',
+  ]
+  return correctionPhrases.some(p => normalized === p || normalized.startsWith(p + ' '))
+}
+
+/**
+ * Detect pronoun follow-up phrases.
+ * Per v4 plan: "tell me more", "how does it work" uses lastDocSlug.
+ */
+function isPronounFollowUp(input: string): boolean {
+  const normalized = input.trim().toLowerCase()
+  const followUpPhrases = [
+    'tell me more',
+    'more details',
+    'explain more',
+    'how does it work',
+    'how does that work',
+    'what else',
+    'continue',
+    'go on',
+    'elaborate',
+  ]
+  return followUpPhrases.some(p => normalized.startsWith(p))
+}
+
+/**
+ * Format response based on user input style.
+ * Per v4 plan: Match User Effort - short question → 1-2 sentences, etc.
+ */
+function getResponseStyle(input: string): 'short' | 'medium' | 'detailed' {
+  const normalized = input.trim().toLowerCase()
+
+  // Detailed: "walk me through", "step by step", "how do i"
+  if (/\b(walk me through|step by step|steps to|how do i|how to)\b/.test(normalized)) {
+    return 'detailed'
+  }
+
+  // Medium: "explain", "describe", "tell me about"
+  if (/\b(explain|describe|tell me about|clarify)\b/.test(normalized)) {
+    return 'medium'
+  }
+
+  // Short: "what is", short queries
+  return 'short'
+}
+
+/**
+ * Format snippet based on response style.
+ * Per v4 plan: Match User Effort.
+ */
+function formatSnippet(snippet: string, style: 'short' | 'medium' | 'detailed'): string {
+  if (!snippet) return snippet
+
+  // Split into sentences
+  const sentences = snippet.split(/(?<=[.!?])\s+/).filter(s => s.trim())
+
+  switch (style) {
+    case 'short':
+      // 1-2 sentences
+      return sentences.slice(0, 2).join(' ')
+    case 'medium':
+      // 2-3 sentences
+      return sentences.slice(0, 3).join(' ')
+    case 'detailed':
+      // Full snippet
+      return snippet
+    default:
+      return snippet
+  }
+}
+
+/**
+ * Add next step offer based on context.
+ * Per v4 plan: Offer Next Steps (only when natural).
+ */
+function getNextStepOffer(style: 'short' | 'medium' | 'detailed', hasMoreContent: boolean): string {
+  if (style === 'short' && hasMoreContent) {
+    return '\n\nWant more detail?'
+  }
+  if (style === 'medium' && hasMoreContent) {
+    return '\n\nWant the step-by-step?'
+  }
+  return ''
+}
+
+// =============================================================================
+// V5 Hybrid Response Selection Helpers (HS1)
+// Per general-doc-retrieval-routing-plan.md (v5)
+// =============================================================================
+
+/** V5 configurable thresholds */
+const V5_MIN_BODY_CHARS = 80
+const V5_HEADING_ONLY_MAX_CHARS = 50
+
+/**
+ * Strip markdown headers from text for body char count.
+ * Removes lines starting with # to get actual body content.
+ */
+function stripMarkdownHeadersForUI(text: string): string {
+  return text
+    .split('\n')
+    .filter(line => !line.trim().startsWith('#'))
+    .join('\n')
+    .trim()
+}
+
+/**
+ * Check if snippet is low quality (heading-only or too short).
+ * Per v5 plan: HS1 snippet quality guard.
+ */
+function isLowQualitySnippet(snippet: string, isHeadingOnly?: boolean, bodyCharCount?: number): boolean {
+  // Use server-provided values if available
+  if (isHeadingOnly === true) return true
+  if (bodyCharCount !== undefined && bodyCharCount < V5_MIN_BODY_CHARS) return true
+
+  // Fallback: compute locally if server didn't provide
+  const strippedBody = stripMarkdownHeadersForUI(snippet)
+
+  // Check if it's just a header
+  if (snippet.trim().startsWith('#') && strippedBody.length < V5_HEADING_ONLY_MAX_CHARS) {
+    return true
+  }
+
+  // Check if too short overall
+  if (strippedBody.length < V5_MIN_BODY_CHARS) {
+    return true
+  }
+
+  return false
+}
+
+/**
+ * Attempt to upgrade a low-quality snippet via follow-up retrieval.
+ * Per v5 plan: HS1 same-doc fallback search.
+ * Returns upgraded snippet or null if upgrade failed.
+ */
+async function attemptSnippetUpgrade(
+  docSlug: string,
+  excludeChunkIds: string[]
+): Promise<{ snippet: string; chunkIds: string[] } | null> {
+  try {
+    const response = await fetch('/api/docs/retrieve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mode: 'chunks',
+        query: docSlug, // Use docSlug as query to get related content
+        scopeDocSlug: docSlug,
+        excludeChunkIds,
+      }),
+    })
+
+    if (!response.ok) return null
+
+    const result = await response.json()
+    if (result.status === 'found' && result.results?.length > 0) {
+      // Find first non-heading-only chunk
+      for (const chunk of result.results) {
+        if (!isLowQualitySnippet(chunk.snippet, chunk.isHeadingOnly, chunk.bodyCharCount)) {
+          return {
+            snippet: chunk.snippet,
+            chunkIds: [chunk.chunkId],
+          }
+        }
+      }
+    }
+    return null
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -868,8 +1213,9 @@ function parseOrdinalFromQuestion(input: string): number | null {
 /**
  * Check if input contains action verbs that should skip grace window.
  * These are deliberate commands that shouldn't be intercepted.
+ * Note: This is separate from hasActionVerb() in v4 routing helpers.
  */
-function hasActionVerb(input: string): boolean {
+function hasGraceSkipActionVerb(input: string): boolean {
   const actionVerbs = [
     // Destructive actions
     'create', 'new', 'make', 'rename', 'delete', 'remove',
@@ -1240,6 +1586,9 @@ function ChatNavigationPanelContent({
     // Clarification follow-up handling (Phase 2a)
     lastClarification,
     setLastClarification,
+    // Doc retrieval conversation state (v4 plan)
+    docRetrievalState,
+    updateDocRetrievalState,
   } = useChatNavigationContext()
 
   const { executeAction, selectOption, openPanelDrawer: openPanelDrawerBase } = useChatNavigation({
@@ -1285,6 +1634,16 @@ function ChatNavigationPanelContent({
   useEffect(() => {
     if (isOpen) {
       setTimeout(() => inputRef.current?.focus(), 100)
+    }
+  }, [isOpen])
+
+  // Fetch knownTerms when panel opens (for app relevance gate)
+  // Per general-doc-retrieval-routing-plan.md (v4)
+  useEffect(() => {
+    if (isOpen && !isKnownTermsCacheValid()) {
+      void fetchKnownTerms().then(terms => {
+        console.log(`[KnownTerms] Cached ${terms.size} terms for routing`)
+      })
     }
   }, [isOpen])
 
@@ -2320,8 +2679,11 @@ function ChatNavigationPanelContent({
       // Per meta-explain-outside-clarification-plan.md (Tiered Plan)
       // Tier 1: Local cache for common concepts
       // Tier 2: Database retrieval for long tail
+      // NOTE: Skip if there's active docRetrievalState AND input is a follow-up cue
+      //       (let v4 pronoun follow-up handler take over instead)
       // ---------------------------------------------------------------------------
-      if (!lastClarification && isMetaExplainOutsideClarification(trimmedInput)) {
+      const shouldDeferToV4FollowUp = docRetrievalState?.lastDocSlug && isPronounFollowUp(trimmedInput)
+      if (!lastClarification && isMetaExplainOutsideClarification(trimmedInput) && !shouldDeferToV4FollowUp) {
         void debugLog({
           component: 'ChatNavigation',
           action: 'meta_explain_outside_clarification',
@@ -2377,6 +2739,17 @@ function ChatNavigationPanelContent({
               isError: false,
             }
             addMessage(assistantMessage)
+
+            // Wire meta-explain into v4 state for follow-ups and corrections
+            // Per general-doc-retrieval-routing-plan.md (v4)
+            const metaQueryTerm = queryTerm || trimmedInput
+            const { tokens: metaTokens } = normalizeInputForRouting(metaQueryTerm)
+            updateDocRetrievalState({
+              lastDocSlug: metaQueryTerm, // Use concept as pseudo-slug for follow-ups
+              lastTopicTokens: metaTokens,
+              lastMode: 'doc',
+            })
+
             setIsLoading(false)
             return
           }
@@ -2398,24 +2771,191 @@ function ChatNavigationPanelContent({
       }
 
       // ---------------------------------------------------------------------------
+      // V4 Correction Handling: "no / not that" after doc retrieval
+      // Per general-doc-retrieval-routing-plan.md (v4)
+      // ---------------------------------------------------------------------------
+      if (docRetrievalState?.lastDocSlug && isCorrectionPhrase(trimmedInput)) {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'doc_correction',
+          metadata: { userInput: trimmedInput, lastDocSlug: docRetrievalState.lastDocSlug },
+        })
+
+        // Acknowledge correction and re-run retrieval with lastTopicTokens
+        const correctionMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: "Got it — let's try again. Which topic were you asking about?",
+          timestamp: new Date(),
+          isError: false,
+        }
+        addMessage(correctionMessage)
+
+        // Clear doc retrieval state to allow fresh query
+        updateDocRetrievalState({ lastDocSlug: undefined, lastTopicTokens: undefined })
+        setIsLoading(false)
+        return
+      }
+
+      // ---------------------------------------------------------------------------
+      // V5 Pronoun Follow-up: "tell me more" with HS2 expansion
+      // Per general-doc-retrieval-routing-plan.md (v5)
+      // Uses excludeChunkIds to avoid repeating already-shown content
+      // ---------------------------------------------------------------------------
+      if (docRetrievalState?.lastDocSlug && isPronounFollowUp(trimmedInput)) {
+        const excludeChunkIds = docRetrievalState.lastChunkIdsShown || []
+
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'doc_followup_v5',
+          metadata: {
+            userInput: trimmedInput,
+            lastDocSlug: docRetrievalState.lastDocSlug,
+            excludeChunkIds,
+          },
+        })
+
+        try {
+          // V5 HS2: Use mode='chunks' with excludeChunkIds for same-doc expansion
+          let retrieveResponse = await fetch('/api/docs/retrieve', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              mode: 'chunks',
+              query: docRetrievalState.lastDocSlug,
+              scopeDocSlug: docRetrievalState.lastDocSlug,
+              excludeChunkIds,
+            }),
+          })
+
+          let result = retrieveResponse.ok ? await retrieveResponse.json() : null
+
+          // If scoped retrieval fails, try query-based without scope but still use chunks mode
+          // to ensure v5 fields (isHeadingOnly, bodyCharCount) are present for quality filtering
+          if (!result || result.status === 'no_match' || !result.results?.length) {
+            retrieveResponse = await fetch('/api/docs/retrieve', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                mode: 'chunks',
+                query: docRetrievalState.lastDocSlug,
+                excludeChunkIds,
+              }),
+            })
+            result = retrieveResponse.ok ? await retrieveResponse.json() : null
+          }
+
+          if (result && (result.status === 'found' || result.status === 'weak') && result.results?.length > 0) {
+            // V5 HS2: Find first non-heading-only chunk (quality filter)
+            let selectedResult = null
+            for (const chunk of result.results) {
+              if (!isLowQualitySnippet(chunk.snippet, chunk.isHeadingOnly, chunk.bodyCharCount)) {
+                selectedResult = chunk
+                break
+              }
+            }
+
+            // If all results are low quality, use first one anyway
+            if (!selectedResult) {
+              selectedResult = result.results[0]
+              console.log('[DocRetrieval:HS2] All follow-up chunks are low quality, using first')
+            }
+
+            const snippet = selectedResult.snippet || selectedResult.content?.slice(0, 500) || ''
+            const newChunkId = selectedResult.chunkId
+
+            // Check if we actually have new content
+            if (snippet.length > 0) {
+              const assistantMessage: ChatMessage = {
+                id: `assistant-${Date.now()}`,
+                role: 'assistant',
+                content: snippet + (snippet.length >= 500 ? '...' : ''),
+                timestamp: new Date(),
+                isError: false,
+              }
+              addMessage(assistantMessage)
+
+              // V5: Update lastChunkIdsShown to include newly shown chunk
+              if (newChunkId) {
+                updateDocRetrievalState({
+                  lastChunkIdsShown: [...excludeChunkIds, newChunkId],
+                })
+              }
+
+              setIsLoading(false)
+              return
+            }
+          }
+
+          // No more content in this doc - inform user
+          const exhaustedMessage: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: "That's all I have on this topic. What else would you like to know?",
+            timestamp: new Date(),
+            isError: false,
+          }
+          addMessage(exhaustedMessage)
+          setIsLoading(false)
+          return
+        } catch (error) {
+          console.error('[ChatNavigation] Doc follow-up error:', error)
+        }
+
+        // Fallback if follow-up fails
+        const fallbackMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: "I don't have more details on that. What else would you like to know?",
+          timestamp: new Date(),
+          isError: false,
+        }
+        addMessage(fallbackMessage)
+        setIsLoading(false)
+        return
+      }
+
+      // ---------------------------------------------------------------------------
       // General Doc Retrieval Routing: Handle "what is X", "how do I X" queries
       // AND bare nouns like "notes", "widgets" (not action nouns like "recent")
-      // Per general-doc-retrieval-routing-plan.md
+      // Per general-doc-retrieval-routing-plan.md (v4)
       // Routes doc-style questions through retrieval for grounded answers.
       // ---------------------------------------------------------------------------
-      const isDocStyle = isDocStyleQuery(trimmedInput)
-      const isBareNoun = isBareNounQuery(trimmedInput, uiContext)
+
+      // Get knownTerms for app relevance gate (use cached if available)
+      const knownTerms = getKnownTermsSync()
+
+      // Use the main routing function
+      const docRoute = routeDocInput(trimmedInput, uiContext, knownTerms ?? undefined)
+      const isDocStyle = docRoute === 'doc'
+      const isBareNoun = docRoute === 'bare_noun'
+
+      // Log routing decision for metrics
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'doc_routing_decision',
+        metadata: {
+          userInput: trimmedInput,
+          route: docRoute,
+          hasKnownTerms: !!knownTerms,
+          knownTermsSize: knownTerms?.size ?? 0,
+        },
+      })
 
       if (!lastClarification && (isDocStyle || isBareNoun)) {
         void debugLog({
           component: 'ChatNavigation',
           action: 'general_doc_retrieval',
-          metadata: { userInput: trimmedInput, isDocStyle, isBareNoun },
+          metadata: { userInput: trimmedInput, isDocStyle, isBareNoun, route: docRoute },
         })
 
         try {
           // For doc-style queries, extract the term; for bare nouns, use as-is
           const queryTerm = isDocStyle ? extractDocQueryTerm(trimmedInput) : trimmedInput.trim().toLowerCase()
+          const { tokens: queryTokens } = normalizeInputForRouting(queryTerm)
+
+          // Get response style for formatting
+          const responseStyle = getResponseStyle(trimmedInput)
 
           // Call retrieval API
           const retrieveResponse = await fetch('/api/docs/retrieve', {
@@ -2429,19 +2969,65 @@ function ChatNavigationPanelContent({
           if (retrieveResponse.ok) {
             const result = await retrieveResponse.json()
 
+            // Log retrieval metrics
+            console.log(`[DocRetrieval] query="${queryTerm}" status=${result.status} ` +
+              `confidence=${result.confidence?.toFixed(2) ?? 'N/A'} ` +
+              `resultsCount=${result.results?.length ?? 0}`)
+
             // Handle different response statuses
             if (result.status === 'found' && result.results?.length > 0) {
               // Strong match - answer from docs
               const topResult = result.results[0]
-              const snippet = topResult.snippet || topResult.content?.slice(0, 200)
+              let rawSnippet = topResult.snippet || topResult.content?.slice(0, 300) || ''
+              let chunkIdsShown: string[] = topResult.chunkId ? [topResult.chunkId] : []
+
+              // V5 HS1: Snippet Quality Guard
+              // Check if snippet is low quality (heading-only or too short)
+              if (isLowQualitySnippet(rawSnippet, topResult.isHeadingOnly, topResult.bodyCharCount)) {
+                console.log(`[DocRetrieval:HS1] Low quality snippet detected for ${topResult.doc_slug}, attempting upgrade`)
+
+                // Attempt to upgrade with next chunk or fallback search
+                const upgraded = await attemptSnippetUpgrade(topResult.doc_slug, chunkIdsShown)
+                if (upgraded) {
+                  rawSnippet = upgraded.snippet
+                  chunkIdsShown = [...chunkIdsShown, ...upgraded.chunkIds]
+                  console.log(`[DocRetrieval:HS1] Snippet upgraded successfully`)
+                } else {
+                  // If upgrade failed, try to use next result if available
+                  for (let i = 1; i < result.results.length; i++) {
+                    const altResult = result.results[i]
+                    if (!isLowQualitySnippet(altResult.snippet, altResult.isHeadingOnly, altResult.bodyCharCount)) {
+                      rawSnippet = altResult.snippet
+                      chunkIdsShown = altResult.chunkId ? [altResult.chunkId] : []
+                      console.log(`[DocRetrieval:HS1] Using alternate result ${i}`)
+                      break
+                    }
+                  }
+                }
+              }
+
+              // Apply response policy: format based on user input style
+              const formattedSnippet = formatSnippet(rawSnippet, responseStyle)
+              const hasMoreContent = rawSnippet.length > formattedSnippet.length
+              const nextStepOffer = getNextStepOffer(responseStyle, hasMoreContent)
+
               const assistantMessage: ChatMessage = {
                 id: `assistant-${Date.now()}`,
                 role: 'assistant',
-                content: snippet + (snippet?.length >= 200 ? '...' : ''),
+                content: formattedSnippet + nextStepOffer,
                 timestamp: new Date(),
                 isError: false,
               }
               addMessage(assistantMessage)
+
+              // Update conversation state for follow-ups (V5: track shown chunk IDs)
+              updateDocRetrievalState({
+                lastDocSlug: topResult.doc_slug,
+                lastTopicTokens: queryTokens,
+                lastMode: isDocStyle ? 'doc' : 'bare_noun',
+                lastChunkIdsShown: chunkIdsShown,
+              })
+
               setIsLoading(false)
               return
             }
@@ -2453,11 +3039,19 @@ function ChatNavigationPanelContent({
               const assistantMessage: ChatMessage = {
                 id: `assistant-${Date.now()}`,
                 role: 'assistant',
-                content: result.clarification || `I found info about "${headerPath}". Is that what you meant?`,
+                content: result.clarification || `I think you mean "${headerPath}". Is that right?`,
                 timestamp: new Date(),
                 isError: false,
               }
               addMessage(assistantMessage)
+
+              // Update state for potential follow-up
+              updateDocRetrievalState({
+                lastDocSlug: topResult.doc_slug,
+                lastTopicTokens: queryTokens,
+                lastMode: isDocStyle ? 'doc' : 'bare_noun',
+              })
+
               setIsLoading(false)
               return
             }
@@ -2476,7 +3070,7 @@ function ChatNavigationPanelContent({
               const assistantMessage: ChatMessage = {
                 id: messageId,
                 role: 'assistant',
-                content: result.clarification || 'Which one do you mean?',
+                content: result.clarification || `Do you mean "${options[0].label}" or "${options[1].label}"?`,
                 timestamp: new Date(),
                 isError: false,
                 options,
@@ -2509,19 +3103,29 @@ function ChatNavigationPanelContent({
                 metaCount: 0,
               })
 
+              // Store topic tokens for potential re-query
+              updateDocRetrievalState({
+                lastTopicTokens: queryTokens,
+                lastMode: isDocStyle ? 'doc' : 'bare_noun',
+              })
+
               setIsLoading(false)
               return
             }
 
-            // No match - ask for clarification
+            // No match - ask for clarification with examples
             const noMatchMessage: ChatMessage = {
               id: `assistant-${Date.now()}`,
               role: 'assistant',
-              content: result.clarification || 'Which part would you like me to explain?',
+              content: result.clarification || "I don't see docs for that exact term. Which feature are you asking about?\n(e.g., workspace, notes, widgets)",
               timestamp: new Date(),
               isError: false,
             }
             addMessage(noMatchMessage)
+
+            // Clear doc state on no match
+            updateDocRetrievalState({ lastDocSlug: undefined, lastTopicTokens: queryTokens })
+
             setIsLoading(false)
             return
           }
@@ -2529,6 +3133,32 @@ function ChatNavigationPanelContent({
           console.error('[ChatNavigation] General doc retrieval error:', error)
           // Fall through to LLM on error
         }
+      }
+
+      // ---------------------------------------------------------------------------
+      // V4 LLM Route: Handle non-app queries (skip retrieval)
+      // Per general-doc-retrieval-routing-plan.md (v4) - app relevance gate
+      // When routeDocInput returns 'llm', the query is not app-relevant
+      // ---------------------------------------------------------------------------
+      if (docRoute === 'llm' && !lastClarification) {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'llm_route_non_app',
+          metadata: { userInput: trimmedInput, route: docRoute },
+        })
+
+        // For non-app queries, provide a helpful redirect to app topics
+        // This prevents the confusing typo fallback for queries like "quantum physics"
+        const llmRouteMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: "I'm best at helping with this app. Try asking about workspaces, notes, widgets, or navigation.",
+          timestamp: new Date(),
+          isError: false,
+        }
+        addMessage(llmRouteMessage)
+        setIsLoading(false)
+        return
       }
 
       // ---------------------------------------------------------------------------
@@ -2704,7 +3334,7 @@ function ChatNavigationPanelContent({
 
       // Tiny LLM classifier fallback: if preview exists but heuristic didn't match,
       // ask the LLM if user wants to expand the preview
-      if (previewIsRecent && !hasActionVerb(trimmedInput)) {
+      if (previewIsRecent && !hasGraceSkipActionVerb(trimmedInput)) {
         try {
           const classifyResponse = await fetch('/api/chat/classify-expand', {
             method: 'POST',
