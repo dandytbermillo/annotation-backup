@@ -549,6 +549,29 @@ Track these to measure conversational quality (not just retrieval correctness):
 
 **Logging note:** include `route`, `status`, `docSlug` (if used), and whether the user corrected/accepted, so you can compute these rates reliably.
 
+---
+
+## Rollout Checklist
+
+### v5 Core (Ship First)
+- Routing + HS1/HS2 live for docs.
+- Header‑only penalty active and thresholds aligned (`MIN_BODY_CHARS=80`, `HEADING_ONLY_MAX_CHARS=50`).
+- `excludeChunkIds` + `lastChunkIdsShown[]` working on “tell me more.”
+- Metrics logging enabled: correction rate, clarification success, turns‑to‑resolution, snippet‑quality fail rate.
+- Manual smoke tests:
+  - “what is a workspace?”
+  - “tell me more” (no repeat)
+  - ambiguous term → 2 pills
+  - “not that” → repair loop
+
+### Optional Features (Phase In)
+- Semantic fallback classifier (gated, default‑on):
+  - Enable in staging → monitor usage rate + latency p95.
+  - Roll out to prod if correction rate improves without latency spikes.
+- Unified retrieval (notes/files):
+  - Only after indexing + permissions are ready.
+  - Add cross‑corpus ambiguity pills and HS1/HS2 reuse.
+
 
 ## Sample Code (Routing Skeleton)
 

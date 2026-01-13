@@ -121,6 +121,19 @@ export interface DebugLogData {
   content_preview?: string;
   metadata?: Record<string, any>;
   note_id?: string | null;
+  // V5 Metrics: Structured analytics fields for retrieval quality tracking
+  metrics?: {
+    event: string;
+    docSlug?: string;
+    correctionPhrase?: string;
+    excludedChunks?: number;
+    optionCount?: number;
+    selectedLabel?: string;
+    upgradeAttempted?: boolean;
+    upgradeSuccess?: boolean;
+    bodyCharCount?: number;
+    timestamp: number;
+  };
 }
 
 /**

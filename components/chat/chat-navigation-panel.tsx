@@ -1905,6 +1905,20 @@ function ChatNavigationPanelContent({
     async (option: SelectionOption) => {
       setIsLoading(true)
 
+      // V5 Metrics: Track pill-click resolution before clearing lastClarification
+      if (lastClarification?.type === 'doc_disambiguation') {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'pill_click_selection',
+          metadata: { selectedLabel: option.label, optionType: option.type },
+          metrics: {
+            event: 'clarification_resolved',
+            selectedLabel: option.label,
+            timestamp: Date.now(),
+          },
+        })
+      }
+
       // Per options-visible-clarification-sync-plan.md: clear lastClarification when option is selected
       // The clarification is resolved once user makes a selection
       setLastClarification(null)
@@ -2063,7 +2077,7 @@ function ChatNavigationPanelContent({
         setIsLoading(false)
       }
     },
-    [selectOption, addMessage, setLastAction, setLastQuickLinksBadge, incrementOpenCount, notesScopeFollowUpActive]
+    [selectOption, addMessage, setLastAction, setLastQuickLinksBadge, incrementOpenCount, notesScopeFollowUpActive, lastClarification]
   )
 
   // ---------------------------------------------------------------------------
@@ -2779,6 +2793,13 @@ function ChatNavigationPanelContent({
           component: 'ChatNavigation',
           action: 'doc_correction',
           metadata: { userInput: trimmedInput, lastDocSlug: docRetrievalState.lastDocSlug },
+          // V5 Metrics: Track correction rate
+          metrics: {
+            event: 'correction_triggered',
+            docSlug: docRetrievalState.lastDocSlug,
+            correctionPhrase: trimmedInput,
+            timestamp: Date.now(),
+          },
         })
 
         // Acknowledge correction and re-run retrieval with lastTopicTokens
@@ -2812,6 +2833,13 @@ function ChatNavigationPanelContent({
             userInput: trimmedInput,
             lastDocSlug: docRetrievalState.lastDocSlug,
             excludeChunkIds,
+          },
+          // V5 Metrics: Track follow-up expansion
+          metrics: {
+            event: 'followup_expansion',
+            docSlug: docRetrievalState.lastDocSlug,
+            excludedChunks: excludeChunkIds.length,
+            timestamp: Date.now(),
           },
         })
 
@@ -2992,17 +3020,49 @@ function ChatNavigationPanelContent({
                   rawSnippet = upgraded.snippet
                   chunkIdsShown = [...chunkIdsShown, ...upgraded.chunkIds]
                   console.log(`[DocRetrieval:HS1] Snippet upgraded successfully`)
+
+                  // V5 Metrics: Track successful snippet upgrade
+                  void debugLog({
+                    component: 'ChatNavigation',
+                    action: 'hs1_snippet_upgrade',
+                    metadata: { docSlug: topResult.doc_slug, upgradeSuccess: true },
+                    metrics: {
+                      event: 'snippet_quality_upgrade',
+                      docSlug: topResult.doc_slug,
+                      upgradeAttempted: true,
+                      upgradeSuccess: true,
+                      bodyCharCount: topResult.bodyCharCount,
+                      timestamp: Date.now(),
+                    },
+                  })
                 } else {
                   // If upgrade failed, try to use next result if available
+                  let alternateUsed = false
                   for (let i = 1; i < result.results.length; i++) {
                     const altResult = result.results[i]
                     if (!isLowQualitySnippet(altResult.snippet, altResult.isHeadingOnly, altResult.bodyCharCount)) {
                       rawSnippet = altResult.snippet
                       chunkIdsShown = altResult.chunkId ? [altResult.chunkId] : []
                       console.log(`[DocRetrieval:HS1] Using alternate result ${i}`)
+                      alternateUsed = true
                       break
                     }
                   }
+
+                  // V5 Metrics: Track failed snippet upgrade
+                  void debugLog({
+                    component: 'ChatNavigation',
+                    action: 'hs1_snippet_upgrade',
+                    metadata: { docSlug: topResult.doc_slug, upgradeSuccess: false, alternateUsed },
+                    metrics: {
+                      event: 'snippet_quality_upgrade',
+                      docSlug: topResult.doc_slug,
+                      upgradeAttempted: true,
+                      upgradeSuccess: alternateUsed,
+                      bodyCharCount: topResult.bodyCharCount,
+                      timestamp: Date.now(),
+                    },
+                  })
                 }
               }
 
@@ -3101,6 +3161,18 @@ function ChatNavigationPanelContent({
                   type: opt.type,
                 })),
                 metaCount: 0,
+              })
+
+              // V5 Metrics: Track clarification shown
+              void debugLog({
+                component: 'ChatNavigation',
+                action: 'clarification_shown',
+                metadata: { optionCount: options.length, labels: options.map(o => o.label) },
+                metrics: {
+                  event: 'clarification_shown',
+                  optionCount: options.length,
+                  timestamp: Date.now(),
+                },
               })
 
               // Store topic tokens for potential re-query
@@ -3403,6 +3475,12 @@ function ChatNavigationPanelContent({
               index: selectionResult.index,
               selectedLabel: selectedOption.label,
             },
+            // V5 Metrics: Track clarification resolved
+            metrics: {
+              event: 'clarification_resolved',
+              selectedLabel: selectedOption.label,
+              timestamp: Date.now(),
+            },
           })
 
           // Use grace window: keep options for one more turn
@@ -3432,6 +3510,12 @@ function ChatNavigationPanelContent({
             metadata: {
               input: trimmedInput,
               matchedLabel: labelMatch.label,
+            },
+            // V5 Metrics: Track clarification resolved via label match
+            metrics: {
+              event: 'clarification_resolved',
+              selectedLabel: labelMatch.label,
+              timestamp: Date.now(),
             },
           })
 
