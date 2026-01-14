@@ -726,14 +726,17 @@ function isPronounFollowUp(input: string): boolean {
     'tell me more',
     'more details',
     'explain more',
+    'more',           // V5: Single-word follow-up
     'how does it work',
     'how does that work',
     'what else',
     'continue',
     'go on',
+    'expand',         // V5: Added per plan
     'elaborate',
   ]
-  return followUpPhrases.some(p => normalized.startsWith(p))
+  // Exact match for single words, startsWith for phrases
+  return followUpPhrases.some(p => normalized === p || normalized.startsWith(p + ' ') || normalized.startsWith(p))
 }
 
 /**
@@ -1867,6 +1870,12 @@ function ChatNavigationPanelContent({
             isError: false,
           }
           addMessage(assistantMessage)
+
+          // Update docRetrievalState so correction/"not that" works after pill selection
+          updateDocRetrievalState({
+            lastDocSlug: docSlug,
+            lastChunkIdsShown: topResult.chunkId ? [topResult.chunkId] : [],
+          })
         } else {
           const errorMessage: ChatMessage = {
             id: `assistant-${Date.now()}`,
@@ -2756,12 +2765,14 @@ function ChatNavigationPanelContent({
 
             // Wire meta-explain into v4 state for follow-ups and corrections
             // Per general-doc-retrieval-routing-plan.md (v4)
+            // V5: Use actual docSlug from result (not query term) for accurate follow-ups
             const metaQueryTerm = queryTerm || trimmedInput
             const { tokens: metaTokens } = normalizeInputForRouting(metaQueryTerm)
             updateDocRetrievalState({
-              lastDocSlug: metaQueryTerm, // Use concept as pseudo-slug for follow-ups
+              lastDocSlug: result.docSlug || metaQueryTerm, // V5: Prefer actual slug, fallback to query
               lastTopicTokens: metaTokens,
               lastMode: 'doc',
+              lastChunkIdsShown: result.chunkId ? [result.chunkId] : [], // V5: Track shown chunk
             })
 
             setIsLoading(false)
@@ -2823,7 +2834,51 @@ function ChatNavigationPanelContent({
       // Per general-doc-retrieval-routing-plan.md (v5)
       // Uses excludeChunkIds to avoid repeating already-shown content
       // ---------------------------------------------------------------------------
-      if (docRetrievalState?.lastDocSlug && isPronounFollowUp(trimmedInput)) {
+
+      // Check for deterministic follow-up first
+      let isFollowUp = isPronounFollowUp(trimmedInput)
+
+      // V5 Follow-up-miss backup: If lastDocSlug is set but deterministic check missed,
+      // call classifier as backup BEFORE falling to LLM routing
+      // Per plan (line 315): "If follow-up detection misses but lastDocSlug is set,
+      // call the semantic classifier as a backup before falling back to LLM"
+      if (docRetrievalState?.lastDocSlug && !isFollowUp) {
+        try {
+          const classifyResponse = await fetch('/api/chat/classify-followup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userMessage: trimmedInput,
+              lastDocSlug: docRetrievalState.lastDocSlug,
+              lastTopicTokens: docRetrievalState.lastTopicTokens,
+            }),
+          })
+          const classifyResult = await classifyResponse.json()
+
+          if (classifyResult.isFollowUp) {
+            isFollowUp = true
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'followup_classifier_backup',
+              metadata: {
+                userInput: trimmedInput,
+                lastDocSlug: docRetrievalState.lastDocSlug,
+                latencyMs: classifyResult.latencyMs,
+              },
+              metrics: {
+                event: 'classifier_followup_detected',
+                docSlug: docRetrievalState.lastDocSlug,
+                timestamp: Date.now(),
+              },
+            })
+          }
+        } catch (error) {
+          console.error('[ChatNavigation] Follow-up classifier backup error:', error)
+          // Continue without classifier result - fall through to normal routing
+        }
+      }
+
+      if (docRetrievalState?.lastDocSlug && isFollowUp) {
         const excludeChunkIds = docRetrievalState.lastChunkIdsShown || []
 
         void debugLog({

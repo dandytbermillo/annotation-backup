@@ -1,5 +1,11 @@
 # General Doc Retrieval Routing Plan (v5 — Hybrid Response Selection)
 
+> **Status: v5 Core COMPLETE** (2026-01-13)
+> - HS1/HS2 snippet quality + follow-up expansion implemented
+> - Metrics logging for all key events (correction, clarification, snippet upgrade)
+> - All smoke tests passed
+> - See Rollout Checklist for details
+
 ## Goal
 Route general, doc-style questions (e.g., “what is…”, “how do I…”, “tell me about…”) through the Cursor-style retrieval system so answers are grounded in app documentation (via `/api/docs/retrieve`), not ad hoc LLM guesses. This expands retrieval beyond the current meta-explain path and adds a deterministic response-selection layer to prevent low-quality snippets.
 
@@ -305,6 +311,8 @@ Implementation notes:
 ### HS2 — Follow-up Expansion (“tell me more”)
 Maintain `lastDocSlug` + `lastChunkIdsShown[]`. When the user says:
 - “tell me more”, “more details”, “continue”, “go on”, “expand”
+Implementation note: follow-up detection should normalize polite prefixes (e.g., "can you", "please", "pls") and treat "tell me more" as a match even when it appears mid-utterance.
+If follow-up detection misses but `lastDocSlug` is set, call the semantic classifier as a backup before falling back to LLM.
 
 Prefer:
 1) Retrieve a different chunk from the same doc (e.g., `excludeChunkIds` or cursor).
@@ -312,6 +320,7 @@ Prefer:
 3) If no more chunks in that doc, fall back to query-based retrieval within the doc using `lastTopicTokens`.
 
 Goal: follow-ups are additive (new content), not a repeated header.
+Implementation note: follow-up retrieval and any fallback should call `mode: "chunks"` so HS1/HS2 always receive chunk metadata.
 
 ### HS3 — Optional bounded LLM formatting (excerpt-only)
 Use an LLM only to format or summarize the already-selected snippet. It must not choose routing or content.
@@ -328,6 +337,7 @@ Constraint prompt (example):
 
 ## Semantic Fallback (Gated, Default-On)
 This phase improves human-like recall for app-relevant phrasing while keeping deterministic routing as the default. Enabled by default when the feature flag is on; can be disabled without affecting deterministic routing.
+Default-on means the flag is enabled, but the classifier only runs on uncertain routes (it never replaces confident doc/action routing).
 
 ### When to call the classifier (Pass 1)
 Only call the semantic classifier if all are true:
@@ -335,6 +345,7 @@ Only call the semantic classifier if all are true:
 - App relevance is unclear (no known-terms overlap and no widget/title match).
 - No clarification is active.
 - Not a fast-path selection reply (ordinal/label).
+If the classifier is used to interpret a follow-up, pass `lastDocSlug` and `lastTopicTokens` so it can route to the same doc instead of starting from scratch.
 
 ### Classifier contract (strict JSON, one-shot)
 Return JSON only:
@@ -548,21 +559,22 @@ Track these to measure conversational quality (not just retrieval correctness):
 | Added latency p95 | p95 overhead for classifier + HS3 path | Track |
 
 **Logging note:** include `route`, `status`, `docSlug` (if used), and whether the user corrected/accepted, so you can compute these rates reliably.
+Clarification success should count all resolution paths (pill click, typed label, typed index).
 
 ---
 
 ## Rollout Checklist
 
-### v5 Core (Ship First)
-- Routing + HS1/HS2 live for docs.
-- Header‑only penalty active and thresholds aligned (`MIN_BODY_CHARS=80`, `HEADING_ONLY_MAX_CHARS=50`).
-- `excludeChunkIds` + `lastChunkIdsShown[]` working on “tell me more.”
-- Metrics logging enabled: correction rate, clarification success, turns‑to‑resolution, snippet‑quality fail rate.
-- Manual smoke tests:
-  - “what is a workspace?”
-  - “tell me more” (no repeat)
-  - ambiguous term → 2 pills
-  - “not that” → repair loop
+### v5 Core (Ship First) ✅ COMPLETE (2026-01-13)
+- [x] Routing + HS1/HS2 live for docs.
+- [x] Header‑only penalty active and thresholds aligned (`MIN_BODY_CHARS=80`, `HEADING_ONLY_MAX_CHARS=50`).
+- [x] `excludeChunkIds` + `lastChunkIdsShown[]` working on "tell me more."
+- [x] Metrics logging enabled: correction rate, clarification success, turns‑to‑resolution, snippet‑quality fail rate.
+- [x] Manual smoke tests:
+  - [x] "what is a workspace?" → body content returned
+  - [x] "tell me more" (no repeat) → cycles through chunks, shows exhaustion
+  - [x] ambiguous term → 2 pills (clarification_shown logged)
+  - [x] "not that" → repair loop (doc_correction logged)
 
 ### Optional Features (Phase In)
 - Semantic fallback classifier (gated, default‑on):

@@ -48,24 +48,16 @@ export async function POST(request: NextRequest) {
     // Mode: 'full' returns full retrieval results with scores
     // Mode: 'chunks' returns chunk-level results (Phase 2 only)
     if (mode === 'explain') {
-      // Try cache first (Tier 1)
-      const cached = getCachedExplanation(query)
-      if (cached) {
-        return NextResponse.json({
-          success: true,
-          source: 'cache',
-          phase: 0,
-          explanation: cached,
-        })
-      }
+      // V5: Use getSmartExplanation which returns metadata for follow-up tracking
+      const result = await getSmartExplanation(query)
 
-      // Fall back to smart retrieval (Phase 2 → Phase 1)
-      const explanation = await getSmartExplanation(query)
       return NextResponse.json({
         success: true,
-        source: 'database',
-        phase: 2,
-        explanation: explanation || 'Which part would you like me to explain?',
+        source: result.fromCache ? 'cache' : 'database',
+        phase: result.fromCache ? 0 : 2,
+        explanation: result.explanation || 'Which part would you like me to explain?',
+        docSlug: result.docSlug,   // V5: Actual doc slug for follow-ups
+        chunkId: result.chunkId,   // V5: Chunk ID for HS2 tracking
       })
     }
 

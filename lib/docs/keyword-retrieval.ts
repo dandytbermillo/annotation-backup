@@ -1020,32 +1020,66 @@ export async function smartRetrieve(
 }
 
 /**
- * Get explanation using smart retrieval (Tier 1 cache → Phase 2 → Phase 1)
+ * Result from getSmartExplanation with metadata for follow-up tracking
+ * V5: Added docSlug and chunkId for HS2 follow-up state
  */
-export async function getSmartExplanation(concept: string): Promise<string | null> {
+export interface ExplanationResult {
+  explanation: string | null
+  docSlug?: string   // Actual doc slug for follow-ups (undefined if from cache)
+  chunkId?: string   // Chunk ID for HS2 tracking (undefined if from cache or Phase 1)
+  fromCache: boolean // True if returned from cache (no metadata available)
+}
+
+/**
+ * Get explanation using smart retrieval (Tier 1 cache → Phase 2 → Phase 1)
+ * V5: Returns object with metadata for follow-up state tracking
+ */
+export async function getSmartExplanation(concept: string): Promise<ExplanationResult> {
   // Tier 1: Check cache first
   const cached = getCachedExplanation(concept)
-  if (cached) return cached
+  if (cached) {
+    return {
+      explanation: cached,
+      fromCache: true,
+      // Note: Cache doesn't have docSlug/chunkId - caller should handle this
+    }
+  }
 
   // Tier 2: Try smart retrieval
   const response = await smartRetrieve(concept)
 
   if (response.status === 'found' && response.results.length > 0) {
     const result = response.results[0]
-    if ('header_path' in result) {
+    let explanation: string
+
+    if ('header_path' in result && result.header_path) {
       // Phase 2 chunk result
-      return `${result.header_path}: ${result.snippet}`
+      explanation = `${result.header_path}: ${result.snippet}`
     } else {
       // Phase 1 doc result
-      return result.snippet.split('\n\n')[0] || result.snippet
+      explanation = result.snippet?.split('\n\n')[0] || result.snippet || ''
+    }
+
+    return {
+      explanation,
+      docSlug: result.doc_slug,
+      chunkId: 'chunkId' in result ? result.chunkId : undefined,
+      fromCache: false,
     }
   }
 
-  if (response.status === 'ambiguous' || response.status === 'weak') {
-    return response.clarification || null
+  if ((response.status === 'ambiguous' || response.status === 'weak') && response.results?.length > 0) {
+    return {
+      explanation: response.clarification || null,
+      docSlug: response.results[0].doc_slug,
+      fromCache: false,
+    }
   }
 
-  return null
+  return {
+    explanation: null,
+    fromCache: false,
+  }
 }
 
 // =============================================================================
