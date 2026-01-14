@@ -2752,6 +2752,71 @@ function ChatNavigationPanelContent({
 
           if (retrieveResponse.ok) {
             const result = await retrieveResponse.json()
+
+            // Per definitional-query-fix-proposal.md: Check for ambiguous status (Step 1 cross-doc override)
+            // If ambiguous, show pills for doc selection instead of just text clarification
+            if (result.status === 'ambiguous' && result.options?.length >= 2) {
+              const messageId = `assistant-${Date.now()}`
+              const options: SelectionOption[] = result.options.slice(0, 2).map((opt: { docSlug: string; label: string; title: string }, idx: number) => ({
+                type: 'doc' as const,
+                id: opt.docSlug,
+                label: opt.label || opt.title,
+                sublabel: opt.title !== opt.label ? opt.title : undefined,
+                data: { docSlug: opt.docSlug },
+              }))
+
+              const assistantMessage: ChatMessage = {
+                id: messageId,
+                role: 'assistant',
+                content: result.explanation || `Do you mean "${options[0].label}" or "${options[1].label}"?`,
+                timestamp: new Date(),
+                isError: false,
+                options,
+              }
+              addMessage(assistantMessage)
+
+              // Set clarification state for pill selection handling
+              setPendingOptions(options.map((opt, idx) => ({
+                index: idx + 1,
+                label: opt.label,
+                sublabel: opt.sublabel,
+                type: opt.type,
+                id: opt.id,
+                data: opt.data,
+              })))
+              setPendingOptionsMessageId(messageId)
+
+              setLastClarification({
+                type: 'doc_disambiguation',
+                originalIntent: 'meta_explain',
+                messageId,
+                timestamp: Date.now(),
+                clarificationQuestion: result.explanation || 'Which one do you mean?',
+                options: options.map(opt => ({
+                  id: opt.id,
+                  label: opt.label,
+                  sublabel: opt.sublabel,
+                  type: opt.type,
+                })),
+                metaCount: 0,
+              })
+
+              void debugLog({
+                component: 'ChatNavigation',
+                action: 'meta_explain_ambiguous_pills',
+                metadata: { optionCount: options.length, labels: options.map(o => o.label), source: 'meta_explain' },
+                metrics: {
+                  event: 'clarification_shown',
+                  optionCount: options.length,
+                  timestamp: Date.now(),
+                },
+              })
+
+              setIsLoading(false)
+              return
+            }
+
+            // Non-ambiguous: show explanation text directly
             const explanation = result.explanation || 'Which part would you like me to explain?'
 
             const assistantMessage: ChatMessage = {

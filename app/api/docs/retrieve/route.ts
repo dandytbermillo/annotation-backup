@@ -58,6 +58,8 @@ export async function POST(request: NextRequest) {
         explanation: result.explanation || 'Which part would you like me to explain?',
         docSlug: result.docSlug,   // V5: Actual doc slug for follow-ups
         chunkId: result.chunkId,   // V5: Chunk ID for HS2 tracking
+        status: result.status,     // V5: 'ambiguous' triggers pills in UI
+        options: result.options,   // V5: Doc options for pills
       })
     }
 

@@ -39,12 +39,17 @@ export interface PanelDrawerData {
   panelType: string
 }
 
+/** Data for doc disambiguation pills (definitional-query-fix-proposal.md) */
+export interface DocData {
+  docSlug: string
+}
+
 export interface SelectionOption {
-  type: 'workspace' | 'note' | 'entry' | 'confirm_delete' | 'quick_links_panel' | 'confirm_panel_write' | 'panel_drawer'
+  type: 'workspace' | 'note' | 'entry' | 'confirm_delete' | 'quick_links_panel' | 'confirm_panel_write' | 'panel_drawer' | 'doc'
   id: string
   label: string
   sublabel?: string
-  data: WorkspaceMatch | NoteMatch | EntryMatch | QuickLinksPanelData | PanelIntentData | PanelDrawerData
+  data: WorkspaceMatch | NoteMatch | EntryMatch | QuickLinksPanelData | PanelIntentData | PanelDrawerData | DocData
 }
 
 /** Suggestion candidate for typo fallback */
