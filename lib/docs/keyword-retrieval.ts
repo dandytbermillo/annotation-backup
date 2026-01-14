@@ -411,31 +411,94 @@ export async function getExplanation(concept: string): Promise<string | null> {
 // =============================================================================
 
 /**
+ * V5: Cache entry with explanation and canonical docSlug for follow-up tracking
+ */
+interface CoreConceptEntry {
+  explanation: string
+  docSlug: string  // Canonical doc slug for HS2 follow-ups
+}
+
+/**
  * Static cache of core concept explanations for instant responses
  * Used by meta-explain before hitting the database
+ * V5: Each entry includes docSlug for accurate follow-up state tracking
  */
-export const CORE_CONCEPTS: Record<string, string> = {
-  home: 'Home is your main entry dashboard. It shows your widgets and quick links.',
-  dashboard: 'The dashboard is the main view of an entry, displaying widgets you can interact with.',
-  workspace: 'A workspace is where your notes live. You can create, edit, and organize notes there.',
-  notes: 'Notes are the core content units. Each note contains rich text you can edit and annotate.',
-  note: 'A note is a document containing rich text. Notes live inside workspaces.',
-  recent: 'Recent shows your most recently opened items in this entry.',
-  widget: 'Widgets are interactive panels on the dashboard showing different types of content.',
-  widgets: 'Widgets are interactive panels on the dashboard showing different types of content.',
-  panel: 'A panel is a container that can display widgets or content in the drawer.',
-  drawer: 'The drawer is a side panel that opens to show widget details or expanded content.',
-  navigator: 'The Navigator lets you browse your folder structure and Knowledge Base hierarchy.',
-  'quick links': 'Quick Links provides shortcuts to your bookmarked or frequently used items.',
-  'links overview': 'Links Overview shows all your Quick Links categories at a glance.',
-  continue: 'The Continue widget helps you pick up where you left off in your last session.',
-  'widget manager': 'The Widget Manager lets you customize your dashboard by adding or removing widgets.',
+export const CORE_CONCEPTS: Record<string, CoreConceptEntry> = {
+  home: {
+    explanation: 'Home is your main entry dashboard. It shows your widgets and quick links.',
+    docSlug: 'concepts/home',
+  },
+  dashboard: {
+    explanation: 'The dashboard is the main view of an entry, displaying widgets you can interact with.',
+    docSlug: 'concepts/dashboard',
+  },
+  workspace: {
+    explanation: 'A workspace is where your notes live. You can create, edit, and organize notes there.',
+    docSlug: 'concepts/workspace',
+  },
+  notes: {
+    explanation: 'Notes are the core content units. Each note contains rich text you can edit and annotate.',
+    docSlug: 'concepts/notes',
+  },
+  note: {
+    explanation: 'A note is a document containing rich text. Notes live inside workspaces.',
+    docSlug: 'concepts/notes',
+  },
+  recent: {
+    explanation: 'Recent shows your most recently opened items in this entry.',
+    docSlug: 'widgets/recent',
+  },
+  widget: {
+    explanation: 'Widgets are interactive panels on the dashboard showing different types of content.',
+    docSlug: 'concepts/widgets',
+  },
+  widgets: {
+    explanation: 'Widgets are interactive panels on the dashboard showing different types of content.',
+    docSlug: 'concepts/widgets',
+  },
+  panel: {
+    explanation: 'A panel is a container that can display widgets or content in the drawer.',
+    docSlug: 'concepts/panels',
+  },
+  drawer: {
+    explanation: 'The drawer is a side panel that opens to show widget details or expanded content.',
+    docSlug: 'concepts/panels',
+  },
+  navigator: {
+    explanation: 'The Navigator lets you browse your folder structure and Knowledge Base hierarchy.',
+    docSlug: 'widgets/navigator',
+  },
+  'quick links': {
+    explanation: 'Quick Links provides shortcuts to your bookmarked or frequently used items.',
+    docSlug: 'widgets/quick-links',
+  },
+  'links overview': {
+    explanation: 'Links Overview shows all your Quick Links categories at a glance.',
+    docSlug: 'widgets/links-overview',
+  },
+  continue: {
+    explanation: 'The Continue widget helps you pick up where you left off in your last session.',
+    docSlug: 'widgets/continue',
+  },
+  'widget manager': {
+    explanation: 'The Widget Manager lets you customize your dashboard by adding or removing widgets.',
+    docSlug: 'widgets/widget-manager',
+  },
+}
+
+/**
+ * V5: Cache result with explanation and docSlug for follow-up tracking
+ */
+export interface CacheResult {
+  explanation: string
+  docSlug: string
 }
 
 /**
  * Try to get explanation from cache first (Tier 1)
+ * V5: Returns object with explanation AND docSlug for accurate follow-up state
  */
-export function getCachedExplanation(query: string): string | null {
+export function getCachedExplanation(query: string): CacheResult | null {
   const normalized = query.toLowerCase().trim()
 
   // Direct match
@@ -1025,9 +1088,9 @@ export async function smartRetrieve(
  */
 export interface ExplanationResult {
   explanation: string | null
-  docSlug?: string   // Actual doc slug for follow-ups (undefined if from cache)
+  docSlug?: string   // Actual doc slug for follow-ups
   chunkId?: string   // Chunk ID for HS2 tracking (undefined if from cache or Phase 1)
-  fromCache: boolean // True if returned from cache (no metadata available)
+  fromCache: boolean // True if returned from cache
 }
 
 /**
@@ -1039,9 +1102,9 @@ export async function getSmartExplanation(concept: string): Promise<ExplanationR
   const cached = getCachedExplanation(concept)
   if (cached) {
     return {
-      explanation: cached,
+      explanation: cached.explanation,
+      docSlug: cached.docSlug,  // V5: Cache now provides docSlug for follow-ups
       fromCache: true,
-      // Note: Cache doesn't have docSlug/chunkId - caller should handle this
     }
   }
 
