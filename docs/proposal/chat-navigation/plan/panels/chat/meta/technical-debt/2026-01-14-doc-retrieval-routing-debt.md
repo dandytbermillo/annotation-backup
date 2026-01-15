@@ -136,7 +136,7 @@ useEffect(() => {
 
 ---
 
-### TD-2: Add Fuzzy Matching for Typos
+### TD-2: Add Fuzzy Matching for Typos (Gated)
 
 **Priority:** Medium
 **Effort:** Medium
@@ -147,29 +147,68 @@ useEffect(() => {
 - Typos fall through to LLM fallback
 
 **Proposed Solution:**
+
+Apply fuzzy matching with strict guardrails to avoid false positives:
+
 ```typescript
 import { distance } from 'fastest-levenshtein'
 
-function fuzzyMatchTerm(token: string, terms: Set<string>, maxDistance = 2): string | null {
+function fuzzyMatchTerm(
+  token: string,
+  terms: Set<string>,
+  maxDistance = 2
+): { matched: string; original: string } | null {
+  // Guardrail 1: Only fuzzy match tokens ≥ 5 chars
+  // Avoids "go" matching "to", "in" matching "on", etc.
+  if (token.length < 5) return null
+
   for (const term of terms) {
-    if (distance(token, term) <= maxDistance) {
-      return term // Return matched term for keyword extraction
+    const dist = distance(token, term)
+    // Guardrail 2: Conservative distance threshold
+    if (dist > 0 && dist <= maxDistance) {
+      return { matched: term, original: token }
     }
   }
   return null
 }
 
 // In routeDocInput:
-const hasFuzzyMatch = tokens.some(t =>
-  CORE_APP_TERMS.has(t) || fuzzyMatchTerm(t, CORE_APP_TERMS)
-)
+function checkAppRelevance(tokens: string[], knownTerms: Set<string>): boolean {
+  for (const token of tokens) {
+    // Step 1: Try exact match first
+    if (knownTerms.has(token)) {
+      return true
+    }
+
+    // Step 2: Only fuzzy match if no exact match
+    const fuzzyResult = fuzzyMatchTerm(token, knownTerms)
+    if (fuzzyResult) {
+      // Guardrail 3: Log fuzzy hits for tuning
+      logFuzzyHit(fuzzyResult.original, fuzzyResult.matched)
+      return true
+    }
+  }
+  return false
+}
 ```
 
+**Guardrails Summary:**
+| Guardrail | Purpose |
+|-----------|---------|
+| Token length ≥ 5 | Avoid short-word false positives |
+| Exact match first | Only fuzzy when needed |
+| Max distance 1-2 | Conservative threshold |
+| Only against knownTerms | Not arbitrary strings |
+| Log fuzzy hits | Tune before widening |
+
 **Acceptance Criteria:**
-- [ ] "workspac" matches "workspace" (distance 1)
-- [ ] "wrkspace" matches "workspace" (distance 2)
+- [ ] "workspac" matches "workspace" (distance 1, length 8)
+- [ ] "wrkspace" matches "workspace" (distance 2, length 8)
+- [ ] "note" does NOT fuzzy match (length 4 < 5)
 - [ ] "wxyz" does NOT match anything (distance > 2)
+- [ ] Fuzzy hits logged with original → matched pair
 - [ ] Performance acceptable (< 5ms for typical query)
+- [ ] False positive rate < 1% (monitor via logs)
 
 ---
 
@@ -207,11 +246,55 @@ export function normalizeQuery(input: string): {
 }
 ```
 
+**Regression Test Table:**
+Add a test file with common phrases to prevent pattern drift:
+
+```typescript
+// lib/chat/query-patterns.test.ts
+const TEST_CASES = [
+  // Meta-explain patterns
+  { input: "what is workspace", expect: { intent: 'explain', topic: 'workspace' } },
+  { input: "what are the actions", expect: { intent: 'explain', topic: 'actions' } },
+  { input: "explain notes", expect: { intent: 'explain', topic: 'notes' } },
+
+  // Conversational wrappers
+  { input: "can you tell me what is workspace", expect: { intent: 'explain', topic: 'workspace' } },
+  { input: "can you pls explain actions", expect: { intent: 'explain', topic: 'actions' } },
+  { input: "would you tell me about notes", expect: { intent: 'explain', topic: 'notes' } },
+
+  // Commands
+  { input: "open notes", expect: { intent: 'action', action: 'open' } },
+  { input: "show workspace", expect: { intent: 'action', action: 'show' } },
+  { input: "go to dashboard", expect: { intent: 'navigate', target: 'dashboard' } },
+
+  // Bare nouns
+  { input: "workspace", expect: { intent: 'explain', topic: 'workspace' } },
+  { input: "notes", expect: { intent: 'explain', topic: 'notes' } },
+
+  // Follow-ups (should NOT be classified as new questions)
+  { input: "tell me more", expect: { intent: 'followup' } },
+  { input: "can you tell me more", expect: { intent: 'followup' } },
+
+  // Non-app queries
+  { input: "what is the weather", expect: { intent: 'unknown' } },
+  { input: "hello", expect: { intent: 'unknown' } },
+]
+
+describe('normalizeQuery', () => {
+  test.each(TEST_CASES)('$input', ({ input, expect }) => {
+    const result = normalizeQuery(input)
+    expect(result.intent).toBe(expect.intent)
+    // ... additional assertions
+  })
+})
+```
+
 **Acceptance Criteria:**
-- [ ] All patterns in single module
+- [ ] All patterns in single module (`lib/chat/query-patterns.ts`)
 - [ ] Single `normalizeQuery()` entry point
-- [ ] Existing tests still pass
-- [ ] Easier to audit/update patterns
+- [ ] Test table with 20+ common phrases
+- [ ] CI runs pattern tests on every change
+- [ ] No regressions when adding new patterns
 
 ---
 
@@ -351,6 +434,74 @@ const intentResponse = await fetch('/api/chat/extract-intent', {
 
 ---
 
+### TD-7: Stricter App-Relevance Fallback
+
+**Priority:** Medium
+**Effort:** Medium
+
+**Current State:**
+The app-relevance fallback routes queries to doc retrieval if ANY token matches `CORE_APP_TERMS` or `knownTerms`:
+
+```typescript
+// chat-navigation-panel.tsx (routeDocInput Step 7)
+if (isAppRelevant) {
+  return 'doc'  // Routes to doc retrieval
+}
+return 'llm'
+```
+
+**Problem:**
+- Too permissive: "I love workspace music" routes to doc retrieval because "workspace" matches
+- No intent verification: keyword presence ≠ intent to query docs
+- Can send irrelevant queries to DB (wasted load)
+- User gets confusing results when query wasn't really about the app
+
+**Proposed Solution:**
+
+Option A: Require intent cue + keyword
+```typescript
+// Stricter: need BOTH intent cue AND app keyword
+const hasIntentCue = hasQuestionIntent(normalized) || hasActionVerb(normalized)
+const hasAppKeyword = tokens.some(t => CORE_APP_TERMS.has(t) || knownTerms?.has(t))
+
+if (hasIntentCue && hasAppKeyword) {
+  return 'doc'
+}
+```
+
+Option B: Clarifying question for borderline cases
+```typescript
+// When keyword present but no clear intent, ask instead of forcing
+if (hasAppKeyword && !hasIntentCue) {
+  return 'clarify'  // "Are you asking about workspaces in this app?"
+}
+```
+
+Option C: Semantic fallback classifier (lightweight LLM)
+```typescript
+// For borderline cases, use small LLM to determine intent
+if (hasAppKeyword && !hasIntentCue) {
+  const result = await classifyAppRelevance(trimmedInput)
+  return result.isAppRelevant ? 'doc' : 'llm'
+}
+```
+
+**Trade-offs:**
+| Option | Pros | Cons |
+|--------|------|------|
+| A: Intent + keyword | Simple, no latency | May miss valid queries |
+| B: Clarifying question | Safe UX, no false routes | Extra interaction |
+| C: Semantic classifier | Best accuracy | Latency, cost |
+
+**Acceptance Criteria:**
+- [ ] "I love workspace music" does NOT route to doc retrieval
+- [ ] "what is workspace" still routes correctly
+- [ ] "workspace" (bare noun) still routes correctly
+- [ ] Borderline cases handled gracefully (clarify or reject)
+- [ ] No increase in false negatives for valid queries
+
+---
+
 ## Recommended Execution Order
 
 | Order | Item | Rationale |
@@ -359,8 +510,9 @@ const intentResponse = await fetch('/api/chat/extract-intent', {
 | 2 | TD-1: Eliminate duplication | Remove maintenance burden |
 | 3 | TD-3: Consolidate patterns | Easier future changes |
 | 4 | TD-2: Fuzzy matching | Handle common typos |
-| 5 | TD-5: Follow-up guard | Only if telemetry shows issue |
-| 6 | TD-6: LLM intent | Only if data shows need |
+| 5 | TD-7: Stricter relevance | Reduce false positives (needs TD-1,3 first) |
+| 6 | TD-5: Follow-up guard | Only if telemetry shows issue |
+| 7 | TD-6: LLM intent | Only if data shows need |
 
 ---
 
@@ -373,6 +525,7 @@ const intentResponse = await fetch('/api/chat/extract-intent', {
 | Fuzzy matching too permissive | Low | Medium | Conservative distance threshold |
 | LLM latency unacceptable | Medium | High | Cache common queries |
 | Polite follow-ups treated as new questions | Low | Low | Monitor in telemetry first |
+| App-relevance fallback too permissive | Medium | Low | Stricter intent + keyword check |
 
 ---
 

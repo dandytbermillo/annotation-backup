@@ -2,9 +2,9 @@
 
 Effective Immediately
 - Read-only advisory mode. I only read/analyze and propose changes as patch previews. I never modify files or run write commands unless explicitly approved.
-- Allowed write scope (codex): Only inside `codex/` and only after the user says “Approved” or “Implement now”.
+- Allowed write scope (codex/docs): Only inside `codex/` or `docs/` and only after the user says “Approved” or “Implement now”.
 - Allowed write scope (Live Context): Inside `.context-memory/` writes are permitted per user authorization; never include secrets/PII.
-- Allowed read scope: Always allowed to read `.context-memory/` and `codex/`; other paths require explicit approval.
+- Allowed read scope: Always allowed to read `.context-memory/`, `codex/`, and `docs/`; other paths require explicit approval.
 - Safe reads only: Use `rg`, `ls`, `sed -n`, `cat`, `head`. No installs, no destructive commands.
 - Network: Restricted unless explicitly approved.
 - Confirmation flow:
@@ -18,7 +18,7 @@ Startup Defaults
 - Auto-read `codex/previous-sessions/RESUME.md` to rehydrate context.
 - Auto-read this policy (`codex/POLICY.md`) to confirm guardrails.
 - Mandatory pre-read for ANY fix or change: always read `codex/codex_needs_to_avoid/isolation-reactivity-anti-patterns.md` before proposing or implementing any fix, change, or suggestion, regardless of scope. Cite the relevant bullets (or note non‑applicability) and confirm compliance in your plan.
-- Stay within `codex/` unless explicitly allowed to read outside.
+- Stay within `codex/` unless explicitly allowed to read outside. Edits are permitted in `docs/` only after explicit approval.
 
 Pre‑work Checklist (Must Affirm Before Starting)
 1) Read `codex/codex_needs_to_avoid/isolation-reactivity-anti-patterns.md` and record whether its constraints apply to this task (applicable or not applicable). Always acknowledge it in your plan.
@@ -32,25 +32,25 @@ Live Context (carve-out)
 - Safety: Never include secrets or PII; respect budgets in `.context-memory/live/README.md`. Use `live/lock` during multi-step writes and remove it afterward.
 
 Ultra-compact variant
-- Default to read-only. No writes/patches/installs. Propose diffs; wait for approval.
+- Default to read-only. No writes/patches/installs unless explicitly approved, and only in `codex/` or `docs/`.
 
 # Authoritative User Policy (Verbatim)
 
-- Operate in read-only advisory mode: do not modify files or run write commands; only read/analyze and propose changes, and wait for my explicit approval before any edits.
+- Operate in read-only advisory mode: do not modify files or run write commands; only read/analyze and propose changes, and wait for my explicit approval before any edits. Approved write scope after explicit approval: `codex/` and `docs/`.
 - Feature flags: ship newly implemented features enabled by default. Any temporary gating is allowed only for short verification windows with a documented removal timeline.
 
 Stronger template (recommended)
 
-- Read-only mode:
-    - Do not use apply_patch or any write/modify shell commands.
+    - Read-only mode:
+        - Do not use apply_patch or any write/modify shell commands unless explicitly approved and only within `codex/` or `docs/`.
     - Only run safe read commands (e.g., rg, ls, sed -n, cat, head).
-    - Do not create/rename/delete files or install packages.
+        - Do not create/rename/delete files or install packages outside `codex/` or `docs/` even with approval.
     - Propose changes as a patch preview in text and ask for approval first.
     - Never proceed with edits unless I explicitly say “Approved” or “Implement now”.
 
 Ultra-compact variant
 
-- Default to read-only. No writes/patches/installs. Propose diffs; wait for my approval before any changes.
+- Default to read-only. No writes/patches/installs unless explicitly approved, and only in `codex/` or `docs/`.
 
 Example confirmation flow
 
@@ -63,10 +63,11 @@ Note:
  - Allowed write scopes:
    - `.context-memory/` (always, per user authorization recorded in Live Context)
    - `/Users/dandy/Downloads/annotation_project/annotation-backup/codex` (only after explicit approval)
+   - `/Users/dandy/Downloads/annotation_project/annotation-backup/docs` (only after explicit approval)
 
-Interpretation update: In addition to the codex path above, `.context-memory/` is an approved write scope for the assistant and does not require per-action approval.
+Interpretation update: In addition to the codex path above, `docs/` is approved for edits after explicit approval. `.context-memory/` remains an approved write scope without per-action approval.
 
-Interpretation: “Do not use apply_patch” means by default; apply_patch may be used only after explicit approval and only within the codex path above.
+Interpretation: “Do not use apply_patch” means by default; apply_patch may be used only after explicit approval and only within the codex/docs paths above.
 
 Supported Chat Commands
 - Resume: “Resume from RESUME.md”, “resume”
