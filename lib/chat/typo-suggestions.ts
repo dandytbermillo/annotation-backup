@@ -316,8 +316,9 @@ function getDefaultSuggestionLabels(vocabulary: CommandDef[]): string {
 
 /**
  * Calculate Levenshtein distance between two strings
+ * Exported for TD-2 fuzzy matching in routing
  */
-function levenshteinDistance(a: string, b: string): number {
+export function levenshteinDistance(a: string, b: string): number {
   const matrix: number[][] = []
 
   for (let i = 0; i <= b.length; i++) {

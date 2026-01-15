@@ -6,6 +6,8 @@
  * DO NOT duplicate these patterns elsewhere - import from this module.
  */
 
+import { levenshteinDistance } from './typo-suggestions'
+
 // =============================================================================
 // Pattern Constants
 // =============================================================================
@@ -572,4 +574,126 @@ export function normalizeQuery(input: string): {
     isCommand,
     extractedTopic,
   }
+}
+
+// =============================================================================
+// TD-2: Gated Fuzzy Matching
+// =============================================================================
+
+/**
+ * Minimum token length for fuzzy matching.
+ * Shorter tokens have too many false positives (e.g., "note" matching "mode").
+ */
+const FUZZY_MIN_TOKEN_LENGTH = 5
+
+/**
+ * Maximum Levenshtein distance for fuzzy match.
+ * Distance of 2 allows common typos like "workspac" → "workspace".
+ */
+const FUZZY_MAX_DISTANCE = 2
+
+export interface FuzzyMatchResult {
+  /** The matched term from knownTerms */
+  matchedTerm: string
+  /** Original input token that was fuzzy-matched */
+  inputToken: string
+  /** Levenshtein distance between input and match */
+  distance: number
+}
+
+/**
+ * Find a fuzzy match for a token against knownTerms.
+ *
+ * TD-2 Guardrails:
+ * - Only matches if token length >= 5
+ * - Only matches if Levenshtein distance <= 2
+ * - Returns the best (lowest distance) match
+ *
+ * @param token - The input token to fuzzy match
+ * @param knownTerms - Set of known terms from the database
+ * @returns The best fuzzy match, or null if no match within guardrails
+ */
+export function findFuzzyMatch(
+  token: string,
+  knownTerms: Set<string>
+): FuzzyMatchResult | null {
+  // Guard: token must be at least 5 characters
+  if (token.length < FUZZY_MIN_TOKEN_LENGTH) {
+    return null
+  }
+
+  const tokenLower = token.toLowerCase()
+  let bestMatch: FuzzyMatchResult | null = null
+
+  for (const term of knownTerms) {
+    const termLower = term.toLowerCase()
+
+    // Skip if exact match (not a fuzzy case)
+    if (tokenLower === termLower) {
+      continue
+    }
+
+    // Skip terms that are too different in length (optimization)
+    const lengthDiff = Math.abs(tokenLower.length - termLower.length)
+    if (lengthDiff > FUZZY_MAX_DISTANCE) {
+      continue
+    }
+
+    const distance = levenshteinDistance(tokenLower, termLower)
+
+    // Guard: distance must be <= 2
+    if (distance > FUZZY_MAX_DISTANCE) {
+      continue
+    }
+
+    // Track best match (lowest distance)
+    if (!bestMatch || distance < bestMatch.distance) {
+      bestMatch = {
+        matchedTerm: term,
+        inputToken: token,
+        distance,
+      }
+    }
+  }
+
+  return bestMatch
+}
+
+/**
+ * Find fuzzy matches for all tokens in a query.
+ * Returns all tokens that fuzzy-matched, for telemetry.
+ *
+ * @param tokens - Array of tokens from normalizeInputForRouting
+ * @param knownTerms - Set of known terms from the database
+ * @returns Array of fuzzy match results (may be empty)
+ */
+export function findAllFuzzyMatches(
+  tokens: string[],
+  knownTerms: Set<string>
+): FuzzyMatchResult[] {
+  const matches: FuzzyMatchResult[] = []
+
+  for (const token of tokens) {
+    const match = findFuzzyMatch(token, knownTerms)
+    if (match) {
+      matches.push(match)
+    }
+  }
+
+  return matches
+}
+
+/**
+ * Check if any token fuzzy-matches a known term.
+ * Returns true if at least one fuzzy match is found.
+ *
+ * @param tokens - Array of tokens from normalizeInputForRouting
+ * @param knownTerms - Set of known terms from the database
+ * @returns true if any fuzzy match found within guardrails
+ */
+export function hasFuzzyMatch(
+  tokens: string[],
+  knownTerms: Set<string>
+): boolean {
+  return tokens.some(token => findFuzzyMatch(token, knownTerms) !== null)
 }

@@ -41,6 +41,10 @@ import {
   // Main API
   classifyQueryIntent,
   normalizeQuery,
+  // TD-2: Fuzzy matching
+  findFuzzyMatch,
+  findAllFuzzyMatches,
+  hasFuzzyMatch,
 } from '@/lib/chat/query-patterns'
 
 describe('Query Patterns Module', () => {
@@ -478,6 +482,124 @@ describe('Query Patterns Module', () => {
       const result = normalizeQuery('can you tell me what are the actions')
       expect(result.stripped).toBe('what are the actions')
       expect(result.intent).toBe('explain')
+    })
+  })
+
+  // ==========================================================================
+  // TD-2: Fuzzy Matching Tests
+  // ==========================================================================
+
+  describe('findFuzzyMatch', () => {
+    const knownTerms = new Set(['workspace', 'workspaces', 'dashboard', 'settings', 'annotations'])
+
+    // Acceptance criteria from TD-2 plan
+    test('workspac → workspace (missing trailing e)', () => {
+      const result = findFuzzyMatch('workspac', knownTerms)
+      expect(result).not.toBeNull()
+      expect(result?.matchedTerm).toBe('workspace')
+      expect(result?.distance).toBe(1)
+    })
+
+    test('wrkspace → workspace (missing o)', () => {
+      const result = findFuzzyMatch('wrkspace', knownTerms)
+      expect(result).not.toBeNull()
+      expect(result?.matchedTerm).toBe('workspace')
+      expect(result?.distance).toBe(1)
+    })
+
+    test('worksapce → workspace (transposition)', () => {
+      const result = findFuzzyMatch('worksapce', knownTerms)
+      expect(result).not.toBeNull()
+      expect(result?.matchedTerm).toBe('workspace')
+      expect(result?.distance).toBe(2)
+    })
+
+    test('note does NOT fuzzy-match (length 4 < min 5)', () => {
+      const result = findFuzzyMatch('note', knownTerms)
+      expect(result).toBeNull()
+    })
+
+    test('does NOT match if distance > 2', () => {
+      // "worksp" is length 6, distance 3 to "workspace"
+      const result = findFuzzyMatch('worksp', knownTerms)
+      expect(result).toBeNull()
+    })
+
+    test('does NOT match if too different in length', () => {
+      // "work" is length 4 < min 5
+      const result = findFuzzyMatch('work', knownTerms)
+      expect(result).toBeNull()
+    })
+
+    test('exact match skipped, returns closest fuzzy (workspace → workspaces)', () => {
+      // When token exactly matches one term, it may still fuzzy-match a similar term
+      // This is fine because exact matches are handled in routing before fuzzy
+      const result = findFuzzyMatch('workspace', knownTerms)
+      // workspace → workspaces is distance 1 (one char difference)
+      expect(result?.matchedTerm).toBe('workspaces')
+      expect(result?.distance).toBe(1)
+    })
+
+    test('dashbord → dashboard (missing a)', () => {
+      const result = findFuzzyMatch('dashbord', knownTerms)
+      expect(result).not.toBeNull()
+      expect(result?.matchedTerm).toBe('dashboard')
+      expect(result?.distance).toBe(1)
+    })
+
+    test('setings → settings (missing t)', () => {
+      const result = findFuzzyMatch('setings', knownTerms)
+      expect(result).not.toBeNull()
+      expect(result?.matchedTerm).toBe('settings')
+      expect(result?.distance).toBe(1)
+    })
+
+    test('annotaions → annotations (missing t)', () => {
+      // annotaions (10 chars) vs annotations (11 chars) = distance 1
+      const result = findFuzzyMatch('annotaions', knownTerms)
+      expect(result).not.toBeNull()
+      expect(result?.matchedTerm).toBe('annotations')
+      expect(result?.distance).toBe(1)
+    })
+  })
+
+  describe('findAllFuzzyMatches', () => {
+    const knownTerms = new Set(['workspace', 'dashboard', 'settings'])
+
+    test('finds multiple fuzzy matches', () => {
+      const tokens = ['workspac', 'dashbord', 'hello']
+      const results = findAllFuzzyMatches(tokens, knownTerms)
+      expect(results).toHaveLength(2)
+      expect(results.map(r => r.matchedTerm)).toContain('workspace')
+      expect(results.map(r => r.matchedTerm)).toContain('dashboard')
+    })
+
+    test('returns empty array when no fuzzy matches', () => {
+      const tokens = ['hello', 'world']
+      const results = findAllFuzzyMatches(tokens, knownTerms)
+      expect(results).toHaveLength(0)
+    })
+
+    test('skips short tokens', () => {
+      const tokens = ['work', 'dash', 'set']
+      const results = findAllFuzzyMatches(tokens, knownTerms)
+      expect(results).toHaveLength(0)
+    })
+  })
+
+  describe('hasFuzzyMatch', () => {
+    const knownTerms = new Set(['workspace', 'dashboard'])
+
+    test('returns true when fuzzy match exists', () => {
+      expect(hasFuzzyMatch(['workspac'], knownTerms)).toBe(true)
+    })
+
+    test('returns false when no fuzzy match', () => {
+      expect(hasFuzzyMatch(['hello', 'world'], knownTerms)).toBe(false)
+    })
+
+    test('returns false for short tokens', () => {
+      expect(hasFuzzyMatch(['work', 'dash'], knownTerms)).toBe(false)
     })
   })
 })

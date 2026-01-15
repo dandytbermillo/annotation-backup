@@ -1,14 +1,16 @@
 # Plan: Doc Retrieval Routing Debt Paydown
 
 **Date:** 2026-01-14
-**Updated:** 2026-01-14
+**Updated:** 2026-01-15
 **Status:** In Progress
 **Feature Slug:** `chat-navigation`
 **Source Debt Doc:** `docs/proposal/chat-navigation/plan/panels/chat/meta/technical-debt/2026-01-14-doc-retrieval-routing-debt.md`
 **Implementation Reports:**
-- `docs/proposal/chat-navigation/plan/panels/chat/meta/reports/2026-01-15-knownterms-race-fix-report.md`
-- `docs/proposal/chat-navigation/plan/panels/chat/meta/reports/2026-01-15-td4-td8-implementation-report.md`
+- `docs/proposal/chat-navigation/plan/panels/chat/meta/reports/2026-01-14-definitional-query-fix-implementation-report.md` (pre-debt-paydown fixes)
 - `docs/proposal/chat-navigation/plan/panels/chat/meta/reports/2026-01-14-td3-implementation-report.md`
+- `docs/proposal/chat-navigation/plan/panels/chat/meta/reports/2026-01-15-td4-td8-implementation-report.md`
+- `docs/proposal/chat-navigation/plan/panels/chat/meta/reports/2026-01-15-knownterms-race-fix-report.md`
+- `docs/proposal/chat-navigation/plan/panels/chat/meta/reports/2026-01-15-td2-fuzzy-matching-implementation-report.md`
 
 ## Goals
 - Reduce pattern fragility without regressing "human feel".
@@ -23,9 +25,9 @@
 1) ✅ TD-4: Durable routing telemetry — **COMPLETE** (2026-01-15)
 2) ✅ TD-8: Don't lock state on weak (doc follow-ups) — **COMPLETE** (2026-01-15)
 3) ✅ TD-3: Consolidate routing patterns — **COMPLETE** (2026-01-14)
-4) TD-1: Remove CORE_APP_TERMS duplication — *waiting for telemetry data*
-5) TD-2: Gated typo tolerance (fuzzy match)
-6) TD-7: Stricter app-relevance fallback
+4) ⏳ TD-1: Remove CORE_APP_TERMS duplication — *collecting telemetry (check-in: 2026-01-16, 2026-01-17, decision: 2026-01-18)*
+5) ✅ TD-2: Gated typo tolerance (fuzzy match) — **COMPLETE** (2026-01-15)
+6) ⏳ TD-7: Stricter app-relevance fallback — *blocked on TD-1*
 7) TD-5: Polite follow-up guard (only if telemetry shows need)
 8) TD-6: LLM intent extraction (optional, last)
 9) ✅ TD-9: Cross-doc ambiguity override — **COMPLETE** (pre-existing)
@@ -106,6 +108,26 @@ Avoid divergence between hardcoded terms and docs database.
 - ✅ Telemetry instrumented: `matched_core_term` + `matched_known_term` fields added
 - ⏳ Data collection: Started 2026-01-15T20:40:00Z, need 48-72 hours
 
+### Check-in Schedule
+| Date | Check-in | Status |
+|------|----------|--------|
+| 2026-01-16 | 24h data review | ⏳ Pending |
+| 2026-01-17 | 48h data review | ⏳ Pending |
+| 2026-01-18 | Final decision (72h data) | ⏳ Pending |
+
+### Early Results (2026-01-15, ~2h data, 16 events)
+| core_match | known_match | count | Interpretation |
+|------------|-------------|-------|----------------|
+| false | false | 12 | Neither matched (LLM fallback) |
+| true | true | 2 | Both matched ✅ |
+| NULL | NULL | 2 | Fields not set |
+
+**Critical metric:** `core_match=true AND known_match=false` = **0** (target: stays at 0)
+
+Sample queries where both matched:
+- `"note"` → route: bare_noun
+- `"can you tell me about workspac actions"` → route: doc
+
 ### TD-1 Analysis Query
 ```sql
 SELECT
@@ -172,6 +194,8 @@ Reduce pattern drift and make changes safer.
 ---
 
 ## TD-2: Gated Typo Tolerance
+### Status: ✅ COMPLETE (2026-01-15)
+
 ### Why
 Fix common typos without flooding routing with false positives.
 
@@ -181,17 +205,38 @@ Fix common typos without flooding routing with false positives.
 - Only match against `knownTerms`.
 - Log fuzzy hits for tuning.
 
+### Implementation
+- Added `findFuzzyMatch`, `findAllFuzzyMatches`, `hasFuzzyMatch` to `lib/chat/query-patterns.ts`
+- **Fix 1 (Routing):** Integrated into `routeDocInput` as fallback after exact match fails
+- **Fix 2 (Clarification):** Added fuzzy check to `isNewQuestionOrCommandDetected` to escape clarification mode
+- **Fix 3 (Retrieval):** Applied fuzzy correction to query before calling retrieval API
+- Added telemetry fields: `fuzzy_matched`, `fuzzy_match_token`, `fuzzy_match_term`, `fuzzy_match_distance`
+- Added 16 unit tests covering all guardrails
+- See: `2026-01-15-td2-fuzzy-matching-implementation-report.md` for full details
+
 ### Acceptance Criteria
-- `workspac` → `workspace`
-- `wrkspace` → `workspace`
-- `note` does NOT fuzzy-match (length 4)
-- False positive rate < 1% (via telemetry)
+- [x] `workspac` → `workspace` (verified, distance=1)
+- [x] `wrkspace` → `workspace` (verified, distance=1)
+- [x] `note` does NOT fuzzy-match (length 4 < min 5)
+- [ ] False positive rate < 1% (via telemetry) - *requires data collection*
+
+### Files Modified
+- `lib/chat/query-patterns.ts` - Added fuzzy matching functions
+- `lib/chat/typo-suggestions.ts` - Exported `levenshteinDistance`
+- `lib/chat/routing-telemetry.ts` - Added fuzzy telemetry fields
+- `components/chat/chat-navigation-panel.tsx` - Integrated fuzzy into routing + telemetry
+- `__tests__/chat/query-patterns.test.ts` - Added 16 fuzzy matching tests
 
 ---
 
 ## TD-7: Stricter App-Relevance Fallback
+### Status: ⏳ Blocked on TD-1
+
 ### Why
 Reduce false routes for marginally relevant queries.
+
+### Blocked Reason
+TD-7 changes app-relevance behavior, which would contaminate the TD-1 baseline and could mask CORE_APP_TERMS usage. Must wait for TD-1 decision (2026-01-18) before implementing.
 
 ### Plan (Low-risk)
 - Require intent cue + app keyword for fallback routing.

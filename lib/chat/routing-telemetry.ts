@@ -71,6 +71,12 @@ export interface RoutingTelemetryEvent {
   used_core_terms_fallback?: boolean  // True when CORE_APP_TERMS was used due to timeout/error
   matched_core_term?: boolean  // Did CORE_APP_TERMS contain a token from this query?
   matched_known_term?: boolean  // Did knownTerms contain a token from this query?
+  // TD-2: Fuzzy matching telemetry
+  fuzzy_matched?: boolean  // Did a fuzzy match contribute to routing?
+  fuzzy_match_token?: string  // The input token that was fuzzy-matched
+  fuzzy_match_term?: string  // The known term it matched to
+  fuzzy_match_distance?: number  // Levenshtein distance (1 or 2)
+  retrieval_query_corrected?: boolean  // Was the retrieval query corrected via fuzzy match?
   last_doc_slug_present: boolean
   last_doc_slug?: string
 
@@ -130,6 +136,12 @@ export async function logRoutingDecision(event: RoutingTelemetryEvent): Promise<
       used_core_terms_fallback: event.used_core_terms_fallback,
       matched_core_term: event.matched_core_term,
       matched_known_term: event.matched_known_term,
+      // TD-2: Fuzzy matching
+      fuzzy_matched: event.fuzzy_matched,
+      fuzzy_match_token: event.fuzzy_match_token,
+      fuzzy_match_term: event.fuzzy_match_term,
+      fuzzy_match_distance: event.fuzzy_match_distance,
+      retrieval_query_corrected: event.retrieval_query_corrected,
       last_doc_slug_present: event.last_doc_slug_present,
       last_doc_slug: event.last_doc_slug,
 

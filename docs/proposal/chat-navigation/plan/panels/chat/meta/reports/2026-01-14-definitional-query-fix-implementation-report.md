@@ -127,11 +127,11 @@ npm run type-check  # ✓ Passed
 
 ## Known Limitations
 
-1. **Hardcoded patterns** - Conversational prefixes and CORE_APP_TERMS need manual updates
-2. **No fuzzy matching** - Typos in keywords still fail (e.g., "workspac")
-3. **No telemetry** - Can't detect routing failures in production
+1. ~~**Hardcoded patterns**~~ - ✅ Addressed by TD-3 (consolidated in `lib/chat/query-patterns.ts`)
+2. ~~**No fuzzy matching**~~ - ✅ Addressed by TD-2 (gated fuzzy matching with distance ≤ 2)
+3. ~~**No telemetry**~~ - ✅ Addressed by TD-4 (durable routing telemetry)
 
-See: `technical-debt/2026-01-14-doc-retrieval-routing-debt.md` for improvement plan.
+See: `2026-01-14-doc-retrieval-routing-debt-paydown-plan.md` for full debt paydown status.
 
 ---
 

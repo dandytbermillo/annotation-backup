@@ -168,10 +168,11 @@ ORDER BY count DESC;
 
 ## Next Steps
 
-1. **Collect telemetry** - 48-72 hours of normal app usage
-2. **Run TD-1 analysis query** - Check matched_core_term vs matched_known_term
-3. **Execute TD-1** - Remove CORE_APP_TERMS if data supports it
-4. **Continue with TD-2/TD-7** - After TD-1 baseline is established
+As of 2026-01-15:
+1. ✅ **Telemetry collection started** - 2026-01-15T20:40:00Z
+2. ⏳ **TD-1 check-ins scheduled** - 2026-01-16 (24h), 2026-01-17 (48h), 2026-01-18 (decision)
+3. ✅ **TD-2 complete** - Gated fuzzy matching implemented
+4. ⏳ **TD-7 blocked** - Waiting for TD-1 decision to avoid baseline contamination
 
 ---
 

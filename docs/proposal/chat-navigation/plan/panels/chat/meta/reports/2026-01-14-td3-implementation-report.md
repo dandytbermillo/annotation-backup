@@ -11,6 +11,8 @@
 
 Implemented TD-3 (Consolidate Pattern Matching) from the debt paydown plan. All routing patterns and detection functions are now centralized in a single module with comprehensive regression tests. Manual smoke testing and telemetry verification confirm correct behavior.
 
+**Update (2026-01-15):** TD-2 (fuzzy matching) added `findFuzzyMatch`, `findAllFuzzyMatches`, `hasFuzzyMatch` functions and 16 additional tests to this module (total: 204 tests).
+
 ---
 
 ## TD-3: Consolidate Pattern Matching
@@ -259,13 +261,13 @@ npm test -- --testPathPattern="query-patterns"
 
 ## Next Steps
 
-Per debt paydown plan execution order:
+Per debt paydown plan execution order (as of 2026-01-15):
 1. ~~TD-4: Durable telemetry~~ ✅
 2. ~~TD-8: Don't lock state on weak~~ ✅
 3. ~~TD-3: Consolidate pattern matching~~ ✅
-4. TD-1: Remove CORE_APP_TERMS duplication (after collecting telemetry data)
-5. TD-2: Gated fuzzy matching for typos
-6. TD-7: Stricter app-relevance fallback
+4. ~~TD-2: Gated fuzzy matching~~ ✅ (added 16 fuzzy tests → total now 204)
+5. ⏳ TD-1: Remove CORE_APP_TERMS (collecting telemetry until 2026-01-18)
+6. ⏳ TD-7: Stricter app-relevance fallback (blocked on TD-1)
 
 ---
 

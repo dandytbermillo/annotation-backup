@@ -258,13 +258,15 @@ LIMIT 10;
 
 ## Next Steps
 
-Per debt paydown plan execution order:
+Per debt paydown plan execution order (as of 2026-01-15):
 1. ~~TD-4: Durable telemetry~~ ✅
 2. ~~TD-8: Don't lock state on weak~~ ✅
-3. TD-1: Remove CORE_APP_TERMS duplication (after collecting telemetry data)
-4. TD-3: Consolidate pattern matching
-5. TD-2: Gated fuzzy matching
-6. TD-7: Stricter app-relevance fallback
+3. ~~TD-3: Consolidate pattern matching~~ ✅
+4. ~~TD-2: Gated fuzzy matching~~ ✅
+5. ⏳ TD-1: Remove CORE_APP_TERMS (collecting telemetry until 2026-01-18)
+6. ⏳ TD-7: Stricter app-relevance fallback (blocked on TD-1)
+
+**Note:** Event schema was later extended with fuzzy matching fields (`fuzzy_matched`, `fuzzy_match_token`, `fuzzy_match_term`, `fuzzy_match_distance`, `retrieval_query_corrected`) - see TD-2 implementation report.
 
 ---
 

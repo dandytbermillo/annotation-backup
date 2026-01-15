@@ -90,6 +90,11 @@ import {
   extractDocQueryTerm,
   // Response style
   getResponseStyle,
+  // TD-2: Fuzzy matching
+  findFuzzyMatch,
+  findAllFuzzyMatches,
+  hasFuzzyMatch,
+  type FuzzyMatchResult,
 } from '@/lib/chat/query-patterns'
 
 export interface ChatNavigationPanelProps {
@@ -448,9 +453,15 @@ function routeDocInput(
 
     if (hasKnownTerm) {
       isAppRelevant = true
-    } else if (!hasCoreAppTerm) {
-      // Not app-relevant (no core terms, no known terms) - skip retrieval, go to LLM
-      return 'llm'
+    } else {
+      // TD-2: Try fuzzy matching as fallback (gated: length >= 5, distance <= 2)
+      const hasFuzzy = hasFuzzyMatch(tokens, knownTerms)
+      if (hasFuzzy) {
+        isAppRelevant = true
+      } else if (!hasCoreAppTerm) {
+        // Not app-relevant (no core terms, no known terms, no fuzzy) - skip retrieval, go to LLM
+        return 'llm'
+      }
     }
   }
 
@@ -2109,11 +2120,17 @@ function ChatNavigationPanelContent({
       const isBareNounNewIntent = bareNounKnownTerms
         ? isBareNounQuery(trimmedInput, uiContext, bareNounKnownTerms)
         : false
-      // Use imported isNewQuestionOrCommand + component-specific bare noun check
+      // TD-2: Check if input fuzzy-matches a known term (for typos like "wrkspace")
+      const { tokens: clarificationTokens } = normalizeInputForRouting(trimmedInput)
+      const isFuzzyMatchNewIntent = bareNounKnownTerms
+        ? hasFuzzyMatch(clarificationTokens, bareNounKnownTerms)
+        : false
+      // Use imported isNewQuestionOrCommand + component-specific bare noun check + fuzzy match
       const isNewQuestionOrCommandDetected =
         isNewQuestionOrCommand(trimmedInput) ||
         trimmedInput.endsWith('?') ||
-        isBareNounNewIntent  // Bare nouns should exit clarification for doc routing
+        isBareNounNewIntent ||  // Bare nouns should exit clarification for doc routing
+        isFuzzyMatchNewIntent   // TD-2: Typos that fuzzy-match should also exit clarification
 
       // WORKAROUND: Track if clarification was cleared within this execution cycle.
       // React's setLastClarification(null) is async - subsequent checks in the same render
@@ -2543,6 +2560,23 @@ function ChatNavigationPanelContent({
               }
             }
           }
+
+          // TD-2: Apply fuzzy correction for meta-explain queries
+          let metaFuzzyCorrectionApplied = false
+          if (queryTerm && metaExplainKnownTerms) {
+            const fuzzyMatch = findFuzzyMatch(queryTerm, metaExplainKnownTerms)
+            if (fuzzyMatch) {
+              console.log(`[MetaExplain] Fuzzy correction: "${queryTerm}" → "${fuzzyMatch.matchedTerm}"`)
+              queryTerm = fuzzyMatch.matchedTerm
+              metaFuzzyCorrectionApplied = true
+              // Track fuzzy match in telemetry
+              metaExplainTelemetryEvent.fuzzy_matched = true
+              metaExplainTelemetryEvent.fuzzy_match_token = fuzzyMatch.inputToken
+              metaExplainTelemetryEvent.fuzzy_match_term = fuzzyMatch.matchedTerm
+              metaExplainTelemetryEvent.fuzzy_match_distance = fuzzyMatch.distance
+            }
+          }
+          metaExplainTelemetryEvent.retrieval_query_corrected = metaFuzzyCorrectionApplied
 
           // Step 3: Detect definitional query for concept preference
           // Per definitional-query-fix-proposal.md: "what is X" should prefer concepts/* over actions/*
@@ -3006,6 +3040,19 @@ function ChatNavigationPanelContent({
       telemetryEvent.matched_known_term = knownTerms
         ? (queryTokens.some(t => knownTerms.has(t)) || knownTerms.has(normalizedQuery))
         : false
+      // TD-2: Track fuzzy matching (only check if no exact match)
+      if (knownTerms && !telemetryEvent.matched_known_term) {
+        const fuzzyMatches = findAllFuzzyMatches(queryTokens, knownTerms)
+        if (fuzzyMatches.length > 0) {
+          const bestFuzzy = fuzzyMatches[0]
+          telemetryEvent.fuzzy_matched = true
+          telemetryEvent.fuzzy_match_token = bestFuzzy.inputToken
+          telemetryEvent.fuzzy_match_term = bestFuzzy.matchedTerm
+          telemetryEvent.fuzzy_match_distance = bestFuzzy.distance
+        } else {
+          telemetryEvent.fuzzy_matched = false
+        }
+      }
       // TD-4: Populate classifier telemetry fields
       telemetryEvent.classifier_called = classifierCalled
       telemetryEvent.classifier_result = classifierResult
@@ -3041,7 +3088,57 @@ function ChatNavigationPanelContent({
 
         try {
           // For doc-style queries, extract the term; for bare nouns, use as-is
-          const queryTerm = isDocStyle ? extractDocQueryTerm(trimmedInput) : trimmedInput.trim().toLowerCase()
+          let queryTerm = isDocStyle ? extractDocQueryTerm(trimmedInput) : trimmedInput.trim().toLowerCase()
+
+          // TD-2: Apply fuzzy correction for retrieval
+          // If we fuzzy-matched during routing, use the corrected term for better retrieval
+          const { tokens: retrievalTokens } = normalizeInputForRouting(queryTerm)
+          let fuzzyCorrectionApplied = false
+          let originalQueryTerm = queryTerm
+
+          if (knownTerms && !isBareNoun) {
+            // For non-bare-noun queries (route='doc'), check if any token needs fuzzy correction
+            const fuzzyMatches = findAllFuzzyMatches(retrievalTokens, knownTerms)
+            if (fuzzyMatches.length > 0) {
+              // Replace typo tokens with corrected terms
+              let correctedQuery = queryTerm
+              for (const fm of fuzzyMatches) {
+                correctedQuery = correctedQuery.replace(
+                  new RegExp(`\\b${fm.inputToken}\\b`, 'gi'),
+                  fm.matchedTerm
+                )
+              }
+              console.log(`[DocRetrieval] Fuzzy correction (doc-style): "${queryTerm}" → "${correctedQuery}"`)
+              queryTerm = correctedQuery
+              fuzzyCorrectionApplied = true
+            }
+          } else if (knownTerms && isBareNoun) {
+            // For bare nouns (route='bare_noun'), the entire input might be a typo
+            const fuzzyMatch = findAllFuzzyMatches(retrievalTokens, knownTerms)[0]
+            if (fuzzyMatch) {
+              console.log(`[DocRetrieval] Fuzzy correction (bare_noun): "${queryTerm}" → "${fuzzyMatch.matchedTerm}"`)
+              queryTerm = fuzzyMatch.matchedTerm
+              fuzzyCorrectionApplied = true
+            }
+          }
+
+          // Log for debugging
+          void debugLog({
+            component: 'DocRetrieval',
+            action: 'fuzzy_correction_check',
+            metadata: {
+              originalQuery: originalQueryTerm,
+              correctedQuery: queryTerm,
+              fuzzyCorrectionApplied,
+              isDocStyle,
+              isBareNoun,
+              knownTermsAvailable: !!knownTerms,
+            },
+          })
+
+          // TD-2: Track retrieval correction in routing telemetry
+          telemetryEvent.retrieval_query_corrected = fuzzyCorrectionApplied
+
           const { tokens: queryTokens } = normalizeInputForRouting(queryTerm)
 
           // Get response style for formatting
