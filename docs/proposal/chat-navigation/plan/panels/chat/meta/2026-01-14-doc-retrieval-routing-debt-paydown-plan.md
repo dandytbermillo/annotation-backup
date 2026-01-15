@@ -6,6 +6,7 @@
 **Feature Slug:** `chat-navigation`
 **Source Debt Doc:** `docs/proposal/chat-navigation/plan/panels/chat/meta/technical-debt/2026-01-14-doc-retrieval-routing-debt.md`
 **Implementation Reports:**
+- `docs/proposal/chat-navigation/plan/panels/chat/meta/reports/2026-01-15-knownterms-race-fix-report.md`
 - `docs/proposal/chat-navigation/plan/panels/chat/meta/reports/2026-01-15-td4-td8-implementation-report.md`
 - `docs/proposal/chat-navigation/plan/panels/chat/meta/reports/2026-01-14-td3-implementation-report.md`
 
@@ -46,7 +47,7 @@ We need data to validate routing changes and avoid regressions.
 - Created `lib/chat/routing-telemetry.ts` with stable `RoutingPatternId` enum
 - Added `forceLog` option to `debugLog` for always-on telemetry
 - Instrumented all routing paths: meta-explain, follow-up, correction, action, doc, llm
-- Added classifier timeout tracking with AbortController (2s timeout)
+- Added classifier timeout **tracking** with AbortController (2s timeout)
 - Added correction tracking with `user_corrected_next_turn` field
 - Added `AMBIGUOUS_CROSS_DOC` pattern for ambiguous results
 
@@ -89,6 +90,8 @@ We need data to validate routing changes and avoid regressions.
 ---
 
 ## TD-1: Remove CORE_APP_TERMS Duplication
+### Status: ⏳ Collecting Telemetry (2026-01-15 → 2026-01-18)
+
 ### Why
 Avoid divergence between hardcoded terms and docs database.
 
@@ -97,6 +100,26 @@ Avoid divergence between hardcoded terms and docs database.
 - SSR embed a snapshot for cold start (required).
 - Remove `CORE_APP_TERMS` once knownTerms is guaranteed available.
 - Dependency: TD-4 telemetry live so cache-miss rate can be verified before removal.
+
+### Current State
+- ✅ Race condition fixed: `await fetchKnownTerms()` with 2s timeout in sendMessage
+- ✅ Telemetry instrumented: `matched_core_term` + `matched_known_term` fields added
+- ⏳ Data collection: Started 2026-01-15T20:40:00Z, need 48-72 hours
+
+### TD-1 Analysis Query
+```sql
+SELECT
+  metadata->>'matched_core_term' as core_match,
+  metadata->>'matched_known_term' as known_match,
+  COUNT(*) as count
+FROM debug_logs
+WHERE action = 'route_decision'
+  AND created_at > '2026-01-15T20:40:00Z'
+GROUP BY 1, 2
+ORDER BY count DESC;
+```
+
+**Decision criteria:** CORE_APP_TERMS can be removed when `core_match=true AND known_match=false` is rare/never (proves knownTerms covers all cases).
 
 ### Staleness Guard
 - Embed a `version`/`hash` with the snapshot.

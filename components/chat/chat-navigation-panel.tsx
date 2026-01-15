@@ -1870,7 +1870,44 @@ function ChatNavigationPanelContent({
     setInput('')
     setIsLoading(true)
 
+    // Track knownTerms fetch status for telemetry
+    let knownTermsFetchStatus: 'cached' | 'fetched' | 'fetch_error' | 'fetch_timeout' = 'cached'
+    // Track if we fell back to CORE_APP_TERMS due to timeout
+    let usedCoreAppTermsFallback = false
+
     try {
+      // ---------------------------------------------------------------------------
+      // Ensure knownTerms cache is populated before routing decisions
+      // Fix for race condition: async useEffect fetch may not complete before routing
+      // Timeout after 2s and fall back to CORE_APP_TERMS for resilience
+      // ---------------------------------------------------------------------------
+      const FETCH_TIMEOUT_MS = 2000
+
+      if (!isKnownTermsCacheValid()) {
+        try {
+          // Race fetch against timeout
+          const timeoutPromise = new Promise<null>((resolve) =>
+            setTimeout(() => resolve(null), FETCH_TIMEOUT_MS)
+          )
+          const result = await Promise.race([fetchKnownTerms(), timeoutPromise])
+
+          if (result === null) {
+            // Timeout - fall back to CORE_APP_TERMS
+            knownTermsFetchStatus = 'fetch_timeout'
+            usedCoreAppTermsFallback = true
+            console.warn('[KnownTerms] Fetch timed out, using CORE_APP_TERMS fallback')
+          } else if (result.size > 0) {
+            knownTermsFetchStatus = 'fetched'
+          } else {
+            knownTermsFetchStatus = 'fetch_error'
+          }
+        } catch {
+          knownTermsFetchStatus = 'fetch_error'
+          usedCoreAppTermsFallback = true
+          console.error('[KnownTerms] Fetch failed in sendMessage, using CORE_APP_TERMS fallback')
+        }
+      }
+
       // ---------------------------------------------------------------------------
       // Rejection Detection: Check if user is rejecting a suggestion
       // Per suggestion-rejection-handling-plan.md
@@ -2451,12 +2488,15 @@ function ChatNavigationPanelContent({
 
         // TD-4: Log meta-explain route telemetry
         const { normalized: normalizedMetaQuery } = normalizeInputForRouting(trimmedInput)
+        const metaExplainKnownTerms = getKnownTermsSync()
         const metaExplainTelemetryEvent: Partial<RoutingTelemetryEvent> = createRoutingTelemetryEvent(
           trimmedInput,
           normalizedMetaQuery,
-          true, // knownTerms not checked for meta-explain
-          0,
-          docRetrievalState?.lastDocSlug
+          !!metaExplainKnownTerms,
+          metaExplainKnownTerms?.size ?? 0,
+          docRetrievalState?.lastDocSlug,
+          knownTermsFetchStatus,
+          usedCoreAppTermsFallback
         )
         metaExplainTelemetryEvent.route_deterministic = 'doc'
         metaExplainTelemetryEvent.route_final = 'doc'
@@ -2656,12 +2696,15 @@ function ChatNavigationPanelContent({
         // TD-4: Log correction telemetry to track when previous routing was wrong
         // This marks that the PREVIOUS turn's routing decision was corrected by user
         const { normalized: normalizedQuery } = normalizeInputForRouting(trimmedInput)
+        const correctionKnownTerms = getKnownTermsSync()
         const correctionTelemetryEvent: Partial<RoutingTelemetryEvent> = createRoutingTelemetryEvent(
           trimmedInput,
           normalizedQuery,
-          true,
-          0,
-          docRetrievalState.lastDocSlug
+          !!correctionKnownTerms,
+          correctionKnownTerms?.size ?? 0,
+          docRetrievalState.lastDocSlug,
+          knownTermsFetchStatus,
+          usedCoreAppTermsFallback
         )
         correctionTelemetryEvent.route_deterministic = 'clarify'
         correctionTelemetryEvent.route_final = 'clarify'
@@ -2785,12 +2828,15 @@ function ChatNavigationPanelContent({
 
         // TD-4: Log follow-up route telemetry
         const { normalized: normalizedQuery } = normalizeInputForRouting(trimmedInput)
+        const followupKnownTerms = getKnownTermsSync()
         const followupTelemetryEvent: Partial<RoutingTelemetryEvent> = createRoutingTelemetryEvent(
           trimmedInput,
           normalizedQuery,
-          true, // knownTerms not relevant for follow-ups
-          0,
-          docRetrievalState.lastDocSlug
+          !!followupKnownTerms,
+          followupKnownTerms?.size ?? 0,
+          docRetrievalState.lastDocSlug,
+          knownTermsFetchStatus,
+          usedCoreAppTermsFallback
         )
         followupTelemetryEvent.route_deterministic = 'followup'
         followupTelemetryEvent.route_final = 'followup'
@@ -2942,17 +2988,24 @@ function ChatNavigationPanelContent({
       const isBareNoun = docRoute === 'bare_noun'
 
       // TD-4: Create telemetry event for tracking
-      const { normalized: normalizedQuery } = normalizeInputForRouting(trimmedInput)
+      const { normalized: normalizedQuery, tokens: queryTokens } = normalizeInputForRouting(trimmedInput)
       const telemetryEvent: Partial<RoutingTelemetryEvent> = createRoutingTelemetryEvent(
         trimmedInput,
         normalizedQuery,
         !!knownTerms,
         knownTerms?.size ?? 0,
-        docRetrievalState?.lastDocSlug
+        docRetrievalState?.lastDocSlug,
+        knownTermsFetchStatus,
+        usedCoreAppTermsFallback
       )
       telemetryEvent.route_deterministic = docRoute as RoutingTelemetryEvent['route_deterministic']
       telemetryEvent.route_final = docRoute as RoutingTelemetryEvent['route_final']
       telemetryEvent.is_new_question = isNewQuestionOrCommandDetected
+      // TD-1 prep: Track whether CORE_APP_TERMS and knownTerms matched this query
+      telemetryEvent.matched_core_term = queryTokens.some(t => CORE_APP_TERMS.has(t))
+      telemetryEvent.matched_known_term = knownTerms
+        ? (queryTokens.some(t => knownTerms.has(t)) || knownTerms.has(normalizedQuery))
+        : false
       // TD-4: Populate classifier telemetry fields
       telemetryEvent.classifier_called = classifierCalled
       telemetryEvent.classifier_result = classifierResult

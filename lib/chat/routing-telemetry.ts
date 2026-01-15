@@ -67,6 +67,10 @@ export interface RoutingTelemetryEvent {
   // State context
   known_terms_loaded: boolean
   known_terms_count: number
+  known_terms_fetch_status?: 'cached' | 'fetched' | 'fetch_error' | 'fetch_timeout'  // Track why knownTerms may be empty
+  used_core_terms_fallback?: boolean  // True when CORE_APP_TERMS was used due to timeout/error
+  matched_core_term?: boolean  // Did CORE_APP_TERMS contain a token from this query?
+  matched_known_term?: boolean  // Did knownTerms contain a token from this query?
   last_doc_slug_present: boolean
   last_doc_slug?: string
 
@@ -122,6 +126,10 @@ export async function logRoutingDecision(event: RoutingTelemetryEvent): Promise<
       // State context
       known_terms_loaded: event.known_terms_loaded,
       known_terms_count: event.known_terms_count,
+      known_terms_fetch_status: event.known_terms_fetch_status,
+      used_core_terms_fallback: event.used_core_terms_fallback,
+      matched_core_term: event.matched_core_term,
+      matched_known_term: event.matched_known_term,
       last_doc_slug_present: event.last_doc_slug_present,
       last_doc_slug: event.last_doc_slug,
 
@@ -168,13 +176,17 @@ export function createRoutingTelemetryEvent(
   normalizedQuery: string,
   knownTermsLoaded: boolean,
   knownTermsCount: number,
-  lastDocSlug?: string
+  lastDocSlug?: string,
+  knownTermsFetchStatus?: 'cached' | 'fetched' | 'fetch_error' | 'fetch_timeout',
+  usedCoreTermsFallback?: boolean
 ): Partial<RoutingTelemetryEvent> {
   return {
     input_len: input.length,
     normalized_query: normalizedQuery,
     known_terms_loaded: knownTermsLoaded,
     known_terms_count: knownTermsCount,
+    known_terms_fetch_status: knownTermsFetchStatus,
+    used_core_terms_fallback: usedCoreTermsFallback,
     last_doc_slug_present: !!lastDocSlug,
     last_doc_slug: lastDocSlug,
     classifier_called: false,
