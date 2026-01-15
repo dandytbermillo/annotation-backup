@@ -215,14 +215,16 @@ export function normalizeQuery(input: string): {
 
 ---
 
-### TD-4: Add Routing Telemetry
+### TD-4: Add Durable Routing Telemetry
 
 **Priority:** High
 **Effort:** Low
 
 **Current State:**
-- No visibility into routing decisions
-- Can't detect patterns of failed queries
+- Debug logging EXISTS (`debugLog()` calls with metrics)
+- But logs are ephemeral (console only, not persisted)
+- No aggregation or dashboarding
+- Can't detect patterns of failed queries over time
 - No data to prioritize improvements
 
 **Proposed Solution:**
@@ -253,13 +255,61 @@ void debugLog({
 - Cache hit rate for knownTerms
 
 **Acceptance Criteria:**
-- [ ] All routing decisions logged
+- [ ] Routing decisions persisted to analytics store
 - [ ] Dashboard showing routing distribution
 - [ ] Alerts for high LLM fallback rate
 
 ---
 
-### TD-5: Evaluate LLM-Based Intent Extraction (Future)
+### TD-5: Follow-up Guard Edge Case
+
+**Priority:** Low (monitor first)
+**Effort:** Low
+
+**Current State:**
+The `!isNewQuestionOrCommand` guard skips the follow-up classifier for queries starting with question words:
+```typescript
+// chat-navigation-panel.tsx:2936
+if (docRetrievalState?.lastDocSlug && !isFollowUp && !isNewQuestionOrCommand) {
+  // Call classifier
+}
+```
+
+**Problem:**
+Polite follow-ups like "can you tell me more about that?" start with "can" which matches `QUESTION_START_PATTERN`, causing them to skip the classifier and be treated as new questions.
+
+| Query | Starts With | isNewQuestionOrCommand | Should Be |
+|-------|-------------|------------------------|-----------|
+| "tell me more" | tell | true | follow-up |
+| "can you tell me more?" | can | true | follow-up |
+| "can you explain what are actions?" | can | true | new question |
+
+**Proposed Solution:**
+```typescript
+// Add specific polite follow-up detection
+const POLITE_FOLLOWUP_PATTERN = /^(can|could|would) you (please )?(tell me more|explain more|elaborate|continue|go on)/i
+
+const isPoliteFollowUp = POLITE_FOLLOWUP_PATTERN.test(trimmedInput)
+
+// In guard:
+if (docRetrievalState?.lastDocSlug && !isFollowUp && !isNewQuestionOrCommand && !isPoliteFollowUp) {
+  // Call classifier
+}
+// OR let polite follow-ups through to classifier
+if (isPoliteFollowUp) {
+  isFollowUp = true // Treat as follow-up directly
+}
+```
+
+**Acceptance Criteria:**
+- [ ] Monitor for this pattern in telemetry (TD-4)
+- [ ] If observed frequently, implement fix
+- [ ] "can you tell me more?" treated as follow-up
+- [ ] "can you explain what is workspace?" still treated as new question
+
+---
+
+### TD-6: Evaluate LLM-Based Intent Extraction (Future)
 
 **Priority:** Low
 **Effort:** High
@@ -305,11 +355,12 @@ const intentResponse = await fetch('/api/chat/extract-intent', {
 
 | Order | Item | Rationale |
 |-------|------|-----------|
-| 1 | TD-4: Telemetry | Get data before optimizing |
+| 1 | TD-4: Durable Telemetry | Get data before optimizing |
 | 2 | TD-1: Eliminate duplication | Remove maintenance burden |
 | 3 | TD-3: Consolidate patterns | Easier future changes |
 | 4 | TD-2: Fuzzy matching | Handle common typos |
-| 5 | TD-5: LLM intent | Only if data shows need |
+| 5 | TD-5: Follow-up guard | Only if telemetry shows issue |
+| 6 | TD-6: LLM intent | Only if data shows need |
 
 ---
 
@@ -321,6 +372,7 @@ const intentResponse = await fetch('/api/chat/extract-intent', {
 | Regex patterns miss new phrasings | High | Low | Telemetry alerts |
 | Fuzzy matching too permissive | Low | Medium | Conservative distance threshold |
 | LLM latency unacceptable | Medium | High | Cache common queries |
+| Polite follow-ups treated as new questions | Low | Low | Monitor in telemetry first |
 
 ---
 
