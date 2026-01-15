@@ -333,6 +333,30 @@ function matchesReshowPhrases(input: string): boolean {
  * Per meta-explain-outside-clarification-plan.md (Tiered Plan)
  * Handles: "explain", "what do you mean?", "explain home", etc.
  */
+/**
+ * Strip conversational prefixes to extract the core question.
+ * e.g., "can you tell me what are the workspaces actions?" → "what are the workspaces actions"
+ */
+function stripConversationalPrefix(input: string): string {
+  const normalized = input.trim().toLowerCase().replace(/[?!.]+$/, '')
+
+  // Common conversational prefixes to strip
+  // Note: "pls" is common shorthand for "please"
+  const prefixes = [
+    /^(can|could|would|will) you (please |pls )?(tell me|explain|help me understand) /i,
+    /^(please |pls )?(tell me|explain) /i,
+    /^i('d| would) (like to|want to) (know|understand) /i,
+    /^(do you know|can you help me understand) /i,
+  ]
+
+  let result = normalized
+  for (const prefix of prefixes) {
+    result = result.replace(prefix, '')
+  }
+
+  return result
+}
+
 function isMetaExplainOutsideClarification(input: string): boolean {
   // Strip trailing punctuation for matching
   const normalized = input.trim().toLowerCase().replace(/[?!.]+$/, '')
@@ -359,32 +383,47 @@ function isMetaExplainOutsideClarification(input: string): boolean {
     return true
   }
 
+  // Check after stripping conversational prefixes
+  // e.g., "can you tell me what are the workspaces actions?" → "what are the workspaces actions"
+  const stripped = stripConversationalPrefix(normalized)
+  if (stripped !== normalized) {
+    if (stripped.startsWith('what is ') || stripped.startsWith('what are ')) {
+      return true
+    }
+  }
+
   return false
 }
 
 /**
  * Extract the concept from a meta-explain phrase.
  * Returns null if no specific concept is mentioned.
+ * Handles conversational prefixes like "can you tell me what are X"
  */
 function extractMetaExplainConcept(input: string): string | null {
   const normalized = input.trim().toLowerCase().replace(/[?!.]+$/, '')
 
-  // "explain <concept>"
-  if (normalized.startsWith('explain ') && normalized !== 'explain that') {
-    const concept = normalized.replace(/^explain\s+/, '').trim()
-    if (concept && concept !== 'that') return concept
-  }
+  // Try direct patterns first, then try after stripping conversational prefix
+  const variants = [normalized, stripConversationalPrefix(normalized)]
 
-  // "what is <concept>"
-  if (normalized.startsWith('what is ')) {
-    const concept = normalized.replace(/^what is\s+(a\s+|an\s+|the\s+)?/, '').trim()
-    if (concept) return concept
-  }
+  for (const text of variants) {
+    // "explain <concept>"
+    if (text.startsWith('explain ') && text !== 'explain that') {
+      const concept = text.replace(/^explain\s+/, '').trim()
+      if (concept && concept !== 'that') return concept
+    }
 
-  // "what are <concepts>"
-  if (normalized.startsWith('what are ')) {
-    const concept = normalized.replace(/^what are\s+(the\s+)?/, '').trim()
-    if (concept) return concept
+    // "what is <concept>"
+    if (text.startsWith('what is ')) {
+      const concept = text.replace(/^what is\s+(a\s+|an\s+|the\s+)?/, '').trim()
+      if (concept) return concept
+    }
+
+    // "what are <concepts>"
+    if (text.startsWith('what are ')) {
+      const concept = text.replace(/^what are\s+(the\s+)?/, '').trim()
+      if (concept) return concept
+    }
   }
 
   return null
@@ -648,6 +687,23 @@ function isBareNounQuery(
  *
  * Now with full knownTerms integration for app relevance gate.
  */
+// Core app terms that are always checked, even if knownTerms cache is not loaded.
+// This ensures queries with these terms route to doc retrieval regardless of cache state.
+const CORE_APP_TERMS = new Set([
+  'workspace', 'workspaces',
+  'note', 'notes',
+  'action', 'actions',
+  'widget', 'widgets',
+  'entry', 'entries',
+  'folder', 'folders',
+  'panel', 'panels',
+  'annotation', 'annotations',
+  'canvas',
+  'navigation', 'navigate',
+  'dashboard',
+  'home',
+])
+
 function routeDocInput(
   input: string,
   uiContext?: UIContext | null,
@@ -656,16 +712,27 @@ function routeDocInput(
   const { normalized, tokens } = normalizeInputForRouting(input)
 
   // Step 1: app relevance gate (v4 plan)
-  // If knownTerms available, check if query is app-relevant
+  // Check against both knownTerms (if available) AND core app terms
+  let isAppRelevant = false
+
+  // Always check core app terms (cache-independent)
+  const hasCoreAppTerm = tokens.some(t => CORE_APP_TERMS.has(t))
+  if (hasCoreAppTerm) {
+    isAppRelevant = true
+  }
+
+  // Also check knownTerms if available
   if (knownTerms && knownTerms.size > 0) {
-    const isAppRelevant =
+    const hasKnownTerm =
       tokens.some(t => knownTerms.has(t)) ||
       knownTerms.has(normalized) ||
       ACTION_NOUNS.has(normalized) ||
       matchesVisibleWidgetTitle(normalized, uiContext)
 
-    if (!isAppRelevant) {
-      // Not app-relevant - skip retrieval, go to LLM
+    if (hasKnownTerm) {
+      isAppRelevant = true
+    } else if (!hasCoreAppTerm) {
+      // Not app-relevant (no core terms, no known terms) - skip retrieval, go to LLM
       return 'llm'
     }
   }
@@ -684,6 +751,14 @@ function routeDocInput(
 
   // Step 6: bare noun routing (stricter)
   if (isBareNounQuery(input, uiContext, knownTerms)) return 'bare_noun'
+
+  // Step 7: App-relevant fallback - if query contains known/core terms but doesn't match
+  // specific patterns (e.g., typos like "an you pls tell me what are workspaces action?"),
+  // route to doc retrieval anyway. Let keyword matching handle intent extraction.
+  // This is more robust than adding endless regex patterns.
+  if (isAppRelevant) {
+    return 'doc'
+  }
 
   return 'llm'
 }
@@ -2342,10 +2417,23 @@ function ChatNavigationPanelContent({
       // Pattern definitions for new-intent detection (used in UNCLEAR fallback)
       const QUESTION_START_PATTERN = /^(what|which|where|when|how|why|who|is|are|do|does|did|can|could|should|would)\b/i
       const COMMAND_START_PATTERN = /^(open|show|go|list|create|close|delete|rename|back|home)\b/i
+      // Per definitional-query-fix-proposal.md: bare nouns should exit clarification for doc routing
+      const bareNounKnownTerms = getKnownTermsSync()
+      const isBareNounNewIntent = bareNounKnownTerms
+        ? isBareNounQuery(trimmedInput, uiContext, bareNounKnownTerms)
+        : false
       const isNewQuestionOrCommand =
         QUESTION_START_PATTERN.test(trimmedInput) ||
         COMMAND_START_PATTERN.test(trimmedInput) ||
-        trimmedInput.endsWith('?')
+        trimmedInput.endsWith('?') ||
+        isBareNounNewIntent  // Bare nouns should exit clarification for doc routing
+
+      // WORKAROUND: Track if clarification was cleared within this execution cycle.
+      // React's setLastClarification(null) is async - subsequent checks in the same render
+      // would still see the old value. This local flag provides synchronous tracking.
+      // Scoped to this sendMessage call only - doesn't persist across renders.
+      // See: definitional-query-fix-proposal.md for context on this pattern.
+      let clarificationCleared = false
 
       // Run clarification handler FIRST when clarification is active
       // Only fall back to normal routing if interpreter returns UNCLEAR AND input looks like new intent
@@ -2598,21 +2686,23 @@ function ChatNavigationPanelContent({
 
         // Tier 1b.5: New intent escape - exit clarification for new questions/commands
         // Per clarification-exit-and-cancel-fix-plan.md: "where am I?" should route normally
+        // Per definitional-query-fix-proposal.md: bare nouns should also exit clarification
         if (isNewQuestionOrCommand) {
           void debugLog({
             component: 'ChatNavigation',
             action: 'clarification_exit_new_intent',
-            metadata: { userInput: trimmedInput },
+            metadata: { userInput: trimmedInput, isBareNounNewIntent },
           })
           // Clear clarification state and fall through to normal routing
           setLastClarification(null)
+          clarificationCleared = true  // Mark as cleared for later checks in same render (React state is async)
           // Don't return - continue to normal routing below
         }
 
         // Tier 1c: Local META check (explanation request)
         // Per clarification-meta-response-plan.md
         // Only check if we didn't already exit via new intent
-        if (lastClarification && isMetaPhrase(trimmedInput)) {
+        if (lastClarification && !clarificationCleared && isMetaPhrase(trimmedInput)) {
           void debugLog({
             component: 'ChatNavigation',
             action: 'clarification_tier1_meta',
@@ -2625,8 +2715,8 @@ function ChatNavigationPanelContent({
 
         // Tier 2: LLM interpretation for unclear responses
         // Call API with clarification-mode flag to get YES/NO/META/UNCLEAR interpretation
-        // Skip if we already exited via new intent (lastClarification was cleared)
-        if (lastClarification) {
+        // Skip if we already exited via new intent (clarificationCleared = true)
+        if (lastClarification && !clarificationCleared) {
           void debugLog({
             component: 'ChatNavigation',
             action: 'clarification_tier2_llm',
@@ -2706,7 +2796,7 @@ function ChatNavigationPanelContent({
       //       (let v4 pronoun follow-up handler take over instead)
       // ---------------------------------------------------------------------------
       const shouldDeferToV4FollowUp = docRetrievalState?.lastDocSlug && isPronounFollowUp(trimmedInput)
-      if (!lastClarification && isMetaExplainOutsideClarification(trimmedInput) && !shouldDeferToV4FollowUp) {
+      if ((!lastClarification || clarificationCleared) && isMetaExplainOutsideClarification(trimmedInput) && !shouldDeferToV4FollowUp) {
         void debugLog({
           component: 'ChatNavigation',
           action: 'meta_explain_outside_clarification',
@@ -2740,6 +2830,14 @@ function ChatNavigationPanelContent({
             }
           }
 
+          // Step 3: Detect definitional query for concept preference
+          // Per definitional-query-fix-proposal.md: "what is X" should prefer concepts/* over actions/*
+          const isDefinitionalPattern = !!concept  // concept is non-null for "what is X", "explain X" patterns
+          const hasActionIntent = isDefinitionalPattern
+            ? /\b(action|actions|create|delete|rename|list|open)\b/i.test(trimmedInput)
+            : false
+          const isDefinitionalQuery = isDefinitionalPattern && !hasActionIntent
+
           // Call retrieval API
           const retrieveResponse = await fetch('/api/docs/retrieve', {
             method: 'POST',
@@ -2747,6 +2845,7 @@ function ChatNavigationPanelContent({
             body: JSON.stringify({
               query: queryTerm || trimmedInput,
               mode: 'explain',
+              isDefinitionalQuery,  // Step 3: hint for backend to prefer concepts
             }),
           })
 
@@ -2907,7 +3006,9 @@ function ChatNavigationPanelContent({
       // call classifier as backup BEFORE falling to LLM routing
       // Per plan (line 315): "If follow-up detection misses but lastDocSlug is set,
       // call the semantic classifier as a backup before falling back to LLM"
-      if (docRetrievalState?.lastDocSlug && !isFollowUp) {
+      // FIX: Skip classifier for new questions/commands - they are clearly new intents, not follow-ups
+      // e.g., "can you tell me what are the workspaces actions?" should NOT be scoped to previous doc
+      if (docRetrievalState?.lastDocSlug && !isFollowUp && !isNewQuestionOrCommand) {
         try {
           const classifyResponse = await fetch('/api/chat/classify-followup', {
             method: 'POST',
@@ -3090,7 +3191,7 @@ function ChatNavigationPanelContent({
         },
       })
 
-      if (!lastClarification && (isDocStyle || isBareNoun)) {
+      if ((!lastClarification || clarificationCleared) && (isDocStyle || isBareNoun)) {
         void debugLog({
           component: 'ChatNavigation',
           action: 'general_doc_retrieval',
@@ -3332,7 +3433,7 @@ function ChatNavigationPanelContent({
       // Per general-doc-retrieval-routing-plan.md (v4) - app relevance gate
       // When routeDocInput returns 'llm', the query is not app-relevant
       // ---------------------------------------------------------------------------
-      if (docRoute === 'llm' && !lastClarification) {
+      if (docRoute === 'llm' && (!lastClarification || clarificationCleared)) {
         void debugLog({
           component: 'ChatNavigation',
           action: 'llm_route_non_app',

@@ -1145,11 +1145,17 @@ export interface ExplanationResult {
   }>
 }
 
+/** Options for getSmartExplanation */
+interface SmartExplanationOptions {
+  isDefinitionalQuery?: boolean  // Step 3: prefer concepts/* for "what is X" queries
+}
+
 /**
  * Get explanation using smart retrieval (DB first → cache fallback)
  * V5: Returns object with metadata for follow-up state tracking
+ * Step 3: When isDefinitionalQuery=true and ambiguous, auto-select concept doc
  */
-export async function getSmartExplanation(concept: string): Promise<ExplanationResult> {
+export async function getSmartExplanation(concept: string, options?: SmartExplanationOptions): Promise<ExplanationResult> {
   // DB-first: Try smart retrieval
   let response: Awaited<ReturnType<typeof smartRetrieve>> | null = null
   try {
@@ -1180,7 +1186,26 @@ export async function getSmartExplanation(concept: string): Promise<ExplanationR
   }
 
   if (response?.status === 'ambiguous' && response.results?.length > 1) {
-    // Ambiguous: return options for pills
+    // Step 3: For definitional queries, auto-select concept doc if available
+    if (options?.isDefinitionalQuery) {
+      const conceptResult = response.results.find(r => r.doc_slug.startsWith('concepts/'))
+      if (conceptResult) {
+        // Auto-select the concept doc without showing pills
+        const explanation = 'header_path' in conceptResult && conceptResult.header_path
+          ? `${conceptResult.header_path}: ${conceptResult.snippet}`
+          : conceptResult.snippet?.split('\n\n')[0] || conceptResult.snippet || ''
+
+        return {
+          explanation,
+          docSlug: conceptResult.doc_slug,
+          chunkId: 'chunkId' in conceptResult ? conceptResult.chunkId : undefined,
+          fromCache: false,
+          status: 'found',  // Treat as found, not ambiguous
+        }
+      }
+    }
+
+    // Default: return options for pills (no definitional preference or no concept match)
     return {
       explanation: response.clarification || null,
       docSlug: response.results[0].doc_slug,

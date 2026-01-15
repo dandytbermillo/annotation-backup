@@ -22,7 +22,7 @@ import {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { query, mode, phase, docSlug, excludeChunkIds, scopeDocSlug } = body
+    const { query, mode, phase, docSlug, excludeChunkIds, scopeDocSlug, isDefinitionalQuery } = body
 
     // DocSlug mode: retrieve specific doc by slug (disambiguation follow-up)
     // Per general-doc-retrieval-routing-plan.md
@@ -49,7 +49,8 @@ export async function POST(request: NextRequest) {
     // Mode: 'chunks' returns chunk-level results (Phase 2 only)
     if (mode === 'explain') {
       // V5: Use getSmartExplanation which returns metadata for follow-up tracking
-      const result = await getSmartExplanation(query)
+      // Step 3: Pass isDefinitionalQuery for concept preference
+      const result = await getSmartExplanation(query, { isDefinitionalQuery: !!isDefinitionalQuery })
 
       return NextResponse.json({
         success: true,
