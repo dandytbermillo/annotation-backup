@@ -1,9 +1,13 @@
-****# Plan: Doc Retrieval Routing Debt Paydown
+# Plan: Doc Retrieval Routing Debt Paydown
 
 **Date:** 2026-01-14
-**Status:** Proposal
+**Updated:** 2026-01-14
+**Status:** In Progress
 **Feature Slug:** `chat-navigation`
 **Source Debt Doc:** `docs/proposal/chat-navigation/plan/panels/chat/meta/technical-debt/2026-01-14-doc-retrieval-routing-debt.md`
+**Implementation Reports:**
+- `docs/proposal/chat-navigation/plan/panels/chat/meta/reports/2026-01-15-td4-td8-implementation-report.md`
+- `docs/proposal/chat-navigation/plan/panels/chat/meta/reports/2026-01-14-td3-implementation-report.md`
 
 ## Goals
 - Reduce pattern fragility without regressing "human feel".
@@ -15,19 +19,21 @@
 - Large retrieval model changes or embeddings rollout.
 
 ## Execution Order (Low-Risk First)
-1) TD-4: Durable routing telemetry
-2) TD-8: Don't lock state on weak (doc follow-ups)
-3) TD-1: Remove CORE_APP_TERMS duplication
-4) TD-3: Consolidate routing patterns
+1) ✅ TD-4: Durable routing telemetry — **COMPLETE** (2026-01-15)
+2) ✅ TD-8: Don't lock state on weak (doc follow-ups) — **COMPLETE** (2026-01-15)
+3) ✅ TD-3: Consolidate routing patterns — **COMPLETE** (2026-01-14)
+4) TD-1: Remove CORE_APP_TERMS duplication — *waiting for telemetry data*
 5) TD-2: Gated typo tolerance (fuzzy match)
 6) TD-7: Stricter app-relevance fallback
 7) TD-5: Polite follow-up guard (only if telemetry shows need)
 8) TD-6: LLM intent extraction (optional, last)
-9) TD-9: Cross-doc ambiguity override (already implemented)
+9) ✅ TD-9: Cross-doc ambiguity override — **COMPLETE** (pre-existing)
 
 ---
 
 ## TD-4: Durable Telemetry (First)
+### Status: ✅ COMPLETE (2026-01-15)
+
 ### Why
 We need data to validate routing changes and avoid regressions.
 
@@ -36,27 +42,49 @@ We need data to validate routing changes and avoid regressions.
 - Define `matched_pattern_id` as a stable enum (e.g., `DEF_WHAT_IS`, `FOLLOWUP_TELL_ME_MORE`).
 - Persist to analytics store (not only console).
 
-### Event Schema (minimum viable)
+### Implementation
+- Created `lib/chat/routing-telemetry.ts` with stable `RoutingPatternId` enum
+- Added `forceLog` option to `debugLog` for always-on telemetry
+- Instrumented all routing paths: meta-explain, follow-up, correction, action, doc, llm
+- Added classifier timeout tracking with AbortController (2s timeout)
+- Added correction tracking with `user_corrected_next_turn` field
+- Added `AMBIGUOUS_CROSS_DOC` pattern for ambiguous results
+
+### Event Schema (implemented)
 - `input_len`
 - `normalized_query`
 - `route_deterministic`
 - `route_final`
 - `matched_pattern_id` (stable enum)
 - `known_terms_loaded`
+- `known_terms_count`
 - `classifier_called`
-- `classifier_confidence`
+- `classifier_result`
+- `classifier_latency_ms`
 - `classifier_timeout`
+- `classifier_error`
 - `doc_status` (found|weak|ambiguous|no_match)
 - `doc_slug_top`
 - `doc_slug_alt[]`
 - `followup_detected`
+- `is_new_question`
 - `last_doc_slug_present`
+- `last_doc_slug`
+- `routing_latency_ms`
 - `user_corrected_next_turn`
 
 ### Acceptance Criteria
-- Routing events persisted and queryable.
-- Dashboard view of route distribution and LLM fallback rate.
-- `matched_pattern_id` enum documented and stable across releases.
+- [x] Routing events persisted and queryable.
+- [x] `matched_pattern_id` enum documented and stable across releases.
+- [x] All routes logged (doc, action, llm, followup, clarify).
+- [x] Classifier timeout tracked.
+- [x] User corrections tracked.
+- [ ] Dashboard view of route distribution. *(query available, UI pending)*
+
+### Production Notes
+- Retention: Use `timestamp` column for cleanup queries
+- Sampling: Default 1.0, use `ROUTING_TELEMETRY_SAMPLE_RATE` env var if needed
+- Index: Consider `CREATE INDEX idx_debug_logs_pattern_id ON debug_logs ((metadata->>'matched_pattern_id')) WHERE component = 'DocRouting'`
 
 ---
 
@@ -81,6 +109,8 @@ Avoid divergence between hardcoded terms and docs database.
 ---
 
 ## TD-3: Consolidate Pattern Matching
+### Status: ✅ COMPLETE (2026-01-14)
+
 ### Why
 Reduce pattern drift and make changes safer.
 
@@ -89,16 +119,32 @@ Reduce pattern drift and make changes safer.
 - Expose a single `normalizeQuery()` API for routing helpers.
 - Add a regression test table with common phrases.
 
-### Regression Table (Examples)
-- `what is workspace` → explain
-- `can you tell me what are actions` → explain
-- `open notes` → action
-- `tell me more` → follow-up
-- `hello` → unknown
+### Implementation
+- Created `lib/chat/query-patterns.ts` with all consolidated patterns
+- Updated `components/chat/chat-navigation-panel.tsx` to import from the new module
+- Removed 15+ duplicate function definitions from the component
+- Created regression test suite: `__tests__/chat/query-patterns.test.ts` with 188 tests
+
+### Exported API
+- **Pattern constants**: AFFIRMATION_PATTERN, REJECTION_PATTERN, QUESTION_START_PATTERN, COMMAND_START_PATTERN, ACTION_NOUNS, DOC_VERBS, POLITE_COMMAND_PREFIXES, META_PATTERNS, RESHOW_PATTERNS, BARE_META_PHRASES
+- **Normalization**: normalizeInputForRouting, normalizeTitle, normalizeTypos, stripConversationalPrefix, startsWithAnyPrefix
+- **Detection**: isAffirmationPhrase, isRejectionPhrase, isCorrectionPhrase, isPronounFollowUp, hasQuestionIntent, hasActionVerb, containsDocInstructionCue, looksIndexLikeReference, isMetaPhrase, matchesReshowPhrases, isMetaExplainOutsideClarification, isCommandLike, isNewQuestionOrCommand
+- **Extraction**: extractMetaExplainConcept, extractDocQueryTerm
+- **Response style**: getResponseStyle
+- **Main API**: classifyQueryIntent, normalizeQuery
+
+### Regression Table (Examples - All tested)
+- `what is workspace` → explain ✓
+- `can you tell me what are actions` → explain ✓
+- `open notes` → action ✓
+- `tell me more` → followup ✓
+- `hello` → unknown ✓
 
 ### Acceptance Criteria
-- All patterns defined in one module.
-- Test suite validates 20+ common phrases.
+- [x] All patterns defined in one module (`lib/chat/query-patterns.ts`)
+- [x] Test suite validates 188 common phrases and patterns
+- [x] Component imports from consolidated module
+- [x] Type-check passes
 
 ---
 
@@ -175,6 +221,8 @@ Implemented in `lib/docs/keyword-retrieval.ts` (cross-doc candidate check before
 If top two results are same-doc and a distinct doc exists within `MIN_GAP`, return ambiguous with pills.
 
 ## TD-8: Don't Lock State on Weak (Doc Follow-ups)
+### Status: ✅ COMPLETE (2026-01-15)
+
 ### Why
 Weak clarifications can lock the user into the wrong doc and make follow-ups expand the wrong content.
 
@@ -182,11 +230,16 @@ Weak clarifications can lock the user into the wrong doc and make follow-ups exp
 - Only set `lastDocSlug` when the retrieval is confident or when the user explicitly confirms.
 - If the result is `weak`, avoid setting follow-up state unless the user selects a pill or confirms.
 
+### Implementation
+- General doc retrieval: weak results show confirmation pill, don't set `lastDocSlug`
+- Meta-explain path: added `isConfidentResult` check, only set `lastDocSlug` for `found` status
+- Ambiguous results: don't set `lastDocSlug` until pill selection
+
 ### Acceptance Criteria
-- After a weak clarification, “tell me more” re-queries instead of expanding a guessed doc.
-- After a pill selection, follow-ups expand the selected doc.
-- Telemetry shows weak→followup misroute rate decreases.
-- Do not set `lastDocSlug` on ambiguous results; only set after pill selection.
+- [x] After a weak clarification, "tell me more" re-queries instead of expanding a guessed doc.
+- [x] After a pill selection, follow-ups expand the selected doc.
+- [x] Do not set `lastDocSlug` on ambiguous results; only set after pill selection.
+- [ ] Telemetry shows weak→followup misroute rate decreases. *(requires data collection)*
 
 ## Risks & Mitigations
 - Pattern changes can regress routing → regression tests + telemetry.
@@ -197,3 +250,5 @@ Weak clarifications can lock the user into the wrong doc and make follow-ups exp
 - Telemetry event schema + dashboard query.
 - `query-patterns` module + tests.
 - knownTerms preload + CORE_APP_TERMS removal.
+
+

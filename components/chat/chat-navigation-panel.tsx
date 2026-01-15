@@ -52,6 +52,45 @@ import {
   RoutingPatternId,
   type RoutingTelemetryEvent,
 } from '@/lib/chat/routing-telemetry'
+// TD-3: Import consolidated patterns from query-patterns module
+import {
+  // Pattern constants
+  AFFIRMATION_PATTERN,
+  REJECTION_PATTERN,
+  QUESTION_START_PATTERN,
+  COMMAND_START_PATTERN,
+  ACTION_NOUNS,
+  DOC_VERBS,
+  POLITE_COMMAND_PREFIXES,
+  META_PATTERNS,
+  RESHOW_PATTERNS,
+  BARE_META_PHRASES,
+  // Normalization functions
+  normalizeInputForRouting,
+  normalizeTitle,
+  normalizeTypos,
+  stripConversationalPrefix,
+  startsWithAnyPrefix,
+  // Detection functions
+  isAffirmationPhrase,
+  isRejectionPhrase,
+  isCorrectionPhrase,
+  isPronounFollowUp,
+  hasQuestionIntent,
+  hasActionVerb,
+  containsDocInstructionCue,
+  looksIndexLikeReference,
+  isMetaPhrase,
+  matchesReshowPhrases,
+  isMetaExplainOutsideClarification,
+  isCommandLike,
+  isNewQuestionOrCommand,
+  // Extraction functions
+  extractMetaExplainConcept,
+  extractDocQueryTerm,
+  // Response style
+  getResponseStyle,
+} from '@/lib/chat/query-patterns'
 
 export interface ChatNavigationPanelProps {
   /** Current entry ID for context */
@@ -228,61 +267,7 @@ function matchesShowAllHeuristic(input: string): boolean {
   return false
 }
 
-/**
- * Check if input is an affirmation phrase.
- * Per Phase 2a.3: Expanded affirmation patterns for clarification responses.
- * Categories:
- * - Explicit: yes, yeah, yep, yup, sure, ok, okay
- * - Polite: please, go ahead, do it, proceed
- * - Confirmations: correct, right, exactly, confirm, confirmed
- * - Casual: k, ya, ye, yea, mhm, uh huh
- * All patterns support optional "please" suffix.
- */
-function isAffirmationPhrase(input: string): boolean {
-  const normalized = input.toLowerCase().trim()
-  // Core affirmations with optional "please" suffix
-  const AFFIRMATION_PATTERN = /^(yes|yeah|yep|yup|sure|ok|okay|k|ya|ye|yea|mhm|uh\s*huh|go ahead|do it|proceed|correct|right|exactly|confirm|confirmed)(\s+please)?$/
-  return AFFIRMATION_PATTERN.test(normalized)
-}
-
-/**
- * Check if input is a rejection phrase.
- * Per Phase 2a.3: Rejection patterns for clarification responses.
- */
-function isRejectionPhrase(input: string): boolean {
-  const normalized = input.toLowerCase().trim()
-  // Rejection patterns: explicit no, cancel intent, soft rejection
-  const REJECTION_PATTERN = /^(no|nope|nah|negative|cancel|stop|abort|never\s*mind|forget it|don't|not now|skip|pass|wrong|incorrect|not that)$/
-  return REJECTION_PATTERN.test(normalized)
-}
-
-/**
- * Check if input is a META phrase (request for explanation).
- * Per clarification-meta-response-plan.md: Handle "what do you mean?" style queries.
- * Only triggers when clarification is already active.
- */
-function isMetaPhrase(input: string): boolean {
-  const normalized = input.toLowerCase().trim()
-  // META patterns: requests for explanation or clarification
-  const META_PATTERNS = [
-    /^what(\s+do\s+you)?\s+mean\??$/,                    // "what do you mean?" / "what mean?"
-    /^explain(\s+that)?(\s+please)?$/,                   // "explain" / "explain that"
-    /^help(\s+me)?(\s+understand)?$/,                    // "help" / "help me understand"
-    /^what\s+are\s+(my\s+)?options\??$/,                 // "what are my options?"
-    /^what('s|s|\s+is)\s+the\s+difference\??$/,          // "what's the difference?"
-    /^huh\??$/,                                          // "huh?"
-    /^\?+$/,                                             // "?" / "??"
-    /^what\??$/,                                         // "what?" / "what"
-    /^(i('m|m)?\s+)?not\s+sure$/,                        // "not sure" / "I'm not sure"
-    /^i\s+don('t|t)\s+know$/,                            // "I don't know"
-    /^(can\s+you\s+)?tell\s+me\s+more\??$/,              // "tell me more" / "can you tell me more?"
-    /^what\s+is\s+that\??$/,                             // "what is that?"
-    /^i('m|m)?\s+not\s+sure\s+what\s+that\s+(does|means)\??$/,  // "I'm not sure what that does"
-    /^clarify(\s+please)?$/,                             // "clarify"
-    /^options\??$/,                                      // "options?"
-  ]
-  return META_PATTERNS.some(pattern => pattern.test(normalized))
-}
+// TD-3: isAffirmationPhrase, isRejectionPhrase, isMetaPhrase now imported from query-patterns.ts
 
 /**
  * Match ordinal phrases to option index.
@@ -311,130 +296,8 @@ function matchOrdinal(input: string, optionCount: number): number | undefined {
   return undefined
 }
 
-/**
- * Check if input matches re-show options phrases.
- * Per pending-options-reshow-grace-window.md triggers.
- * Handles common typos via simple normalization.
- */
-function matchesReshowPhrases(input: string): boolean {
-  const normalized = input.toLowerCase().trim()
-    // Normalize common typos
-    .replace(/shwo|shw/g, 'show')
-    .replace(/optins|optons|optiosn/g, 'options')
-    .replace(/teh/g, 'the')
-
-  const reshowPatterns = [
-    /^show\s*(me\s*)?(the\s*)?options$/,
-    /^(what\s*were\s*those|what\s*were\s*they)\??$/,
-    /^i'?m\s*confused\??$/,
-    /^(can\s*you\s*)?show\s*(me\s*)?(again|them)\??$/,
-    /^remind\s*me\??$/,
-    /^options\??$/,
-  ]
-
-  return reshowPatterns.some(pattern => pattern.test(normalized))
-}
-
-/**
- * Check if input is a meta-explain phrase OUTSIDE of clarification mode.
- * Per meta-explain-outside-clarification-plan.md (Tiered Plan)
- * Handles: "explain", "what do you mean?", "explain home", etc.
- */
-/**
- * Strip conversational prefixes to extract the core question.
- * e.g., "can you tell me what are the workspaces actions?" → "what are the workspaces actions"
- */
-function stripConversationalPrefix(input: string): string {
-  const normalized = input.trim().toLowerCase().replace(/[?!.]+$/, '')
-
-  // Common conversational prefixes to strip
-  // Note: "pls" is common shorthand for "please"
-  const prefixes = [
-    /^(can|could|would|will) you (please |pls )?(tell me|explain|help me understand) /i,
-    /^(please |pls )?(tell me|explain) /i,
-    /^i('d| would) (like to|want to) (know|understand) /i,
-    /^(do you know|can you help me understand) /i,
-  ]
-
-  let result = normalized
-  for (const prefix of prefixes) {
-    result = result.replace(prefix, '')
-  }
-
-  return result
-}
-
-function isMetaExplainOutsideClarification(input: string): boolean {
-  // Strip trailing punctuation for matching
-  const normalized = input.trim().toLowerCase().replace(/[?!.]+$/, '')
-
-  // Direct meta phrases
-  if (
-    normalized === 'explain' ||
-    normalized === 'what do you mean' ||
-    normalized === 'explain that' ||
-    normalized === 'help me understand' ||
-    normalized === 'what is that' ||
-    normalized === 'tell me more'
-  ) {
-    return true
-  }
-
-  // "explain <concept>" pattern
-  if (normalized.startsWith('explain ')) {
-    return true
-  }
-
-  // "what is <concept>" pattern
-  if (normalized.startsWith('what is ') || normalized.startsWith('what are ')) {
-    return true
-  }
-
-  // Check after stripping conversational prefixes
-  // e.g., "can you tell me what are the workspaces actions?" → "what are the workspaces actions"
-  const stripped = stripConversationalPrefix(normalized)
-  if (stripped !== normalized) {
-    if (stripped.startsWith('what is ') || stripped.startsWith('what are ')) {
-      return true
-    }
-  }
-
-  return false
-}
-
-/**
- * Extract the concept from a meta-explain phrase.
- * Returns null if no specific concept is mentioned.
- * Handles conversational prefixes like "can you tell me what are X"
- */
-function extractMetaExplainConcept(input: string): string | null {
-  const normalized = input.trim().toLowerCase().replace(/[?!.]+$/, '')
-
-  // Try direct patterns first, then try after stripping conversational prefix
-  const variants = [normalized, stripConversationalPrefix(normalized)]
-
-  for (const text of variants) {
-    // "explain <concept>"
-    if (text.startsWith('explain ') && text !== 'explain that') {
-      const concept = text.replace(/^explain\s+/, '').trim()
-      if (concept && concept !== 'that') return concept
-    }
-
-    // "what is <concept>"
-    if (text.startsWith('what is ')) {
-      const concept = text.replace(/^what is\s+(a\s+|an\s+|the\s+)?/, '').trim()
-      if (concept) return concept
-    }
-
-    // "what are <concepts>"
-    if (text.startsWith('what are ')) {
-      const concept = text.replace(/^what are\s+(the\s+)?/, '').trim()
-      if (concept) return concept
-    }
-  }
-
-  return null
-}
+// TD-3: matchesReshowPhrases, stripConversationalPrefix, isMetaExplainOutsideClarification,
+//       extractMetaExplainConcept now imported from query-patterns.ts
 
 // =============================================================================
 // V4 Doc Retrieval Routing Helpers
@@ -446,105 +309,15 @@ function extractMetaExplainConcept(input: string): string | null {
  */
 type DocRoute = 'doc' | 'action' | 'bare_noun' | 'llm'
 
-/**
- * Action nouns that should bypass doc retrieval and use normal routing.
- * Per v4 plan: minimal set of navigation shortcuts.
- * Note: singular "workspace" is doc-routable, only plural "workspaces" is action.
- */
-const ACTION_NOUNS = new Set<string>([
-  'recent',
-  'recents',
-  'quick links',
-  'quicklinks',
-  'workspaces', // plural only; keep singular "workspace" doc-routable
-])
-
-/**
- * Polite command prefixes that indicate an action request, not a doc question.
- * Per v4 plan: "can you open..." is a command, but "can I rename?" is a question.
- */
-const POLITE_COMMAND_PREFIXES = [
-  'can you',
-  'could you',
-  'would you',
-  'please',
-  'show me',
-]
-
-/**
- * Doc-verb cues: low-churn list of verbs that indicate doc-style queries.
- * Per v4 plan: these extend beyond question-word detection.
- */
-const DOC_VERBS = new Set<string>([
-  'describe',
-  'clarify',
-  'define',
-  'overview',
-  'meaning',
-])
-
-/**
- * Check if string starts with any of the given prefixes.
- */
-function startsWithAnyPrefix(normalized: string, prefixes: string[]): boolean {
-  return prefixes.some(p => normalized === p || normalized.startsWith(p + ' '))
-}
-
-/**
- * Normalize user input for routing decisions.
- * Per v4 plan: consistent normalization for both routing and retrieval.
- */
-function normalizeInputForRouting(input: string): { normalized: string; tokens: string[] } {
-  const normalized = input
-    .toLowerCase()
-    .trim()
-    .replace(/[-_/,:;]+/g, ' ')
-    .replace(/[?!.]+$/, '')
-    .replace(/\s+/g, ' ')
-
-  // NOTE: In real impl apply synonyms + conservative stemming + typo fix BEFORE tokenization.
-  const tokens = normalized.split(/\s+/).filter(Boolean)
-  return { normalized, tokens }
-}
-
-/**
- * Normalize a widget/doc title for comparison.
- */
-function normalizeTitle(title: string): string {
-  return title
-    .toLowerCase()
-    .trim()
-    .replace(/[-_/,:;]+/g, ' ')
-    .replace(/[?!.]+$/, '')
-    .replace(/\s+/g, ' ')
-}
-
-/**
- * Check if input has question intent (starts with question word or ends with ?).
- * Per v4 plan: broad detection of question-like inputs.
- */
-function hasQuestionIntent(normalized: string): boolean {
-  return (
-    /^(what|how|where|when|why|who|which|can|could|would|should|tell|explain|help|is|are|do|does)\b/i.test(
-      normalized
-    ) ||
-    normalized.endsWith('?')
-  )
-}
-
-/**
- * Check if input contains action verbs.
- * Per v4 plan: used for command detection.
- */
-function hasActionVerb(normalized: string): boolean {
-  return /\b(open|close|show|list|go|create|rename|delete|remove|add|navigate|edit|modify|change|update)\b/i.test(
-    normalized
-  )
-}
+// TD-3: ACTION_NOUNS, POLITE_COMMAND_PREFIXES, DOC_VERBS, startsWithAnyPrefix,
+//       normalizeInputForRouting, normalizeTitle, hasQuestionIntent, hasActionVerb,
+//       containsDocInstructionCue, looksIndexLikeReference, isCommandLike
+//       now imported from query-patterns.ts
 
 /**
  * Check if input matches a visible widget title.
  * Per v4 plan: visible widget bypass routes to action.
+ * Component-specific: requires UIContext.
  */
 function matchesVisibleWidgetTitle(normalized: string, uiContext?: UIContext | null): boolean {
   const widgets = uiContext?.dashboard?.visibleWidgets
@@ -554,54 +327,16 @@ function matchesVisibleWidgetTitle(normalized: string, uiContext?: UIContext | n
 }
 
 /**
- * Check if input contains doc instruction cues.
- * Per v4 plan: "how to", "show me how" are doc-style even with "show me" prefix.
- */
-function containsDocInstructionCue(normalized: string): boolean {
-  return /\b(how to|how do i|tell me how|show me how|walk me through)\b/i.test(normalized)
-}
-
-/**
- * Check if input looks like an index-like reference (e.g., "workspace 6", "note 2").
- * Per v4 plan: these should route to action, not doc retrieval.
- */
-function looksIndexLikeReference(normalized: string): boolean {
-  return /\b(workspace|note|page|entry)\s+\d+\b/i.test(normalized)
-}
-
-/**
- * Check if input is command-like (should route to action).
- * Per v4 plan: imperative commands + polite commands - doc instruction cues.
- */
-function isCommandLike(normalized: string): boolean {
-  // Index-like selection should be action even without a verb: "note 2"
-  if (looksIndexLikeReference(normalized)) return true
-
-  // Imperative: action verb without question intent
-  if (hasActionVerb(normalized) && !hasQuestionIntent(normalized)) return true
-
-  // Polite command: prefix + action verb, unless it's clearly an instruction question
-  if (
-    startsWithAnyPrefix(normalized, POLITE_COMMAND_PREFIXES) &&
-    hasActionVerb(normalized) &&
-    !containsDocInstructionCue(normalized)
-  ) {
-    return true
-  }
-
-  return false
-}
-
-/**
  * Check if input is a doc-style query.
  * Per v4 plan: question intent OR doc-verb cues, AND not command-like.
+ * Component-specific: requires UIContext for widget matching.
  */
 function isDocStyleQuery(input: string, uiContext?: UIContext | null): boolean {
   const { normalized, tokens } = normalizeInputForRouting(input)
 
   // Skip bare meta-explain phrases (handled by existing meta-explain handler)
-  const bareMetaPhrases = ['explain', 'what do you mean', 'explain that', 'help me understand', 'what is that', 'tell me more']
-  if (bareMetaPhrases.includes(normalized)) {
+  // TD-3: Use imported BARE_META_PHRASES
+  if (BARE_META_PHRASES.includes(normalized)) {
     return false
   }
 
@@ -620,32 +355,7 @@ function isDocStyleQuery(input: string, uiContext?: UIContext | null): boolean {
   return tokens.some(t => DOC_VERBS.has(t))
 }
 
-/**
- * Extract the query term from a doc-style query.
- * E.g., "how do I add a widget" → "add widget"
- */
-function extractDocQueryTerm(input: string): string {
-  const { normalized } = normalizeInputForRouting(input)
-
-  // Remove common prefixes
-  let term = normalized
-    .replace(/^what (is|are)\s+(a\s+|an\s+|the\s+)?/i, '')
-    .replace(/^how (do i|to|can i)\s+/i, '')
-    .replace(/^tell me (about\s+)?(a\s+|an\s+|the\s+)?/i, '')
-    .replace(/^tell me how (to\s+)?/i, '')
-    .replace(/^explain\s+(a\s+|an\s+|the\s+)?/i, '')
-    .replace(/^what does\s+(a\s+|an\s+|the\s+)?/i, '')
-    .replace(/^where can i\s+(find\s+|see\s+)?/i, '')
-    .replace(/^how can i\s+/i, '')
-    .replace(/^show me how (to\s+)?/i, '')
-    .replace(/^walk me through\s+(how to\s+)?/i, '')
-    .replace(/^describe\s+(the\s+|a\s+|an\s+)?/i, '')
-    .replace(/^clarify\s+(the\s+|a\s+|an\s+)?/i, '')
-    .replace(/^define\s+(the\s+|a\s+|an\s+)?/i, '')
-    .trim()
-
-  return term || normalized
-}
+// TD-3: extractDocQueryTerm now imported from query-patterns.ts
 
 /**
  * Check if input passes the bare-noun guard for doc retrieval.
@@ -775,72 +485,7 @@ function routeDocInput(
 // Per general-doc-retrieval-routing-plan.md (v4)
 // =============================================================================
 
-/**
- * Detect correction/rejection phrases.
- * Per v4 plan: "no / not that / that's wrong" triggers re-retrieval.
- */
-function isCorrectionPhrase(input: string): boolean {
-  const normalized = input.trim().toLowerCase()
-  const correctionPhrases = [
-    'no',
-    'nope',
-    'not that',
-    'not what i meant',
-    'not what i asked',
-    "that's wrong",
-    'thats wrong',
-    'wrong',
-    'incorrect',
-    'different',
-    'something else',
-    'try again',
-  ]
-  return correctionPhrases.some(p => normalized === p || normalized.startsWith(p + ' '))
-}
-
-/**
- * Detect pronoun follow-up phrases.
- * Per v4 plan: "tell me more", "how does it work" uses lastDocSlug.
- */
-function isPronounFollowUp(input: string): boolean {
-  const normalized = input.trim().toLowerCase()
-  const followUpPhrases = [
-    'tell me more',
-    'more details',
-    'explain more',
-    'more',           // V5: Single-word follow-up
-    'how does it work',
-    'how does that work',
-    'what else',
-    'continue',
-    'go on',
-    'expand',         // V5: Added per plan
-    'elaborate',
-  ]
-  // Exact match for single words, startsWith for phrases
-  return followUpPhrases.some(p => normalized === p || normalized.startsWith(p + ' ') || normalized.startsWith(p))
-}
-
-/**
- * Format response based on user input style.
- * Per v4 plan: Match User Effort - short question → 1-2 sentences, etc.
- */
-function getResponseStyle(input: string): 'short' | 'medium' | 'detailed' {
-  const normalized = input.trim().toLowerCase()
-
-  // Detailed: "walk me through", "step by step", "how do i"
-  if (/\b(walk me through|step by step|steps to|how do i|how to)\b/.test(normalized)) {
-    return 'detailed'
-  }
-
-  // Medium: "explain", "describe", "tell me about"
-  if (/\b(explain|describe|tell me about|clarify)\b/.test(normalized)) {
-    return 'medium'
-  }
-
-  // Short: "what is", short queries
-  return 'short'
-}
+// TD-3: isCorrectionPhrase, isPronounFollowUp, getResponseStyle now imported from query-patterns.ts
 
 /**
  * Format snippet based on response style.
@@ -2421,17 +2066,15 @@ function ChatNavigationPanelContent({
       // When clarification is active, ALL input goes through this handler first.
       // Clarification handling runs BEFORE new-intent detection to avoid premature exit.
       // ---------------------------------------------------------------------------
-      // Pattern definitions for new-intent detection (used in UNCLEAR fallback)
-      const QUESTION_START_PATTERN = /^(what|which|where|when|how|why|who|is|are|do|does|did|can|could|should|would)\b/i
-      const COMMAND_START_PATTERN = /^(open|show|go|list|create|close|delete|rename|back|home)\b/i
+      // TD-3: Use imported patterns from query-patterns.ts
       // Per definitional-query-fix-proposal.md: bare nouns should exit clarification for doc routing
       const bareNounKnownTerms = getKnownTermsSync()
       const isBareNounNewIntent = bareNounKnownTerms
         ? isBareNounQuery(trimmedInput, uiContext, bareNounKnownTerms)
         : false
-      const isNewQuestionOrCommand =
-        QUESTION_START_PATTERN.test(trimmedInput) ||
-        COMMAND_START_PATTERN.test(trimmedInput) ||
+      // Use imported isNewQuestionOrCommand + component-specific bare noun check
+      const isNewQuestionOrCommandDetected =
+        isNewQuestionOrCommand(trimmedInput) ||
         trimmedInput.endsWith('?') ||
         isBareNounNewIntent  // Bare nouns should exit clarification for doc routing
 
@@ -2567,7 +2210,7 @@ function ChatNavigationPanelContent({
         // Returns true if we should fall through to normal routing, false if handled here
         const handleUnclear = (): boolean => {
           // If input looks like a new question/command, exit clarification and route normally
-          if (isNewQuestionOrCommand) {
+          if (isNewQuestionOrCommandDetected) {
             void debugLog({
               component: 'ChatNavigation',
               action: 'clarification_exit_unclear_new_intent',
@@ -2694,7 +2337,7 @@ function ChatNavigationPanelContent({
         // Tier 1b.5: New intent escape - exit clarification for new questions/commands
         // Per clarification-exit-and-cancel-fix-plan.md: "where am I?" should route normally
         // Per definitional-query-fix-proposal.md: bare nouns should also exit clarification
-        if (isNewQuestionOrCommand) {
+        if (isNewQuestionOrCommandDetected) {
           void debugLog({
             component: 'ChatNavigation',
             action: 'clarification_exit_new_intent',
@@ -2888,6 +2531,10 @@ function ChatNavigationPanelContent({
             metaExplainTelemetryEvent.doc_slug_top = result.docSlug || result.options?.[0]?.docSlug
             metaExplainTelemetryEvent.doc_slug_alt = result.options?.slice(1, 3).map((o: { docSlug: string }) => o.docSlug)
             metaExplainTelemetryEvent.routing_latency_ms = Date.now() - metaExplainStartTime
+            // TD-4: Set AMBIGUOUS_CROSS_DOC pattern when result is ambiguous with multiple doc options
+            if (result.status === 'ambiguous' && result.options?.length >= 2) {
+              metaExplainTelemetryEvent.matched_pattern_id = RoutingPatternId.AMBIGUOUS_CROSS_DOC
+            }
             void logRoutingDecision(metaExplainTelemetryEvent as RoutingTelemetryEvent)
 
             // Per definitional-query-fix-proposal.md: Check for ambiguous status (Step 1 cross-doc override)
@@ -3077,7 +2724,7 @@ function ChatNavigationPanelContent({
       // call the semantic classifier as a backup before falling back to LLM"
       // FIX: Skip classifier for new questions/commands - they are clearly new intents, not follow-ups
       // e.g., "can you tell me what are the workspaces actions?" should NOT be scoped to previous doc
-      if (docRetrievalState?.lastDocSlug && !isFollowUp && !isNewQuestionOrCommand) {
+      if (docRetrievalState?.lastDocSlug && !isFollowUp && !isNewQuestionOrCommandDetected) {
         classifierCalled = true
         const classifierStartTime = Date.now()
 
@@ -3305,7 +2952,7 @@ function ChatNavigationPanelContent({
       )
       telemetryEvent.route_deterministic = docRoute as RoutingTelemetryEvent['route_deterministic']
       telemetryEvent.route_final = docRoute as RoutingTelemetryEvent['route_final']
-      telemetryEvent.is_new_question = isNewQuestionOrCommand
+      telemetryEvent.is_new_question = isNewQuestionOrCommandDetected
       // TD-4: Populate classifier telemetry fields
       telemetryEvent.classifier_called = classifierCalled
       telemetryEvent.classifier_result = classifierResult
@@ -3316,7 +2963,7 @@ function ChatNavigationPanelContent({
         trimmedInput,
         docRoute,
         isFollowUp,
-        isNewQuestionOrCommand,
+        isNewQuestionOrCommandDetected,
         classifierCalled,
         stripConversationalPrefix(normalizedQuery) !== normalizedQuery
       )
@@ -3369,6 +3016,10 @@ function ChatNavigationPanelContent({
             telemetryEvent.doc_slug_top = result.results?.[0]?.doc_slug
             telemetryEvent.doc_slug_alt = result.results?.slice(1, 3).map((r: { doc_slug: string }) => r.doc_slug)
             telemetryEvent.routing_latency_ms = Date.now() - routingStartTime
+            // TD-4: Set AMBIGUOUS_CROSS_DOC pattern when result is ambiguous with multiple doc options
+            if (result.status === 'ambiguous' && result.results?.length >= 2) {
+              telemetryEvent.matched_pattern_id = RoutingPatternId.AMBIGUOUS_CROSS_DOC
+            }
             void logRoutingDecision(telemetryEvent as RoutingTelemetryEvent)
 
             // Handle different response statuses
