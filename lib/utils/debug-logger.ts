@@ -134,6 +134,8 @@ export interface DebugLogData {
     bodyCharCount?: number;
     timestamp: number;
   };
+  // TD-4: Force logging even when debug is disabled (for durable telemetry)
+  forceLog?: boolean;
 }
 
 /**
@@ -145,9 +147,6 @@ export async function debugLog(
   _event?: string,
   _details?: any
 ): Promise<void> {
-  if (!shouldEmitDebugLog()) {
-    return;
-  }
   const data: DebugLogData =
     typeof _dataOrContext === "string"
       ? {
@@ -156,6 +155,11 @@ export async function debugLog(
           metadata: typeof _details === "object" ? _details : undefined,
         }
       : _dataOrContext
+
+  // TD-4: forceLog bypasses the debug check for durable telemetry
+  if (!data.forceLog && !shouldEmitDebugLog()) {
+    return;
+  }
   const timestamp = new Date().toISOString()
   const payload = JSON.stringify({
     timestamp,

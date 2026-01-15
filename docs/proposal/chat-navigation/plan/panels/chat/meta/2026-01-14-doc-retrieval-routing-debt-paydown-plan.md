@@ -185,6 +185,8 @@ Weak clarifications can lock the user into the wrong doc and make follow-ups exp
 ### Acceptance Criteria
 - After a weak clarification, “tell me more” re-queries instead of expanding a guessed doc.
 - After a pill selection, follow-ups expand the selected doc.
+- Telemetry shows weak→followup misroute rate decreases.
+- Do not set `lastDocSlug` on ambiguous results; only set after pill selection.
 
 ## Risks & Mitigations
 - Pattern changes can regress routing → regression tests + telemetry.

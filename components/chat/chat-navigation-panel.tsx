@@ -45,6 +45,13 @@ import {
   showEntryOpenedToast,
 } from '@/lib/chat/navigation-toast'
 import { getKnownTermsSync, fetchKnownTerms, isKnownTermsCacheValid } from '@/lib/docs/known-terms-client'
+import {
+  logRoutingDecision,
+  createRoutingTelemetryEvent,
+  getPatternId,
+  RoutingPatternId,
+  type RoutingTelemetryEvent,
+} from '@/lib/chat/routing-telemetry'
 
 export interface ChatNavigationPanelProps {
   /** Current entry ID for context */
@@ -2932,11 +2939,15 @@ function ChatNavigationPanelContent({
             // V5: Use actual docSlug from result (not query term) for accurate follow-ups
             const metaQueryTerm = queryTerm || trimmedInput
             const { tokens: metaTokens } = normalizeInputForRouting(metaQueryTerm)
+
+            // TD-8: Only set lastDocSlug for confident results (found), not weak
+            // Weak results should not lock follow-ups to potentially wrong doc
+            const isConfidentResult = result.status === 'found' || !result.status // Legacy: if no status, assume found
             updateDocRetrievalState({
-              lastDocSlug: result.docSlug || metaQueryTerm, // V5: Prefer actual slug, fallback to query
+              lastDocSlug: isConfidentResult ? (result.docSlug || metaQueryTerm) : undefined,
               lastTopicTokens: metaTokens,
               lastMode: 'doc',
-              lastChunkIdsShown: result.chunkId ? [result.chunkId] : [], // V5: Track shown chunk
+              lastChunkIdsShown: isConfidentResult && result.chunkId ? [result.chunkId] : [],
             })
 
             setIsLoading(false)
@@ -2964,6 +2975,26 @@ function ChatNavigationPanelContent({
       // Per general-doc-retrieval-routing-plan.md (v4)
       // ---------------------------------------------------------------------------
       if (docRetrievalState?.lastDocSlug && isCorrectionPhrase(trimmedInput)) {
+        // TD-4: Log correction telemetry to track when previous routing was wrong
+        // This marks that the PREVIOUS turn's routing decision was corrected by user
+        const { normalized: normalizedQuery } = normalizeInputForRouting(trimmedInput)
+        const correctionTelemetryEvent: Partial<RoutingTelemetryEvent> = createRoutingTelemetryEvent(
+          trimmedInput,
+          normalizedQuery,
+          true,
+          0,
+          docRetrievalState.lastDocSlug
+        )
+        correctionTelemetryEvent.route_deterministic = 'clarify'
+        correctionTelemetryEvent.route_final = 'clarify'
+        correctionTelemetryEvent.matched_pattern_id = RoutingPatternId.CORRECTION
+        // TD-4: This event indicates the PREVIOUS turn should be marked as user_corrected_next_turn=true
+        // The doc_slug_top contains the doc that was incorrectly routed to
+        correctionTelemetryEvent.doc_slug_top = docRetrievalState.lastDocSlug
+        correctionTelemetryEvent.user_corrected_next_turn = true // Marks this IS a correction event
+        correctionTelemetryEvent.routing_latency_ms = 0
+        void logRoutingDecision(correctionTelemetryEvent as RoutingTelemetryEvent)
+
         void debugLog({
           component: 'ChatNavigation',
           action: 'doc_correction',
@@ -3002,6 +3033,13 @@ function ChatNavigationPanelContent({
       // Check for deterministic follow-up first
       let isFollowUp = isPronounFollowUp(trimmedInput)
 
+      // TD-4: Track classifier state for telemetry
+      let classifierCalled = false
+      let classifierResult: boolean | undefined
+      let classifierTimeout = false
+      let classifierLatencyMs: number | undefined
+      let classifierError = false
+
       // V5 Follow-up-miss backup: If lastDocSlug is set but deterministic check missed,
       // call classifier as backup BEFORE falling to LLM routing
       // Per plan (line 315): "If follow-up detection misses but lastDocSlug is set,
@@ -3009,7 +3047,14 @@ function ChatNavigationPanelContent({
       // FIX: Skip classifier for new questions/commands - they are clearly new intents, not follow-ups
       // e.g., "can you tell me what are the workspaces actions?" should NOT be scoped to previous doc
       if (docRetrievalState?.lastDocSlug && !isFollowUp && !isNewQuestionOrCommand) {
+        classifierCalled = true
+        const classifierStartTime = Date.now()
+
         try {
+          // TD-4: Add timeout to classifier call (2 second timeout)
+          const controller = new AbortController()
+          const timeoutId = setTimeout(() => controller.abort(), 2000)
+
           const classifyResponse = await fetch('/api/chat/classify-followup', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -3018,10 +3063,15 @@ function ChatNavigationPanelContent({
               lastDocSlug: docRetrievalState.lastDocSlug,
               lastTopicTokens: docRetrievalState.lastTopicTokens,
             }),
+            signal: controller.signal,
           })
-          const classifyResult = await classifyResponse.json()
+          clearTimeout(timeoutId)
 
-          if (classifyResult.isFollowUp) {
+          const classifyResultData = await classifyResponse.json()
+          classifierLatencyMs = Date.now() - classifierStartTime
+          classifierResult = classifyResultData.isFollowUp
+
+          if (classifyResultData.isFollowUp) {
             isFollowUp = true
             void debugLog({
               component: 'ChatNavigation',
@@ -3029,7 +3079,7 @@ function ChatNavigationPanelContent({
               metadata: {
                 userInput: trimmedInput,
                 lastDocSlug: docRetrievalState.lastDocSlug,
-                latencyMs: classifyResult.latencyMs,
+                latencyMs: classifierLatencyMs,
               },
               metrics: {
                 event: 'classifier_followup_detected',
@@ -3039,13 +3089,46 @@ function ChatNavigationPanelContent({
             })
           }
         } catch (error) {
-          console.error('[ChatNavigation] Follow-up classifier backup error:', error)
+          classifierLatencyMs = Date.now() - classifierStartTime
+          if (error instanceof Error && error.name === 'AbortError') {
+            classifierTimeout = true
+            console.warn('[ChatNavigation] Follow-up classifier timed out')
+          } else {
+            classifierError = true
+            console.error('[ChatNavigation] Follow-up classifier backup error:', error)
+          }
           // Continue without classifier result - fall through to normal routing
         }
       }
 
       if (docRetrievalState?.lastDocSlug && isFollowUp) {
         const excludeChunkIds = docRetrievalState.lastChunkIdsShown || []
+        const followupStartTime = Date.now()
+
+        // TD-4: Log follow-up route telemetry
+        const { normalized: normalizedQuery } = normalizeInputForRouting(trimmedInput)
+        const followupTelemetryEvent: Partial<RoutingTelemetryEvent> = createRoutingTelemetryEvent(
+          trimmedInput,
+          normalizedQuery,
+          true, // knownTerms not relevant for follow-ups
+          0,
+          docRetrievalState.lastDocSlug
+        )
+        followupTelemetryEvent.route_deterministic = 'followup'
+        followupTelemetryEvent.route_final = 'followup'
+        followupTelemetryEvent.followup_detected = true
+        followupTelemetryEvent.classifier_called = classifierCalled
+        followupTelemetryEvent.classifier_result = classifierResult
+        followupTelemetryEvent.classifier_timeout = classifierTimeout
+        followupTelemetryEvent.classifier_latency_ms = classifierLatencyMs
+        followupTelemetryEvent.classifier_error = classifierError
+        followupTelemetryEvent.matched_pattern_id = classifierCalled && classifierResult
+          ? RoutingPatternId.FOLLOWUP_CLASSIFIER
+          : isPronounFollowUp(trimmedInput)
+            ? RoutingPatternId.FOLLOWUP_PRONOUN
+            : RoutingPatternId.FOLLOWUP_TELL_ME_MORE
+        followupTelemetryEvent.routing_latency_ms = Date.now() - followupStartTime
+        void logRoutingDecision(followupTelemetryEvent as RoutingTelemetryEvent)
 
         void debugLog({
           component: 'ChatNavigation',
@@ -3173,23 +3256,50 @@ function ChatNavigationPanelContent({
 
       // Get knownTerms for app relevance gate (use cached if available)
       const knownTerms = getKnownTermsSync()
+      const routingStartTime = Date.now()
 
       // Use the main routing function
       const docRoute = routeDocInput(trimmedInput, uiContext, knownTerms ?? undefined)
       const isDocStyle = docRoute === 'doc'
       const isBareNoun = docRoute === 'bare_noun'
 
-      // Log routing decision for metrics
-      void debugLog({
-        component: 'ChatNavigation',
-        action: 'doc_routing_decision',
-        metadata: {
-          userInput: trimmedInput,
-          route: docRoute,
-          hasKnownTerms: !!knownTerms,
-          knownTermsSize: knownTerms?.size ?? 0,
-        },
-      })
+      // TD-4: Create telemetry event for tracking
+      const { normalized: normalizedQuery } = normalizeInputForRouting(trimmedInput)
+      const telemetryEvent: Partial<RoutingTelemetryEvent> = createRoutingTelemetryEvent(
+        trimmedInput,
+        normalizedQuery,
+        !!knownTerms,
+        knownTerms?.size ?? 0,
+        docRetrievalState?.lastDocSlug
+      )
+      telemetryEvent.route_deterministic = docRoute as RoutingTelemetryEvent['route_deterministic']
+      telemetryEvent.route_final = docRoute as RoutingTelemetryEvent['route_final']
+      telemetryEvent.is_new_question = isNewQuestionOrCommand
+      // TD-4: Populate classifier telemetry fields
+      telemetryEvent.classifier_called = classifierCalled
+      telemetryEvent.classifier_result = classifierResult
+      telemetryEvent.classifier_timeout = classifierTimeout
+      telemetryEvent.classifier_latency_ms = classifierLatencyMs
+      telemetryEvent.classifier_error = classifierError
+      telemetryEvent.matched_pattern_id = getPatternId(
+        trimmedInput,
+        docRoute,
+        isFollowUp,
+        isNewQuestionOrCommand,
+        classifierCalled,
+        stripConversationalPrefix(normalizedQuery) !== normalizedQuery
+      )
+
+      // TD-4: Log action route decisions (widget/command bypass)
+      if (docRoute === 'action') {
+        telemetryEvent.route_final = 'action'
+        telemetryEvent.matched_pattern_id = matchesVisibleWidgetTitle(normalizedQuery, uiContext)
+          ? RoutingPatternId.ACTION_WIDGET
+          : RoutingPatternId.ACTION_COMMAND
+        telemetryEvent.routing_latency_ms = Date.now() - routingStartTime
+        void logRoutingDecision(telemetryEvent as RoutingTelemetryEvent)
+        // Action routes fall through to LLM/tool processing
+      }
 
       if ((!lastClarification || clarificationCleared) && (isDocStyle || isBareNoun)) {
         void debugLog({
@@ -3222,6 +3332,13 @@ function ChatNavigationPanelContent({
             console.log(`[DocRetrieval] query="${queryTerm}" status=${result.status} ` +
               `confidence=${result.confidence?.toFixed(2) ?? 'N/A'} ` +
               `resultsCount=${result.results?.length ?? 0}`)
+
+            // TD-4: Update telemetry with retrieval result
+            telemetryEvent.doc_status = result.status as RoutingTelemetryEvent['doc_status']
+            telemetryEvent.doc_slug_top = result.results?.[0]?.doc_slug
+            telemetryEvent.doc_slug_alt = result.results?.slice(1, 3).map((r: { doc_slug: string }) => r.doc_slug)
+            telemetryEvent.routing_latency_ms = Date.now() - routingStartTime
+            void logRoutingDecision(telemetryEvent as RoutingTelemetryEvent)
 
             // Handle different response statuses
             if (result.status === 'found' && result.results?.length > 0) {
@@ -3317,18 +3434,43 @@ function ChatNavigationPanelContent({
               // Weak match - show best guess with confirmation
               const topResult = result.results[0]
               const headerPath = topResult.header_path || topResult.title
+              const messageId = `assistant-${Date.now()}`
+
+              // TD-8: Create pill for weak result so user can confirm
+              const weakOption: SelectionOption = {
+                type: 'doc' as const,
+                id: topResult.doc_slug,
+                label: headerPath,
+                sublabel: topResult.category || 'Documentation',
+                data: { docSlug: topResult.doc_slug },
+              }
+
               const assistantMessage: ChatMessage = {
-                id: `assistant-${Date.now()}`,
+                id: messageId,
                 role: 'assistant',
                 content: result.clarification || `I think you mean "${headerPath}". Is that right?`,
                 timestamp: new Date(),
                 isError: false,
+                options: [weakOption], // Show as pill for confirmation
               }
               addMessage(assistantMessage)
 
-              // Update state for potential follow-up
+              // TD-8: Set up pill selection handling
+              setPendingOptions([{
+                index: 1,
+                label: weakOption.label,
+                sublabel: weakOption.sublabel,
+                type: weakOption.type,
+                id: weakOption.id,
+                data: weakOption.data,
+              }])
+              setPendingOptionsMessageId(messageId)
+
+              // TD-8: DON'T set lastDocSlug on weak results
+              // Only set topic tokens so "tell me more" re-queries instead of expanding wrong doc
+              // lastDocSlug will be set when user clicks the pill (explicit confirmation)
               updateDocRetrievalState({
-                lastDocSlug: topResult.doc_slug,
+                // lastDocSlug intentionally NOT set - per TD-8
                 lastTopicTokens: queryTokens,
                 lastMode: isDocStyle ? 'doc' : 'bare_noun',
               })
@@ -3434,11 +3576,11 @@ function ChatNavigationPanelContent({
       // When routeDocInput returns 'llm', the query is not app-relevant
       // ---------------------------------------------------------------------------
       if (docRoute === 'llm' && (!lastClarification || clarificationCleared)) {
-        void debugLog({
-          component: 'ChatNavigation',
-          action: 'llm_route_non_app',
-          metadata: { userInput: trimmedInput, route: docRoute },
-        })
+        // TD-4: Log LLM fallback for tracking
+        telemetryEvent.route_final = 'llm'
+        telemetryEvent.matched_pattern_id = RoutingPatternId.ROUTE_LLM_FALLBACK
+        telemetryEvent.routing_latency_ms = Date.now() - routingStartTime
+        void logRoutingDecision(telemetryEvent as RoutingTelemetryEvent)
 
         // For non-app queries, provide a helpful redirect to app topics
         // This prevents the confusing typo fallback for queries like "quantum physics"
