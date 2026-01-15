@@ -2804,6 +2804,30 @@ function ChatNavigationPanelContent({
       // ---------------------------------------------------------------------------
       const shouldDeferToV4FollowUp = docRetrievalState?.lastDocSlug && isPronounFollowUp(trimmedInput)
       if ((!lastClarification || clarificationCleared) && isMetaExplainOutsideClarification(trimmedInput) && !shouldDeferToV4FollowUp) {
+        const metaExplainStartTime = Date.now()
+
+        // TD-4: Log meta-explain route telemetry
+        const { normalized: normalizedMetaQuery } = normalizeInputForRouting(trimmedInput)
+        const metaExplainTelemetryEvent: Partial<RoutingTelemetryEvent> = createRoutingTelemetryEvent(
+          trimmedInput,
+          normalizedMetaQuery,
+          true, // knownTerms not checked for meta-explain
+          0,
+          docRetrievalState?.lastDocSlug
+        )
+        metaExplainTelemetryEvent.route_deterministic = 'doc'
+        metaExplainTelemetryEvent.route_final = 'doc'
+        // Determine pattern based on query structure
+        if (/^what is\b/i.test(normalizedMetaQuery)) {
+          metaExplainTelemetryEvent.matched_pattern_id = RoutingPatternId.DEF_WHAT_IS
+        } else if (/^what are\b/i.test(normalizedMetaQuery)) {
+          metaExplainTelemetryEvent.matched_pattern_id = RoutingPatternId.DEF_WHAT_ARE
+        } else if (/^explain\b/i.test(normalizedMetaQuery)) {
+          metaExplainTelemetryEvent.matched_pattern_id = RoutingPatternId.DEF_EXPLAIN
+        } else {
+          metaExplainTelemetryEvent.matched_pattern_id = RoutingPatternId.DEF_CONVERSATIONAL
+        }
+
         void debugLog({
           component: 'ChatNavigation',
           action: 'meta_explain_outside_clarification',
@@ -2858,6 +2882,13 @@ function ChatNavigationPanelContent({
 
           if (retrieveResponse.ok) {
             const result = await retrieveResponse.json()
+
+            // TD-4: Update telemetry with retrieval result and log
+            metaExplainTelemetryEvent.doc_status = result.status as RoutingTelemetryEvent['doc_status']
+            metaExplainTelemetryEvent.doc_slug_top = result.docSlug || result.options?.[0]?.docSlug
+            metaExplainTelemetryEvent.doc_slug_alt = result.options?.slice(1, 3).map((o: { docSlug: string }) => o.docSlug)
+            metaExplainTelemetryEvent.routing_latency_ms = Date.now() - metaExplainStartTime
+            void logRoutingDecision(metaExplainTelemetryEvent as RoutingTelemetryEvent)
 
             // Per definitional-query-fix-proposal.md: Check for ambiguous status (Step 1 cross-doc override)
             // If ambiguous, show pills for doc selection instead of just text clarification
