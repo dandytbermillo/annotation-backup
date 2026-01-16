@@ -1,7 +1,10 @@
+---
+keywords: [widget, widgets, panel, panels, action, actions, dashboard]
+---
 # Widget and Panel Actions
 
 ## Overview
-Widgets and panels are the building blocks of the dashboard. The chat can open widgets as drawers and list their content in chat, depending on panel type.
+Widgets and panels are the building blocks of the dashboard. The chat can open widgets as drawers and list their content in chat, depending on panel type. Each action targets a specific widget or panel.
 
 ## Supported actions
 - Open a visible widget by name (drawer)
@@ -22,6 +25,7 @@ Widgets and panels are the building blocks of the dashboard. The chat can open w
 - If a widget does not expose a chat manifest yet, the chat may not open it.
 
 ## Related concepts
+- Action
 - Widgets
 - Panels
 - Drawer

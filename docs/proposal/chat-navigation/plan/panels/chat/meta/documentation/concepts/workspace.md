@@ -1,3 +1,6 @@
+---
+keywords: [workspace, workspaces, entry, entries, notes, note, dashboard, canvas]
+---
 # Workspace
 
 ## Overview

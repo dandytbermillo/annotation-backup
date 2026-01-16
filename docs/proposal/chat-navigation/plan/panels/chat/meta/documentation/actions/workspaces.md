@@ -1,7 +1,10 @@
+---
+keywords: [workspace, workspaces, action, actions, entry, entries]
+---
 # Workspace Actions
 
 ## Overview
-Workspace actions manage and organize workspaces within the current entry. These actions are safe and scoped to the current entry unless otherwise stated.
+Workspace actions manage and organize workspaces within the current entry. Each action is safe and scoped to the current entry unless otherwise stated.
 
 ## Supported actions
 - List workspaces in the current entry
@@ -23,6 +26,7 @@ Workspace actions manage and organize workspaces within the current entry. These
 - Some defaults (like a Dashboard workspace) may be protected from deletion.
 
 ## Related concepts
+- Action
 - Entry
 - Dashboard
 - Workspace

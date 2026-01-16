@@ -1,9 +1,19 @@
 # knownTerms SSR Snapshot Plan
 
-**Date:** 2026-01-15  
-**Status:** Draft  
-**Scope:** Chat routing (knownTerms preload)  
+**Date:** 2026-01-15
+**Status:** Implemented
+**Scope:** Chat routing (knownTerms preload)
 **Related:** `2026-01-14-doc-retrieval-routing-debt-paydown-plan.md` (TD-1 prerequisite)
+
+## Implementation (2026-01-15)
+
+**Files created/modified:**
+- `lib/docs/known-terms-client.ts` - Added `initFromSnapshot()`, `getKnownTermsFetchStatus()`, snapshot types
+- `lib/docs/known-terms-snapshot.ts` - Server-side snapshot builder (new)
+- `app/providers/known-terms-provider.tsx` - Client provider to init from snapshot (new)
+- `app/layout.tsx` - SSR snapshot injection
+- `app/api/docs/known-terms/route.ts` - Added version hash and generatedAt
+- `lib/chat/routing-telemetry.ts` - Added 'snapshot' to fetch status enum
 
 ---
 

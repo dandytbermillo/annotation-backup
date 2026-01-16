@@ -1,3 +1,6 @@
+---
+keywords: [entry, entries, dashboard, workspaces, workspace, notes, note, home, quick links, widgets, panels]
+---
 # Entry
 
 ## Overview

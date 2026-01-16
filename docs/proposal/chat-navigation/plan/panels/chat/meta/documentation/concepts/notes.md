@@ -1,3 +1,6 @@
+---
+keywords: [notes, note, workspace, workspaces, entry, entries, annotation, annotations, canvas]
+---
 # Notes
 
 ## Overview

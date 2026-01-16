@@ -1,7 +1,10 @@
+---
+keywords: [navigation, navigate, action, actions, entry, entries, workspace, workspaces, dashboard, home]
+---
 # Navigation Actions
 
 ## Overview
-These actions move you between entries, dashboards, and workspaces. They are used by the chat assistant when you ask to go somewhere or open a location.
+These actions move you between entries, dashboards, and workspaces. Each action targets a single destination. They are used by the chat assistant when you ask to go somewhere or open a location.
 
 ## Supported actions
 - Go to the current entry dashboard
@@ -23,6 +26,7 @@ These actions move you between entries, dashboards, and workspaces. They are use
 - If the target is not found, the chat returns a clear "not found" message.
 
 ## Related concepts
+- Action
 - Home
 - Entry
 - Dashboard

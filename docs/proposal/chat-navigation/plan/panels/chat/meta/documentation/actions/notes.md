@@ -1,7 +1,10 @@
+---
+keywords: [note, notes, action, actions, workspace, workspaces]
+---
 # Note Actions
 
 ## Overview
-Notes live inside workspaces. Note actions depend on the current workspace context.
+Notes live inside workspaces. Note actions depend on the current workspace context. Each action is scoped to the active workspace.
 
 ## Supported actions
 - Open a note by title
@@ -17,5 +20,6 @@ Notes live inside workspaces. Note actions depend on the current workspace conte
 - If a note title is not found, the chat responds with a clear "not found" message.
 
 ## Related concepts
+- Action
 - Workspace
 - Notes

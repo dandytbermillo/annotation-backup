@@ -44,7 +44,7 @@ import {
   showHomeToast,
   showEntryOpenedToast,
 } from '@/lib/chat/navigation-toast'
-import { getKnownTermsSync, fetchKnownTerms, isKnownTermsCacheValid } from '@/lib/docs/known-terms-client'
+import { getKnownTermsSync, fetchKnownTerms, isKnownTermsCacheValid, getKnownTermsFetchStatus } from '@/lib/docs/known-terms-client'
 import {
   logRoutingDecision,
   createRoutingTelemetryEvent,
@@ -409,22 +409,9 @@ function isBareNounQuery(
  *
  * Now with full knownTerms integration for app relevance gate.
  */
-// Core app terms that are always checked, even if knownTerms cache is not loaded.
-// This ensures queries with these terms route to doc retrieval regardless of cache state.
-const CORE_APP_TERMS = new Set([
-  'workspace', 'workspaces',
-  'note', 'notes',
-  'action', 'actions',
-  'widget', 'widgets',
-  'entry', 'entries',
-  'folder', 'folders',
-  'panel', 'panels',
-  'annotation', 'annotations',
-  'canvas',
-  'navigation', 'navigate',
-  'dashboard',
-  'home',
-])
+// TD-1 COMPLETE: CORE_APP_TERMS removed (2026-01-16)
+// App relevance now determined solely by knownTerms (SSR snapshot guarantees availability)
+// Historical telemetry with matched_core_term preserved in debug_logs
 
 function routeDocInput(
   input: string,
@@ -434,16 +421,9 @@ function routeDocInput(
   const { normalized, tokens } = normalizeInputForRouting(input)
 
   // Step 1: app relevance gate (v4 plan)
-  // Check against both knownTerms (if available) AND core app terms
+  // TD-1: Now relies solely on knownTerms (SSR snapshot guarantees availability)
   let isAppRelevant = false
 
-  // Always check core app terms (cache-independent)
-  const hasCoreAppTerm = tokens.some(t => CORE_APP_TERMS.has(t))
-  if (hasCoreAppTerm) {
-    isAppRelevant = true
-  }
-
-  // Also check knownTerms if available
   if (knownTerms && knownTerms.size > 0) {
     const hasKnownTerm =
       tokens.some(t => knownTerms.has(t)) ||
@@ -458,11 +438,15 @@ function routeDocInput(
       const hasFuzzy = hasFuzzyMatch(tokens, knownTerms)
       if (hasFuzzy) {
         isAppRelevant = true
-      } else if (!hasCoreAppTerm) {
-        // Not app-relevant (no core terms, no known terms, no fuzzy) - skip retrieval, go to LLM
+      } else {
+        // Not app-relevant (no known terms, no fuzzy) - skip retrieval, go to LLM
         return 'llm'
       }
     }
+  } else {
+    // Edge case: knownTerms not available (should not happen with SSR snapshot)
+    console.warn('[routeDocInput] knownTerms not available - SSR snapshot may have failed')
+    // Fall through to other routing checks (action, doc-style, etc.)
   }
 
   // Step 2: visible widget bypass
@@ -480,7 +464,7 @@ function routeDocInput(
   // Step 6: bare noun routing (stricter)
   if (isBareNounQuery(input, uiContext, knownTerms)) return 'bare_noun'
 
-  // Step 7: App-relevant fallback - if query contains known/core terms but doesn't match
+  // Step 7: App-relevant fallback - if query contains known terms but doesn't match
   // specific patterns (e.g., typos like "an you pls tell me what are workspaces action?"),
   // route to doc retrieval anyway. Let keyword matching handle intent extraction.
   // This is more robust than adding endless regex patterns.
@@ -1882,15 +1866,17 @@ function ChatNavigationPanelContent({
     setIsLoading(true)
 
     // Track knownTerms fetch status for telemetry
-    let knownTermsFetchStatus: 'cached' | 'fetched' | 'fetch_error' | 'fetch_timeout' = 'cached'
-    // Track if we fell back to CORE_APP_TERMS due to timeout
-    let usedCoreAppTermsFallback = false
+    // Initialize from actual status (may be 'snapshot' on cold start)
+    let knownTermsFetchStatus: 'snapshot' | 'cached' | 'fetched' | 'fetch_error' | 'fetch_timeout' =
+      getKnownTermsFetchStatus() || 'cached'
+    // TD-1: CORE_APP_TERMS fallback removed - SSR snapshot guarantees knownTerms availability
+    const usedCoreAppTermsFallback = false // Kept for telemetry backwards compatibility
 
     try {
       // ---------------------------------------------------------------------------
       // Ensure knownTerms cache is populated before routing decisions
       // Fix for race condition: async useEffect fetch may not complete before routing
-      // Timeout after 2s and fall back to CORE_APP_TERMS for resilience
+      // Timeout after 2s - SSR snapshot ensures knownTerms is still available
       // ---------------------------------------------------------------------------
       const FETCH_TIMEOUT_MS = 2000
 
@@ -1903,10 +1889,9 @@ function ChatNavigationPanelContent({
           const result = await Promise.race([fetchKnownTerms(), timeoutPromise])
 
           if (result === null) {
-            // Timeout - fall back to CORE_APP_TERMS
+            // Timeout - SSR snapshot should still have terms available
             knownTermsFetchStatus = 'fetch_timeout'
-            usedCoreAppTermsFallback = true
-            console.warn('[KnownTerms] Fetch timed out, using CORE_APP_TERMS fallback')
+            console.warn('[KnownTerms] Fetch timed out, using SSR snapshot')
           } else if (result.size > 0) {
             knownTermsFetchStatus = 'fetched'
           } else {
@@ -1914,8 +1899,7 @@ function ChatNavigationPanelContent({
           }
         } catch {
           knownTermsFetchStatus = 'fetch_error'
-          usedCoreAppTermsFallback = true
-          console.error('[KnownTerms] Fetch failed in sendMessage, using CORE_APP_TERMS fallback')
+          console.error('[KnownTerms] Fetch failed in sendMessage, using SSR snapshot')
         }
       }
 
@@ -2504,7 +2488,7 @@ function ChatNavigationPanelContent({
         const metaExplainStartTime = Date.now()
 
         // TD-4: Log meta-explain route telemetry
-        const { normalized: normalizedMetaQuery } = normalizeInputForRouting(trimmedInput)
+        const { normalized: normalizedMetaQuery, tokens: metaExplainTokens } = normalizeInputForRouting(trimmedInput)
         const metaExplainKnownTerms = getKnownTermsSync()
         const metaExplainTelemetryEvent: Partial<RoutingTelemetryEvent> = createRoutingTelemetryEvent(
           trimmedInput,
@@ -2527,6 +2511,10 @@ function ChatNavigationPanelContent({
         } else {
           metaExplainTelemetryEvent.matched_pattern_id = RoutingPatternId.DEF_CONVERSATIONAL
         }
+        // TD-1: Track term matching on meta-explain path (CORE_APP_TERMS removed)
+        metaExplainTelemetryEvent.matched_known_term = metaExplainKnownTerms
+          ? (metaExplainTokens.some(t => metaExplainKnownTerms.has(t)) || metaExplainKnownTerms.has(normalizedMetaQuery))
+          : false
 
         void debugLog({
           component: 'ChatNavigation',
@@ -2729,7 +2717,7 @@ function ChatNavigationPanelContent({
       if (docRetrievalState?.lastDocSlug && isCorrectionPhrase(trimmedInput)) {
         // TD-4: Log correction telemetry to track when previous routing was wrong
         // This marks that the PREVIOUS turn's routing decision was corrected by user
-        const { normalized: normalizedQuery } = normalizeInputForRouting(trimmedInput)
+        const { normalized: normalizedQuery, tokens: correctionTokens } = normalizeInputForRouting(trimmedInput)
         const correctionKnownTerms = getKnownTermsSync()
         const correctionTelemetryEvent: Partial<RoutingTelemetryEvent> = createRoutingTelemetryEvent(
           trimmedInput,
@@ -2743,6 +2731,10 @@ function ChatNavigationPanelContent({
         correctionTelemetryEvent.route_deterministic = 'clarify'
         correctionTelemetryEvent.route_final = 'clarify'
         correctionTelemetryEvent.matched_pattern_id = RoutingPatternId.CORRECTION
+        // TD-1: Track term matching on correction path (CORE_APP_TERMS removed)
+        correctionTelemetryEvent.matched_known_term = correctionKnownTerms
+          ? (correctionTokens.some(t => correctionKnownTerms.has(t)) || correctionKnownTerms.has(normalizedQuery))
+          : false
         // TD-4: This event indicates the PREVIOUS turn should be marked as user_corrected_next_turn=true
         // The doc_slug_top contains the doc that was incorrectly routed to
         correctionTelemetryEvent.doc_slug_top = docRetrievalState.lastDocSlug
@@ -2861,7 +2853,7 @@ function ChatNavigationPanelContent({
         const followupStartTime = Date.now()
 
         // TD-4: Log follow-up route telemetry
-        const { normalized: normalizedQuery } = normalizeInputForRouting(trimmedInput)
+        const { normalized: normalizedQuery, tokens: followupTokens } = normalizeInputForRouting(trimmedInput)
         const followupKnownTerms = getKnownTermsSync()
         const followupTelemetryEvent: Partial<RoutingTelemetryEvent> = createRoutingTelemetryEvent(
           trimmedInput,
@@ -2885,6 +2877,10 @@ function ChatNavigationPanelContent({
           : isPronounFollowUp(trimmedInput)
             ? RoutingPatternId.FOLLOWUP_PRONOUN
             : RoutingPatternId.FOLLOWUP_TELL_ME_MORE
+        // TD-1: Track term matching on follow-up path (CORE_APP_TERMS removed)
+        followupTelemetryEvent.matched_known_term = followupKnownTerms
+          ? (followupTokens.some(t => followupKnownTerms.has(t)) || followupKnownTerms.has(normalizedQuery))
+          : false
         followupTelemetryEvent.routing_latency_ms = Date.now() - followupStartTime
         void logRoutingDecision(followupTelemetryEvent as RoutingTelemetryEvent)
 
@@ -3035,8 +3031,7 @@ function ChatNavigationPanelContent({
       telemetryEvent.route_deterministic = docRoute as RoutingTelemetryEvent['route_deterministic']
       telemetryEvent.route_final = docRoute as RoutingTelemetryEvent['route_final']
       telemetryEvent.is_new_question = isNewQuestionOrCommandDetected
-      // TD-1 prep: Track whether CORE_APP_TERMS and knownTerms matched this query
-      telemetryEvent.matched_core_term = queryTokens.some(t => CORE_APP_TERMS.has(t))
+      // TD-1: Track whether knownTerms matched this query (CORE_APP_TERMS removed)
       telemetryEvent.matched_known_term = knownTerms
         ? (queryTokens.some(t => knownTerms.has(t)) || knownTerms.has(normalizedQuery))
         : false

@@ -38,7 +38,7 @@ export enum RoutingPatternId {
   ROUTE_DOC_STYLE = 'ROUTE_DOC_STYLE',            // Doc-style query
   ROUTE_BARE_NOUN = 'ROUTE_BARE_NOUN',            // Bare noun query
   ROUTE_APP_RELEVANT = 'ROUTE_APP_RELEVANT',      // App-relevant fallback
-  ROUTE_CORE_TERMS = 'ROUTE_CORE_TERMS',          // CORE_APP_TERMS fallback
+  ROUTE_CORE_TERMS = 'ROUTE_CORE_TERMS',          // DEPRECATED: CORE_APP_TERMS removed in TD-1
   ROUTE_LLM_FALLBACK = 'ROUTE_LLM_FALLBACK',      // LLM fallback (no match)
 
   // Special cases
@@ -67,9 +67,9 @@ export interface RoutingTelemetryEvent {
   // State context
   known_terms_loaded: boolean
   known_terms_count: number
-  known_terms_fetch_status?: 'cached' | 'fetched' | 'fetch_error' | 'fetch_timeout'  // Track why knownTerms may be empty
-  used_core_terms_fallback?: boolean  // True when CORE_APP_TERMS was used due to timeout/error
-  matched_core_term?: boolean  // Did CORE_APP_TERMS contain a token from this query?
+  known_terms_fetch_status?: 'snapshot' | 'cached' | 'fetched' | 'fetch_error' | 'fetch_timeout'  // Track source of knownTerms
+  used_core_terms_fallback?: boolean  // DEPRECATED: Always false after TD-1 (CORE_APP_TERMS removed)
+  matched_core_term?: boolean  // DEPRECATED: No longer set after TD-1 (CORE_APP_TERMS removed)
   matched_known_term?: boolean  // Did knownTerms contain a token from this query?
   // TD-2: Fuzzy matching telemetry
   fuzzy_matched?: boolean  // Did a fuzzy match contribute to routing?
@@ -189,7 +189,7 @@ export function createRoutingTelemetryEvent(
   knownTermsLoaded: boolean,
   knownTermsCount: number,
   lastDocSlug?: string,
-  knownTermsFetchStatus?: 'cached' | 'fetched' | 'fetch_error' | 'fetch_timeout',
+  knownTermsFetchStatus?: 'snapshot' | 'cached' | 'fetched' | 'fetch_error' | 'fetch_timeout',
   usedCoreTermsFallback?: boolean
 ): Partial<RoutingTelemetryEvent> {
   return {

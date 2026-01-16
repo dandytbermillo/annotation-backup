@@ -1,3 +1,6 @@
+---
+keywords: [navigator, folder, folders, navigation, navigate, tree, browse, structure]
+---
 # Navigator
 
 ## Overview

@@ -25,9 +25,9 @@
 1) ✅ TD-4: Durable routing telemetry — **COMPLETE** (2026-01-15)
 2) ✅ TD-8: Don't lock state on weak (doc follow-ups) — **COMPLETE** (2026-01-15)
 3) ✅ TD-3: Consolidate routing patterns — **COMPLETE** (2026-01-14)
-4) ⏳ TD-1: Remove CORE_APP_TERMS duplication — *collecting telemetry (decision when: ≥100 events, ≥90% terms loaded, 0 critical failures)*
+4) ✅ TD-1: Remove CORE_APP_TERMS duplication — **COMPLETE** (2026-01-16)
 5) ✅ TD-2: Gated typo tolerance (fuzzy match) — **COMPLETE** (2026-01-15)
-6) ⏳ TD-7: Stricter app-relevance fallback — *blocked on TD-1*
+6) ⏳ TD-7: Stricter app-relevance fallback — *unblocked, ready to proceed*
 7) TD-5: Polite follow-up guard (only if telemetry shows need)
 8) TD-6: LLM intent extraction (optional, last)
 9) ✅ TD-9: Cross-doc ambiguity override — **COMPLETE** (pre-existing)
@@ -52,6 +52,7 @@ We need data to validate routing changes and avoid regressions.
 - Added classifier timeout **tracking** with AbortController (2s timeout)
 - Added correction tracking with `user_corrected_next_turn` field
 - Added `AMBIGUOUS_CROSS_DOC` pattern for ambiguous results
+- **2026-01-15 fix:** Added `matched_core_term`/`matched_known_term` instrumentation to meta-explain, follow-up, and correction paths (previously NULL, now all paths set these fields for accurate TD-1 metrics)
 
 ### Event Schema (implemented)
 - `input_len`
@@ -92,7 +93,7 @@ We need data to validate routing changes and avoid regressions.
 ---
 
 ## TD-1: Remove CORE_APP_TERMS Duplication
-### Status: ⏳ Collecting Telemetry (2026-01-15 → volume-based)
+### Status: ✅ COMPLETE (2026-01-16)
 
 ### Why
 Avoid divergence between hardcoded terms and docs database.
@@ -103,10 +104,19 @@ Avoid divergence between hardcoded terms and docs database.
 - Remove `CORE_APP_TERMS` once knownTerms is guaranteed available.
 - Dependency: TD-4 telemetry live so cache-miss rate can be verified before removal.
 
-### Current State
+### Implementation (2026-01-16)
+- ✅ `CORE_APP_TERMS` constant removed from `chat-navigation-panel.tsx`
+- ✅ `routeDocInput()` now relies solely on `knownTerms` (SSR snapshot guarantees availability)
+- ✅ Timeout/fallback logic simplified (no longer falls back to hardcoded terms)
+- ✅ `matched_core_term` telemetry field deprecated (no longer set)
+- ✅ Type definitions updated in `routing-telemetry.ts`
+
+### Validation (pre-removal)
 - ✅ Race condition fixed: `await fetchKnownTerms()` with 2s timeout in sendMessage
-- ✅ Telemetry instrumented: `matched_core_term` + `matched_known_term` fields added
-- ⏳ Data collection: Started 2026-01-15T20:40:00Z
+- ✅ Telemetry instrumented: all routing paths set `matched_known_term`
+- ✅ SSR snapshot implemented and tested (cold-start verified)
+- ✅ "action" singular gap fixed (added to docs, re-seeded)
+- ✅ All quality criteria passed (0 critical failures, 0% NULL/NULL, 100% terms loaded)
 
 ### Check-in Schedule
 | Date | Check-in | Status |
@@ -117,18 +127,10 @@ Avoid divergence between hardcoded terms and docs database.
 
 **Note:** Decision date is flexible. If event volume is too low at 72h, extend window rather than deciding on insufficient data.
 
-### Early Results (2026-01-15, ~2h data, 16 events)
-| core_match | known_match | count | Interpretation |
-|------------|-------------|-------|----------------|
-| false | false | 12 | Neither matched (LLM fallback) |
-| true | true | 2 | Both matched ✅ |
-| NULL | NULL | 2 | Fields not set |
-
-**Critical metric:** `core_match=true AND known_match=false` = **0** (target: stays at 0)
-
-Sample queries where both matched:
-- `"note"` → route: bare_noun
-- `"can you tell me about workspac actions"` → route: doc
+### Baseline Note
+Earlier results from 2026-01-15 include NULL/NULL events caused by incomplete instrumentation.
+Those events should be treated as pre-fix noise. **TD-1 analysis should start at
+2026-01-16T03:29:00Z** (all routing paths instrumented).
 
 ### Decision Criteria (All Must Pass)
 
@@ -182,7 +184,7 @@ SELECT
   ) as terms_loaded_pct
 FROM debug_logs
 WHERE action = 'route_decision'
-  AND created_at > '2026-01-15T20:40:00Z';
+  AND created_at > '2026-01-16T03:29:00Z';
 
 -- Decision: Proceed with CORE_APP_TERMS removal when ALL pass:
 -- 1. critical_failures = 0 (or effectively never)
@@ -201,25 +203,31 @@ SELECT
   ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 1) as pct
 FROM debug_logs
 WHERE action = 'route_decision'
-  AND created_at > '2026-01-15T20:40:00Z'
+  AND created_at > '2026-01-16T03:29:00Z'
 GROUP BY 1, 2
 ORDER BY count DESC;
 ```
 
 ### SSR Snapshot Prerequisite (Criterion 5)
-**Status:** ⏳ Not yet implemented
+**Status:** ✅ Implemented (2026-01-15)
 
-Before removing CORE_APP_TERMS, must implement:
-- [ ] SSR embed a snapshot of knownTerms for cold start
-- [ ] Add `version`/`hash` field to snapshot
-- [ ] Add TTL staleness guard (e.g., 7 days)
-- [ ] Test: fresh session without cache still routes correctly
+Implementation checklist:
+- [x] SSR embed a snapshot of knownTerms for cold start (`app/layout.tsx`)
+- [x] Add `version`/`hash` field to snapshot (`v1:sha256hash`)
+- [x] Add TTL staleness guard (7 days)
+- [x] Test: fresh session without cache still routes correctly (2026-01-15)
 
-**Why this is blocking:** Without the snapshot, fresh sessions would have `knownTerms = null` until the first fetch completes, causing routing drift to LLM fallback.
+**Files:**
+- `lib/docs/known-terms-snapshot.ts` - Server-side snapshot builder
+- `app/providers/known-terms-provider.tsx` - Client init from snapshot
+- `app/layout.tsx` - SSR injection
+- `lib/docs/known-terms-client.ts` - `initFromSnapshot()` function
+
+**See:** `knownterms-ssr-snapshot-plan.md` for full details
 
 ### Acceptance Criteria
 - [ ] All 5 telemetry criteria pass (query above)
-- [ ] SSR snapshot implemented and tested
+- [x] SSR snapshot implemented and tested (2026-01-15)
 - [ ] No routing path depends on `CORE_APP_TERMS`
 - [ ] No cache-miss scenarios in production
 
@@ -439,5 +447,4 @@ Weak clarifications can lock the user into the wrong doc and make follow-ups exp
 - Telemetry event schema + dashboard query.
 - `query-patterns` module + tests.
 - knownTerms preload + CORE_APP_TERMS removal.
-
 

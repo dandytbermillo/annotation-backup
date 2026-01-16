@@ -8,13 +8,18 @@ export const metadata: Metadata = {
 }
 
 import { PlainModeProvider } from './providers/plain-mode-provider'
+import { KnownTermsProvider } from './providers/known-terms-provider'
 import { Toaster } from '@/components/ui/toaster'
+import { buildKnownTermsSnapshot } from '@/lib/docs/known-terms-snapshot'
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode
 }>) {
+  // Build knownTerms snapshot at SSR time for cold-start availability
+  const knownTermsSnapshot = await buildKnownTermsSnapshot()
+
   return (
     <html lang="en">
       <head>
@@ -23,10 +28,12 @@ export default function RootLayout({
         <link rel="apple-touch-icon" href="/icons/icon-192x192.png" />
       </head>
       <body>
-        <PlainModeProvider>
-          {children}
-          <Toaster />
-        </PlainModeProvider>
+        <KnownTermsProvider snapshot={knownTermsSnapshot}>
+          <PlainModeProvider>
+            {children}
+            <Toaster />
+          </PlainModeProvider>
+        </KnownTermsProvider>
       </body>
     </html>
   )
