@@ -1,7 +1,7 @@
 # Plan: Doc Retrieval Routing Debt Paydown
 
 **Date:** 2026-01-14
-**Updated:** 2026-01-15
+**Updated:** 2026-01-15 (TD-1 decision criteria refined)
 **Status:** In Progress
 **Feature Slug:** `chat-navigation`
 **Source Debt Doc:** `docs/proposal/chat-navigation/plan/panels/chat/meta/technical-debt/2026-01-14-doc-retrieval-routing-debt.md`
@@ -25,7 +25,7 @@
 1) ✅ TD-4: Durable routing telemetry — **COMPLETE** (2026-01-15)
 2) ✅ TD-8: Don't lock state on weak (doc follow-ups) — **COMPLETE** (2026-01-15)
 3) ✅ TD-3: Consolidate routing patterns — **COMPLETE** (2026-01-14)
-4) ⏳ TD-1: Remove CORE_APP_TERMS duplication — *collecting telemetry (check-in: 2026-01-16, 2026-01-17, decision: 2026-01-18)*
+4) ⏳ TD-1: Remove CORE_APP_TERMS duplication — *collecting telemetry (decision when: ≥100 events, ≥90% terms loaded, 0 critical failures)*
 5) ✅ TD-2: Gated typo tolerance (fuzzy match) — **COMPLETE** (2026-01-15)
 6) ⏳ TD-7: Stricter app-relevance fallback — *blocked on TD-1*
 7) TD-5: Polite follow-up guard (only if telemetry shows need)
@@ -92,7 +92,7 @@ We need data to validate routing changes and avoid regressions.
 ---
 
 ## TD-1: Remove CORE_APP_TERMS Duplication
-### Status: ⏳ Collecting Telemetry (2026-01-15 → 2026-01-18)
+### Status: ⏳ Collecting Telemetry (2026-01-15 → volume-based)
 
 ### Why
 Avoid divergence between hardcoded terms and docs database.
@@ -106,14 +106,16 @@ Avoid divergence between hardcoded terms and docs database.
 ### Current State
 - ✅ Race condition fixed: `await fetchKnownTerms()` with 2s timeout in sendMessage
 - ✅ Telemetry instrumented: `matched_core_term` + `matched_known_term` fields added
-- ⏳ Data collection: Started 2026-01-15T20:40:00Z, need 48-72 hours
+- ⏳ Data collection: Started 2026-01-15T20:40:00Z
 
 ### Check-in Schedule
 | Date | Check-in | Status |
 |------|----------|--------|
 | 2026-01-16 | 24h data review | ⏳ Pending |
 | 2026-01-17 | 48h data review | ⏳ Pending |
-| 2026-01-18 | Final decision (72h data) | ⏳ Pending |
+| 2026-01-18+ | Final decision (when volume sufficient) | ⏳ Pending |
+
+**Note:** Decision date is flexible. If event volume is too low at 72h, extend window rather than deciding on insufficient data.
 
 ### Early Results (2026-01-15, ~2h data, 16 events)
 | core_match | known_match | count | Interpretation |
@@ -128,12 +130,75 @@ Sample queries where both matched:
 - `"note"` → route: bare_noun
 - `"can you tell me about workspac actions"` → route: doc
 
-### TD-1 Analysis Query
+### Decision Criteria (All Must Pass)
+
+| # | Criterion | Threshold | Why |
+|---|-----------|-----------|-----|
+| 1 | Critical failures | `core=true AND known=false` = 0 (or effectively never) | Proves knownTerms covers all CORE_APP_TERMS cases |
+| 2 | Instrumentation coverage | NULL/NULL events < 5% | Ensures we're measuring all traffic, not a subset |
+| 3 | Terms loaded | `known_terms_count > 0` for ≥ 95% of events | Proves knownTerms is reliably available |
+| 4 | Volume | ≥ 100 total events | Statistical confidence |
+| 5 | SSR snapshot ready | Implemented + tested | Required for cold-start (plan prerequisite) |
+| 6 | Window | Extend until criteria met | Don't rush decision on low volume |
+
+**Failure modes this guards against:**
+1. **Empty data false positive:** If `knownTerms` fails to load, both fields are false/null → "0 critical failures" but neither system working
+2. **Instrumentation gaps:** If some paths don't set the fields (NULL/NULL), "0" is misleading because we're not measuring all traffic
+3. **Cold-start regression:** Without SSR snapshot, fresh sessions could have "no terms available" routing drift
+
+### TD-1 Decision Query
+```sql
+SELECT
+  -- Criterion 1: Critical failures (target: 0)
+  COUNT(*) FILTER (
+    WHERE metadata->>'matched_core_term' = 'true'
+      AND metadata->>'matched_known_term' = 'false'
+  ) as critical_failures,
+
+  -- Criterion 2: Instrumentation coverage (target: < 5% NULL/NULL)
+  COUNT(*) FILTER (
+    WHERE metadata->>'matched_core_term' IS NULL
+      AND metadata->>'matched_known_term' IS NULL
+  ) as null_null_events,
+
+  -- Criterion 3: Terms loaded (target: >= 95%)
+  COUNT(*) FILTER (
+    WHERE (metadata->>'known_terms_count')::int > 0
+  ) as events_with_terms,
+
+  -- Criterion 4: Volume (target: >= 100)
+  COUNT(*) as total_events,
+
+  -- Computed percentages
+  ROUND(
+    100.0 * COUNT(*) FILTER (
+      WHERE metadata->>'matched_core_term' IS NULL
+        AND metadata->>'matched_known_term' IS NULL
+    ) / NULLIF(COUNT(*), 0), 1
+  ) as null_null_pct,
+  ROUND(
+    100.0 * COUNT(*) FILTER (WHERE (metadata->>'known_terms_count')::int > 0) /
+    NULLIF(COUNT(*), 0), 1
+  ) as terms_loaded_pct
+FROM debug_logs
+WHERE action = 'route_decision'
+  AND created_at > '2026-01-15T20:40:00Z';
+
+-- Decision: Proceed with CORE_APP_TERMS removal when ALL pass:
+-- 1. critical_failures = 0 (or effectively never)
+-- 2. null_null_pct < 5 (instrumentation firing on all paths)
+-- 3. terms_loaded_pct >= 95 (knownTerms reliably available)
+-- 4. total_events >= 100 (sufficient volume)
+-- 5. SSR snapshot implemented and tested (manual check)
+```
+
+### TD-1 Breakdown Query (for debugging)
 ```sql
 SELECT
   metadata->>'matched_core_term' as core_match,
   metadata->>'matched_known_term' as known_match,
-  COUNT(*) as count
+  COUNT(*) as count,
+  ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 1) as pct
 FROM debug_logs
 WHERE action = 'route_decision'
   AND created_at > '2026-01-15T20:40:00Z'
@@ -141,15 +206,71 @@ GROUP BY 1, 2
 ORDER BY count DESC;
 ```
 
-**Decision criteria:** CORE_APP_TERMS can be removed when `core_match=true AND known_match=false` is rare/never (proves knownTerms covers all cases).
+### SSR Snapshot Prerequisite (Criterion 5)
+**Status:** ⏳ Not yet implemented
 
-### Staleness Guard
-- Embed a `version`/`hash` with the snapshot.
-- Expire snapshot after a fixed TTL (e.g., 7 days).
+Before removing CORE_APP_TERMS, must implement:
+- [ ] SSR embed a snapshot of knownTerms for cold start
+- [ ] Add `version`/`hash` field to snapshot
+- [ ] Add TTL staleness guard (e.g., 7 days)
+- [ ] Test: fresh session without cache still routes correctly
+
+**Why this is blocking:** Without the snapshot, fresh sessions would have `knownTerms = null` until the first fetch completes, causing routing drift to LLM fallback.
 
 ### Acceptance Criteria
-- No routing path depends on `CORE_APP_TERMS`.
-- No cache-miss scenarios in production.
+- [ ] All 5 telemetry criteria pass (query above)
+- [ ] SSR snapshot implemented and tested
+- [ ] No routing path depends on `CORE_APP_TERMS`
+- [ ] No cache-miss scenarios in production
+
+### Coverage Gap Resolution Process
+
+**Step 1: Verify data quality before interpreting gaps**
+- [ ] Volume ≥ 100 events
+- [ ] NULL/NULL rate < 5% (or filter to main routing paths only)
+- [ ] Terms loaded ≥ 95%
+
+**Step 2: Identify gap tokens**
+```sql
+-- List tokens causing core=true AND known=false
+SELECT
+  metadata->>'normalized_query' as query,
+  metadata->>'fuzzy_matched' as fuzzy_saved,
+  metadata->>'fuzzy_match_term' as corrected_to,
+  COUNT(*) as count
+FROM debug_logs
+WHERE action = 'route_decision'
+  AND metadata->>'matched_core_term' = 'true'
+  AND metadata->>'matched_known_term' = 'false'
+GROUP BY 1, 2, 3
+ORDER BY count DESC;
+```
+
+**Step 3: Classify each gap into buckets**
+
+| Bucket | Action | Example |
+|--------|--------|---------|
+| No docs intended | Remove from CORE_APP_TERMS | "canvas" if no canvas doc planned |
+| Inflection gap | Add alias to knownTerms/keywords | "action" → add "action" keyword |
+| Real missing doc | Add doc or decide handling | "folder" → create folder.md |
+
+**Step 4: Track fuzzy-rescued cases separately**
+- Don't exclude from gap count (they still indicate coverage gaps)
+- Note which tokens were corrected and whether fuzzy is reliable fallback
+- Example: "action" → "actions" (fuzzy distance=1, reliable)
+
+**Step 5: Re-run after each change**
+- Verify gap list shrinks
+- Confirm no new gaps introduced
+- Update this section with results
+
+### Current Gap Status (2026-01-15)
+
+| Token | Count | Fuzzy Saved? | Bucket | Resolution |
+|-------|-------|--------------|--------|------------|
+| action | 1 | ✅ Yes → actions | Inflection | Fuzzy handles; optionally add alias |
+
+**NULL/NULL Note:** 35% of events are NULL/NULL because meta-explain and follow-up paths don't set these fields. This is expected - those paths don't depend on CORE_APP_TERMS. Consider filtering to main routing paths (`matched_pattern_id IN ('ROUTE_DOC_STYLE', 'ROUTE_BARE_NOUN', 'ROUTE_APP_RELEVANT', 'ROUTE_CORE_TERMS')`) for cleaner metrics.
 
 ---
 

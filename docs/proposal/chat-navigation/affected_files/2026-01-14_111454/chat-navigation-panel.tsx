@@ -45,6 +45,57 @@ import {
   showEntryOpenedToast,
 } from '@/lib/chat/navigation-toast'
 import { getKnownTermsSync, fetchKnownTerms, isKnownTermsCacheValid } from '@/lib/docs/known-terms-client'
+import {
+  logRoutingDecision,
+  createRoutingTelemetryEvent,
+  getPatternId,
+  RoutingPatternId,
+  type RoutingTelemetryEvent,
+} from '@/lib/chat/routing-telemetry'
+// TD-3: Import consolidated patterns from query-patterns module
+import {
+  // Pattern constants
+  AFFIRMATION_PATTERN,
+  REJECTION_PATTERN,
+  QUESTION_START_PATTERN,
+  COMMAND_START_PATTERN,
+  ACTION_NOUNS,
+  DOC_VERBS,
+  POLITE_COMMAND_PREFIXES,
+  META_PATTERNS,
+  RESHOW_PATTERNS,
+  BARE_META_PHRASES,
+  // Normalization functions
+  normalizeInputForRouting,
+  normalizeTitle,
+  normalizeTypos,
+  stripConversationalPrefix,
+  startsWithAnyPrefix,
+  // Detection functions
+  isAffirmationPhrase,
+  isRejectionPhrase,
+  isCorrectionPhrase,
+  isPronounFollowUp,
+  hasQuestionIntent,
+  hasActionVerb,
+  containsDocInstructionCue,
+  looksIndexLikeReference,
+  isMetaPhrase,
+  matchesReshowPhrases,
+  isMetaExplainOutsideClarification,
+  isCommandLike,
+  isNewQuestionOrCommand,
+  // Extraction functions
+  extractMetaExplainConcept,
+  extractDocQueryTerm,
+  // Response style
+  getResponseStyle,
+  // TD-2: Fuzzy matching
+  findFuzzyMatch,
+  findAllFuzzyMatches,
+  hasFuzzyMatch,
+  type FuzzyMatchResult,
+} from '@/lib/chat/query-patterns'
 
 export interface ChatNavigationPanelProps {
   /** Current entry ID for context */
@@ -221,61 +272,7 @@ function matchesShowAllHeuristic(input: string): boolean {
   return false
 }
 
-/**
- * Check if input is an affirmation phrase.
- * Per Phase 2a.3: Expanded affirmation patterns for clarification responses.
- * Categories:
- * - Explicit: yes, yeah, yep, yup, sure, ok, okay
- * - Polite: please, go ahead, do it, proceed
- * - Confirmations: correct, right, exactly, confirm, confirmed
- * - Casual: k, ya, ye, yea, mhm, uh huh
- * All patterns support optional "please" suffix.
- */
-function isAffirmationPhrase(input: string): boolean {
-  const normalized = input.toLowerCase().trim()
-  // Core affirmations with optional "please" suffix
-  const AFFIRMATION_PATTERN = /^(yes|yeah|yep|yup|sure|ok|okay|k|ya|ye|yea|mhm|uh\s*huh|go ahead|do it|proceed|correct|right|exactly|confirm|confirmed)(\s+please)?$/
-  return AFFIRMATION_PATTERN.test(normalized)
-}
-
-/**
- * Check if input is a rejection phrase.
- * Per Phase 2a.3: Rejection patterns for clarification responses.
- */
-function isRejectionPhrase(input: string): boolean {
-  const normalized = input.toLowerCase().trim()
-  // Rejection patterns: explicit no, cancel intent, soft rejection
-  const REJECTION_PATTERN = /^(no|nope|nah|negative|cancel|stop|abort|never\s*mind|forget it|don't|not now|skip|pass|wrong|incorrect|not that)$/
-  return REJECTION_PATTERN.test(normalized)
-}
-
-/**
- * Check if input is a META phrase (request for explanation).
- * Per clarification-meta-response-plan.md: Handle "what do you mean?" style queries.
- * Only triggers when clarification is already active.
- */
-function isMetaPhrase(input: string): boolean {
-  const normalized = input.toLowerCase().trim()
-  // META patterns: requests for explanation or clarification
-  const META_PATTERNS = [
-    /^what(\s+do\s+you)?\s+mean\??$/,                    // "what do you mean?" / "what mean?"
-    /^explain(\s+that)?(\s+please)?$/,                   // "explain" / "explain that"
-    /^help(\s+me)?(\s+understand)?$/,                    // "help" / "help me understand"
-    /^what\s+are\s+(my\s+)?options\??$/,                 // "what are my options?"
-    /^what('s|s|\s+is)\s+the\s+difference\??$/,          // "what's the difference?"
-    /^huh\??$/,                                          // "huh?"
-    /^\?+$/,                                             // "?" / "??"
-    /^what\??$/,                                         // "what?" / "what"
-    /^(i('m|m)?\s+)?not\s+sure$/,                        // "not sure" / "I'm not sure"
-    /^i\s+don('t|t)\s+know$/,                            // "I don't know"
-    /^(can\s+you\s+)?tell\s+me\s+more\??$/,              // "tell me more" / "can you tell me more?"
-    /^what\s+is\s+that\??$/,                             // "what is that?"
-    /^i('m|m)?\s+not\s+sure\s+what\s+that\s+(does|means)\??$/,  // "I'm not sure what that does"
-    /^clarify(\s+please)?$/,                             // "clarify"
-    /^options\??$/,                                      // "options?"
-  ]
-  return META_PATTERNS.some(pattern => pattern.test(normalized))
-}
+// TD-3: isAffirmationPhrase, isRejectionPhrase, isMetaPhrase now imported from query-patterns.ts
 
 /**
  * Match ordinal phrases to option index.
@@ -304,91 +301,8 @@ function matchOrdinal(input: string, optionCount: number): number | undefined {
   return undefined
 }
 
-/**
- * Check if input matches re-show options phrases.
- * Per pending-options-reshow-grace-window.md triggers.
- * Handles common typos via simple normalization.
- */
-function matchesReshowPhrases(input: string): boolean {
-  const normalized = input.toLowerCase().trim()
-    // Normalize common typos
-    .replace(/shwo|shw/g, 'show')
-    .replace(/optins|optons|optiosn/g, 'options')
-    .replace(/teh/g, 'the')
-
-  const reshowPatterns = [
-    /^show\s*(me\s*)?(the\s*)?options$/,
-    /^(what\s*were\s*those|what\s*were\s*they)\??$/,
-    /^i'?m\s*confused\??$/,
-    /^(can\s*you\s*)?show\s*(me\s*)?(again|them)\??$/,
-    /^remind\s*me\??$/,
-    /^options\??$/,
-  ]
-
-  return reshowPatterns.some(pattern => pattern.test(normalized))
-}
-
-/**
- * Check if input is a meta-explain phrase OUTSIDE of clarification mode.
- * Per meta-explain-outside-clarification-plan.md (Tiered Plan)
- * Handles: "explain", "what do you mean?", "explain home", etc.
- */
-function isMetaExplainOutsideClarification(input: string): boolean {
-  // Strip trailing punctuation for matching
-  const normalized = input.trim().toLowerCase().replace(/[?!.]+$/, '')
-
-  // Direct meta phrases
-  if (
-    normalized === 'explain' ||
-    normalized === 'what do you mean' ||
-    normalized === 'explain that' ||
-    normalized === 'help me understand' ||
-    normalized === 'what is that' ||
-    normalized === 'tell me more'
-  ) {
-    return true
-  }
-
-  // "explain <concept>" pattern
-  if (normalized.startsWith('explain ')) {
-    return true
-  }
-
-  // "what is <concept>" pattern
-  if (normalized.startsWith('what is ') || normalized.startsWith('what are ')) {
-    return true
-  }
-
-  return false
-}
-
-/**
- * Extract the concept from a meta-explain phrase.
- * Returns null if no specific concept is mentioned.
- */
-function extractMetaExplainConcept(input: string): string | null {
-  const normalized = input.trim().toLowerCase().replace(/[?!.]+$/, '')
-
-  // "explain <concept>"
-  if (normalized.startsWith('explain ') && normalized !== 'explain that') {
-    const concept = normalized.replace(/^explain\s+/, '').trim()
-    if (concept && concept !== 'that') return concept
-  }
-
-  // "what is <concept>"
-  if (normalized.startsWith('what is ')) {
-    const concept = normalized.replace(/^what is\s+(a\s+|an\s+|the\s+)?/, '').trim()
-    if (concept) return concept
-  }
-
-  // "what are <concepts>"
-  if (normalized.startsWith('what are ')) {
-    const concept = normalized.replace(/^what are\s+(the\s+)?/, '').trim()
-    if (concept) return concept
-  }
-
-  return null
-}
+// TD-3: matchesReshowPhrases, stripConversationalPrefix, isMetaExplainOutsideClarification,
+//       extractMetaExplainConcept now imported from query-patterns.ts
 
 // =============================================================================
 // V4 Doc Retrieval Routing Helpers
@@ -400,105 +314,15 @@ function extractMetaExplainConcept(input: string): string | null {
  */
 type DocRoute = 'doc' | 'action' | 'bare_noun' | 'llm'
 
-/**
- * Action nouns that should bypass doc retrieval and use normal routing.
- * Per v4 plan: minimal set of navigation shortcuts.
- * Note: singular "workspace" is doc-routable, only plural "workspaces" is action.
- */
-const ACTION_NOUNS = new Set<string>([
-  'recent',
-  'recents',
-  'quick links',
-  'quicklinks',
-  'workspaces', // plural only; keep singular "workspace" doc-routable
-])
-
-/**
- * Polite command prefixes that indicate an action request, not a doc question.
- * Per v4 plan: "can you open..." is a command, but "can I rename?" is a question.
- */
-const POLITE_COMMAND_PREFIXES = [
-  'can you',
-  'could you',
-  'would you',
-  'please',
-  'show me',
-]
-
-/**
- * Doc-verb cues: low-churn list of verbs that indicate doc-style queries.
- * Per v4 plan: these extend beyond question-word detection.
- */
-const DOC_VERBS = new Set<string>([
-  'describe',
-  'clarify',
-  'define',
-  'overview',
-  'meaning',
-])
-
-/**
- * Check if string starts with any of the given prefixes.
- */
-function startsWithAnyPrefix(normalized: string, prefixes: string[]): boolean {
-  return prefixes.some(p => normalized === p || normalized.startsWith(p + ' '))
-}
-
-/**
- * Normalize user input for routing decisions.
- * Per v4 plan: consistent normalization for both routing and retrieval.
- */
-function normalizeInputForRouting(input: string): { normalized: string; tokens: string[] } {
-  const normalized = input
-    .toLowerCase()
-    .trim()
-    .replace(/[-_/,:;]+/g, ' ')
-    .replace(/[?!.]+$/, '')
-    .replace(/\s+/g, ' ')
-
-  // NOTE: In real impl apply synonyms + conservative stemming + typo fix BEFORE tokenization.
-  const tokens = normalized.split(/\s+/).filter(Boolean)
-  return { normalized, tokens }
-}
-
-/**
- * Normalize a widget/doc title for comparison.
- */
-function normalizeTitle(title: string): string {
-  return title
-    .toLowerCase()
-    .trim()
-    .replace(/[-_/,:;]+/g, ' ')
-    .replace(/[?!.]+$/, '')
-    .replace(/\s+/g, ' ')
-}
-
-/**
- * Check if input has question intent (starts with question word or ends with ?).
- * Per v4 plan: broad detection of question-like inputs.
- */
-function hasQuestionIntent(normalized: string): boolean {
-  return (
-    /^(what|how|where|when|why|who|which|can|could|would|should|tell|explain|help|is|are|do|does)\b/i.test(
-      normalized
-    ) ||
-    normalized.endsWith('?')
-  )
-}
-
-/**
- * Check if input contains action verbs.
- * Per v4 plan: used for command detection.
- */
-function hasActionVerb(normalized: string): boolean {
-  return /\b(open|close|show|list|go|create|rename|delete|remove|add|navigate|edit|modify|change|update)\b/i.test(
-    normalized
-  )
-}
+// TD-3: ACTION_NOUNS, POLITE_COMMAND_PREFIXES, DOC_VERBS, startsWithAnyPrefix,
+//       normalizeInputForRouting, normalizeTitle, hasQuestionIntent, hasActionVerb,
+//       containsDocInstructionCue, looksIndexLikeReference, isCommandLike
+//       now imported from query-patterns.ts
 
 /**
  * Check if input matches a visible widget title.
  * Per v4 plan: visible widget bypass routes to action.
+ * Component-specific: requires UIContext.
  */
 function matchesVisibleWidgetTitle(normalized: string, uiContext?: UIContext | null): boolean {
   const widgets = uiContext?.dashboard?.visibleWidgets
@@ -508,54 +332,16 @@ function matchesVisibleWidgetTitle(normalized: string, uiContext?: UIContext | n
 }
 
 /**
- * Check if input contains doc instruction cues.
- * Per v4 plan: "how to", "show me how" are doc-style even with "show me" prefix.
- */
-function containsDocInstructionCue(normalized: string): boolean {
-  return /\b(how to|how do i|tell me how|show me how|walk me through)\b/i.test(normalized)
-}
-
-/**
- * Check if input looks like an index-like reference (e.g., "workspace 6", "note 2").
- * Per v4 plan: these should route to action, not doc retrieval.
- */
-function looksIndexLikeReference(normalized: string): boolean {
-  return /\b(workspace|note|page|entry)\s+\d+\b/i.test(normalized)
-}
-
-/**
- * Check if input is command-like (should route to action).
- * Per v4 plan: imperative commands + polite commands - doc instruction cues.
- */
-function isCommandLike(normalized: string): boolean {
-  // Index-like selection should be action even without a verb: "note 2"
-  if (looksIndexLikeReference(normalized)) return true
-
-  // Imperative: action verb without question intent
-  if (hasActionVerb(normalized) && !hasQuestionIntent(normalized)) return true
-
-  // Polite command: prefix + action verb, unless it's clearly an instruction question
-  if (
-    startsWithAnyPrefix(normalized, POLITE_COMMAND_PREFIXES) &&
-    hasActionVerb(normalized) &&
-    !containsDocInstructionCue(normalized)
-  ) {
-    return true
-  }
-
-  return false
-}
-
-/**
  * Check if input is a doc-style query.
  * Per v4 plan: question intent OR doc-verb cues, AND not command-like.
+ * Component-specific: requires UIContext for widget matching.
  */
 function isDocStyleQuery(input: string, uiContext?: UIContext | null): boolean {
   const { normalized, tokens } = normalizeInputForRouting(input)
 
   // Skip bare meta-explain phrases (handled by existing meta-explain handler)
-  const bareMetaPhrases = ['explain', 'what do you mean', 'explain that', 'help me understand', 'what is that', 'tell me more']
-  if (bareMetaPhrases.includes(normalized)) {
+  // TD-3: Use imported BARE_META_PHRASES
+  if (BARE_META_PHRASES.includes(normalized)) {
     return false
   }
 
@@ -574,32 +360,7 @@ function isDocStyleQuery(input: string, uiContext?: UIContext | null): boolean {
   return tokens.some(t => DOC_VERBS.has(t))
 }
 
-/**
- * Extract the query term from a doc-style query.
- * E.g., "how do I add a widget" → "add widget"
- */
-function extractDocQueryTerm(input: string): string {
-  const { normalized } = normalizeInputForRouting(input)
-
-  // Remove common prefixes
-  let term = normalized
-    .replace(/^what (is|are)\s+(a\s+|an\s+|the\s+)?/i, '')
-    .replace(/^how (do i|to|can i)\s+/i, '')
-    .replace(/^tell me (about\s+)?(a\s+|an\s+|the\s+)?/i, '')
-    .replace(/^tell me how (to\s+)?/i, '')
-    .replace(/^explain\s+(a\s+|an\s+|the\s+)?/i, '')
-    .replace(/^what does\s+(a\s+|an\s+|the\s+)?/i, '')
-    .replace(/^where can i\s+(find\s+|see\s+)?/i, '')
-    .replace(/^how can i\s+/i, '')
-    .replace(/^show me how (to\s+)?/i, '')
-    .replace(/^walk me through\s+(how to\s+)?/i, '')
-    .replace(/^describe\s+(the\s+|a\s+|an\s+)?/i, '')
-    .replace(/^clarify\s+(the\s+|a\s+|an\s+)?/i, '')
-    .replace(/^define\s+(the\s+|a\s+|an\s+)?/i, '')
-    .trim()
-
-  return term || normalized
-}
+// TD-3: extractDocQueryTerm now imported from query-patterns.ts
 
 /**
  * Check if input passes the bare-noun guard for doc retrieval.
@@ -648,6 +409,23 @@ function isBareNounQuery(
  *
  * Now with full knownTerms integration for app relevance gate.
  */
+// Core app terms that are always checked, even if knownTerms cache is not loaded.
+// This ensures queries with these terms route to doc retrieval regardless of cache state.
+const CORE_APP_TERMS = new Set([
+  'workspace', 'workspaces',
+  'note', 'notes',
+  'action', 'actions',
+  'widget', 'widgets',
+  'entry', 'entries',
+  'folder', 'folders',
+  'panel', 'panels',
+  'annotation', 'annotations',
+  'canvas',
+  'navigation', 'navigate',
+  'dashboard',
+  'home',
+])
+
 function routeDocInput(
   input: string,
   uiContext?: UIContext | null,
@@ -656,17 +434,34 @@ function routeDocInput(
   const { normalized, tokens } = normalizeInputForRouting(input)
 
   // Step 1: app relevance gate (v4 plan)
-  // If knownTerms available, check if query is app-relevant
+  // Check against both knownTerms (if available) AND core app terms
+  let isAppRelevant = false
+
+  // Always check core app terms (cache-independent)
+  const hasCoreAppTerm = tokens.some(t => CORE_APP_TERMS.has(t))
+  if (hasCoreAppTerm) {
+    isAppRelevant = true
+  }
+
+  // Also check knownTerms if available
   if (knownTerms && knownTerms.size > 0) {
-    const isAppRelevant =
+    const hasKnownTerm =
       tokens.some(t => knownTerms.has(t)) ||
       knownTerms.has(normalized) ||
       ACTION_NOUNS.has(normalized) ||
       matchesVisibleWidgetTitle(normalized, uiContext)
 
-    if (!isAppRelevant) {
-      // Not app-relevant - skip retrieval, go to LLM
-      return 'llm'
+    if (hasKnownTerm) {
+      isAppRelevant = true
+    } else {
+      // TD-2: Try fuzzy matching as fallback (gated: length >= 5, distance <= 2)
+      const hasFuzzy = hasFuzzyMatch(tokens, knownTerms)
+      if (hasFuzzy) {
+        isAppRelevant = true
+      } else if (!hasCoreAppTerm) {
+        // Not app-relevant (no core terms, no known terms, no fuzzy) - skip retrieval, go to LLM
+        return 'llm'
+      }
     }
   }
 
@@ -685,6 +480,14 @@ function routeDocInput(
   // Step 6: bare noun routing (stricter)
   if (isBareNounQuery(input, uiContext, knownTerms)) return 'bare_noun'
 
+  // Step 7: App-relevant fallback - if query contains known/core terms but doesn't match
+  // specific patterns (e.g., typos like "an you pls tell me what are workspaces action?"),
+  // route to doc retrieval anyway. Let keyword matching handle intent extraction.
+  // This is more robust than adding endless regex patterns.
+  if (isAppRelevant) {
+    return 'doc'
+  }
+
   return 'llm'
 }
 
@@ -693,72 +496,7 @@ function routeDocInput(
 // Per general-doc-retrieval-routing-plan.md (v4)
 // =============================================================================
 
-/**
- * Detect correction/rejection phrases.
- * Per v4 plan: "no / not that / that's wrong" triggers re-retrieval.
- */
-function isCorrectionPhrase(input: string): boolean {
-  const normalized = input.trim().toLowerCase()
-  const correctionPhrases = [
-    'no',
-    'nope',
-    'not that',
-    'not what i meant',
-    'not what i asked',
-    "that's wrong",
-    'thats wrong',
-    'wrong',
-    'incorrect',
-    'different',
-    'something else',
-    'try again',
-  ]
-  return correctionPhrases.some(p => normalized === p || normalized.startsWith(p + ' '))
-}
-
-/**
- * Detect pronoun follow-up phrases.
- * Per v4 plan: "tell me more", "how does it work" uses lastDocSlug.
- */
-function isPronounFollowUp(input: string): boolean {
-  const normalized = input.trim().toLowerCase()
-  const followUpPhrases = [
-    'tell me more',
-    'more details',
-    'explain more',
-    'more',           // V5: Single-word follow-up
-    'how does it work',
-    'how does that work',
-    'what else',
-    'continue',
-    'go on',
-    'expand',         // V5: Added per plan
-    'elaborate',
-  ]
-  // Exact match for single words, startsWith for phrases
-  return followUpPhrases.some(p => normalized === p || normalized.startsWith(p + ' ') || normalized.startsWith(p))
-}
-
-/**
- * Format response based on user input style.
- * Per v4 plan: Match User Effort - short question → 1-2 sentences, etc.
- */
-function getResponseStyle(input: string): 'short' | 'medium' | 'detailed' {
-  const normalized = input.trim().toLowerCase()
-
-  // Detailed: "walk me through", "step by step", "how do i"
-  if (/\b(walk me through|step by step|steps to|how do i|how to)\b/.test(normalized)) {
-    return 'detailed'
-  }
-
-  // Medium: "explain", "describe", "tell me about"
-  if (/\b(explain|describe|tell me about|clarify)\b/.test(normalized)) {
-    return 'medium'
-  }
-
-  // Short: "what is", short queries
-  return 'short'
-}
+// TD-3: isCorrectionPhrase, isPronounFollowUp, getResponseStyle now imported from query-patterns.ts
 
 /**
  * Format snippet based on response style.
@@ -2143,7 +1881,44 @@ function ChatNavigationPanelContent({
     setInput('')
     setIsLoading(true)
 
+    // Track knownTerms fetch status for telemetry
+    let knownTermsFetchStatus: 'cached' | 'fetched' | 'fetch_error' | 'fetch_timeout' = 'cached'
+    // Track if we fell back to CORE_APP_TERMS due to timeout
+    let usedCoreAppTermsFallback = false
+
     try {
+      // ---------------------------------------------------------------------------
+      // Ensure knownTerms cache is populated before routing decisions
+      // Fix for race condition: async useEffect fetch may not complete before routing
+      // Timeout after 2s and fall back to CORE_APP_TERMS for resilience
+      // ---------------------------------------------------------------------------
+      const FETCH_TIMEOUT_MS = 2000
+
+      if (!isKnownTermsCacheValid()) {
+        try {
+          // Race fetch against timeout
+          const timeoutPromise = new Promise<null>((resolve) =>
+            setTimeout(() => resolve(null), FETCH_TIMEOUT_MS)
+          )
+          const result = await Promise.race([fetchKnownTerms(), timeoutPromise])
+
+          if (result === null) {
+            // Timeout - fall back to CORE_APP_TERMS
+            knownTermsFetchStatus = 'fetch_timeout'
+            usedCoreAppTermsFallback = true
+            console.warn('[KnownTerms] Fetch timed out, using CORE_APP_TERMS fallback')
+          } else if (result.size > 0) {
+            knownTermsFetchStatus = 'fetched'
+          } else {
+            knownTermsFetchStatus = 'fetch_error'
+          }
+        } catch {
+          knownTermsFetchStatus = 'fetch_error'
+          usedCoreAppTermsFallback = true
+          console.error('[KnownTerms] Fetch failed in sendMessage, using CORE_APP_TERMS fallback')
+        }
+      }
+
       // ---------------------------------------------------------------------------
       // Rejection Detection: Check if user is rejecting a suggestion
       // Per suggestion-rejection-handling-plan.md
@@ -2339,13 +2114,30 @@ function ChatNavigationPanelContent({
       // When clarification is active, ALL input goes through this handler first.
       // Clarification handling runs BEFORE new-intent detection to avoid premature exit.
       // ---------------------------------------------------------------------------
-      // Pattern definitions for new-intent detection (used in UNCLEAR fallback)
-      const QUESTION_START_PATTERN = /^(what|which|where|when|how|why|who|is|are|do|does|did|can|could|should|would)\b/i
-      const COMMAND_START_PATTERN = /^(open|show|go|list|create|close|delete|rename|back|home)\b/i
-      const isNewQuestionOrCommand =
-        QUESTION_START_PATTERN.test(trimmedInput) ||
-        COMMAND_START_PATTERN.test(trimmedInput) ||
-        trimmedInput.endsWith('?')
+      // TD-3: Use imported patterns from query-patterns.ts
+      // Per definitional-query-fix-proposal.md: bare nouns should exit clarification for doc routing
+      const bareNounKnownTerms = getKnownTermsSync()
+      const isBareNounNewIntent = bareNounKnownTerms
+        ? isBareNounQuery(trimmedInput, uiContext, bareNounKnownTerms)
+        : false
+      // TD-2: Check if input fuzzy-matches a known term (for typos like "wrkspace")
+      const { tokens: clarificationTokens } = normalizeInputForRouting(trimmedInput)
+      const isFuzzyMatchNewIntent = bareNounKnownTerms
+        ? hasFuzzyMatch(clarificationTokens, bareNounKnownTerms)
+        : false
+      // Use imported isNewQuestionOrCommand + component-specific bare noun check + fuzzy match
+      const isNewQuestionOrCommandDetected =
+        isNewQuestionOrCommand(trimmedInput) ||
+        trimmedInput.endsWith('?') ||
+        isBareNounNewIntent ||  // Bare nouns should exit clarification for doc routing
+        isFuzzyMatchNewIntent   // TD-2: Typos that fuzzy-match should also exit clarification
+
+      // WORKAROUND: Track if clarification was cleared within this execution cycle.
+      // React's setLastClarification(null) is async - subsequent checks in the same render
+      // would still see the old value. This local flag provides synchronous tracking.
+      // Scoped to this sendMessage call only - doesn't persist across renders.
+      // See: definitional-query-fix-proposal.md for context on this pattern.
+      let clarificationCleared = false
 
       // Run clarification handler FIRST when clarification is active
       // Only fall back to normal routing if interpreter returns UNCLEAR AND input looks like new intent
@@ -2472,7 +2264,7 @@ function ChatNavigationPanelContent({
         // Returns true if we should fall through to normal routing, false if handled here
         const handleUnclear = (): boolean => {
           // If input looks like a new question/command, exit clarification and route normally
-          if (isNewQuestionOrCommand) {
+          if (isNewQuestionOrCommandDetected) {
             void debugLog({
               component: 'ChatNavigation',
               action: 'clarification_exit_unclear_new_intent',
@@ -2598,21 +2390,23 @@ function ChatNavigationPanelContent({
 
         // Tier 1b.5: New intent escape - exit clarification for new questions/commands
         // Per clarification-exit-and-cancel-fix-plan.md: "where am I?" should route normally
-        if (isNewQuestionOrCommand) {
+        // Per definitional-query-fix-proposal.md: bare nouns should also exit clarification
+        if (isNewQuestionOrCommandDetected) {
           void debugLog({
             component: 'ChatNavigation',
             action: 'clarification_exit_new_intent',
-            metadata: { userInput: trimmedInput },
+            metadata: { userInput: trimmedInput, isBareNounNewIntent },
           })
           // Clear clarification state and fall through to normal routing
           setLastClarification(null)
+          clarificationCleared = true  // Mark as cleared for later checks in same render (React state is async)
           // Don't return - continue to normal routing below
         }
 
         // Tier 1c: Local META check (explanation request)
         // Per clarification-meta-response-plan.md
         // Only check if we didn't already exit via new intent
-        if (lastClarification && isMetaPhrase(trimmedInput)) {
+        if (lastClarification && !clarificationCleared && isMetaPhrase(trimmedInput)) {
           void debugLog({
             component: 'ChatNavigation',
             action: 'clarification_tier1_meta',
@@ -2625,8 +2419,8 @@ function ChatNavigationPanelContent({
 
         // Tier 2: LLM interpretation for unclear responses
         // Call API with clarification-mode flag to get YES/NO/META/UNCLEAR interpretation
-        // Skip if we already exited via new intent (lastClarification was cleared)
-        if (lastClarification) {
+        // Skip if we already exited via new intent (clarificationCleared = true)
+        if (lastClarification && !clarificationCleared) {
           void debugLog({
             component: 'ChatNavigation',
             action: 'clarification_tier2_llm',
@@ -2706,7 +2500,34 @@ function ChatNavigationPanelContent({
       //       (let v4 pronoun follow-up handler take over instead)
       // ---------------------------------------------------------------------------
       const shouldDeferToV4FollowUp = docRetrievalState?.lastDocSlug && isPronounFollowUp(trimmedInput)
-      if (!lastClarification && isMetaExplainOutsideClarification(trimmedInput) && !shouldDeferToV4FollowUp) {
+      if ((!lastClarification || clarificationCleared) && isMetaExplainOutsideClarification(trimmedInput) && !shouldDeferToV4FollowUp) {
+        const metaExplainStartTime = Date.now()
+
+        // TD-4: Log meta-explain route telemetry
+        const { normalized: normalizedMetaQuery } = normalizeInputForRouting(trimmedInput)
+        const metaExplainKnownTerms = getKnownTermsSync()
+        const metaExplainTelemetryEvent: Partial<RoutingTelemetryEvent> = createRoutingTelemetryEvent(
+          trimmedInput,
+          normalizedMetaQuery,
+          !!metaExplainKnownTerms,
+          metaExplainKnownTerms?.size ?? 0,
+          docRetrievalState?.lastDocSlug,
+          knownTermsFetchStatus,
+          usedCoreAppTermsFallback
+        )
+        metaExplainTelemetryEvent.route_deterministic = 'doc'
+        metaExplainTelemetryEvent.route_final = 'doc'
+        // Determine pattern based on query structure
+        if (/^what is\b/i.test(normalizedMetaQuery)) {
+          metaExplainTelemetryEvent.matched_pattern_id = RoutingPatternId.DEF_WHAT_IS
+        } else if (/^what are\b/i.test(normalizedMetaQuery)) {
+          metaExplainTelemetryEvent.matched_pattern_id = RoutingPatternId.DEF_WHAT_ARE
+        } else if (/^explain\b/i.test(normalizedMetaQuery)) {
+          metaExplainTelemetryEvent.matched_pattern_id = RoutingPatternId.DEF_EXPLAIN
+        } else {
+          metaExplainTelemetryEvent.matched_pattern_id = RoutingPatternId.DEF_CONVERSATIONAL
+        }
+
         void debugLog({
           component: 'ChatNavigation',
           action: 'meta_explain_outside_clarification',
@@ -2740,6 +2561,31 @@ function ChatNavigationPanelContent({
             }
           }
 
+          // TD-2: Apply fuzzy correction for meta-explain queries
+          let metaFuzzyCorrectionApplied = false
+          if (queryTerm && metaExplainKnownTerms) {
+            const fuzzyMatch = findFuzzyMatch(queryTerm, metaExplainKnownTerms)
+            if (fuzzyMatch) {
+              console.log(`[MetaExplain] Fuzzy correction: "${queryTerm}" → "${fuzzyMatch.matchedTerm}"`)
+              queryTerm = fuzzyMatch.matchedTerm
+              metaFuzzyCorrectionApplied = true
+              // Track fuzzy match in telemetry
+              metaExplainTelemetryEvent.fuzzy_matched = true
+              metaExplainTelemetryEvent.fuzzy_match_token = fuzzyMatch.inputToken
+              metaExplainTelemetryEvent.fuzzy_match_term = fuzzyMatch.matchedTerm
+              metaExplainTelemetryEvent.fuzzy_match_distance = fuzzyMatch.distance
+            }
+          }
+          metaExplainTelemetryEvent.retrieval_query_corrected = metaFuzzyCorrectionApplied
+
+          // Step 3: Detect definitional query for concept preference
+          // Per definitional-query-fix-proposal.md: "what is X" should prefer concepts/* over actions/*
+          const isDefinitionalPattern = !!concept  // concept is non-null for "what is X", "explain X" patterns
+          const hasActionIntent = isDefinitionalPattern
+            ? /\b(action|actions|create|delete|rename|list|open)\b/i.test(trimmedInput)
+            : false
+          const isDefinitionalQuery = isDefinitionalPattern && !hasActionIntent
+
           // Call retrieval API
           const retrieveResponse = await fetch('/api/docs/retrieve', {
             method: 'POST',
@@ -2747,11 +2593,88 @@ function ChatNavigationPanelContent({
             body: JSON.stringify({
               query: queryTerm || trimmedInput,
               mode: 'explain',
+              isDefinitionalQuery,  // Step 3: hint for backend to prefer concepts
             }),
           })
 
           if (retrieveResponse.ok) {
             const result = await retrieveResponse.json()
+
+            // TD-4: Update telemetry with retrieval result and log
+            metaExplainTelemetryEvent.doc_status = result.status as RoutingTelemetryEvent['doc_status']
+            metaExplainTelemetryEvent.doc_slug_top = result.docSlug || result.options?.[0]?.docSlug
+            metaExplainTelemetryEvent.doc_slug_alt = result.options?.slice(1, 3).map((o: { docSlug: string }) => o.docSlug)
+            metaExplainTelemetryEvent.routing_latency_ms = Date.now() - metaExplainStartTime
+            // TD-4: Set AMBIGUOUS_CROSS_DOC pattern when result is ambiguous with multiple doc options
+            if (result.status === 'ambiguous' && result.options?.length >= 2) {
+              metaExplainTelemetryEvent.matched_pattern_id = RoutingPatternId.AMBIGUOUS_CROSS_DOC
+            }
+            void logRoutingDecision(metaExplainTelemetryEvent as RoutingTelemetryEvent)
+
+            // Per definitional-query-fix-proposal.md: Check for ambiguous status (Step 1 cross-doc override)
+            // If ambiguous, show pills for doc selection instead of just text clarification
+            if (result.status === 'ambiguous' && result.options?.length >= 2) {
+              const messageId = `assistant-${Date.now()}`
+              const options: SelectionOption[] = result.options.slice(0, 2).map((opt: { docSlug: string; label: string; title: string }, idx: number) => ({
+                type: 'doc' as const,
+                id: opt.docSlug,
+                label: opt.label || opt.title,
+                sublabel: opt.title !== opt.label ? opt.title : undefined,
+                data: { docSlug: opt.docSlug },
+              }))
+
+              const assistantMessage: ChatMessage = {
+                id: messageId,
+                role: 'assistant',
+                content: result.explanation || `Do you mean "${options[0].label}" or "${options[1].label}"?`,
+                timestamp: new Date(),
+                isError: false,
+                options,
+              }
+              addMessage(assistantMessage)
+
+              // Set clarification state for pill selection handling
+              setPendingOptions(options.map((opt, idx) => ({
+                index: idx + 1,
+                label: opt.label,
+                sublabel: opt.sublabel,
+                type: opt.type,
+                id: opt.id,
+                data: opt.data,
+              })))
+              setPendingOptionsMessageId(messageId)
+
+              setLastClarification({
+                type: 'doc_disambiguation',
+                originalIntent: 'meta_explain',
+                messageId,
+                timestamp: Date.now(),
+                clarificationQuestion: result.explanation || 'Which one do you mean?',
+                options: options.map(opt => ({
+                  id: opt.id,
+                  label: opt.label,
+                  sublabel: opt.sublabel,
+                  type: opt.type,
+                })),
+                metaCount: 0,
+              })
+
+              void debugLog({
+                component: 'ChatNavigation',
+                action: 'meta_explain_ambiguous_pills',
+                metadata: { optionCount: options.length, labels: options.map(o => o.label), source: 'meta_explain' },
+                metrics: {
+                  event: 'clarification_shown',
+                  optionCount: options.length,
+                  timestamp: Date.now(),
+                },
+              })
+
+              setIsLoading(false)
+              return
+            }
+
+            // Non-ambiguous: show explanation text directly
             const explanation = result.explanation || 'Which part would you like me to explain?'
 
             const assistantMessage: ChatMessage = {
@@ -2768,11 +2691,15 @@ function ChatNavigationPanelContent({
             // V5: Use actual docSlug from result (not query term) for accurate follow-ups
             const metaQueryTerm = queryTerm || trimmedInput
             const { tokens: metaTokens } = normalizeInputForRouting(metaQueryTerm)
+
+            // TD-8: Only set lastDocSlug for confident results (found), not weak
+            // Weak results should not lock follow-ups to potentially wrong doc
+            const isConfidentResult = result.status === 'found' || !result.status // Legacy: if no status, assume found
             updateDocRetrievalState({
-              lastDocSlug: result.docSlug || metaQueryTerm, // V5: Prefer actual slug, fallback to query
+              lastDocSlug: isConfidentResult ? (result.docSlug || metaQueryTerm) : undefined,
               lastTopicTokens: metaTokens,
               lastMode: 'doc',
-              lastChunkIdsShown: result.chunkId ? [result.chunkId] : [], // V5: Track shown chunk
+              lastChunkIdsShown: isConfidentResult && result.chunkId ? [result.chunkId] : [],
             })
 
             setIsLoading(false)
@@ -2800,6 +2727,29 @@ function ChatNavigationPanelContent({
       // Per general-doc-retrieval-routing-plan.md (v4)
       // ---------------------------------------------------------------------------
       if (docRetrievalState?.lastDocSlug && isCorrectionPhrase(trimmedInput)) {
+        // TD-4: Log correction telemetry to track when previous routing was wrong
+        // This marks that the PREVIOUS turn's routing decision was corrected by user
+        const { normalized: normalizedQuery } = normalizeInputForRouting(trimmedInput)
+        const correctionKnownTerms = getKnownTermsSync()
+        const correctionTelemetryEvent: Partial<RoutingTelemetryEvent> = createRoutingTelemetryEvent(
+          trimmedInput,
+          normalizedQuery,
+          !!correctionKnownTerms,
+          correctionKnownTerms?.size ?? 0,
+          docRetrievalState.lastDocSlug,
+          knownTermsFetchStatus,
+          usedCoreAppTermsFallback
+        )
+        correctionTelemetryEvent.route_deterministic = 'clarify'
+        correctionTelemetryEvent.route_final = 'clarify'
+        correctionTelemetryEvent.matched_pattern_id = RoutingPatternId.CORRECTION
+        // TD-4: This event indicates the PREVIOUS turn should be marked as user_corrected_next_turn=true
+        // The doc_slug_top contains the doc that was incorrectly routed to
+        correctionTelemetryEvent.doc_slug_top = docRetrievalState.lastDocSlug
+        correctionTelemetryEvent.user_corrected_next_turn = true // Marks this IS a correction event
+        correctionTelemetryEvent.routing_latency_ms = 0
+        void logRoutingDecision(correctionTelemetryEvent as RoutingTelemetryEvent)
+
         void debugLog({
           component: 'ChatNavigation',
           action: 'doc_correction',
@@ -2838,12 +2788,28 @@ function ChatNavigationPanelContent({
       // Check for deterministic follow-up first
       let isFollowUp = isPronounFollowUp(trimmedInput)
 
+      // TD-4: Track classifier state for telemetry
+      let classifierCalled = false
+      let classifierResult: boolean | undefined
+      let classifierTimeout = false
+      let classifierLatencyMs: number | undefined
+      let classifierError = false
+
       // V5 Follow-up-miss backup: If lastDocSlug is set but deterministic check missed,
       // call classifier as backup BEFORE falling to LLM routing
       // Per plan (line 315): "If follow-up detection misses but lastDocSlug is set,
       // call the semantic classifier as a backup before falling back to LLM"
-      if (docRetrievalState?.lastDocSlug && !isFollowUp) {
+      // FIX: Skip classifier for new questions/commands - they are clearly new intents, not follow-ups
+      // e.g., "can you tell me what are the workspaces actions?" should NOT be scoped to previous doc
+      if (docRetrievalState?.lastDocSlug && !isFollowUp && !isNewQuestionOrCommandDetected) {
+        classifierCalled = true
+        const classifierStartTime = Date.now()
+
         try {
+          // TD-4: Add timeout to classifier call (2 second timeout)
+          const controller = new AbortController()
+          const timeoutId = setTimeout(() => controller.abort(), 2000)
+
           const classifyResponse = await fetch('/api/chat/classify-followup', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -2852,10 +2818,15 @@ function ChatNavigationPanelContent({
               lastDocSlug: docRetrievalState.lastDocSlug,
               lastTopicTokens: docRetrievalState.lastTopicTokens,
             }),
+            signal: controller.signal,
           })
-          const classifyResult = await classifyResponse.json()
+          clearTimeout(timeoutId)
 
-          if (classifyResult.isFollowUp) {
+          const classifyResultData = await classifyResponse.json()
+          classifierLatencyMs = Date.now() - classifierStartTime
+          classifierResult = classifyResultData.isFollowUp
+
+          if (classifyResultData.isFollowUp) {
             isFollowUp = true
             void debugLog({
               component: 'ChatNavigation',
@@ -2863,7 +2834,7 @@ function ChatNavigationPanelContent({
               metadata: {
                 userInput: trimmedInput,
                 lastDocSlug: docRetrievalState.lastDocSlug,
-                latencyMs: classifyResult.latencyMs,
+                latencyMs: classifierLatencyMs,
               },
               metrics: {
                 event: 'classifier_followup_detected',
@@ -2873,13 +2844,49 @@ function ChatNavigationPanelContent({
             })
           }
         } catch (error) {
-          console.error('[ChatNavigation] Follow-up classifier backup error:', error)
+          classifierLatencyMs = Date.now() - classifierStartTime
+          if (error instanceof Error && error.name === 'AbortError') {
+            classifierTimeout = true
+            console.warn('[ChatNavigation] Follow-up classifier timed out')
+          } else {
+            classifierError = true
+            console.error('[ChatNavigation] Follow-up classifier backup error:', error)
+          }
           // Continue without classifier result - fall through to normal routing
         }
       }
 
       if (docRetrievalState?.lastDocSlug && isFollowUp) {
         const excludeChunkIds = docRetrievalState.lastChunkIdsShown || []
+        const followupStartTime = Date.now()
+
+        // TD-4: Log follow-up route telemetry
+        const { normalized: normalizedQuery } = normalizeInputForRouting(trimmedInput)
+        const followupKnownTerms = getKnownTermsSync()
+        const followupTelemetryEvent: Partial<RoutingTelemetryEvent> = createRoutingTelemetryEvent(
+          trimmedInput,
+          normalizedQuery,
+          !!followupKnownTerms,
+          followupKnownTerms?.size ?? 0,
+          docRetrievalState.lastDocSlug,
+          knownTermsFetchStatus,
+          usedCoreAppTermsFallback
+        )
+        followupTelemetryEvent.route_deterministic = 'followup'
+        followupTelemetryEvent.route_final = 'followup'
+        followupTelemetryEvent.followup_detected = true
+        followupTelemetryEvent.classifier_called = classifierCalled
+        followupTelemetryEvent.classifier_result = classifierResult
+        followupTelemetryEvent.classifier_timeout = classifierTimeout
+        followupTelemetryEvent.classifier_latency_ms = classifierLatencyMs
+        followupTelemetryEvent.classifier_error = classifierError
+        followupTelemetryEvent.matched_pattern_id = classifierCalled && classifierResult
+          ? RoutingPatternId.FOLLOWUP_CLASSIFIER
+          : isPronounFollowUp(trimmedInput)
+            ? RoutingPatternId.FOLLOWUP_PRONOUN
+            : RoutingPatternId.FOLLOWUP_TELL_ME_MORE
+        followupTelemetryEvent.routing_latency_ms = Date.now() - followupStartTime
+        void logRoutingDecision(followupTelemetryEvent as RoutingTelemetryEvent)
 
         void debugLog({
           component: 'ChatNavigation',
@@ -3007,25 +3014,72 @@ function ChatNavigationPanelContent({
 
       // Get knownTerms for app relevance gate (use cached if available)
       const knownTerms = getKnownTermsSync()
+      const routingStartTime = Date.now()
 
       // Use the main routing function
       const docRoute = routeDocInput(trimmedInput, uiContext, knownTerms ?? undefined)
       const isDocStyle = docRoute === 'doc'
       const isBareNoun = docRoute === 'bare_noun'
 
-      // Log routing decision for metrics
-      void debugLog({
-        component: 'ChatNavigation',
-        action: 'doc_routing_decision',
-        metadata: {
-          userInput: trimmedInput,
-          route: docRoute,
-          hasKnownTerms: !!knownTerms,
-          knownTermsSize: knownTerms?.size ?? 0,
-        },
-      })
+      // TD-4: Create telemetry event for tracking
+      const { normalized: normalizedQuery, tokens: queryTokens } = normalizeInputForRouting(trimmedInput)
+      const telemetryEvent: Partial<RoutingTelemetryEvent> = createRoutingTelemetryEvent(
+        trimmedInput,
+        normalizedQuery,
+        !!knownTerms,
+        knownTerms?.size ?? 0,
+        docRetrievalState?.lastDocSlug,
+        knownTermsFetchStatus,
+        usedCoreAppTermsFallback
+      )
+      telemetryEvent.route_deterministic = docRoute as RoutingTelemetryEvent['route_deterministic']
+      telemetryEvent.route_final = docRoute as RoutingTelemetryEvent['route_final']
+      telemetryEvent.is_new_question = isNewQuestionOrCommandDetected
+      // TD-1 prep: Track whether CORE_APP_TERMS and knownTerms matched this query
+      telemetryEvent.matched_core_term = queryTokens.some(t => CORE_APP_TERMS.has(t))
+      telemetryEvent.matched_known_term = knownTerms
+        ? (queryTokens.some(t => knownTerms.has(t)) || knownTerms.has(normalizedQuery))
+        : false
+      // TD-2: Track fuzzy matching (only check if no exact match)
+      if (knownTerms && !telemetryEvent.matched_known_term) {
+        const fuzzyMatches = findAllFuzzyMatches(queryTokens, knownTerms)
+        if (fuzzyMatches.length > 0) {
+          const bestFuzzy = fuzzyMatches[0]
+          telemetryEvent.fuzzy_matched = true
+          telemetryEvent.fuzzy_match_token = bestFuzzy.inputToken
+          telemetryEvent.fuzzy_match_term = bestFuzzy.matchedTerm
+          telemetryEvent.fuzzy_match_distance = bestFuzzy.distance
+        } else {
+          telemetryEvent.fuzzy_matched = false
+        }
+      }
+      // TD-4: Populate classifier telemetry fields
+      telemetryEvent.classifier_called = classifierCalled
+      telemetryEvent.classifier_result = classifierResult
+      telemetryEvent.classifier_timeout = classifierTimeout
+      telemetryEvent.classifier_latency_ms = classifierLatencyMs
+      telemetryEvent.classifier_error = classifierError
+      telemetryEvent.matched_pattern_id = getPatternId(
+        trimmedInput,
+        docRoute,
+        isFollowUp,
+        isNewQuestionOrCommandDetected,
+        classifierCalled,
+        stripConversationalPrefix(normalizedQuery) !== normalizedQuery
+      )
 
-      if (!lastClarification && (isDocStyle || isBareNoun)) {
+      // TD-4: Log action route decisions (widget/command bypass)
+      if (docRoute === 'action') {
+        telemetryEvent.route_final = 'action'
+        telemetryEvent.matched_pattern_id = matchesVisibleWidgetTitle(normalizedQuery, uiContext)
+          ? RoutingPatternId.ACTION_WIDGET
+          : RoutingPatternId.ACTION_COMMAND
+        telemetryEvent.routing_latency_ms = Date.now() - routingStartTime
+        void logRoutingDecision(telemetryEvent as RoutingTelemetryEvent)
+        // Action routes fall through to LLM/tool processing
+      }
+
+      if ((!lastClarification || clarificationCleared) && (isDocStyle || isBareNoun)) {
         void debugLog({
           component: 'ChatNavigation',
           action: 'general_doc_retrieval',
@@ -3034,7 +3088,57 @@ function ChatNavigationPanelContent({
 
         try {
           // For doc-style queries, extract the term; for bare nouns, use as-is
-          const queryTerm = isDocStyle ? extractDocQueryTerm(trimmedInput) : trimmedInput.trim().toLowerCase()
+          let queryTerm = isDocStyle ? extractDocQueryTerm(trimmedInput) : trimmedInput.trim().toLowerCase()
+
+          // TD-2: Apply fuzzy correction for retrieval
+          // If we fuzzy-matched during routing, use the corrected term for better retrieval
+          const { tokens: retrievalTokens } = normalizeInputForRouting(queryTerm)
+          let fuzzyCorrectionApplied = false
+          let originalQueryTerm = queryTerm
+
+          if (knownTerms && !isBareNoun) {
+            // For non-bare-noun queries (route='doc'), check if any token needs fuzzy correction
+            const fuzzyMatches = findAllFuzzyMatches(retrievalTokens, knownTerms)
+            if (fuzzyMatches.length > 0) {
+              // Replace typo tokens with corrected terms
+              let correctedQuery = queryTerm
+              for (const fm of fuzzyMatches) {
+                correctedQuery = correctedQuery.replace(
+                  new RegExp(`\\b${fm.inputToken}\\b`, 'gi'),
+                  fm.matchedTerm
+                )
+              }
+              console.log(`[DocRetrieval] Fuzzy correction (doc-style): "${queryTerm}" → "${correctedQuery}"`)
+              queryTerm = correctedQuery
+              fuzzyCorrectionApplied = true
+            }
+          } else if (knownTerms && isBareNoun) {
+            // For bare nouns (route='bare_noun'), the entire input might be a typo
+            const fuzzyMatch = findAllFuzzyMatches(retrievalTokens, knownTerms)[0]
+            if (fuzzyMatch) {
+              console.log(`[DocRetrieval] Fuzzy correction (bare_noun): "${queryTerm}" → "${fuzzyMatch.matchedTerm}"`)
+              queryTerm = fuzzyMatch.matchedTerm
+              fuzzyCorrectionApplied = true
+            }
+          }
+
+          // Log for debugging
+          void debugLog({
+            component: 'DocRetrieval',
+            action: 'fuzzy_correction_check',
+            metadata: {
+              originalQuery: originalQueryTerm,
+              correctedQuery: queryTerm,
+              fuzzyCorrectionApplied,
+              isDocStyle,
+              isBareNoun,
+              knownTermsAvailable: !!knownTerms,
+            },
+          })
+
+          // TD-2: Track retrieval correction in routing telemetry
+          telemetryEvent.retrieval_query_corrected = fuzzyCorrectionApplied
+
           const { tokens: queryTokens } = normalizeInputForRouting(queryTerm)
 
           // Get response style for formatting
@@ -3056,6 +3160,17 @@ function ChatNavigationPanelContent({
             console.log(`[DocRetrieval] query="${queryTerm}" status=${result.status} ` +
               `confidence=${result.confidence?.toFixed(2) ?? 'N/A'} ` +
               `resultsCount=${result.results?.length ?? 0}`)
+
+            // TD-4: Update telemetry with retrieval result
+            telemetryEvent.doc_status = result.status as RoutingTelemetryEvent['doc_status']
+            telemetryEvent.doc_slug_top = result.results?.[0]?.doc_slug
+            telemetryEvent.doc_slug_alt = result.results?.slice(1, 3).map((r: { doc_slug: string }) => r.doc_slug)
+            telemetryEvent.routing_latency_ms = Date.now() - routingStartTime
+            // TD-4: Set AMBIGUOUS_CROSS_DOC pattern when result is ambiguous with multiple doc options
+            if (result.status === 'ambiguous' && result.results?.length >= 2) {
+              telemetryEvent.matched_pattern_id = RoutingPatternId.AMBIGUOUS_CROSS_DOC
+            }
+            void logRoutingDecision(telemetryEvent as RoutingTelemetryEvent)
 
             // Handle different response statuses
             if (result.status === 'found' && result.results?.length > 0) {
@@ -3151,18 +3266,43 @@ function ChatNavigationPanelContent({
               // Weak match - show best guess with confirmation
               const topResult = result.results[0]
               const headerPath = topResult.header_path || topResult.title
+              const messageId = `assistant-${Date.now()}`
+
+              // TD-8: Create pill for weak result so user can confirm
+              const weakOption: SelectionOption = {
+                type: 'doc' as const,
+                id: topResult.doc_slug,
+                label: headerPath,
+                sublabel: topResult.category || 'Documentation',
+                data: { docSlug: topResult.doc_slug },
+              }
+
               const assistantMessage: ChatMessage = {
-                id: `assistant-${Date.now()}`,
+                id: messageId,
                 role: 'assistant',
                 content: result.clarification || `I think you mean "${headerPath}". Is that right?`,
                 timestamp: new Date(),
                 isError: false,
+                options: [weakOption], // Show as pill for confirmation
               }
               addMessage(assistantMessage)
 
-              // Update state for potential follow-up
+              // TD-8: Set up pill selection handling
+              setPendingOptions([{
+                index: 1,
+                label: weakOption.label,
+                sublabel: weakOption.sublabel,
+                type: weakOption.type,
+                id: weakOption.id,
+                data: weakOption.data,
+              }])
+              setPendingOptionsMessageId(messageId)
+
+              // TD-8: DON'T set lastDocSlug on weak results
+              // Only set topic tokens so "tell me more" re-queries instead of expanding wrong doc
+              // lastDocSlug will be set when user clicks the pill (explicit confirmation)
               updateDocRetrievalState({
-                lastDocSlug: topResult.doc_slug,
+                // lastDocSlug intentionally NOT set - per TD-8
                 lastTopicTokens: queryTokens,
                 lastMode: isDocStyle ? 'doc' : 'bare_noun',
               })
@@ -3267,12 +3407,12 @@ function ChatNavigationPanelContent({
       // Per general-doc-retrieval-routing-plan.md (v4) - app relevance gate
       // When routeDocInput returns 'llm', the query is not app-relevant
       // ---------------------------------------------------------------------------
-      if (docRoute === 'llm' && !lastClarification) {
-        void debugLog({
-          component: 'ChatNavigation',
-          action: 'llm_route_non_app',
-          metadata: { userInput: trimmedInput, route: docRoute },
-        })
+      if (docRoute === 'llm' && (!lastClarification || clarificationCleared)) {
+        // TD-4: Log LLM fallback for tracking
+        telemetryEvent.route_final = 'llm'
+        telemetryEvent.matched_pattern_id = RoutingPatternId.ROUTE_LLM_FALLBACK
+        telemetryEvent.routing_latency_ms = Date.now() - routingStartTime
+        void logRoutingDecision(telemetryEvent as RoutingTelemetryEvent)
 
         // For non-app queries, provide a helpful redirect to app topics
         // This prevents the confusing typo fallback for queries like "quantum physics"

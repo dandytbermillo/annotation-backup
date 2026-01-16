@@ -908,9 +908,41 @@ export async function retrieveChunks(
 
   // Same-doc tie collapse: if top two results are from the same doc, treat as weak
   // instead of ambiguous (avoids confusing "Home > Home" vs "Home > Overview" prompts)
+  // BUT: first check for cross-doc candidate within MIN_GAP (cross-doc ambiguity override)
   if (topResults.length > 1 &&
       topResults[0].doc_slug === topResults[1].doc_slug &&
       (topResult.score - secondScore) < MIN_GAP) {
+
+    // Cross-doc ambiguity override: check if a distinct doc exists within MIN_GAP
+    // This prevents hiding concept docs when action docs tie at the top
+    const topDocSlug = topResults[0].doc_slug
+    const topScore = topResults[0].score
+
+    // Find ALL distinct docs within MIN_GAP, then pick highest-scoring one
+    const crossDocCandidates = topResults.filter(r =>
+      r.doc_slug !== topDocSlug &&
+      (topScore - r.score) < MIN_GAP
+    )
+
+    // Pick the best cross-doc candidate by score (not just first match)
+    const crossDocCandidate = crossDocCandidates.length > 0
+      ? crossDocCandidates.reduce((best, curr) => curr.score > best.score ? curr : best)
+      : null
+
+    if (crossDocCandidate) {
+      // Distinct doc within MIN_GAP exists → return ambiguous (pills)
+      // Use header_path for clarification text (consistent with existing UI)
+      return {
+        status: 'ambiguous',
+        results: [topResults[0], crossDocCandidate],
+        clarification: `Do you mean "${topResults[0].header_path}" or "${crossDocCandidate.header_path}"?`,
+        confidence,
+        phase: 2,
+        metrics,
+      }
+    }
+
+    // No cross-doc candidate → proceed with same-doc weak behavior
     return {
       status: 'weak',
       results: [topResult],
@@ -998,10 +1030,24 @@ export async function retrieveByDocSlug(docSlug: string): Promise<ChunkRetrieval
     }
   }
 
-  // Return the first chunk (intro/overview) as the best content
-  const bestChunk = chunks[0]
+  // HS1 Guard: Prefer first non-heading-only chunk
+  // This ensures pill clicks and direct lookups return useful content
+  let bestChunk = chunks[0]
+  let snippet = extractSnippet(bestChunk.content)
+
+  if (detectIsHeadingOnly(snippet) && chunks.length > 1) {
+    for (let i = 1; i < chunks.length; i++) {
+      const chunk = chunks[i]
+      const candidateSnippet = extractSnippet(chunk.content)
+      if (!detectIsHeadingOnly(candidateSnippet)) {
+        bestChunk = chunk
+        snippet = candidateSnippet
+        break
+      }
+    }
+  }
+
   const retrievalTimeMs = Date.now() - startTime
-  const snippet = extractSnippet(bestChunk.content)
   const maxChunkIndex = Math.max(...chunks.map(c => c.chunk_index))
 
   const topResult: ChunkRetrievalResult = {
@@ -1091,13 +1137,25 @@ export interface ExplanationResult {
   docSlug?: string   // Actual doc slug for follow-ups
   chunkId?: string   // Chunk ID for HS2 tracking (undefined if from cache or Phase 1)
   fromCache: boolean // True if returned from cache
+  status?: 'found' | 'ambiguous' | 'weak' | 'no_match'  // For UI to show pills on ambiguous
+  options?: Array<{   // Doc options for ambiguous status (pills)
+    docSlug: string
+    label: string     // header_path for display
+    title: string
+  }>
+}
+
+/** Options for getSmartExplanation */
+interface SmartExplanationOptions {
+  isDefinitionalQuery?: boolean  // Step 3: prefer concepts/* for "what is X" queries
 }
 
 /**
  * Get explanation using smart retrieval (DB first → cache fallback)
  * V5: Returns object with metadata for follow-up state tracking
+ * Step 3: When isDefinitionalQuery=true and ambiguous, auto-select concept doc
  */
-export async function getSmartExplanation(concept: string): Promise<ExplanationResult> {
+export async function getSmartExplanation(concept: string, options?: SmartExplanationOptions): Promise<ExplanationResult> {
   // DB-first: Try smart retrieval
   let response: Awaited<ReturnType<typeof smartRetrieve>> | null = null
   try {
@@ -1127,11 +1185,46 @@ export async function getSmartExplanation(concept: string): Promise<ExplanationR
     }
   }
 
-  if ((response?.status === 'ambiguous' || response?.status === 'weak') && response.results?.length > 0) {
+  if (response?.status === 'ambiguous' && response.results?.length > 1) {
+    // Step 3: For definitional queries, auto-select concept doc if available
+    if (options?.isDefinitionalQuery) {
+      const conceptResult = response.results.find(r => r.doc_slug.startsWith('concepts/'))
+      if (conceptResult) {
+        // Auto-select the concept doc without showing pills
+        const explanation = 'header_path' in conceptResult && conceptResult.header_path
+          ? `${conceptResult.header_path}: ${conceptResult.snippet}`
+          : conceptResult.snippet?.split('\n\n')[0] || conceptResult.snippet || ''
+
+        return {
+          explanation,
+          docSlug: conceptResult.doc_slug,
+          chunkId: 'chunkId' in conceptResult ? conceptResult.chunkId : undefined,
+          fromCache: false,
+          status: 'found',  // Treat as found, not ambiguous
+        }
+      }
+    }
+
+    // Default: return options for pills (no definitional preference or no concept match)
     return {
       explanation: response.clarification || null,
       docSlug: response.results[0].doc_slug,
       fromCache: false,
+      status: 'ambiguous',
+      options: response.results.slice(0, 2).map(r => ({
+        docSlug: r.doc_slug,
+        label: 'header_path' in r && r.header_path ? r.header_path : r.title,
+        title: r.title,
+      })),
+    }
+  }
+
+  if (response?.status === 'weak' && response.results?.length > 0) {
+    return {
+      explanation: response.clarification || null,
+      docSlug: response.results[0].doc_slug,
+      fromCache: false,
+      status: 'weak',
     }
   }
 

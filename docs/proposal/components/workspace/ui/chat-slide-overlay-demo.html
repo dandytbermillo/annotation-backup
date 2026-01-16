@@ -1174,7 +1174,7 @@
       <circle cx="12" cy="12" r="10"/>
       <path d="M12 16v-4M12 8h.01"/>
     </svg>
-    3 Divider Styles: Session • Date Headers • Time-Gap • Scroll up to compare ↑
+    4 Styles: Session • Date • Time-Gap • Doc "Show more" • Scroll up to compare ↑
   </div>
 
   <div class="toast" id="toast">Navigating...</div>
@@ -1340,6 +1340,56 @@ Notes: Cloud infrastructure costs increased by 12% due to scaling requirements. 
 </ul>
 
 <p>Next meeting scheduled for Monday 9am.</p>`
+      },
+      // Doc-based chat responses with "Show more" button
+      workspaceConcept: {
+        type: ContentType.NOTE,
+        title: 'Workspace Overview',
+        docSlug: 'concepts/workspace',
+        chunkId: 'workspace-overview-1',
+        snippet: 'A workspace is where notes live. Each workspace belongs to an entry and has its own open notes and active note.',
+        content: `<h1>Workspace Overview</h1>
+<p>A <span class="highlight">workspace</span> is where notes live. Each workspace belongs to an entry and has its own open notes and active note.</p>
+
+<h2>Key Concepts</h2>
+<ul>
+  <li><strong>Entry</strong> - A workspace belongs to exactly one entry</li>
+  <li><strong>Open Notes</strong> - Notes currently visible in the workspace</li>
+  <li><strong>Active Note</strong> - The note currently being edited</li>
+  <li><strong>Note Tabs</strong> - Quick access to recently used notes</li>
+</ul>
+
+<h2>Workspace Actions</h2>
+<p>You can perform the following actions on a workspace:</p>
+<ul>
+  <li>Create new notes</li>
+  <li>Open existing notes</li>
+  <li>Arrange notes on the canvas</li>
+  <li>Switch between notes</li>
+</ul>
+
+<h2>Related Topics</h2>
+<p>See also: <span class="highlight">Notes</span>, <span class="highlight">Entries</span>, <span class="highlight">Canvas</span></p>`
+      },
+      dashboardConcept: {
+        type: ContentType.NOTE,
+        title: 'Dashboard Overview',
+        docSlug: 'concepts/dashboard',
+        chunkId: 'dashboard-overview-1',
+        snippet: 'The Dashboard is your home screen showing widgets, quick actions, and recent activity.',
+        content: `<h1>Dashboard Overview</h1>
+<p>The <span class="highlight">Dashboard</span> is your home screen showing widgets, quick actions, and recent activity.</p>
+
+<h2>Dashboard Widgets</h2>
+<ul>
+  <li><strong>Continue</strong> - Resume where you left off</li>
+  <li><strong>Quick Capture</strong> - Fast note creation</li>
+  <li><strong>Recent</strong> - Recently accessed notes</li>
+  <li><strong>Quick Links</strong> - Pinned notes and bookmarks</li>
+</ul>
+
+<h2>Customization</h2>
+<p>Drag widgets to rearrange. Click settings to configure each widget.</p>`
       }
     };
 
@@ -1468,6 +1518,45 @@ Notes: Cloud infrastructure costs increased by 12% due to scaling requirements. 
                 <polyline points="9 18 15 12 9 6"/>
               </svg>
               Show all ${totalCount} →
+            </button>
+          </div>
+        </div>
+      `;
+
+      messagesList.appendChild(message);
+      messagesList.scrollTop = messagesList.scrollHeight;
+    }
+
+    // Doc-based response with snippet + "Show more" button (per chat-show-more-button-plan.md)
+    function addDocSnippetMessage(summary, snippet, dataKey, docTitle) {
+      const messagesList = document.getElementById('messagesList');
+      const message = document.createElement('div');
+      message.className = 'message message-assistant';
+
+      const data = sampleData[dataKey];
+      const docSlug = data?.docSlug || dataKey;
+      const chunkId = data?.chunkId || 'chunk-1';
+
+      message.innerHTML = `
+        <div class="message-bubble">
+          ${summary}
+          <div class="result-preview" style="margin-top: 10px;">
+            <div class="result-header">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+              </svg>
+              ${docTitle}
+            </div>
+            <div style="font-size: 12px; color: #9ca3af; margin: 8px 0; line-height: 1.5;">
+              ${snippet}
+            </div>
+            <button class="show-more-btn" onclick="openViewPanel('${dataKey}', '${docTitle}')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                <line x1="9" y1="3" x2="9" y2="21"/>
+              </svg>
+              Show more
             </button>
           </div>
         </div>
@@ -1901,6 +1990,22 @@ Notes: Cloud infrastructure costs increased by 12% due to scaling requirements. 
             'note',
             'meetingNotes'
           );
+        } else if (query.includes('what is workspace') || query.includes('what are workspaces') || query.includes('explain workspace')) {
+          // Doc-based "Show more" response for workspace concept
+          addDocSnippetMessage(
+            'A workspace is where notes live:',
+            sampleData.workspaceConcept.snippet,
+            'workspaceConcept',
+            'Workspace Overview'
+          );
+        } else if (query.includes('what is dashboard') || query.includes('explain dashboard')) {
+          // Doc-based "Show more" response for dashboard concept
+          addDocSnippetMessage(
+            'The Dashboard is your home screen:',
+            sampleData.dashboardConcept.snippet,
+            'dashboardConcept',
+            'Dashboard Overview'
+          );
         } else {
           addMessage(`I can help you view different content types:<br><br>
             • <strong>"show readme"</strong> - Text file<br>
@@ -1908,7 +2013,10 @@ Notes: Cloud infrastructure costs increased by 12% due to scaling requirements. 
             • <strong>"show code"</strong> - Code file<br>
             • <strong>"links A"</strong> - Mixed list (links + notes)<br>
             • <strong>"preview notes"</strong> - Rich text note<br>
-            • <strong>"find sprints"</strong> - Search results`);
+            • <strong>"find sprints"</strong> - Search results<br><br>
+            <strong>Doc queries (with "Show more"):</strong><br>
+            • <strong>"what is workspace"</strong> - Concept explanation<br>
+            • <strong>"what is dashboard"</strong> - Feature overview`);
         }
       }, 300);
     }
@@ -1962,10 +2070,25 @@ Notes: Cloud infrastructure costs increased by 12% due to scaling requirements. 
     addMessage('Navigating to Home...', false);
 
     // ============================================
+    // OPTION 4: Doc-based "Show more" responses
+    // ============================================
+    addDemoLabel('Option 4: Doc-based "Show more" button');
+    addMessage('what is workspace', true);
+    // Simulating doc-based response with snippet + show more
+    setTimeout(() => {
+      addDocSnippetMessage(
+        'A workspace is where notes live:',
+        sampleData.workspaceConcept.snippet,
+        'workspaceConcept',
+        'Workspace Overview'
+      );
+    }, 100);
+
+    // ============================================
     // Interactive demo prompt
     // ============================================
     addDemoLabel('Try the demo');
-    addMessage('Scroll up to compare all 3 divider styles! ↑<br><br>Try commands below:<br>• "show readme" • "links A" • "open budget.pdf"');
+    addMessage('Scroll up to compare all styles! ↑<br><br>Try commands below:<br>• "show readme" • "links A" • "open budget.pdf"<br>• <strong>"what is workspace"</strong> • <strong>"what is dashboard"</strong>');
   </script>
 </body>
 </html>
