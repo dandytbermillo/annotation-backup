@@ -58,6 +58,7 @@ export type {
   LastSuggestionState,
   LastClarificationState,
   ActionHistoryEntry,
+  DocRetrievalState,
 } from './chat-navigation-context'
 
 // Schema utilities (for reference)

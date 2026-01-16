@@ -10,8 +10,10 @@
 'use client'
 
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { MessageSquare, X, Loader2, PanelLeftClose } from 'lucide-react'
+import { MessageSquare, Send, X, Loader2, ChevronRight, PanelLeftClose, Clock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import { debugLog } from '@/lib/utils/debug-logger'
@@ -30,11 +32,6 @@ import {
 } from '@/lib/chat'
 import { ViewPanel } from './view-panel'
 import { MessageResultPreview } from './message-result-preview'
-import { ChatInput } from './ChatInput'
-import { SelectionPills } from './SelectionPills'
-import { SuggestionPills } from './SuggestionPills'
-import { DateHeader } from './DateHeader'
-import { SessionDivider } from './SessionDivider'
 import { getActiveEntryContext } from '@/lib/entry/entry-context'
 import { getActiveWorkspaceContext } from '@/lib/note-workspaces/state'
 import type { UIContext } from '@/lib/chat/intent-prompt'
@@ -53,36 +50,54 @@ import {
   createRoutingTelemetryEvent,
   getPatternId,
   RoutingPatternId,
-  setMatchedKnownTermTelemetry,
   type RoutingTelemetryEvent,
 } from '@/lib/chat/routing-telemetry'
-// Step 3 refactor: Routing handlers
-import { handleCorrection, handleMetaExplain, handleFollowUp } from '@/lib/chat/chat-routing'
 // TD-3: Import consolidated patterns from query-patterns module
 import {
+  // Pattern constants
+  AFFIRMATION_PATTERN,
+  REJECTION_PATTERN,
+  QUESTION_START_PATTERN,
+  COMMAND_START_PATTERN,
   ACTION_NOUNS,
   DOC_VERBS,
+  POLITE_COMMAND_PREFIXES,
+  META_PATTERNS,
+  RESHOW_PATTERNS,
   BARE_META_PHRASES,
+  // Normalization functions
   normalizeInputForRouting,
   normalizeTitle,
+  normalizeTypos,
   stripConversationalPrefix,
+  startsWithAnyPrefix,
+  // Detection functions
   isAffirmationPhrase,
   isRejectionPhrase,
+  isCorrectionPhrase,
+  isPronounFollowUp,
   hasQuestionIntent,
   hasActionVerb,
   containsDocInstructionCue,
+  looksIndexLikeReference,
   isMetaPhrase,
   matchesReshowPhrases,
+  isMetaExplainOutsideClarification,
   isCommandLike,
   isNewQuestionOrCommand,
+  // Extraction functions
+  extractMetaExplainConcept,
   extractDocQueryTerm,
+  // Response style
   getResponseStyle,
+  // TD-2: Fuzzy matching
+  findFuzzyMatch,
   findAllFuzzyMatches,
   hasFuzzyMatch,
+  type FuzzyMatchResult,
+  // TD-7: High-ambiguity terms
   getHighAmbiguityOnlyMatch,
 } from '@/lib/chat/query-patterns'
-// Step 1 refactor: Pure UI helpers
-import { normalizeUserMessage, extractQuickLinksBadge } from '@/lib/chat/ui-helpers'
 
 export interface ChatNavigationPanelProps {
   /** Current entry ID for context */
@@ -102,9 +117,84 @@ export interface ChatNavigationPanelProps {
   // Note: visiblePanels and focusedPanelId are now read from ChatNavigationContext (Gap 2)
 }
 
+// =============================================================================
+// Normalization Helper
+// =============================================================================
+
+/**
+ * Normalize user input before sending to LLM.
+ * - Strip filler phrases ("how about", "please", "can you", etc.)
+ * - Collapse duplicate tokens ("workspace workspace 5" → "workspace 5")
+ * - Trim whitespace
+ *
+ * Note: Preserves "create" and "new" keywords to distinguish open vs create intent.
+ * Note: Uses case-insensitive matching but preserves original casing in output.
+ */
+function normalizeUserMessage(input: string): string {
+  let normalized = input.trim()
+
+  // Strip common filler phrases (but preserve "create" and "new")
+  const fillerPatterns = [
+    /^(hey|hi|hello|please|can you|could you|would you|i want to|i'd like to|let's|let me|how about|what about)\s+/i,
+    /\s+(please|thanks|thank you)$/i,
+  ]
+  for (const pattern of fillerPatterns) {
+    normalized = normalized.replace(pattern, '')
+  }
+
+  // Collapse duplicate consecutive words ("workspace workspace 5" → "workspace 5")
+  normalized = normalized.replace(/\b(\w+)\s+\1\b/gi, '$1')
+
+  // Collapse multiple spaces
+  normalized = normalized.replace(/\s+/g, ' ').trim()
+
+  return normalized
+}
+
 // Context assembly limits
 const MAX_RECENT_USER_MESSAGES = 6
 const SUMMARY_MAX_CHARS = 400
+
+// =============================================================================
+// Ordinal Parser
+// =============================================================================
+
+/**
+ * Parse ordinal phrases to 1-based index.
+ * Returns the index if recognized, -1 for "last", or null if not an ordinal.
+ */
+function parseOrdinal(input: string): number | null {
+  const normalized = input.toLowerCase().trim()
+
+  // Simple ordinals
+  const ordinalMap: Record<string, number> = {
+    'first': 1, '1': 1, 'one': 1, 'the first': 1, 'first one': 1, 'the first one': 1,
+    'second': 2, '2': 2, 'two': 2, 'the second': 2, 'second one': 2, 'the second one': 2,
+    'third': 3, '3': 3, 'three': 3, 'the third': 3, 'third one': 3, 'the third one': 3,
+    'fourth': 4, '4': 4, 'four': 4, 'the fourth': 4, 'fourth one': 4, 'the fourth one': 4,
+    'fifth': 5, '5': 5, 'five': 5, 'the fifth': 5, 'fifth one': 5, 'the fifth one': 5,
+    'last': -1, 'the last': -1, 'last one': -1, 'the last one': -1,
+  }
+
+  // Check for exact match
+  if (ordinalMap[normalized] !== undefined) {
+    return ordinalMap[normalized]
+  }
+
+  // Check for patterns like "option 1", "option 2", etc.
+  const optionMatch = normalized.match(/^(?:option|number|#)\s*(\d+)$/i)
+  if (optionMatch) {
+    return parseInt(optionMatch[1], 10)
+  }
+
+  return null
+}
+
+function extractQuickLinksBadge(title?: string): string | null {
+  if (!title) return null
+  const match = title.match(/quick\s*links?\s*([a-z])/i)
+  return match ? match[1].toLowerCase() : null
+}
 
 /**
  * Pending option stored in chat state
@@ -185,6 +275,34 @@ function matchesShowAllHeuristic(input: string): boolean {
 }
 
 // TD-3: isAffirmationPhrase, isRejectionPhrase, isMetaPhrase now imported from query-patterns.ts
+
+/**
+ * Match ordinal phrases to option index.
+ * Returns 0-based index or undefined if no match.
+ */
+function matchOrdinal(input: string, optionCount: number): number | undefined {
+  const normalized = input.toLowerCase().trim()
+
+  const ordinals: Record<string, number> = {
+    'first': 0, 'first one': 0, 'the first': 0, 'the first one': 0, '1st': 0,
+    'second': 1, 'second one': 1, 'the second': 1, 'the second one': 1, '2nd': 1,
+    'third': 2, 'third one': 2, 'the third': 2, 'the third one': 2, '3rd': 2,
+    'fourth': 3, 'fourth one': 3, 'the fourth': 3, 'the fourth one': 3, '4th': 3,
+    'fifth': 4, 'fifth one': 4, 'the fifth': 4, 'the fifth one': 4, '5th': 4,
+    'last': optionCount - 1, 'last one': optionCount - 1, 'the last': optionCount - 1, 'the last one': optionCount - 1,
+  }
+
+  for (const [phrase, index] of Object.entries(ordinals)) {
+    if (normalized === phrase || normalized.includes(phrase)) {
+      if (index >= 0 && index < optionCount) {
+        return index
+      }
+    }
+  }
+
+  return undefined
+}
+
 // TD-3: matchesReshowPhrases, stripConversationalPrefix, isMetaExplainOutsideClarification,
 //       extractMetaExplainConcept now imported from query-patterns.ts
 
@@ -738,6 +856,113 @@ function buildChatContext(messages: ChatMessage[], uiContext?: UIContext | null)
 }
 
 /**
+ * Clarification question types that can be answered from chat context.
+ * Per answer-from-chat-context-plan.md
+ */
+type ClarificationType =
+  | 'what_opened'      // "what did you just open?"
+  | 'what_shown'       // "what did you just show?"
+  | 'what_said'        // "what did you say?"
+  | 'option_count'     // "is there a third option?", "how many options?"
+  | 'item_count'       // "how many items were there?"
+  | 'list_items'       // "what were the items?"
+  | 'repeat_options'   // "what were the options?" (similar to reshow)
+  | null
+
+/**
+ * Detect if input is a clarification question that can be answered from context.
+ * Returns the type of clarification or null if not a clarification question.
+ */
+function detectClarification(input: string): ClarificationType {
+  const normalized = input.toLowerCase().trim()
+
+  // What did you just open?
+  if (/what\s+(did\s+you\s+)?(just\s+)?open(ed)?\??$/.test(normalized)) {
+    return 'what_opened'
+  }
+
+  // What did you just show?
+  if (/what\s+(did\s+you\s+)?(just\s+)?show(n|ed)?\??$/.test(normalized)) {
+    return 'what_shown'
+  }
+
+  // What did you say?
+  if (/what\s+(did\s+you\s+)?say(\s+again)?\??$/.test(normalized)) {
+    return 'what_said'
+  }
+
+  // Is there a third/fourth/etc option?
+  if (/is\s+there\s+(a\s+)?(third|fourth|fifth|sixth|3rd|4th|5th|6th|\d+)\s+option\??$/.test(normalized)) {
+    return 'option_count'
+  }
+
+  // How many options?
+  if (/how\s+many\s+options(\s+are\s+there)?\??$/.test(normalized)) {
+    return 'option_count'
+  }
+
+  // How many items?
+  if (/how\s+many\s+items(\s+(are|were)\s+there)?\??$/.test(normalized)) {
+    return 'item_count'
+  }
+
+  // What were the items?
+  if (/what\s+(were|are)\s+the\s+items\??$/.test(normalized)) {
+    return 'list_items'
+  }
+
+  // What were the options? (can overlap with reshow, but we'll answer with count/list)
+  if (/what\s+(were|are)\s+the\s+options\??$/.test(normalized)) {
+    return 'repeat_options'
+  }
+
+  return null
+}
+
+/**
+ * Get the last assistant message content from chat history.
+ */
+function getLastAssistantMessage(messages: ChatMessage[]): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'assistant' && messages[i].content) {
+      return messages[i].content
+    }
+  }
+  return null
+}
+
+/**
+ * Parse ordinal number from clarification question (e.g., "third" → 3).
+ */
+function parseOrdinalFromQuestion(input: string): number | null {
+  const normalized = input.toLowerCase()
+  const ordinalMap: Record<string, number> = {
+    'third': 3, '3rd': 3,
+    'fourth': 4, '4th': 4,
+    'fifth': 5, '5th': 5,
+    'sixth': 6, '6th': 6,
+    'seventh': 7, '7th': 7,
+    'eighth': 8, '8th': 8,
+    'ninth': 9, '9th': 9,
+    'tenth': 10, '10th': 10,
+  }
+
+  for (const [word, num] of Object.entries(ordinalMap)) {
+    if (normalized.includes(word)) {
+      return num
+    }
+  }
+
+  // Check for numeric (e.g., "is there a 5 option")
+  const numMatch = normalized.match(/(\d+)\s*option/)
+  if (numMatch) {
+    return parseInt(numMatch[1], 10)
+  }
+
+  return null
+}
+
+/**
  * Check if input contains action verbs that should skip grace window.
  * These are deliberate commands that shouldn't be intercepted.
  * Note: This is separate from hasActionVerb() in v4 routing helpers.
@@ -975,8 +1200,52 @@ function buildContextPayload(
 // =============================================================================
 // Session Divider Components
 // =============================================================================
-// Step 4 refactor: DateHeader and SessionDivider extracted to separate files
-// =============================================================================
+
+function SessionDivider() {
+  return (
+    <div className="flex items-center gap-3 py-4 my-2">
+      <div className="flex-1 h-px bg-gradient-to-r from-transparent via-zinc-400 to-transparent" />
+      <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-zinc-500 font-semibold bg-zinc-100 px-3 py-1 rounded-full border border-zinc-200 shadow-sm">
+        <Clock className="h-3.5 w-3.5" />
+        <span>Previous session</span>
+      </div>
+      <div className="flex-1 h-px bg-gradient-to-l from-transparent via-zinc-400 to-transparent" />
+    </div>
+  )
+}
+
+function DateHeader({ date, isToday }: { date: Date; isToday: boolean }) {
+  const formatDate = (d: Date): string => {
+    const now = new Date()
+    const yesterday = new Date(now)
+    yesterday.setDate(yesterday.getDate() - 1)
+
+    if (isToday) return 'Today'
+    if (d.toDateString() === yesterday.toDateString()) return 'Yesterday'
+
+    return d.toLocaleDateString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
+    })
+  }
+
+  return (
+    <div className="flex items-center gap-3 py-3 my-1">
+      <div className="flex-1 h-px bg-zinc-200" />
+      <div className={cn(
+        "text-[11px] font-medium px-3 py-1 rounded-full border shadow-sm",
+        isToday
+          ? "text-indigo-600 bg-indigo-50 border-indigo-200"
+          : "text-zinc-500 bg-zinc-50 border-zinc-200"
+      )}>
+        {formatDate(date)}
+      </div>
+      <div className="flex-1 h-px bg-zinc-200" />
+    </div>
+  )
+}
 
 /**
  * Check if two dates are on different days
@@ -2236,71 +2505,6 @@ function ChatNavigationPanelContent({
           return
         }
 
-        // Tier 1d: Local ordinal/selection check for multi-option clarifications
-        // Handles "first", "second", "1", "2", etc. when options are displayed
-        // This runs BEFORE Tier 2 LLM to avoid unnecessary API calls
-        // Note: Use pendingOptions for full option data (ClarificationOption doesn't have 'data' property)
-        if (lastClarification && !clarificationCleared && lastClarification.options && lastClarification.options.length > 0) {
-          const clarificationOptionLabels = lastClarification.options.map(opt => opt.label)
-          const clarificationSelectionResult = isSelectionOnly(trimmedInput, lastClarification.options.length, clarificationOptionLabels)
-
-          if (clarificationSelectionResult.isSelection && clarificationSelectionResult.index !== undefined) {
-            const selectedClarificationOption = lastClarification.options[clarificationSelectionResult.index]
-            // Get full option data from pendingOptions (which has 'data' property)
-            const fullOption = pendingOptions.find(opt => opt.id === selectedClarificationOption.id)
-
-            void debugLog({
-              component: 'ChatNavigation',
-              action: 'clarification_tier1d_ordinal_selection',
-              metadata: {
-                input: trimmedInput,
-                index: clarificationSelectionResult.index,
-                selectedLabel: selectedClarificationOption.label,
-                clarificationType: lastClarification.type,
-                hasFullOption: !!fullOption,
-              },
-              metrics: {
-                event: 'clarification_resolved',
-                selectedLabel: selectedClarificationOption.label,
-                timestamp: Date.now(),
-              },
-            })
-
-            // Clear clarification state
-            setLastClarification(null)
-            clarificationCleared = true
-
-            // Execute the selection using full option data if available
-            if (fullOption) {
-              const optionToSelect: SelectionOption = {
-                type: fullOption.type as SelectionOption['type'],
-                id: fullOption.id,
-                label: fullOption.label,
-                sublabel: fullOption.sublabel,
-                data: fullOption.data as SelectionOption['data'],
-              }
-              setIsLoading(false)
-              handleSelectOption(optionToSelect)
-              return
-            } else {
-              // Fallback: construct minimal option for doc_disambiguation type
-              // For doc type, data is { docSlug: id }
-              const optionToSelect: SelectionOption = {
-                type: selectedClarificationOption.type as SelectionOption['type'],
-                id: selectedClarificationOption.id,
-                label: selectedClarificationOption.label,
-                sublabel: selectedClarificationOption.sublabel,
-                data: selectedClarificationOption.type === 'doc'
-                  ? { docSlug: selectedClarificationOption.id }
-                  : { term: selectedClarificationOption.id, action: 'doc' as const },
-              }
-              setIsLoading(false)
-              handleSelectOption(optionToSelect)
-              return
-            }
-          }
-        }
-
         // Tier 2: LLM interpretation for unclear responses
         // Call API with clarification-mode flag to get YES/NO/META/UNCLEAR interpretation
         // Skip if we already exited via new intent (clarificationCleared = true)
@@ -2377,69 +2581,527 @@ function ChatNavigationPanelContent({
 
       // ---------------------------------------------------------------------------
       // Meta-Explain Outside Clarification: Handle "explain", "what do you mean?"
-      // Step 3 refactor: Extracted to lib/chat/chat-routing.ts
+      // Per meta-explain-outside-clarification-plan.md (Tiered Plan)
+      // Tier 1: Local cache for common concepts
+      // Tier 2: Database retrieval for long tail
+      // NOTE: Skip if there's active docRetrievalState AND input is a follow-up cue
+      //       (let v4 pronoun follow-up handler take over instead)
       // ---------------------------------------------------------------------------
-      const metaExplainResult = await handleMetaExplain({
-        trimmedInput,
-        docRetrievalState,
-        messages,
-        lastClarification,
-        clarificationCleared,
-        knownTermsFetchStatus,
-        usedCoreAppTermsFallback,
-        addMessage,
-        updateDocRetrievalState,
-        setIsLoading,
-        setPendingOptions,
-        setPendingOptionsMessageId,
-        setLastClarification,
-      })
-      if (metaExplainResult.handled) {
+      const shouldDeferToV4FollowUp = docRetrievalState?.lastDocSlug && isPronounFollowUp(trimmedInput)
+      if ((!lastClarification || clarificationCleared) && isMetaExplainOutsideClarification(trimmedInput) && !shouldDeferToV4FollowUp) {
+        const metaExplainStartTime = Date.now()
+
+        // TD-4: Log meta-explain route telemetry
+        const { normalized: normalizedMetaQuery, tokens: metaExplainTokens } = normalizeInputForRouting(trimmedInput)
+        const metaExplainKnownTerms = getKnownTermsSync()
+        const metaExplainTelemetryEvent: Partial<RoutingTelemetryEvent> = createRoutingTelemetryEvent(
+          trimmedInput,
+          normalizedMetaQuery,
+          !!metaExplainKnownTerms,
+          metaExplainKnownTerms?.size ?? 0,
+          docRetrievalState?.lastDocSlug,
+          knownTermsFetchStatus,
+          usedCoreAppTermsFallback
+        )
+        metaExplainTelemetryEvent.route_deterministic = 'doc'
+        metaExplainTelemetryEvent.route_final = 'doc'
+        // Determine pattern based on query structure
+        if (/^what is\b/i.test(normalizedMetaQuery)) {
+          metaExplainTelemetryEvent.matched_pattern_id = RoutingPatternId.DEF_WHAT_IS
+        } else if (/^what are\b/i.test(normalizedMetaQuery)) {
+          metaExplainTelemetryEvent.matched_pattern_id = RoutingPatternId.DEF_WHAT_ARE
+        } else if (/^explain\b/i.test(normalizedMetaQuery)) {
+          metaExplainTelemetryEvent.matched_pattern_id = RoutingPatternId.DEF_EXPLAIN
+        } else {
+          metaExplainTelemetryEvent.matched_pattern_id = RoutingPatternId.DEF_CONVERSATIONAL
+        }
+        // TD-1: Track term matching on meta-explain path (CORE_APP_TERMS removed)
+        metaExplainTelemetryEvent.matched_known_term = metaExplainKnownTerms
+          ? (metaExplainTokens.some(t => metaExplainKnownTerms.has(t)) || metaExplainKnownTerms.has(normalizedMetaQuery))
+          : false
+
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'meta_explain_outside_clarification',
+          metadata: { userInput: trimmedInput },
+        })
+
+        try {
+          // Extract specific concept or use last assistant message context
+          const concept = extractMetaExplainConcept(trimmedInput)
+          let queryTerm = concept
+
+          // If no specific concept, try to infer from last assistant message
+          if (!queryTerm) {
+            const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant')
+            if (lastAssistant?.content) {
+              // Extract key terms from last answer (e.g., "dashboard of Home" → "home")
+              const contentLower = lastAssistant.content.toLowerCase()
+              if (contentLower.includes('dashboard') && contentLower.includes('home')) {
+                queryTerm = 'home'
+              } else if (contentLower.includes('workspace')) {
+                queryTerm = 'workspace'
+              } else if (contentLower.includes('recent')) {
+                queryTerm = 'recent'
+              } else if (contentLower.includes('quick links')) {
+                queryTerm = 'quick links'
+              } else if (contentLower.includes('navigator')) {
+                queryTerm = 'navigator'
+              } else if (contentLower.includes('panel') || contentLower.includes('drawer')) {
+                queryTerm = 'drawer'
+              }
+            }
+          }
+
+          // TD-2: Apply fuzzy correction for meta-explain queries
+          let metaFuzzyCorrectionApplied = false
+          if (queryTerm && metaExplainKnownTerms) {
+            const fuzzyMatch = findFuzzyMatch(queryTerm, metaExplainKnownTerms)
+            if (fuzzyMatch) {
+              console.log(`[MetaExplain] Fuzzy correction: "${queryTerm}" → "${fuzzyMatch.matchedTerm}"`)
+              queryTerm = fuzzyMatch.matchedTerm
+              metaFuzzyCorrectionApplied = true
+              // Track fuzzy match in telemetry
+              metaExplainTelemetryEvent.fuzzy_matched = true
+              metaExplainTelemetryEvent.fuzzy_match_token = fuzzyMatch.inputToken
+              metaExplainTelemetryEvent.fuzzy_match_term = fuzzyMatch.matchedTerm
+              metaExplainTelemetryEvent.fuzzy_match_distance = fuzzyMatch.distance
+            }
+          }
+          metaExplainTelemetryEvent.retrieval_query_corrected = metaFuzzyCorrectionApplied
+
+          // Step 3: Detect definitional query for concept preference
+          // Per definitional-query-fix-proposal.md: "what is X" should prefer concepts/* over actions/*
+          const isDefinitionalPattern = !!concept  // concept is non-null for "what is X", "explain X" patterns
+          const hasActionIntent = isDefinitionalPattern
+            ? /\b(action|actions|create|delete|rename|list|open)\b/i.test(trimmedInput)
+            : false
+          const isDefinitionalQuery = isDefinitionalPattern && !hasActionIntent
+
+          // Call retrieval API
+          const retrieveResponse = await fetch('/api/docs/retrieve', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              query: queryTerm || trimmedInput,
+              mode: 'explain',
+              isDefinitionalQuery,  // Step 3: hint for backend to prefer concepts
+            }),
+          })
+
+          if (retrieveResponse.ok) {
+            const result = await retrieveResponse.json()
+
+            // TD-4: Update telemetry with retrieval result and log
+            metaExplainTelemetryEvent.doc_status = result.status as RoutingTelemetryEvent['doc_status']
+            metaExplainTelemetryEvent.doc_slug_top = result.docSlug || result.options?.[0]?.docSlug
+            metaExplainTelemetryEvent.doc_slug_alt = result.options?.slice(1, 3).map((o: { docSlug: string }) => o.docSlug)
+            metaExplainTelemetryEvent.routing_latency_ms = Date.now() - metaExplainStartTime
+            // TD-4: Set AMBIGUOUS_CROSS_DOC pattern when result is ambiguous with multiple doc options
+            if (result.status === 'ambiguous' && result.options?.length >= 2) {
+              metaExplainTelemetryEvent.matched_pattern_id = RoutingPatternId.AMBIGUOUS_CROSS_DOC
+            }
+            void logRoutingDecision(metaExplainTelemetryEvent as RoutingTelemetryEvent)
+
+            // Per definitional-query-fix-proposal.md: Check for ambiguous status (Step 1 cross-doc override)
+            // If ambiguous, show pills for doc selection instead of just text clarification
+            if (result.status === 'ambiguous' && result.options?.length >= 2) {
+              const messageId = `assistant-${Date.now()}`
+              const options: SelectionOption[] = result.options.slice(0, 2).map((opt: { docSlug: string; label: string; title: string }, idx: number) => ({
+                type: 'doc' as const,
+                id: opt.docSlug,
+                label: opt.label || opt.title,
+                sublabel: opt.title !== opt.label ? opt.title : undefined,
+                data: { docSlug: opt.docSlug },
+              }))
+
+              const assistantMessage: ChatMessage = {
+                id: messageId,
+                role: 'assistant',
+                content: result.explanation || `Do you mean "${options[0].label}" or "${options[1].label}"?`,
+                timestamp: new Date(),
+                isError: false,
+                options,
+              }
+              addMessage(assistantMessage)
+
+              // Set clarification state for pill selection handling
+              setPendingOptions(options.map((opt, idx) => ({
+                index: idx + 1,
+                label: opt.label,
+                sublabel: opt.sublabel,
+                type: opt.type,
+                id: opt.id,
+                data: opt.data,
+              })))
+              setPendingOptionsMessageId(messageId)
+
+              setLastClarification({
+                type: 'doc_disambiguation',
+                originalIntent: 'meta_explain',
+                messageId,
+                timestamp: Date.now(),
+                clarificationQuestion: result.explanation || 'Which one do you mean?',
+                options: options.map(opt => ({
+                  id: opt.id,
+                  label: opt.label,
+                  sublabel: opt.sublabel,
+                  type: opt.type,
+                })),
+                metaCount: 0,
+              })
+
+              void debugLog({
+                component: 'ChatNavigation',
+                action: 'meta_explain_ambiguous_pills',
+                metadata: { optionCount: options.length, labels: options.map(o => o.label), source: 'meta_explain' },
+                metrics: {
+                  event: 'clarification_shown',
+                  optionCount: options.length,
+                  timestamp: Date.now(),
+                },
+              })
+
+              setIsLoading(false)
+              return
+            }
+
+            // Non-ambiguous: show explanation text directly
+            const explanation = result.explanation || 'Which part would you like me to explain?'
+
+            const assistantMessage: ChatMessage = {
+              id: `assistant-${Date.now()}`,
+              role: 'assistant',
+              content: explanation,
+              timestamp: new Date(),
+              isError: false,
+            }
+            addMessage(assistantMessage)
+
+            // Wire meta-explain into v4 state for follow-ups and corrections
+            // Per general-doc-retrieval-routing-plan.md (v4)
+            // V5: Use actual docSlug from result (not query term) for accurate follow-ups
+            const metaQueryTerm = queryTerm || trimmedInput
+            const { tokens: metaTokens } = normalizeInputForRouting(metaQueryTerm)
+
+            // TD-8: Only set lastDocSlug for confident results (found), not weak
+            // Weak results should not lock follow-ups to potentially wrong doc
+            const isConfidentResult = result.status === 'found' || !result.status // Legacy: if no status, assume found
+            updateDocRetrievalState({
+              lastDocSlug: isConfidentResult ? (result.docSlug || metaQueryTerm) : undefined,
+              lastTopicTokens: metaTokens,
+              lastMode: 'doc',
+              lastChunkIdsShown: isConfidentResult && result.chunkId ? [result.chunkId] : [],
+            })
+
+            setIsLoading(false)
+            return
+          }
+        } catch (error) {
+          console.error('[ChatNavigation] Meta-explain retrieval error:', error)
+        }
+
+        // Fallback if retrieval fails
+        const fallbackMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: 'Which part would you like me to explain?',
+          timestamp: new Date(),
+          isError: false,
+        }
+        addMessage(fallbackMessage)
+        setIsLoading(false)
         return
       }
 
       // ---------------------------------------------------------------------------
       // V4 Correction Handling: "no / not that" after doc retrieval
       // Per general-doc-retrieval-routing-plan.md (v4)
-      // Step 3 refactor: Extracted to lib/chat/chat-routing.ts
       // ---------------------------------------------------------------------------
-      const correctionResult = handleCorrection({
-        trimmedInput,
-        docRetrievalState,
-        knownTermsFetchStatus,
-        usedCoreAppTermsFallback,
-        addMessage,
-        updateDocRetrievalState,
-        setIsLoading,
-      })
-      if (correctionResult.handled) {
+      if (docRetrievalState?.lastDocSlug && isCorrectionPhrase(trimmedInput)) {
+        // TD-4: Log correction telemetry to track when previous routing was wrong
+        // This marks that the PREVIOUS turn's routing decision was corrected by user
+        const { normalized: normalizedQuery, tokens: correctionTokens } = normalizeInputForRouting(trimmedInput)
+        const correctionKnownTerms = getKnownTermsSync()
+        const correctionTelemetryEvent: Partial<RoutingTelemetryEvent> = createRoutingTelemetryEvent(
+          trimmedInput,
+          normalizedQuery,
+          !!correctionKnownTerms,
+          correctionKnownTerms?.size ?? 0,
+          docRetrievalState.lastDocSlug,
+          knownTermsFetchStatus,
+          usedCoreAppTermsFallback
+        )
+        correctionTelemetryEvent.route_deterministic = 'clarify'
+        correctionTelemetryEvent.route_final = 'clarify'
+        correctionTelemetryEvent.matched_pattern_id = RoutingPatternId.CORRECTION
+        // TD-1: Track term matching on correction path (CORE_APP_TERMS removed)
+        correctionTelemetryEvent.matched_known_term = correctionKnownTerms
+          ? (correctionTokens.some(t => correctionKnownTerms.has(t)) || correctionKnownTerms.has(normalizedQuery))
+          : false
+        // TD-4: This event indicates the PREVIOUS turn should be marked as user_corrected_next_turn=true
+        // The doc_slug_top contains the doc that was incorrectly routed to
+        correctionTelemetryEvent.doc_slug_top = docRetrievalState.lastDocSlug
+        correctionTelemetryEvent.user_corrected_next_turn = true // Marks this IS a correction event
+        correctionTelemetryEvent.routing_latency_ms = 0
+        void logRoutingDecision(correctionTelemetryEvent as RoutingTelemetryEvent)
+
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'doc_correction',
+          metadata: { userInput: trimmedInput, lastDocSlug: docRetrievalState.lastDocSlug },
+          // V5 Metrics: Track correction rate
+          metrics: {
+            event: 'correction_triggered',
+            docSlug: docRetrievalState.lastDocSlug,
+            correctionPhrase: trimmedInput,
+            timestamp: Date.now(),
+          },
+        })
+
+        // Acknowledge correction and re-run retrieval with lastTopicTokens
+        const correctionMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: "Got it — let's try again. Which topic were you asking about?",
+          timestamp: new Date(),
+          isError: false,
+        }
+        addMessage(correctionMessage)
+
+        // Clear doc retrieval state to allow fresh query
+        updateDocRetrievalState({ lastDocSlug: undefined, lastTopicTokens: undefined })
+        setIsLoading(false)
         return
       }
 
       // ---------------------------------------------------------------------------
       // V5 Pronoun Follow-up: "tell me more" with HS2 expansion
-      // Step 3 refactor: Extracted to lib/chat/chat-routing.ts
+      // Per general-doc-retrieval-routing-plan.md (v5)
+      // Uses excludeChunkIds to avoid repeating already-shown content
       // ---------------------------------------------------------------------------
-      const followUpResult = await handleFollowUp({
-        trimmedInput,
-        docRetrievalState,
-        isNewQuestionOrCommandDetected,
-        knownTermsFetchStatus,
-        usedCoreAppTermsFallback,
-        addMessage,
-        updateDocRetrievalState,
-        setIsLoading,
-      })
-      // Extract classifier state for use in subsequent routing telemetry
-      const {
-        classifierCalled,
-        classifierResult,
-        classifierTimeout,
-        classifierLatencyMs,
-        classifierError,
-      } = followUpResult
-      const isFollowUp = followUpResult.handled
-      if (followUpResult.handled) {
+
+      // Check for deterministic follow-up first
+      let isFollowUp = isPronounFollowUp(trimmedInput)
+
+      // TD-4: Track classifier state for telemetry
+      let classifierCalled = false
+      let classifierResult: boolean | undefined
+      let classifierTimeout = false
+      let classifierLatencyMs: number | undefined
+      let classifierError = false
+
+      // V5 Follow-up-miss backup: If lastDocSlug is set but deterministic check missed,
+      // call classifier as backup BEFORE falling to LLM routing
+      // Per plan (line 315): "If follow-up detection misses but lastDocSlug is set,
+      // call the semantic classifier as a backup before falling back to LLM"
+      // FIX: Skip classifier for new questions/commands - they are clearly new intents, not follow-ups
+      // e.g., "can you tell me what are the workspaces actions?" should NOT be scoped to previous doc
+      if (docRetrievalState?.lastDocSlug && !isFollowUp && !isNewQuestionOrCommandDetected) {
+        classifierCalled = true
+        const classifierStartTime = Date.now()
+
+        try {
+          // TD-4: Add timeout to classifier call (2 second timeout)
+          const controller = new AbortController()
+          const timeoutId = setTimeout(() => controller.abort(), 2000)
+
+          const classifyResponse = await fetch('/api/chat/classify-followup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userMessage: trimmedInput,
+              lastDocSlug: docRetrievalState.lastDocSlug,
+              lastTopicTokens: docRetrievalState.lastTopicTokens,
+            }),
+            signal: controller.signal,
+          })
+          clearTimeout(timeoutId)
+
+          const classifyResultData = await classifyResponse.json()
+          classifierLatencyMs = Date.now() - classifierStartTime
+          classifierResult = classifyResultData.isFollowUp
+
+          if (classifyResultData.isFollowUp) {
+            isFollowUp = true
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'followup_classifier_backup',
+              metadata: {
+                userInput: trimmedInput,
+                lastDocSlug: docRetrievalState.lastDocSlug,
+                latencyMs: classifierLatencyMs,
+              },
+              metrics: {
+                event: 'classifier_followup_detected',
+                docSlug: docRetrievalState.lastDocSlug,
+                timestamp: Date.now(),
+              },
+            })
+          }
+        } catch (error) {
+          classifierLatencyMs = Date.now() - classifierStartTime
+          if (error instanceof Error && error.name === 'AbortError') {
+            classifierTimeout = true
+            console.warn('[ChatNavigation] Follow-up classifier timed out')
+          } else {
+            classifierError = true
+            console.error('[ChatNavigation] Follow-up classifier backup error:', error)
+          }
+          // Continue without classifier result - fall through to normal routing
+        }
+      }
+
+      if (docRetrievalState?.lastDocSlug && isFollowUp) {
+        const excludeChunkIds = docRetrievalState.lastChunkIdsShown || []
+        const followupStartTime = Date.now()
+
+        // TD-4: Log follow-up route telemetry
+        const { normalized: normalizedQuery, tokens: followupTokens } = normalizeInputForRouting(trimmedInput)
+        const followupKnownTerms = getKnownTermsSync()
+        const followupTelemetryEvent: Partial<RoutingTelemetryEvent> = createRoutingTelemetryEvent(
+          trimmedInput,
+          normalizedQuery,
+          !!followupKnownTerms,
+          followupKnownTerms?.size ?? 0,
+          docRetrievalState.lastDocSlug,
+          knownTermsFetchStatus,
+          usedCoreAppTermsFallback
+        )
+        followupTelemetryEvent.route_deterministic = 'followup'
+        followupTelemetryEvent.route_final = 'followup'
+        followupTelemetryEvent.followup_detected = true
+        followupTelemetryEvent.classifier_called = classifierCalled
+        followupTelemetryEvent.classifier_result = classifierResult
+        followupTelemetryEvent.classifier_timeout = classifierTimeout
+        followupTelemetryEvent.classifier_latency_ms = classifierLatencyMs
+        followupTelemetryEvent.classifier_error = classifierError
+        followupTelemetryEvent.matched_pattern_id = classifierCalled && classifierResult
+          ? RoutingPatternId.FOLLOWUP_CLASSIFIER
+          : isPronounFollowUp(trimmedInput)
+            ? RoutingPatternId.FOLLOWUP_PRONOUN
+            : RoutingPatternId.FOLLOWUP_TELL_ME_MORE
+        // TD-1: Track term matching on follow-up path (CORE_APP_TERMS removed)
+        followupTelemetryEvent.matched_known_term = followupKnownTerms
+          ? (followupTokens.some(t => followupKnownTerms.has(t)) || followupKnownTerms.has(normalizedQuery))
+          : false
+        followupTelemetryEvent.routing_latency_ms = Date.now() - followupStartTime
+        void logRoutingDecision(followupTelemetryEvent as RoutingTelemetryEvent)
+
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'doc_followup_v5',
+          metadata: {
+            userInput: trimmedInput,
+            lastDocSlug: docRetrievalState.lastDocSlug,
+            excludeChunkIds,
+          },
+          // V5 Metrics: Track follow-up expansion
+          metrics: {
+            event: 'followup_expansion',
+            docSlug: docRetrievalState.lastDocSlug,
+            excludedChunks: excludeChunkIds.length,
+            timestamp: Date.now(),
+          },
+        })
+
+        try {
+          // V5 HS2: Use mode='chunks' with excludeChunkIds for same-doc expansion
+          let retrieveResponse = await fetch('/api/docs/retrieve', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              mode: 'chunks',
+              query: docRetrievalState.lastDocSlug,
+              scopeDocSlug: docRetrievalState.lastDocSlug,
+              excludeChunkIds,
+            }),
+          })
+
+          let result = retrieveResponse.ok ? await retrieveResponse.json() : null
+
+          // If scoped retrieval fails, try query-based without scope but still use chunks mode
+          // to ensure v5 fields (isHeadingOnly, bodyCharCount) are present for quality filtering
+          if (!result || result.status === 'no_match' || !result.results?.length) {
+            retrieveResponse = await fetch('/api/docs/retrieve', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                mode: 'chunks',
+                query: docRetrievalState.lastDocSlug,
+                excludeChunkIds,
+              }),
+            })
+            result = retrieveResponse.ok ? await retrieveResponse.json() : null
+          }
+
+          if (result && (result.status === 'found' || result.status === 'weak') && result.results?.length > 0) {
+            // V5 HS2: Find first non-heading-only chunk (quality filter)
+            let selectedResult = null
+            for (const chunk of result.results) {
+              if (!isLowQualitySnippet(chunk.snippet, chunk.isHeadingOnly, chunk.bodyCharCount)) {
+                selectedResult = chunk
+                break
+              }
+            }
+
+            // If all results are low quality, use first one anyway
+            if (!selectedResult) {
+              selectedResult = result.results[0]
+              console.log('[DocRetrieval:HS2] All follow-up chunks are low quality, using first')
+            }
+
+            const snippet = selectedResult.snippet || selectedResult.content?.slice(0, 500) || ''
+            const newChunkId = selectedResult.chunkId
+
+            // Check if we actually have new content
+            if (snippet.length > 0) {
+              const assistantMessage: ChatMessage = {
+                id: `assistant-${Date.now()}`,
+                role: 'assistant',
+                content: snippet + (snippet.length >= 500 ? '...' : ''),
+                timestamp: new Date(),
+                isError: false,
+              }
+              addMessage(assistantMessage)
+
+              // V5: Update lastChunkIdsShown to include newly shown chunk
+              if (newChunkId) {
+                updateDocRetrievalState({
+                  lastChunkIdsShown: [...excludeChunkIds, newChunkId],
+                })
+              }
+
+              setIsLoading(false)
+              return
+            }
+          }
+
+          // No more content in this doc - inform user
+          const exhaustedMessage: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: "That's all I have on this topic. What else would you like to know?",
+            timestamp: new Date(),
+            isError: false,
+          }
+          addMessage(exhaustedMessage)
+          setIsLoading(false)
+          return
+        } catch (error) {
+          console.error('[ChatNavigation] Doc follow-up error:', error)
+        }
+
+        // Fallback if follow-up fails
+        const fallbackMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: "I don't have more details on that. What else would you like to know?",
+          timestamp: new Date(),
+          isError: false,
+        }
+        addMessage(fallbackMessage)
+        setIsLoading(false)
         return
       }
 
@@ -2474,7 +3136,9 @@ function ChatNavigationPanelContent({
       telemetryEvent.route_final = docRoute as RoutingTelemetryEvent['route_final']
       telemetryEvent.is_new_question = isNewQuestionOrCommandDetected
       // TD-1: Track whether knownTerms matched this query (CORE_APP_TERMS removed)
-      setMatchedKnownTermTelemetry(telemetryEvent, queryTokens, normalizedQuery, knownTerms)
+      telemetryEvent.matched_known_term = knownTerms
+        ? (queryTokens.some(t => knownTerms.has(t)) || knownTerms.has(normalizedQuery))
+        : false
       // TD-2: Track fuzzy matching (only check if no exact match)
       if (knownTerms && !telemetryEvent.matched_known_term) {
         const fuzzyMatches = findAllFuzzyMatches(queryTokens, knownTerms)
@@ -2836,7 +3500,7 @@ function ChatNavigationPanelContent({
             if (result.status === 'ambiguous' && result.results?.length >= 2) {
               // Ambiguous - show options as pills
               const messageId = `assistant-${Date.now()}`
-              const options: SelectionOption[] = result.results.slice(0, 2).map((r: { doc_slug: string; header_path?: string; title: string; category: string }) => ({
+              const options: SelectionOption[] = result.results.slice(0, 2).map((r: { doc_slug: string; header_path?: string; title: string; category: string }, idx: number) => ({
                 type: 'doc' as const,
                 id: r.doc_slug,
                 label: r.header_path || r.title,
@@ -2928,52 +3592,8 @@ function ChatNavigationPanelContent({
       // V4 LLM Route: Handle non-app queries (skip retrieval)
       // Per general-doc-retrieval-routing-plan.md (v4) - app relevance gate
       // When routeDocInput returns 'llm', the query is not app-relevant
-      // EXCEPT: Check for pending options selection first (e.g., "second", "2")
       // ---------------------------------------------------------------------------
       if (docRoute === 'llm' && (!lastClarification || clarificationCleared)) {
-        // Pre-check: If pendingOptions exist, check if this is a selection pattern
-        // This catches "second", "2", etc. when user is selecting from disambiguation
-        // even after lastClarification was cleared by previous selection
-        if (pendingOptions.length > 0) {
-          const optionLabels = pendingOptions.map(opt => opt.label)
-          const selectionResult = isSelectionOnly(trimmedInput, pendingOptions.length, optionLabels)
-
-          if (selectionResult.isSelection && selectionResult.index !== undefined) {
-            const selectedOption = pendingOptions[selectionResult.index]
-
-            void debugLog({
-              component: 'ChatNavigation',
-              action: 'llm_route_selection_intercept',
-              metadata: {
-                input: trimmedInput,
-                index: selectionResult.index,
-                selectedLabel: selectedOption.label,
-              },
-              metrics: {
-                event: 'clarification_resolved',
-                selectedLabel: selectedOption.label,
-                timestamp: Date.now(),
-              },
-            })
-
-            // Use grace window: keep options for one more turn
-            setPendingOptionsGraceCount(1)
-
-            // Execute the selection directly
-            const optionToSelect: SelectionOption = {
-              type: selectedOption.type as SelectionOption['type'],
-              id: selectedOption.id,
-              label: selectedOption.label,
-              sublabel: selectedOption.sublabel,
-              data: selectedOption.data as SelectionOption['data'],
-            }
-
-            setIsLoading(false)
-            handleSelectOption(optionToSelect)
-            return
-          }
-        }
-
         // TD-4: Log LLM fallback for tracking
         telemetryEvent.route_final = 'llm'
         telemetryEvent.matched_pattern_id = RoutingPatternId.ROUTE_LLM_FALLBACK
@@ -4002,10 +4622,9 @@ function ChatNavigationPanelContent({
           messageId: assistantMessageId,
           timestamp: Date.now(),
         })
-      } else if (resolution.success && resolution.action !== 'error' && resolution.action !== 'answer_from_context' && resolution.action !== 'select' && resolution.action !== 'list_workspaces' && resolution.action !== 'clarify_type') {
+      } else if (resolution.success && resolution.action !== 'error' && resolution.action !== 'answer_from_context') {
         // Only clear clarification when an explicit action is executed (navigation, panel open, etc.)
         // NOT on every response without metadata - that would break the clarification flow
-        // NOT on 'select', 'list_workspaces', 'clarify_type' - these SHOW options that need lastClarification preserved
         // The clarification-mode intercept handles clearing in executeNextAction() and handleRejection()
         setLastClarification(null)
       }
@@ -4042,6 +4661,20 @@ function ChatNavigationPanelContent({
       setIsLoading(false)
     }
   }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction, messages, addMessage, setInput, sessionState, setLastAction, setLastQuickLinksBadge, appendRequestHistory, openPanelWithTracking, openPanelDrawer, conversationSummary, pendingOptions, pendingOptionsGraceCount, handleSelectOption, lastPreview, lastSuggestion, setLastSuggestion, addRejectedSuggestions, clearRejectedSuggestions, isRejectedSuggestion, uiContext, visiblePanels, focusedPanelId, lastClarification, setLastClarification, setNotesScopeFollowUpActive])
+
+  // ---------------------------------------------------------------------------
+  // Handle Key Press
+  // ---------------------------------------------------------------------------
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault()
+        sendMessage()
+      }
+    },
+    [sendMessage]
+  )
 
   // ---------------------------------------------------------------------------
   // Clear Chat
@@ -4232,22 +4865,118 @@ function ChatNavigationPanelContent({
                           />
                         )}
 
-                        {/* Selection Pills - Step 4 refactor: Extracted to SelectionPills component */}
+                        {/* Selection Pills */}
                         {message.options && message.options.length > 0 && (
-                          <SelectionPills
-                            options={message.options}
-                            onSelect={handleSelectOption}
-                            disabled={isLoading}
-                          />
+                          <div className="flex flex-wrap gap-1.5 mt-1.5">
+                            {message.options.map((option) => (
+                              <button
+                                key={option.id}
+                                onClick={() => handleSelectOption(option)}
+                                disabled={isLoading}
+                                className="group"
+                              >
+                                <Badge
+                                  variant="secondary"
+                                  className={cn(
+                                    'cursor-pointer transition-colors',
+                                    'hover:bg-primary hover:text-primary-foreground',
+                                    isLoading && 'opacity-50 cursor-not-allowed'
+                                  )}
+                                >
+                                  <span className="flex items-center gap-1">
+                                    {option.label}
+                                    {option.sublabel && (
+                                      <span className="text-xs opacity-70">
+                                        ({option.sublabel})
+                                      </span>
+                                    )}
+                                    <ChevronRight className="h-3 w-3 opacity-50 group-hover:opacity-100" />
+                                  </span>
+                                </Badge>
+                              </button>
+                            ))}
+                          </div>
                         )}
 
-                        {/* Suggestion Pills (typo recovery) - Step 4 refactor: Extracted to SuggestionPills */}
+                        {/* Suggestion Pills (typo recovery) */}
                         {message.suggestions && message.suggestions.candidates.length > 0 && (
-                          <SuggestionPills
-                            suggestions={message.suggestions}
-                            onSuggestionClick={handleSuggestionClick}
-                            disabled={isLoading}
-                          />
+                          <div className="flex flex-wrap gap-1.5 mt-1.5">
+                            {/* Case A: High-confidence single match - show dual action buttons */}
+                            {message.suggestions.type === 'confirm_single' && message.suggestions.candidates.length === 1 && (
+                              <>
+                                {/* Open button - primary action */}
+                                <button
+                                  key={`suggestion-open-${message.suggestions.candidates[0].label}`}
+                                  onClick={() => handleSuggestionClick(message.suggestions!.candidates[0].label, 'open')}
+                                  disabled={isLoading}
+                                  className="group"
+                                >
+                                  <Badge
+                                    variant="secondary"
+                                    className={cn(
+                                      'cursor-pointer transition-colors',
+                                      'hover:bg-primary hover:text-primary-foreground',
+                                      isLoading && 'opacity-50 cursor-not-allowed'
+                                    )}
+                                  >
+                                    <span className="flex items-center gap-1">
+                                      {message.suggestions.candidates[0].primaryAction === 'list'
+                                        ? `Show ${message.suggestions.candidates[0].label}`
+                                        : `Open ${message.suggestions.candidates[0].label}`}
+                                      <ChevronRight className="h-3 w-3 opacity-50 group-hover:opacity-100" />
+                                    </span>
+                                  </Badge>
+                                </button>
+                                {/* List in chat button - preview action */}
+                                <button
+                                  key={`suggestion-list-${message.suggestions.candidates[0].label}`}
+                                  onClick={() => handleSuggestionClick(message.suggestions!.candidates[0].label, 'list')}
+                                  disabled={isLoading}
+                                  className="group"
+                                >
+                                  <Badge
+                                    variant="outline"
+                                    className={cn(
+                                      'cursor-pointer transition-colors',
+                                      'hover:bg-primary hover:text-primary-foreground',
+                                      'border-dashed text-muted-foreground',
+                                      isLoading && 'opacity-50 cursor-not-allowed'
+                                    )}
+                                  >
+                                    <span className="flex items-center gap-1">
+                                      List in chat
+                                      <ChevronRight className="h-3 w-3 opacity-50 group-hover:opacity-100" />
+                                    </span>
+                                  </Badge>
+                                </button>
+                              </>
+                            )}
+                            {/* Case B/C: Multiple matches or low confidence - show single button per candidate */}
+                            {(message.suggestions.type !== 'confirm_single' || message.suggestions.candidates.length > 1) &&
+                              message.suggestions.candidates.map((candidate, idx) => (
+                              <button
+                                key={`suggestion-${idx}-${candidate.label}`}
+                                onClick={() => handleSuggestionClick(candidate.label, 'open')}
+                                disabled={isLoading}
+                                className="group"
+                              >
+                                <Badge
+                                  variant="outline"
+                                  className={cn(
+                                    'cursor-pointer transition-colors',
+                                    'hover:bg-primary hover:text-primary-foreground',
+                                    'border-dashed text-muted-foreground',
+                                    isLoading && 'opacity-50 cursor-not-allowed'
+                                  )}
+                                >
+                                  <span className="flex items-center gap-1">
+                                    {candidate.label}
+                                    <ChevronRight className="h-3 w-3 opacity-50 group-hover:opacity-100" />
+                                  </span>
+                                </Badge>
+                              </button>
+                            ))}
+                          </div>
                         )}
                       </div>
                     </div>
@@ -4274,14 +5003,33 @@ function ChatNavigationPanelContent({
             </ScrollArea>
 
             {/* Input - fixed at bottom with high contrast */}
-            {/* Step 4 refactor: Extracted to ChatInput component */}
-            <ChatInput
-              ref={inputRef}
-              value={input}
-              onChange={setInput}
-              onSend={sendMessage}
-              isLoading={isLoading}
-            />
+            <div className="border-t border-white/20 p-3 shrink-0 bg-white/90 backdrop-blur-md">
+              <div className="flex items-center gap-2">
+                <Input
+                  ref={inputRef}
+                  type="text"
+                  placeholder="Where would you like to go?"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  disabled={isLoading}
+                  className="h-10 text-sm bg-white text-zinc-900 border-zinc-300 placeholder:text-zinc-400"
+                />
+                <Button
+                  size="icon"
+                  className="h-10 w-10 shrink-0"
+                  onClick={sendMessage}
+                  disabled={!input.trim() || isLoading}
+                >
+                  {isLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Send className="h-4 w-4" />
+                  )}
+                  <span className="sr-only">Send</span>
+                </Button>
+              </div>
+            </div>
           </div>
     </>
   )

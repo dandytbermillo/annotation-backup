@@ -262,3 +262,30 @@ export function getPatternId(
 
   return RoutingPatternId.UNKNOWN
 }
+
+// =============================================================================
+// Helper: Set Matched Known Term Telemetry (Step 2 Refactor)
+// =============================================================================
+
+/**
+ * Set the matched_known_term field on a telemetry event.
+ * Checks if any token matches knownTerms or if the normalized query matches.
+ *
+ * This helper reduces duplication across meta-explain, correction, follow-up,
+ * and main routing paths.
+ *
+ * @param event - The telemetry event to update (mutates in place)
+ * @param tokens - Array of tokens from the query
+ * @param normalizedQuery - The normalized query string
+ * @param knownTerms - Set of known terms (optional)
+ */
+export function setMatchedKnownTermTelemetry(
+  event: Partial<RoutingTelemetryEvent>,
+  tokens: string[],
+  normalizedQuery: string,
+  knownTerms?: Set<string> | null
+): void {
+  event.matched_known_term = knownTerms
+    ? (tokens.some(t => knownTerms.has(t)) || knownTerms.has(normalizedQuery))
+    : false
+}
