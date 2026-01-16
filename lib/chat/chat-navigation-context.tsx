@@ -44,12 +44,18 @@ export interface DocData {
   docSlug: string
 }
 
+/** TD-7: Data for high-ambiguity clarification pills */
+export interface TD7ClarificationData {
+  term: string
+  action: 'doc' | 'llm'
+}
+
 export interface SelectionOption {
-  type: 'workspace' | 'note' | 'entry' | 'confirm_delete' | 'quick_links_panel' | 'confirm_panel_write' | 'panel_drawer' | 'doc'
+  type: 'workspace' | 'note' | 'entry' | 'confirm_delete' | 'quick_links_panel' | 'confirm_panel_write' | 'panel_drawer' | 'doc' | 'td7_clarification'
   id: string
   label: string
   sublabel?: string
-  data: WorkspaceMatch | NoteMatch | EntryMatch | QuickLinksPanelData | PanelIntentData | PanelDrawerData | DocData
+  data: WorkspaceMatch | NoteMatch | EntryMatch | QuickLinksPanelData | PanelIntentData | PanelDrawerData | DocData | TD7ClarificationData
 }
 
 /** Suggestion candidate for typo fallback */
@@ -82,7 +88,7 @@ export interface ClarificationOption {
 
 /** Last clarification state for follow-up handling (Phase 2a) */
 export interface LastClarificationState {
-  type: 'notes_scope' | 'option_selection' | 'doc_disambiguation'
+  type: 'notes_scope' | 'option_selection' | 'doc_disambiguation' | 'td7_high_ambiguity'
   originalIntent: string
   /** Generic action to execute when user affirms (Phase 2a deterministic handler) - optional for option_selection */
   nextAction?: string

@@ -95,6 +95,8 @@ import {
   findAllFuzzyMatches,
   hasFuzzyMatch,
   type FuzzyMatchResult,
+  // TD-7: High-ambiguity terms
+  getHighAmbiguityOnlyMatch,
 } from '@/lib/chat/query-patterns'
 
 export interface ChatNavigationPanelProps {
@@ -311,8 +313,15 @@ function matchOrdinal(input: string, optionCount: number): number | undefined {
 
 /**
  * Route types for doc retrieval routing decision.
+ * TD-7: Added 'clarify_ambiguous' for high-ambiguity term clarification.
  */
-type DocRoute = 'doc' | 'action' | 'bare_noun' | 'llm'
+type DocRoute = 'doc' | 'action' | 'bare_noun' | 'llm' | 'clarify_ambiguous'
+
+/**
+ * TD-7: Feature flag for stricter app-relevance.
+ * When enabled, high-ambiguity terms trigger clarification instead of direct routing.
+ */
+const STRICT_APP_RELEVANCE_ENABLED = process.env.NEXT_PUBLIC_STRICT_APP_RELEVANCE_HIGH_AMBIGUITY === 'true'
 
 // TD-3: ACTION_NOUNS, POLITE_COMMAND_PREFIXES, DOC_VERBS, startsWithAnyPrefix,
 //       normalizeInputForRouting, normalizeTitle, hasQuestionIntent, hasActionVerb,
@@ -458,17 +467,35 @@ function routeDocInput(
   // Step 4: command-like (includes index-like digits)
   if (isCommandLike(normalized)) return 'action'
 
-  // Step 5: doc-style routing
+  // Step 5: doc-style routing (has explicit intent cue)
   if (isDocStyleQuery(input, uiContext)) return 'doc'
 
   // Step 6: bare noun routing (stricter)
-  if (isBareNounQuery(input, uiContext, knownTerms)) return 'bare_noun'
+  // TD-7: Check for high-ambiguity terms before routing to bare_noun
+  if (isBareNounQuery(input, uiContext, knownTerms)) {
+    if (STRICT_APP_RELEVANCE_ENABLED) {
+      const highAmbiguityTerm = getHighAmbiguityOnlyMatch(tokens, normalized, knownTerms)
+      if (highAmbiguityTerm) {
+        // High-ambiguity bare noun without explicit intent → clarification
+        return 'clarify_ambiguous'
+      }
+    }
+    return 'bare_noun'
+  }
 
   // Step 7: App-relevant fallback - if query contains known terms but doesn't match
   // specific patterns (e.g., typos like "an you pls tell me what are workspaces action?"),
   // route to doc retrieval anyway. Let keyword matching handle intent extraction.
   // This is more robust than adding endless regex patterns.
+  // TD-7: Check for high-ambiguity terms before fallback routing
   if (isAppRelevant) {
+    if (STRICT_APP_RELEVANCE_ENABLED) {
+      const highAmbiguityTerm = getHighAmbiguityOnlyMatch(tokens, normalized, knownTerms)
+      if (highAmbiguityTerm) {
+        // High-ambiguity fallback without explicit intent → clarification
+        return 'clarify_ambiguous'
+      }
+    }
     return 'doc'
   }
 
@@ -1654,6 +1681,81 @@ function ChatNavigationPanelContent({
       // The clarification is resolved once user makes a selection
       setLastClarification(null)
 
+      // TD-7: Handle high-ambiguity clarification selection
+      if (option.type === 'td7_clarification') {
+        const td7Data = option.data as { term: string; action: 'doc' | 'llm' }
+
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'td7_clarification_selected',
+          metadata: { selectedOption: option.id, term: td7Data.term, action: td7Data.action },
+        })
+
+        if (td7Data.action === 'doc') {
+          // User confirmed app feature → do doc retrieval
+          try {
+            const retrieveResponse = await fetch('/api/docs/retrieve', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ query: td7Data.term }),
+            })
+
+            if (retrieveResponse.ok) {
+              const result = await retrieveResponse.json()
+
+              if (result.status === 'found' && result.topMatch) {
+                // Found doc - show response
+                const assistantMessage: ChatMessage = {
+                  id: `assistant-${Date.now()}`,
+                  role: 'assistant',
+                  content: result.topMatch.snippet || `Here's what I found about ${td7Data.term}.`,
+                  timestamp: new Date(),
+                  isError: false,
+                }
+                addMessage(assistantMessage)
+
+                // Set lastDocSlug for follow-ups
+                updateDocRetrievalState({ lastDocSlug: result.topMatch.slug })
+              } else {
+                // No match found
+                const noMatchMessage: ChatMessage = {
+                  id: `assistant-${Date.now()}`,
+                  role: 'assistant',
+                  content: `I couldn't find specific documentation about ${td7Data.term}. What would you like to know about it?`,
+                  timestamp: new Date(),
+                  isError: false,
+                }
+                addMessage(noMatchMessage)
+              }
+            } else {
+              throw new Error('Retrieval failed')
+            }
+          } catch {
+            const errorMessage: ChatMessage = {
+              id: `assistant-${Date.now()}`,
+              role: 'assistant',
+              content: 'Sorry, I had trouble looking that up. Please try again.',
+              timestamp: new Date(),
+              isError: true,
+            }
+            addMessage(errorMessage)
+          }
+        } else {
+          // User selected "something else" → generic response
+          const genericMessage: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: 'Okay, what would you like help with?',
+            timestamp: new Date(),
+            isError: false,
+          }
+          addMessage(genericMessage)
+        }
+
+        setIsLoading(false)
+        return
+      }
+
       try {
         // Check if this is a pending delete selection (disambiguation for delete)
         const workspaceData = option.data as WorkspaceMatch & { pendingDelete?: boolean }
@@ -1666,10 +1768,12 @@ function ChatNavigationPanelContent({
           }
         }
 
+        // Note: TD-7 clarification options are handled above and return early,
+        // so this code path is never reached for td7_clarification type
         const result = await selectOption({
-          type: option.type,
+          type: option.type as Exclude<SelectionOption['type'], 'td7_clarification'>,
           id: option.id,
-          data: option.data,
+          data: option.data as Exclude<SelectionOption['data'], import('@/lib/chat/chat-navigation-context').TD7ClarificationData>,
         })
 
         // Note: Don't clear pending options here - grace window logic handles clearing.
@@ -3072,6 +3176,93 @@ function ChatNavigationPanelContent({
         telemetryEvent.routing_latency_ms = Date.now() - routingStartTime
         void logRoutingDecision(telemetryEvent as RoutingTelemetryEvent)
         // Action routes fall through to LLM/tool processing
+      }
+
+      // TD-7: Handle high-ambiguity clarification
+      if (docRoute === 'clarify_ambiguous') {
+        // Get the high-ambiguity term that triggered clarification
+        const highAmbiguityTerm = getHighAmbiguityOnlyMatch(queryTokens, normalizedQuery, knownTerms ?? undefined)
+
+        // TD-7: Set telemetry fields
+        telemetryEvent.strict_app_relevance_triggered = true
+        telemetryEvent.strict_term = highAmbiguityTerm || normalizedQuery
+        telemetryEvent.route_final = 'clarify'
+        telemetryEvent.matched_pattern_id = RoutingPatternId.CLARIFY_HIGH_AMBIGUITY
+        telemetryEvent.routing_latency_ms = Date.now() - routingStartTime
+        void logRoutingDecision(telemetryEvent as RoutingTelemetryEvent)
+
+        // Build clarification message
+        const termDisplay = highAmbiguityTerm
+          ? highAmbiguityTerm.charAt(0).toUpperCase() + highAmbiguityTerm.slice(1)
+          : trimmedInput
+        const messageId = `assistant-${Date.now()}`
+
+        // Create 2 options per TD-7 spec
+        const options: SelectionOption[] = [
+          {
+            id: 'app_feature',
+            label: `${termDisplay} (App)`,
+            sublabel: 'Ask about this app feature',
+            type: 'td7_clarification',
+            data: { term: highAmbiguityTerm || normalizedQuery, action: 'doc' as const },
+          },
+          {
+            id: 'something_else',
+            label: 'Something else',
+            sublabel: 'Not asking about this app',
+            type: 'td7_clarification',
+            data: { term: highAmbiguityTerm || normalizedQuery, action: 'llm' as const },
+          },
+        ]
+
+        const assistantMessage: ChatMessage = {
+          id: messageId,
+          role: 'assistant',
+          content: `Are you asking about ${termDisplay} in this app?`,
+          timestamp: new Date(),
+          isError: false,
+          options,
+        }
+        addMessage(assistantMessage)
+
+        // Set clarification state for selection handling
+        setPendingOptions(options.map((opt, idx) => ({
+          index: idx + 1,
+          label: opt.label,
+          sublabel: opt.sublabel,
+          type: opt.type,
+          id: opt.id,
+          data: opt.data,
+        })))
+        setPendingOptionsMessageId(messageId)
+
+        setLastClarification({
+          type: 'td7_high_ambiguity',
+          originalIntent: 'high_ambiguity_clarification',
+          messageId,
+          timestamp: Date.now(),
+          clarificationQuestion: `Are you asking about ${termDisplay} in this app?`,
+          options: options.map(opt => ({
+            id: opt.id,
+            label: opt.label,
+            sublabel: opt.sublabel,
+            type: opt.type,
+          })),
+          metaCount: 0,
+        })
+
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'td7_clarification_shown',
+          metadata: {
+            highAmbiguityTerm,
+            userInput: trimmedInput,
+            options: options.map(o => o.label),
+          },
+        })
+
+        setIsLoading(false)
+        return
       }
 
       if ((!lastClarification || clarificationCleared) && (isDocStyle || isBareNoun)) {

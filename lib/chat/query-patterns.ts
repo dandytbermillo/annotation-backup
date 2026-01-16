@@ -191,6 +191,20 @@ export const BARE_META_PHRASES = [
   'tell me more',
 ]
 
+/**
+ * TD-7: High-ambiguity terms - common English words that also have app meanings.
+ * These require clarification when no explicit intent cue is present.
+ * Start small and expand based on telemetry.
+ * See: td7-stricter-app-relevance-plan.md
+ */
+export const HIGH_AMBIGUITY_TERMS = new Set<string>([
+  'home',
+  'notes',
+  'note',
+  'action',
+  'actions',
+])
+
 // =============================================================================
 // Normalization Functions
 // =============================================================================
@@ -401,6 +415,52 @@ export function isCommandLike(input: string): boolean {
   if (hasPolitePrefix && hasActionVerb(normalized) && !containsDocInstructionCue(normalized)) {
     return true
   }
+
+  return false
+}
+
+/**
+ * TD-7: Check if query only matches high-ambiguity terms (no specific terms).
+ * Returns the matched high-ambiguity term if true, null otherwise.
+ * Used to trigger clarification instead of direct routing.
+ */
+export function getHighAmbiguityOnlyMatch(
+  tokens: string[],
+  normalized: string,
+  knownTerms?: Set<string>
+): string | null {
+  if (!knownTerms || knownTerms.size === 0) return null
+
+  // Find all matched terms (token matches + normalized match)
+  const matchedTokens = tokens.filter(t => knownTerms.has(t))
+  const normalizedMatches = knownTerms.has(normalized) ? [normalized] : []
+  const allMatches = [...new Set([...matchedTokens, ...normalizedMatches])]
+
+  if (allMatches.length === 0) return null
+
+  // Check if ALL matches are high-ambiguity
+  const allHighAmbiguity = allMatches.every(t => HIGH_AMBIGUITY_TERMS.has(t))
+  if (!allHighAmbiguity) return null
+
+  // Return the first high-ambiguity term found (for telemetry)
+  return allMatches[0]
+}
+
+/**
+ * TD-7: Check if input has explicit intent cues that bypass ambiguity clarification.
+ * Intent cues include: question patterns, doc instruction cues, action verbs.
+ */
+export function hasExplicitIntentCue(input: string): boolean {
+  const normalized = input.toLowerCase().trim()
+
+  // Question intent (what is, how do, etc.)
+  if (hasQuestionIntent(normalized)) return true
+
+  // Doc instruction cue (how to, tell me how, etc.)
+  if (containsDocInstructionCue(normalized)) return true
+
+  // Action verb (open, show, go to, etc.)
+  if (hasActionVerb(normalized)) return true
 
   return false
 }

@@ -11,6 +11,7 @@
 - `docs/proposal/chat-navigation/plan/panels/chat/meta/reports/2026-01-15-td4-td8-implementation-report.md`
 - `docs/proposal/chat-navigation/plan/panels/chat/meta/reports/2026-01-15-knownterms-race-fix-report.md`
 - `docs/proposal/chat-navigation/plan/panels/chat/meta/reports/2026-01-15-td2-fuzzy-matching-implementation-report.md`
+- `docs/proposal/chat-navigation/plan/panels/chat/meta/reports/2026-01-16-td7-implementation-report.md`
 
 ## Goals
 - Reduce pattern fragility without regressing "human feel".
@@ -27,7 +28,7 @@
 3) ✅ TD-3: Consolidate routing patterns — **COMPLETE** (2026-01-14)
 4) ✅ TD-1: Remove CORE_APP_TERMS duplication — **COMPLETE** (2026-01-16)
 5) ✅ TD-2: Gated typo tolerance (fuzzy match) — **COMPLETE** (2026-01-15)
-6) ⏳ TD-7: Stricter app-relevance fallback — *unblocked, ready to proceed*
+6) ✅ TD-7: Stricter app-relevance fallback — **COMPLETE** (2026-01-16)
 7) TD-5: Polite follow-up guard (only if telemetry shows need)
 8) TD-6: LLM intent extraction (optional, last)
 9) ✅ TD-9: Cross-doc ambiguity override — **COMPLETE** (pre-existing)
@@ -359,13 +360,10 @@ Fix common typos without flooding routing with false positives.
 ---
 
 ## TD-7: Stricter App-Relevance Fallback
-### Status: ⏳ Blocked on TD-1
+### Status: ✅ COMPLETE (2026-01-16)
 
 ### Why
 Reduce false routes for marginally relevant queries.
-
-### Blocked Reason
-TD-7 changes app-relevance behavior, which would contaminate the TD-1 baseline and could mask CORE_APP_TERMS usage. Must wait for TD-1 decision (2026-01-18) before implementing.
 
 ### Plan (Low-risk)
 - Require intent cue + app keyword for fallback routing.
@@ -373,9 +371,31 @@ TD-7 changes app-relevance behavior, which would contaminate the TD-1 baseline a
 - If borderline, ask one clarifying question (2 options max).
 - Roll out behind a feature flag for gradual exposure.
 
+### Implementation (2026-01-16)
+- ✅ Added `HIGH_AMBIGUITY_TERMS` constant (5 terms: home, notes, note, action, actions)
+- ✅ Added `getHighAmbiguityOnlyMatch()` and `hasExplicitIntentCue()` helpers
+- ✅ Feature flag: `NEXT_PUBLIC_STRICT_APP_RELEVANCE_HIGH_AMBIGUITY`
+- ✅ Updated `routeDocInput()` Step 6 (bare noun) and Step 7 (app-relevant fallback)
+- ✅ Added clarification handling with 2 options: "[Term] (App)" and "Something else"
+- ✅ Telemetry fields: `strict_app_relevance_triggered`, `strict_term`
+- ✅ Pattern ID: `CLARIFY_HIGH_AMBIGUITY`
+
+### Files Modified
+- `lib/chat/query-patterns.ts` - Added HIGH_AMBIGUITY_TERMS, helper functions
+- `lib/chat/routing-telemetry.ts` - Added telemetry fields and pattern ID
+- `lib/chat/chat-navigation-context.tsx` - Added TD7ClarificationData type
+- `components/chat/chat-navigation-panel.tsx` - Routing logic and clarification handling
+
 ### Acceptance Criteria
-- "I love workspace music" does NOT route to docs.
-- "what is workspace" still routes correctly.
+- [x] High-ambiguity bare nouns trigger clarification (when flag enabled)
+- [x] Doc-style queries bypass clarification (intent cue present)
+- [x] Action commands bypass clarification
+- [ ] "I love workspace music" does NOT route to docs. *(Note: workspace not in initial HIGH_AMBIGUITY_TERMS list; will be added based on telemetry)*
+- [x] "what is workspace" still routes correctly.
+
+### References
+- **Spec:** `td7-stricter-app-relevance-plan.md`
+- **Implementation Report:** `reports/2026-01-16-td7-implementation-report.md`
 
 ---
 

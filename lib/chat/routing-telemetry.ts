@@ -46,6 +46,9 @@ export enum RoutingPatternId {
   CLARIFICATION_EXIT = 'CLARIFICATION_EXIT',       // New question exits clarification
   AMBIGUOUS_CROSS_DOC = 'AMBIGUOUS_CROSS_DOC',    // Cross-doc ambiguity
 
+  // TD-7: High-ambiguity clarification
+  CLARIFY_HIGH_AMBIGUITY = 'CLARIFY_HIGH_AMBIGUITY', // High-ambiguity term triggered clarification
+
   // Unknown/unmatched
   UNKNOWN = 'UNKNOWN',
 }
@@ -77,6 +80,9 @@ export interface RoutingTelemetryEvent {
   fuzzy_match_term?: string  // The known term it matched to
   fuzzy_match_distance?: number  // Levenshtein distance (1 or 2)
   retrieval_query_corrected?: boolean  // Was the retrieval query corrected via fuzzy match?
+  // TD-7: Stricter app-relevance telemetry
+  strict_app_relevance_triggered?: boolean  // Did TD-7 clarification trigger?
+  strict_term?: string  // The high-ambiguity term that triggered clarification
   last_doc_slug_present: boolean
   last_doc_slug?: string
 
@@ -142,6 +148,9 @@ export async function logRoutingDecision(event: RoutingTelemetryEvent): Promise<
       fuzzy_match_term: event.fuzzy_match_term,
       fuzzy_match_distance: event.fuzzy_match_distance,
       retrieval_query_corrected: event.retrieval_query_corrected,
+      // TD-7: Stricter app-relevance
+      strict_app_relevance_triggered: event.strict_app_relevance_triggered,
+      strict_term: event.strict_term,
       last_doc_slug_present: event.last_doc_slug_present,
       last_doc_slug: event.last_doc_slug,
 

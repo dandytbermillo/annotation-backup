@@ -1,9 +1,10 @@
 # TD-7: Stricter App-Relevance Fallback (High-Ambiguity Terms)
 
-**Date:** 2026-01-16  
-**Status:** Draft  
-**Scope:** Routing only (no retrieval changes)  
+**Date:** 2026-01-16
+**Status:** Implemented
+**Scope:** Routing only (no retrieval changes)
 **Related:** `2026-01-14-doc-retrieval-routing-debt-paydown-plan.md`
+**Implementation Report:** `reports/2026-01-16-td7-implementation-report.md`
 
 ---
 
