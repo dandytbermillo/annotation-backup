@@ -22,8 +22,16 @@ import {
   isPronounFollowUp,
   extractMetaExplainConcept,
   findFuzzyMatch,
+  isAffirmationPhrase,
+  isRejectionPhrase,
+  isMetaPhrase,
+  isNewQuestionOrCommand,
+  hasFuzzyMatch,
 } from '@/lib/chat/query-patterns'
+import { isBareNounQuery } from '@/lib/chat/doc-routing'
+import type { UIContext } from '@/lib/chat/intent-prompt'
 import type { ChatMessage, DocRetrievalState, SelectionOption, LastClarificationState } from '@/lib/chat'
+import type { ClarificationOption } from '@/lib/chat/chat-navigation-context'
 
 // =============================================================================
 // Handler Result Type
@@ -730,4 +738,522 @@ function isLowQualitySnippet(
   // Fallback: check snippet length
   if (snippet.length < 50) return true
   return false
+}
+
+// =============================================================================
+// Clarification Intercept Handler
+// =============================================================================
+
+/**
+ * Result from clarification intercept handler
+ */
+export interface ClarificationInterceptResult extends HandlerResult {
+  /** Whether clarification was cleared (for downstream handlers) */
+  clarificationCleared: boolean
+  /** Whether new question/command was detected */
+  isNewQuestionOrCommandDetected: boolean
+}
+
+/**
+ * Context for clarification intercept handler
+ */
+export interface ClarificationInterceptContext {
+  // Input
+  trimmedInput: string
+
+  // State (read-only)
+  lastClarification: LastClarificationState | null
+  lastSuggestion: unknown | null  // Any truthy value indicates active suggestion
+  pendingOptions: PendingOptionState[]
+  uiContext?: UIContext | null
+  currentEntryId?: string
+
+  // Callbacks
+  addMessage: (message: ChatMessage) => void
+  setLastClarification: (state: LastClarificationState | null) => void
+  setIsLoading: (loading: boolean) => void
+  setPendingOptions: (options: PendingOptionState[]) => void
+  setPendingOptionsMessageId: (messageId: string | null) => void
+  setPendingOptionsGraceCount: (count: number) => void
+  setNotesScopeFollowUpActive: (active: boolean) => void
+  handleSelectOption: (option: SelectionOption) => void
+}
+
+/**
+ * Check if input is a selection-only pattern (ordinal or single letter).
+ * Per llm-chat-context-first-plan.md: Only intercept pure selection patterns.
+ */
+function isSelectionOnly(
+  input: string,
+  optionCount: number,
+  optionLabels: string[]
+): { isSelection: boolean; index?: number } {
+  const normalized = input.trim().toLowerCase()
+
+  // Option phrases: option 1, option 2, the first one, the second one
+  // Plus ordinals and single letters
+  const selectionPattern = /^(first|second|third|fourth|fifth|last|[1-9]|option\s*[1-9]|the\s+(first|second|third|fourth|fifth|last)\s+one|[a-e])$/i
+
+  if (!selectionPattern.test(normalized)) {
+    return { isSelection: false }
+  }
+
+  // Map input to index
+  let index: number | undefined
+
+  // Check ordinals first
+  const ordinalMap: Record<string, number> = {
+    'first': 0, 'second': 1, 'third': 2, 'fourth': 3, 'fifth': 4,
+    'the first one': 0, 'the second one': 1, 'the third one': 2,
+    'the fourth one': 3, 'the fifth one': 4, 'the last one': optionCount - 1,
+    'last': optionCount - 1,
+  }
+
+  if (ordinalMap[normalized] !== undefined) {
+    index = ordinalMap[normalized]
+  } else if (/^[1-9]$/.test(normalized)) {
+    index = parseInt(normalized, 10) - 1
+  } else if (/^option\s*[1-9]$/i.test(normalized)) {
+    const num = normalized.match(/[1-9]/)?.[0]
+    if (num) index = parseInt(num, 10) - 1
+  } else if (/^[a-e]$/i.test(normalized)) {
+    index = normalized.charCodeAt(0) - 'a'.charCodeAt(0)
+    // Letter doesn't match any option - not a selection
+    if (index >= optionCount) {
+      return { isSelection: false }
+    }
+  }
+
+  // Validate index is within bounds
+  if (index !== undefined && index >= 0 && index < optionCount) {
+    return { isSelection: true, index }
+  }
+
+  return { isSelection: false }
+}
+
+/**
+ * Handle clarification mode intercept.
+ * When clarification is active, ALL input goes through this handler first.
+ * Clarification handling runs BEFORE new-intent detection to avoid premature exit.
+ *
+ * Handles:
+ * - Tier 1: Local affirmation/rejection/meta checks
+ * - Tier 1d: Ordinal selection for multi-option clarifications
+ * - Tier 2: LLM interpretation for unclear responses
+ *
+ * Returns { handled: true } if input was processed here, false to continue routing.
+ */
+export async function handleClarificationIntercept(
+  ctx: ClarificationInterceptContext
+): Promise<ClarificationInterceptResult> {
+  const {
+    trimmedInput,
+    lastClarification,
+    lastSuggestion,
+    pendingOptions,
+    uiContext,
+    currentEntryId,
+    addMessage,
+    setLastClarification,
+    setIsLoading,
+    setPendingOptions,
+    setPendingOptionsMessageId,
+    setPendingOptionsGraceCount,
+    setNotesScopeFollowUpActive,
+    handleSelectOption,
+  } = ctx
+
+  // TD-3: Check for bare noun new intent
+  const bareNounKnownTerms = getKnownTermsSync()
+  const isBareNounNewIntent = bareNounKnownTerms
+    ? isBareNounQuery(trimmedInput, uiContext, bareNounKnownTerms)
+    : false
+
+  // TD-2: Check if input fuzzy-matches a known term (for typos like "wrkspace")
+  const { tokens: clarificationTokens } = normalizeInputForRouting(trimmedInput)
+  const isFuzzyMatchNewIntent = bareNounKnownTerms
+    ? hasFuzzyMatch(clarificationTokens, bareNounKnownTerms)
+    : false
+
+  // Detect new question/command
+  const isNewQuestionOrCommandDetected =
+    isNewQuestionOrCommand(trimmedInput) ||
+    trimmedInput.endsWith('?') ||
+    isBareNounNewIntent ||
+    isFuzzyMatchNewIntent
+
+  // Track if clarification was cleared within this execution cycle
+  let clarificationCleared = false
+
+  // Check if we should enter clarification mode
+  const hasClarificationContext = lastClarification?.nextAction ||
+    (lastClarification?.options && lastClarification.options.length > 0)
+
+  if (!lastSuggestion && hasClarificationContext) {
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'clarification_mode_intercept',
+      metadata: {
+        userInput: trimmedInput,
+        nextAction: lastClarification?.nextAction,
+        hasOptions: !!(lastClarification?.options?.length),
+        clarificationType: lastClarification?.type,
+      },
+    })
+
+    // Helper: Execute nextAction (show workspace picker for notes_scope)
+    const executeNextAction = async () => {
+      setLastClarification(null)
+
+      try {
+        const workspacesUrl = currentEntryId
+          ? `/api/dashboard/workspaces/search?entryId=${currentEntryId}&limit=10`
+          : `/api/dashboard/workspaces/search?limit=10`
+        const workspacesResponse = await fetch(workspacesUrl)
+        if (!workspacesResponse.ok) {
+          throw new Error('Failed to fetch workspaces')
+        }
+        const workspacesData = await workspacesResponse.json()
+        const workspaces = workspacesData.workspaces || []
+
+        if (workspaces.length === 0) {
+          const noWorkspacesMessage: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: 'No workspaces found. Create a workspace first to view open notes.',
+            timestamp: new Date(),
+            isError: false,
+          }
+          addMessage(noWorkspacesMessage)
+          return
+        }
+
+        const messageId = `assistant-${Date.now()}`
+        const workspaceOptions: SelectionOption[] = workspaces.map((ws: { id: string; name: string; isDefault?: boolean; noteCount?: number; entryName?: string }) => ({
+          type: 'workspace' as const,
+          id: ws.id,
+          label: ws.isDefault ? `${ws.name} (Default)` : ws.name,
+          sublabel: ws.entryName || `${ws.noteCount || 0} notes`,
+          data: ws,
+        }))
+
+        const workspacePickerMessage: ChatMessage = {
+          id: messageId,
+          role: 'assistant',
+          content: 'Sure — which workspace?',
+          timestamp: new Date(),
+          isError: false,
+          options: workspaceOptions,
+        }
+        addMessage(workspacePickerMessage)
+
+        setPendingOptions(workspaceOptions.map((opt, idx) => ({
+          index: idx + 1,
+          ...opt,
+        })) as PendingOptionState[])
+        setPendingOptionsMessageId(messageId)
+        setPendingOptionsGraceCount(0)
+        setNotesScopeFollowUpActive(true)
+
+        setLastClarification({
+          type: 'option_selection',
+          originalIntent: 'list_open_notes',
+          messageId,
+          timestamp: Date.now(),
+          clarificationQuestion: 'Sure — which workspace?',
+          options: workspaceOptions.map(opt => ({
+            id: opt.id,
+            label: opt.label,
+            sublabel: opt.sublabel,
+            type: opt.type,
+          })),
+          metaCount: 0,
+        })
+      } catch (error) {
+        console.error('[ChatNavigation] Failed to fetch workspaces for clarification:', error)
+        const errorMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: 'Sorry, I couldn\'t load workspaces. Please try again.',
+          timestamp: new Date(),
+          isError: true,
+        }
+        addMessage(errorMessage)
+      }
+    }
+
+    // Helper: Handle rejection/cancel
+    const handleRejection = () => {
+      setLastClarification(null)
+      setPendingOptions([])
+      setPendingOptionsMessageId(null)
+      setPendingOptionsGraceCount(0)
+      const cancelMessage: ChatMessage = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: 'Okay — let me know what you want to do.',
+        timestamp: new Date(),
+        isError: false,
+      }
+      addMessage(cancelMessage)
+    }
+
+    // Helper: Handle unclear response
+    const handleUnclear = (): boolean => {
+      if (isNewQuestionOrCommandDetected) {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'clarification_exit_unclear_new_intent',
+          metadata: { userInput: trimmedInput },
+        })
+        setLastClarification(null)
+        return true
+      }
+      const reaskMessage: ChatMessage = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: 'I didn\'t quite catch that. Would you like to open a workspace to see your notes? (yes/no)',
+        timestamp: new Date(),
+        isError: false,
+      }
+      addMessage(reaskMessage)
+      return false
+    }
+
+    // Helper: Handle META response (explanation request)
+    const handleMeta = () => {
+      const currentMetaCount = lastClarification!.metaCount ?? 0
+      const META_LOOP_LIMIT = 2
+
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'clarification_meta_response',
+        metadata: { userInput: trimmedInput, metaCount: currentMetaCount },
+      })
+
+      if (currentMetaCount >= META_LOOP_LIMIT) {
+        const escapeMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: 'I can show both options, or we can skip this for now. What would you like?',
+          timestamp: new Date(),
+          isError: false,
+        }
+        addMessage(escapeMessage)
+        setLastClarification({
+          ...lastClarification!,
+          metaCount: 0,
+        })
+        return
+      }
+
+      let explanation: string
+      let messageOptions: ClarificationOption[] | undefined
+
+      if (lastClarification!.options && lastClarification!.options.length > 0) {
+        const optionsList = lastClarification!.options
+          .map((opt, i) => `${i + 1}. ${opt.label}${opt.sublabel ? ` (${opt.sublabel})` : ''}`)
+          .join('\n')
+        explanation = `Here are your options:\n${optionsList}\n\nJust say a number or name to select one.`
+        messageOptions = lastClarification!.options
+      } else if (lastClarification!.type === 'notes_scope') {
+        explanation = 'I\'m asking because notes are organized within workspaces. To show which notes are open, I need to know which workspace to check. Would you like to pick a workspace? (yes/no)'
+      } else {
+        explanation = `I'm asking: ${lastClarification!.clarificationQuestion ?? 'Would you like to proceed?'} (yes/no)`
+      }
+
+      const metaMessage: ChatMessage = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: explanation,
+        timestamp: new Date(),
+        isError: false,
+        options: messageOptions ? messageOptions.map(opt => ({
+          type: opt.type as SelectionOption['type'],
+          id: opt.id,
+          label: opt.label,
+          sublabel: opt.sublabel,
+          data: {} as SelectionOption['data'],
+        })) : undefined,
+      }
+      addMessage(metaMessage)
+
+      setLastClarification({
+        ...lastClarification!,
+        metaCount: currentMetaCount + 1,
+      })
+    }
+
+    // Tier 1: Local affirmation check
+    const hasMultipleOptions = lastClarification!.options && lastClarification!.options.length > 0
+    if (isAffirmationPhrase(trimmedInput) && !hasMultipleOptions) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'clarification_tier1_affirmation',
+        metadata: { userInput: trimmedInput },
+      })
+      await executeNextAction()
+      setIsLoading(false)
+      return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+    }
+
+    // Tier 1b: Local rejection check
+    if (isRejectionPhrase(trimmedInput)) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'clarification_tier1_rejection',
+        metadata: { userInput: trimmedInput },
+      })
+      handleRejection()
+      setIsLoading(false)
+      return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+    }
+
+    // Tier 1b.5: New intent escape
+    if (isNewQuestionOrCommandDetected) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'clarification_exit_new_intent',
+        metadata: { userInput: trimmedInput, isBareNounNewIntent },
+      })
+      setLastClarification(null)
+      clarificationCleared = true
+      // Don't return - continue to check if other handlers should process
+    }
+
+    // Tier 1c: Local META check
+    if (lastClarification && !clarificationCleared && isMetaPhrase(trimmedInput)) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'clarification_tier1_meta',
+        metadata: { userInput: trimmedInput },
+      })
+      handleMeta()
+      setIsLoading(false)
+      return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+    }
+
+    // Tier 1d: Ordinal/selection check for multi-option clarifications
+    if (lastClarification && !clarificationCleared && lastClarification.options && lastClarification.options.length > 0) {
+      const clarificationOptionLabels = lastClarification.options.map(opt => opt.label)
+      const clarificationSelectionResult = isSelectionOnly(trimmedInput, lastClarification.options.length, clarificationOptionLabels)
+
+      if (clarificationSelectionResult.isSelection && clarificationSelectionResult.index !== undefined) {
+        const selectedClarificationOption = lastClarification.options[clarificationSelectionResult.index]
+        const fullOption = pendingOptions.find(opt => opt.id === selectedClarificationOption.id)
+
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'clarification_tier1d_ordinal_selection',
+          metadata: {
+            input: trimmedInput,
+            index: clarificationSelectionResult.index,
+            selectedLabel: selectedClarificationOption.label,
+            clarificationType: lastClarification.type,
+            hasFullOption: !!fullOption,
+          },
+          metrics: {
+            event: 'clarification_resolved',
+            selectedLabel: selectedClarificationOption.label,
+            timestamp: Date.now(),
+          },
+        })
+
+        setLastClarification(null)
+        clarificationCleared = true
+
+        if (fullOption) {
+          const optionToSelect: SelectionOption = {
+            type: fullOption.type as SelectionOption['type'],
+            id: fullOption.id,
+            label: fullOption.label,
+            sublabel: fullOption.sublabel,
+            data: fullOption.data as SelectionOption['data'],
+          }
+          setIsLoading(false)
+          handleSelectOption(optionToSelect)
+          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+        } else {
+          const optionToSelect: SelectionOption = {
+            type: selectedClarificationOption.type as SelectionOption['type'],
+            id: selectedClarificationOption.id,
+            label: selectedClarificationOption.label,
+            sublabel: selectedClarificationOption.sublabel,
+            data: selectedClarificationOption.type === 'doc'
+              ? { docSlug: selectedClarificationOption.id }
+              : { term: selectedClarificationOption.id, action: 'doc' as const },
+          }
+          setIsLoading(false)
+          handleSelectOption(optionToSelect)
+          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+        }
+      }
+    }
+
+    // Tier 2: LLM interpretation for unclear responses
+    if (lastClarification && !clarificationCleared) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'clarification_tier2_llm',
+        metadata: { userInput: trimmedInput },
+      })
+
+      try {
+        const interpretResponse = await fetch('/api/chat/navigate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: trimmedInput,
+            clarificationMode: true,
+            clarificationQuestion: 'Would you like to open a workspace to see your notes?',
+          }),
+        })
+
+        if (interpretResponse.ok) {
+          const interpretResult = await interpretResponse.json()
+          const interpretation = interpretResult.clarificationInterpretation
+
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'clarification_tier2_result',
+            metadata: { interpretation },
+          })
+
+          if (interpretation === 'YES') {
+            await executeNextAction()
+            setIsLoading(false)
+            return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+          } else if (interpretation === 'NO') {
+            handleRejection()
+            setIsLoading(false)
+            return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+          } else if (interpretation === 'META') {
+            handleMeta()
+            setIsLoading(false)
+            return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+          } else {
+            if (!handleUnclear()) {
+              setIsLoading(false)
+              return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+            }
+          }
+        } else {
+          if (!handleUnclear()) {
+            setIsLoading(false)
+            return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+          }
+        }
+      } catch (error) {
+        console.error('[ChatNavigation] Clarification interpretation failed:', error)
+        if (!handleUnclear()) {
+          setIsLoading(false)
+          return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+        }
+      }
+    }
+  }
+
+  // Not handled or fell through after new intent detection
+  return { handled: false, clarificationCleared, isNewQuestionOrCommandDetected }
 }
