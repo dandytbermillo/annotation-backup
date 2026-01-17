@@ -49,6 +49,9 @@ export enum RoutingPatternId {
   // TD-7: High-ambiguity clarification
   CLARIFY_HIGH_AMBIGUITY = 'CLARIFY_HIGH_AMBIGUITY', // High-ambiguity term triggered clarification
 
+  // Semantic fallback classifier
+  SEMANTIC_FALLBACK = 'SEMANTIC_FALLBACK',           // Classifier routed to docs/actions
+
   // Unknown/unmatched
   UNKNOWN = 'UNKNOWN',
 }
@@ -92,6 +95,15 @@ export interface RoutingTelemetryEvent {
   classifier_latency_ms?: number
   classifier_timeout?: boolean  // TD-4: Added per plan
   classifier_error?: boolean
+  // Semantic fallback classifier info (route classifier)
+  semantic_classifier_called?: boolean
+  semantic_classifier_domain?: 'app' | 'general'
+  semantic_classifier_intent?: 'doc_explain' | 'action' | 'search_notes' | 'other'
+  semantic_classifier_confidence?: number
+  semantic_classifier_needs_clarification?: boolean
+  semantic_classifier_latency_ms?: number
+  semantic_classifier_timeout?: boolean
+  semantic_classifier_error?: boolean
 
   // Retrieval result
   doc_status?: 'found' | 'weak' | 'ambiguous' | 'no_match'
@@ -160,6 +172,14 @@ export async function logRoutingDecision(event: RoutingTelemetryEvent): Promise<
       classifier_latency_ms: event.classifier_latency_ms,
       classifier_timeout: event.classifier_timeout,
       classifier_error: event.classifier_error,
+      semantic_classifier_called: event.semantic_classifier_called,
+      semantic_classifier_domain: event.semantic_classifier_domain,
+      semantic_classifier_intent: event.semantic_classifier_intent,
+      semantic_classifier_confidence: event.semantic_classifier_confidence,
+      semantic_classifier_needs_clarification: event.semantic_classifier_needs_clarification,
+      semantic_classifier_latency_ms: event.semantic_classifier_latency_ms,
+      semantic_classifier_timeout: event.semantic_classifier_timeout,
+      semantic_classifier_error: event.semantic_classifier_error,
 
       // Retrieval result
       doc_status: event.doc_status,

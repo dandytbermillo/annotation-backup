@@ -38,6 +38,72 @@ import type { ChatMessage, SelectionOption, DocRetrievalState, LastClarification
 import type { PendingOptionState } from '@/lib/chat/chat-routing'
 
 // =============================================================================
+// Semantic Fallback Classifier (Gated)
+// =============================================================================
+
+const SEMANTIC_FALLBACK_ENABLED = process.env.NEXT_PUBLIC_SEMANTIC_FALLBACK_ENABLED !== 'false'
+const SEMANTIC_FALLBACK_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_SEMANTIC_FALLBACK_TIMEOUT_MS ?? 500)
+const SEMANTIC_FALLBACK_CONFIDENCE_MIN = Number(process.env.NEXT_PUBLIC_SEMANTIC_FALLBACK_CONFIDENCE_MIN ?? 0.7)
+
+type SemanticRouteResult = {
+  domain: 'app' | 'general'
+  intent: 'doc_explain' | 'action' | 'search_notes' | 'other'
+  confidence: number
+  rewrite?: string
+  entities?: {
+    docTopic?: string
+    widgetName?: string
+    noteQuery?: string
+  }
+  needs_clarification: boolean
+  clarify_question?: string
+}
+
+async function runSemanticClassifier(
+  userMessage: string,
+  lastDocSlug?: string,
+  lastTopicTokens?: string[]
+): Promise<{
+  ok: boolean
+  latencyMs: number
+  timeout: boolean
+  result?: SemanticRouteResult
+}> {
+  const startTime = Date.now()
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), SEMANTIC_FALLBACK_TIMEOUT_MS)
+
+  try {
+    const response = await fetch('/api/chat/classify-route', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userMessage,
+        lastDocSlug,
+        lastTopicTokens,
+      }),
+      signal: controller.signal,
+    })
+    clearTimeout(timeoutId)
+
+    const payload = await response.json()
+    return {
+      ok: !!payload.ok && !!payload.result,
+      latencyMs: Date.now() - startTime,
+      timeout: false,
+      result: payload.result,
+    }
+  } catch (error) {
+    const isTimeout = error instanceof Error && error.name === 'AbortError'
+    return {
+      ok: false,
+      latencyMs: Date.now() - startTime,
+      timeout: isTimeout,
+    }
+  }
+}
+
+// =============================================================================
 // Route Type
 // =============================================================================
 
@@ -447,6 +513,48 @@ export async function handleDocRetrieval(ctx: DocRetrievalHandlerContext): Promi
   const isDocStyle = docRoute === 'doc'
   const isBareNoun = docRoute === 'bare_noun'
 
+  // Semantic fallback classifier (gated)
+  let semanticClassifierCalled = false
+  let semanticClassifierTimeout = false
+  let semanticClassifierError = false
+  let semanticClassifierLatencyMs: number | undefined
+  let semanticClassifierResult: SemanticRouteResult | undefined
+  let classifierSuggestedRoute: 'doc' | 'action' | null = null
+  let classifierRewrite: string | undefined
+
+  if (
+    SEMANTIC_FALLBACK_ENABLED &&
+    docRoute === 'llm' &&
+    (!lastClarification || clarificationCleared) &&
+    !isFollowUp
+  ) {
+    semanticClassifierCalled = true
+    const classifierResult = await runSemanticClassifier(
+      trimmedInput,
+      docRetrievalState?.lastDocSlug,
+      docRetrievalState?.lastTopicTokens
+    )
+    semanticClassifierLatencyMs = classifierResult.latencyMs
+    semanticClassifierTimeout = classifierResult.timeout
+    semanticClassifierResult = classifierResult.result
+
+    if (classifierResult.ok && semanticClassifierResult) {
+      const isConfident = semanticClassifierResult.confidence >= SEMANTIC_FALLBACK_CONFIDENCE_MIN
+      const needsClarification = !!semanticClassifierResult.needs_clarification
+
+      if (semanticClassifierResult.domain === 'app' && isConfident && !needsClarification) {
+        if (semanticClassifierResult.intent === 'doc_explain' || semanticClassifierResult.intent === 'search_notes') {
+          classifierSuggestedRoute = 'doc'
+          classifierRewrite = semanticClassifierResult.rewrite
+        } else if (semanticClassifierResult.intent === 'action') {
+          classifierSuggestedRoute = 'action'
+        }
+      }
+    } else if (!classifierResult.ok && !classifierResult.timeout) {
+      semanticClassifierError = true
+    }
+  }
+
   // TD-4: Create telemetry event for tracking
   const { normalized: normalizedQuery, tokens: queryTokens } = normalizeInputForRouting(trimmedInput)
   const telemetryEvent: Partial<RoutingTelemetryEvent> = createRoutingTelemetryEvent(
@@ -482,6 +590,14 @@ export async function handleDocRetrieval(ctx: DocRetrievalHandlerContext): Promi
   telemetryEvent.classifier_timeout = classifierTimeout
   telemetryEvent.classifier_latency_ms = classifierLatencyMs
   telemetryEvent.classifier_error = classifierError
+  telemetryEvent.semantic_classifier_called = semanticClassifierCalled
+  telemetryEvent.semantic_classifier_domain = semanticClassifierResult?.domain
+  telemetryEvent.semantic_classifier_intent = semanticClassifierResult?.intent
+  telemetryEvent.semantic_classifier_confidence = semanticClassifierResult?.confidence
+  telemetryEvent.semantic_classifier_needs_clarification = semanticClassifierResult?.needs_clarification
+  telemetryEvent.semantic_classifier_latency_ms = semanticClassifierLatencyMs
+  telemetryEvent.semantic_classifier_timeout = semanticClassifierTimeout
+  telemetryEvent.semantic_classifier_error = semanticClassifierError
   telemetryEvent.matched_pattern_id = getPatternId(
     trimmedInput,
     docRoute,
@@ -501,6 +617,15 @@ export async function handleDocRetrieval(ctx: DocRetrievalHandlerContext): Promi
     void logRoutingDecision(telemetryEvent as RoutingTelemetryEvent)
     // Action routes fall through to LLM/tool processing
     return { handled: false, route: docRoute }
+  }
+
+  // Semantic classifier suggested action: allow LLM action router to handle
+  if (docRoute === 'llm' && classifierSuggestedRoute === 'action') {
+    telemetryEvent.route_final = 'action'
+    telemetryEvent.matched_pattern_id = RoutingPatternId.SEMANTIC_FALLBACK
+    telemetryEvent.routing_latency_ms = Date.now() - routingStartTime
+    void logRoutingDecision(telemetryEvent as RoutingTelemetryEvent)
+    return { handled: false, route: 'action' }
   }
 
   // TD-7: Handle high-ambiguity clarification
@@ -589,24 +714,36 @@ export async function handleDocRetrieval(ctx: DocRetrievalHandlerContext): Promi
     return { handled: true, route: docRoute }
   }
 
+  const shouldRouteToDocs = classifierSuggestedRoute === 'doc' || isDocStyle || isBareNoun
+  const effectiveDocStyle = classifierSuggestedRoute === 'doc' ? true : isDocStyle
+  const effectiveBareNoun = classifierSuggestedRoute === 'doc' ? false : isBareNoun
+
   // Handle doc/bare_noun routes with retrieval
-  if ((!lastClarification || clarificationCleared) && (isDocStyle || isBareNoun)) {
+  if ((!lastClarification || clarificationCleared) && shouldRouteToDocs) {
     void debugLog({
       component: 'ChatNavigation',
       action: 'general_doc_retrieval',
-      metadata: { userInput: trimmedInput, isDocStyle, isBareNoun, route: docRoute },
+      metadata: {
+        userInput: trimmedInput,
+        isDocStyle: effectiveDocStyle,
+        isBareNoun: effectiveBareNoun,
+        route: classifierSuggestedRoute ?? docRoute,
+        classifierRewrite: classifierRewrite,
+      },
     })
 
     try {
       // For doc-style queries, extract the term; for bare nouns, use as-is
-      let queryTerm = isDocStyle ? extractDocQueryTerm(trimmedInput) : trimmedInput.trim().toLowerCase()
+      let queryTerm = classifierSuggestedRoute === 'doc'
+        ? (classifierRewrite || trimmedInput.trim().toLowerCase())
+        : (effectiveDocStyle ? extractDocQueryTerm(trimmedInput) : trimmedInput.trim().toLowerCase())
 
       // TD-2: Apply fuzzy correction for retrieval
       const { tokens: retrievalTokens } = normalizeInputForRouting(queryTerm)
       let fuzzyCorrectionApplied = false
       const originalQueryTerm = queryTerm
 
-      if (knownTerms && !isBareNoun) {
+      if (knownTerms && !effectiveBareNoun) {
         const fuzzyMatches = findAllFuzzyMatches(retrievalTokens, knownTerms)
         if (fuzzyMatches.length > 0) {
           let correctedQuery = queryTerm
@@ -620,7 +757,7 @@ export async function handleDocRetrieval(ctx: DocRetrievalHandlerContext): Promi
           queryTerm = correctedQuery
           fuzzyCorrectionApplied = true
         }
-      } else if (knownTerms && isBareNoun) {
+      } else if (knownTerms && effectiveBareNoun) {
         const fuzzyMatch = findAllFuzzyMatches(retrievalTokens, knownTerms)[0]
         if (fuzzyMatch) {
           console.log(`[DocRetrieval] Fuzzy correction (bare_noun): "${queryTerm}" → "${fuzzyMatch.matchedTerm}"`)
@@ -636,13 +773,17 @@ export async function handleDocRetrieval(ctx: DocRetrievalHandlerContext): Promi
           originalQuery: originalQueryTerm,
           correctedQuery: queryTerm,
           fuzzyCorrectionApplied,
-          isDocStyle,
-          isBareNoun,
+          isDocStyle: effectiveDocStyle,
+          isBareNoun: effectiveBareNoun,
           knownTermsAvailable: !!knownTerms,
         },
       })
 
       telemetryEvent.retrieval_query_corrected = fuzzyCorrectionApplied
+      if (classifierSuggestedRoute === 'doc') {
+        telemetryEvent.route_final = 'doc'
+        telemetryEvent.matched_pattern_id = RoutingPatternId.SEMANTIC_FALLBACK
+      }
 
       const { tokens: queryTokensForRetrieval } = normalizeInputForRouting(queryTerm)
       const responseStyle = getResponseStyle(trimmedInput)
@@ -729,7 +870,7 @@ export async function handleDocRetrieval(ctx: DocRetrievalHandlerContext): Promi
           updateDocRetrievalState({
             lastDocSlug: topResult.doc_slug,
             lastTopicTokens: queryTokensForRetrieval,
-            lastMode: isDocStyle ? 'doc' : 'bare_noun',
+            lastMode: effectiveDocStyle ? 'doc' : 'bare_noun',
             lastChunkIdsShown: chunkIdsShown,
           })
 
@@ -773,7 +914,7 @@ export async function handleDocRetrieval(ctx: DocRetrievalHandlerContext): Promi
 
           updateDocRetrievalState({
             lastTopicTokens: queryTokensForRetrieval,
-            lastMode: isDocStyle ? 'doc' : 'bare_noun',
+            lastMode: effectiveDocStyle ? 'doc' : 'bare_noun',
           })
 
           setIsLoading(false)
@@ -834,7 +975,7 @@ export async function handleDocRetrieval(ctx: DocRetrievalHandlerContext): Promi
 
           updateDocRetrievalState({
             lastTopicTokens: queryTokensForRetrieval,
-            lastMode: isDocStyle ? 'doc' : 'bare_noun',
+            lastMode: effectiveDocStyle ? 'doc' : 'bare_noun',
           })
 
           setIsLoading(false)

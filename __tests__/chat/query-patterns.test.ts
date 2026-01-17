@@ -273,7 +273,18 @@ describe('Query Patterns Module', () => {
   })
 
   describe('isPronounFollowUp', () => {
-    test.each(['tell me more', 'more details', 'how does it work', 'continue', 'elaborate'])(
+    test.each([
+      'tell me more',
+      'more details',
+      'how does it work',
+      'continue',
+      'elaborate',
+      // TD-5: Polite follow-up variants (stripped via stripConversationalPrefix)
+      'can you tell me more',
+      'can you tell me more?',
+      'could you tell me more',
+      'please tell me more',
+    ])(
       'returns true for "%s"',
       (input) => {
         expect(isPronounFollowUp(input)).toBe(true)
