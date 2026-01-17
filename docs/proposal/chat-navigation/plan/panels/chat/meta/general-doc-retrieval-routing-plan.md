@@ -342,9 +342,10 @@ Default-on means the flag is enabled, but the classifier only runs on uncertain 
 ### When to call the classifier (Pass 1)
 Only call the semantic classifier if all are true:
 - Deterministic routing returns `llm` (no confident route).
-- App relevance is unclear (no known-terms overlap and no widget/title match).
+- App relevance is unclear (no **known doc terms** overlap and no widget/title match).
 - No clarification is active.
 - Not a fast-path selection reply (ordinal/label).
+- Not a follow-up (follow-up = refers to prior context like “that/it/those/what about…”, within the active context window).
 If the classifier is used to interpret a follow-up, pass `lastDocSlug` and `lastTopicTokens` so it can route to the same doc instead of starting from scratch.
 
 ### Classifier contract (strict JSON, one-shot)
@@ -372,7 +373,7 @@ Rules:
 - Timeout (e.g., 300–600ms). On timeout/error, skip classifier and fall back to deterministic handling.
 
 ### Deterministic execution after Pass 1
-- `doc_explain` → call `/api/docs/retrieve` with `rewrite` or original query.
+- `doc_explain` → call `/api/docs/retrieve` with `rewrite` or original query. (Optional guard: only retrieve if `confidence >= threshold`.)
 - `action` → run action router; if unresolved (no target, multiple competing targets, or low-confidence match), fall back to doc retrieval or clarification.
 - `search_notes` → route to notes/files retrieval if implemented; otherwise ask a clarifying question or treat as `doc_explain`.
 - `general` → normal LLM response (no retrieval).

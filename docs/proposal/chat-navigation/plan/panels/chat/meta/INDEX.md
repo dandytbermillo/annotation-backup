@@ -38,7 +38,7 @@ This index documents the plan timeline for the doc retrieval feature in chat nav
 | Section | Description | Status |
 |---------|-------------|--------|
 | v5 Core | Routing + HS1/HS2 response selection | ✅ Complete (2026-01-13) |
-| Semantic classifier | LLM fallback for borderline cases | ⏸️ Optional (not implemented; follow-up classifier only) |
+| Semantic classifier | LLM fallback for borderline cases | ⏸️ Optional (not implemented; follow-up classifier only; gated on unknown doc terms) |
 | Unified retrieval | Notes/files corpus | ⏸️ Future (blocked on indexing) |
 
 **Key Deliverables:**
