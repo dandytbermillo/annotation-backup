@@ -602,4 +602,75 @@ describe('Query Patterns Module', () => {
       expect(hasFuzzyMatch(['work', 'dash'], knownTerms)).toBe(false)
     })
   })
+
+  // ===========================================================================
+  // TD-7: High-Ambiguity Term Detection
+  // ===========================================================================
+
+  describe('getHighAmbiguityOnlyMatch', () => {
+    const { getHighAmbiguityOnlyMatch } = require('@/lib/chat/query-patterns')
+    const knownTerms = new Set(['home', 'notes', 'workspace', 'quick links', 'navigator', 'widget'])
+
+    test('returns term for high-ambiguity bare noun', () => {
+      // "home" is in HIGH_AMBIGUITY_TERMS
+      const result = getHighAmbiguityOnlyMatch(['home'], 'home', knownTerms)
+      expect(result).toBe('home')
+    })
+
+    test('returns term for "notes" (high-ambiguity)', () => {
+      const result = getHighAmbiguityOnlyMatch(['notes'], 'notes', knownTerms)
+      expect(result).toBe('notes')
+    })
+
+    test('returns null for "workspace" (NOT high-ambiguity)', () => {
+      // "workspace" is in knownTerms but NOT in HIGH_AMBIGUITY_TERMS
+      const result = getHighAmbiguityOnlyMatch(['workspace'], 'workspace', knownTerms)
+      expect(result).toBeNull()
+    })
+
+    test('returns null for mixed terms (home + workspace)', () => {
+      // If any matched term is NOT high-ambiguity, return null
+      const result = getHighAmbiguityOnlyMatch(['home', 'workspace'], 'home workspace', knownTerms)
+      expect(result).toBeNull()
+    })
+
+    test('returns term when multiple high-ambiguity terms match', () => {
+      // Both "home" and "notes" are high-ambiguity
+      const result = getHighAmbiguityOnlyMatch(['home', 'notes'], 'home notes', knownTerms)
+      expect(result).toBe('home') // Returns first match
+    })
+
+    test('returns term for longer query with only high-ambiguity match', () => {
+      // "I love home music" - only "home" matches knownTerms, and it's high-ambiguity
+      const result = getHighAmbiguityOnlyMatch(['i', 'love', 'home', 'music'], 'i love home music', knownTerms)
+      expect(result).toBe('home')
+    })
+
+    test('returns null for longer query with non-high-ambiguity match', () => {
+      // "I love workspace music" - only "workspace" matches, NOT high-ambiguity
+      const result = getHighAmbiguityOnlyMatch(['i', 'love', 'workspace', 'music'], 'i love workspace music', knownTerms)
+      expect(result).toBeNull()
+    })
+
+    test('returns null for specific multi-word term', () => {
+      // "quick links" is specific, not high-ambiguity
+      const result = getHighAmbiguityOnlyMatch(['quick', 'links'], 'quick links', knownTerms)
+      expect(result).toBeNull()
+    })
+
+    test('returns null when no known terms match', () => {
+      const result = getHighAmbiguityOnlyMatch(['hello', 'world'], 'hello world', knownTerms)
+      expect(result).toBeNull()
+    })
+
+    test('returns null when knownTerms is empty', () => {
+      const result = getHighAmbiguityOnlyMatch(['home'], 'home', new Set())
+      expect(result).toBeNull()
+    })
+
+    test('returns null when knownTerms is undefined', () => {
+      const result = getHighAmbiguityOnlyMatch(['home'], 'home', undefined)
+      expect(result).toBeNull()
+    })
+  })
 })

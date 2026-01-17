@@ -303,10 +303,17 @@ export function isCorrectionPhrase(input: string): boolean {
 
 /**
  * Check if input is a pronoun follow-up phrase (tell me more, etc.).
+ * TD-5: Also checks stripped version to handle polite follow-ups like "can you tell me more?"
  */
 export function isPronounFollowUp(input: string): boolean {
-  const normalized = input.trim().toLowerCase()
-  return FOLLOWUP_PHRASES.some(p => normalized === p || normalized.startsWith(p + ' ') || normalized.startsWith(p))
+  const normalized = input.trim().toLowerCase().replace(/[?!.]+$/, '')
+  const stripped = stripConversationalPrefix(normalized)
+
+  const matchesPhrase = (text: string) =>
+    FOLLOWUP_PHRASES.some(p => text === p || text.startsWith(p + ' ') || text.startsWith(p))
+
+  // Check both original and stripped (for polite variants like "can you tell me more")
+  return matchesPhrase(normalized) || matchesPhrase(stripped)
 }
 
 /**

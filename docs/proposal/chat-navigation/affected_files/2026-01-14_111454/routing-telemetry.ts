@@ -38,13 +38,16 @@ export enum RoutingPatternId {
   ROUTE_DOC_STYLE = 'ROUTE_DOC_STYLE',            // Doc-style query
   ROUTE_BARE_NOUN = 'ROUTE_BARE_NOUN',            // Bare noun query
   ROUTE_APP_RELEVANT = 'ROUTE_APP_RELEVANT',      // App-relevant fallback
-  ROUTE_CORE_TERMS = 'ROUTE_CORE_TERMS',          // CORE_APP_TERMS fallback
+  ROUTE_CORE_TERMS = 'ROUTE_CORE_TERMS',          // DEPRECATED: CORE_APP_TERMS removed in TD-1
   ROUTE_LLM_FALLBACK = 'ROUTE_LLM_FALLBACK',      // LLM fallback (no match)
 
   // Special cases
   CORRECTION = 'CORRECTION',                       // "no / not that"
   CLARIFICATION_EXIT = 'CLARIFICATION_EXIT',       // New question exits clarification
   AMBIGUOUS_CROSS_DOC = 'AMBIGUOUS_CROSS_DOC',    // Cross-doc ambiguity
+
+  // TD-7: High-ambiguity clarification
+  CLARIFY_HIGH_AMBIGUITY = 'CLARIFY_HIGH_AMBIGUITY', // High-ambiguity term triggered clarification
 
   // Unknown/unmatched
   UNKNOWN = 'UNKNOWN',
@@ -67,9 +70,9 @@ export interface RoutingTelemetryEvent {
   // State context
   known_terms_loaded: boolean
   known_terms_count: number
-  known_terms_fetch_status?: 'cached' | 'fetched' | 'fetch_error' | 'fetch_timeout'  // Track why knownTerms may be empty
-  used_core_terms_fallback?: boolean  // True when CORE_APP_TERMS was used due to timeout/error
-  matched_core_term?: boolean  // Did CORE_APP_TERMS contain a token from this query?
+  known_terms_fetch_status?: 'snapshot' | 'cached' | 'fetched' | 'fetch_error' | 'fetch_timeout'  // Track source of knownTerms
+  used_core_terms_fallback?: boolean  // DEPRECATED: Always false after TD-1 (CORE_APP_TERMS removed)
+  matched_core_term?: boolean  // DEPRECATED: No longer set after TD-1 (CORE_APP_TERMS removed)
   matched_known_term?: boolean  // Did knownTerms contain a token from this query?
   // TD-2: Fuzzy matching telemetry
   fuzzy_matched?: boolean  // Did a fuzzy match contribute to routing?
@@ -77,6 +80,9 @@ export interface RoutingTelemetryEvent {
   fuzzy_match_term?: string  // The known term it matched to
   fuzzy_match_distance?: number  // Levenshtein distance (1 or 2)
   retrieval_query_corrected?: boolean  // Was the retrieval query corrected via fuzzy match?
+  // TD-7: Stricter app-relevance telemetry
+  strict_app_relevance_triggered?: boolean  // Did TD-7 clarification trigger?
+  strict_term?: string  // The high-ambiguity term that triggered clarification
   last_doc_slug_present: boolean
   last_doc_slug?: string
 
@@ -142,6 +148,9 @@ export async function logRoutingDecision(event: RoutingTelemetryEvent): Promise<
       fuzzy_match_term: event.fuzzy_match_term,
       fuzzy_match_distance: event.fuzzy_match_distance,
       retrieval_query_corrected: event.retrieval_query_corrected,
+      // TD-7: Stricter app-relevance
+      strict_app_relevance_triggered: event.strict_app_relevance_triggered,
+      strict_term: event.strict_term,
       last_doc_slug_present: event.last_doc_slug_present,
       last_doc_slug: event.last_doc_slug,
 
@@ -189,7 +198,7 @@ export function createRoutingTelemetryEvent(
   knownTermsLoaded: boolean,
   knownTermsCount: number,
   lastDocSlug?: string,
-  knownTermsFetchStatus?: 'cached' | 'fetched' | 'fetch_error' | 'fetch_timeout',
+  knownTermsFetchStatus?: 'snapshot' | 'cached' | 'fetched' | 'fetch_error' | 'fetch_timeout',
   usedCoreTermsFallback?: boolean
 ): Partial<RoutingTelemetryEvent> {
   return {
@@ -252,4 +261,31 @@ export function getPatternId(
   if (route === 'llm') return RoutingPatternId.ROUTE_LLM_FALLBACK
 
   return RoutingPatternId.UNKNOWN
+}
+
+// =============================================================================
+// Helper: Set Matched Known Term Telemetry (Step 2 Refactor)
+// =============================================================================
+
+/**
+ * Set the matched_known_term field on a telemetry event.
+ * Checks if any token matches knownTerms or if the normalized query matches.
+ *
+ * This helper reduces duplication across meta-explain, correction, follow-up,
+ * and main routing paths.
+ *
+ * @param event - The telemetry event to update (mutates in place)
+ * @param tokens - Array of tokens from the query
+ * @param normalizedQuery - The normalized query string
+ * @param knownTerms - Set of known terms (optional)
+ */
+export function setMatchedKnownTermTelemetry(
+  event: Partial<RoutingTelemetryEvent>,
+  tokens: string[],
+  normalizedQuery: string,
+  knownTerms?: Set<string> | null
+): void {
+  event.matched_known_term = knownTerms
+    ? (tokens.some(t => knownTerms.has(t)) || knownTerms.has(normalizedQuery))
+    : false
 }
