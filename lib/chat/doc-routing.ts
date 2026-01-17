@@ -42,7 +42,8 @@ import type { PendingOptionState } from '@/lib/chat/chat-routing'
 // =============================================================================
 
 const SEMANTIC_FALLBACK_ENABLED = process.env.NEXT_PUBLIC_SEMANTIC_FALLBACK_ENABLED !== 'false'
-const SEMANTIC_FALLBACK_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_SEMANTIC_FALLBACK_TIMEOUT_MS ?? 500)
+const SEMANTIC_FALLBACK_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_SEMANTIC_FALLBACK_TIMEOUT_MS ?? 800)
+const SEMANTIC_FALLBACK_TIMEOUT_DOC_STYLE_MS = Number(process.env.NEXT_PUBLIC_SEMANTIC_FALLBACK_TIMEOUT_DOC_STYLE_MS ?? 1500)
 const SEMANTIC_FALLBACK_CONFIDENCE_MIN = Number(process.env.NEXT_PUBLIC_SEMANTIC_FALLBACK_CONFIDENCE_MIN ?? 0.7)
 
 type SemanticRouteResult = {
@@ -62,7 +63,8 @@ type SemanticRouteResult = {
 async function runSemanticClassifier(
   userMessage: string,
   lastDocSlug?: string,
-  lastTopicTokens?: string[]
+  lastTopicTokens?: string[],
+  timeoutMs: number = SEMANTIC_FALLBACK_TIMEOUT_MS
 ): Promise<{
   ok: boolean
   latencyMs: number
@@ -71,7 +73,7 @@ async function runSemanticClassifier(
 }> {
   const startTime = Date.now()
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), SEMANTIC_FALLBACK_TIMEOUT_MS)
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
     const response = await fetch('/api/chat/classify-route', {
@@ -529,10 +531,14 @@ export async function handleDocRetrieval(ctx: DocRetrievalHandlerContext): Promi
     !isFollowUp
   ) {
     semanticClassifierCalled = true
+    // Use higher timeout for doc-style queries that failed app relevance gate
+    // (e.g., "describe the settings" has doc-style pattern but "settings" not in knownTerms)
+    const isDocStylePattern = isDocStyleQuery(trimmedInput, uiContext)
     const classifierResult = await runSemanticClassifier(
       trimmedInput,
       docRetrievalState?.lastDocSlug,
-      docRetrievalState?.lastTopicTokens
+      docRetrievalState?.lastTopicTokens,
+      isDocStylePattern ? SEMANTIC_FALLBACK_TIMEOUT_DOC_STYLE_MS : SEMANTIC_FALLBACK_TIMEOUT_MS
     )
     semanticClassifierLatencyMs = classifierResult.latencyMs
     semanticClassifierTimeout = classifierResult.timeout
@@ -626,6 +632,78 @@ export async function handleDocRetrieval(ctx: DocRetrievalHandlerContext): Promi
     telemetryEvent.routing_latency_ms = Date.now() - routingStartTime
     void logRoutingDecision(telemetryEvent as RoutingTelemetryEvent)
     return { handled: false, route: 'action' }
+  }
+
+  // Doc-style gate: queries with doc-style trigger but no known doc terms
+  // Per routing plan: run classifier to determine if this is app-docs or general
+  const hasKnownDocTermMatch = !!telemetryEvent.matched_known_term || !!telemetryEvent.fuzzy_matched
+  let docStyleGateRejected = false
+
+  if (
+    SEMANTIC_FALLBACK_ENABLED &&
+    isDocStyle &&
+    !hasKnownDocTermMatch &&
+    (!lastClarification || clarificationCleared) &&
+    !isFollowUp
+  ) {
+    // Call classifier for doc-style queries without known doc terms
+    // Use higher timeout for doc-style gate (needs classifier insight for "human" routing)
+    semanticClassifierCalled = true
+    const docStyleClassifierResult = await runSemanticClassifier(
+      trimmedInput,
+      docRetrievalState?.lastDocSlug,
+      docRetrievalState?.lastTopicTokens,
+      SEMANTIC_FALLBACK_TIMEOUT_DOC_STYLE_MS
+    )
+    semanticClassifierLatencyMs = docStyleClassifierResult.latencyMs
+    semanticClassifierTimeout = docStyleClassifierResult.timeout
+    semanticClassifierResult = docStyleClassifierResult.result
+
+    // Update telemetry for this classifier call
+    telemetryEvent.semantic_classifier_called = true
+    telemetryEvent.semantic_classifier_latency_ms = docStyleClassifierResult.latencyMs
+    telemetryEvent.semantic_classifier_timeout = docStyleClassifierResult.timeout
+
+    if (docStyleClassifierResult.ok && semanticClassifierResult) {
+      telemetryEvent.semantic_classifier_domain = semanticClassifierResult.domain
+      telemetryEvent.semantic_classifier_intent = semanticClassifierResult.intent
+      telemetryEvent.semantic_classifier_confidence = semanticClassifierResult.confidence
+      telemetryEvent.semantic_classifier_needs_clarification = semanticClassifierResult.needs_clarification
+
+      const isDocExplain = semanticClassifierResult.intent === 'doc_explain'
+      const isConfident = semanticClassifierResult.confidence >= SEMANTIC_FALLBACK_CONFIDENCE_MIN
+      const needsClarification = !!semanticClassifierResult.needs_clarification
+
+      // Only proceed to doc retrieval if classifier confirms doc_explain with confidence
+      if (!(isDocExplain && isConfident && !needsClarification)) {
+        docStyleGateRejected = true
+      }
+    } else {
+      // Classifier failed or timed out - reject doc retrieval to be safe
+      if (!docStyleClassifierResult.ok && !docStyleClassifierResult.timeout) {
+        telemetryEvent.semantic_classifier_error = true
+      }
+      docStyleGateRejected = true
+    }
+
+    // If gate rejected, fall back to LLM response
+    if (docStyleGateRejected) {
+      telemetryEvent.route_final = 'llm'
+      telemetryEvent.matched_pattern_id = RoutingPatternId.SEMANTIC_FALLBACK
+      telemetryEvent.routing_latency_ms = Date.now() - routingStartTime
+      void logRoutingDecision(telemetryEvent as RoutingTelemetryEvent)
+
+      const llmRouteMessage: ChatMessage = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: "I'm best at helping with this app. Try asking about workspaces, notes, widgets, or navigation.",
+        timestamp: new Date(),
+        isError: false,
+      }
+      addMessage(llmRouteMessage)
+      setIsLoading(false)
+      return { handled: true, route: 'llm' as DocRoute }
+    }
   }
 
   // TD-7: Handle high-ambiguity clarification
