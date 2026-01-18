@@ -110,6 +110,15 @@ export interface RoutingTelemetryEvent {
   doc_slug_top?: string
   doc_slug_alt?: string[]
 
+  // HS3: Bounded formatting telemetry
+  hs3_called?: boolean
+  hs3_latency_ms?: number
+  hs3_input_len?: number
+  hs3_output_len?: number
+  hs3_trigger_reason?: 'long_snippet' | 'steps_request' | 'two_chunks'
+  hs3_timeout?: boolean
+  hs3_error?: boolean
+
   // Follow-up context
   followup_detected: boolean
   is_new_question: boolean
@@ -185,6 +194,15 @@ export async function logRoutingDecision(event: RoutingTelemetryEvent): Promise<
       doc_status: event.doc_status,
       doc_slug_top: event.doc_slug_top,
       doc_slug_alt: event.doc_slug_alt,
+
+      // HS3: Bounded formatting
+      hs3_called: event.hs3_called,
+      hs3_latency_ms: event.hs3_latency_ms,
+      hs3_input_len: event.hs3_input_len,
+      hs3_output_len: event.hs3_output_len,
+      hs3_trigger_reason: event.hs3_trigger_reason,
+      hs3_timeout: event.hs3_timeout,
+      hs3_error: event.hs3_error,
 
       // Follow-up context
       followup_detected: event.followup_detected,

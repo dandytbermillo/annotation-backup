@@ -333,6 +333,16 @@ Trigger formatting when:
 Constraint prompt (example):
 “Summarize using only the excerpt. Do not add facts. If the excerpt doesn’t contain the answer, say so.”
 
+Testing note:
+- Many docs are shorter than 600 chars, so HS3 may not trigger in routine testing.
+- For validation, temporarily lower `HS3_LENGTH_THRESHOLD` or use a steps request on a long doc.
+- Disambiguation pill selection currently bypasses HS3 unless that path is explicitly wired to it.
+
+Timeout tuning note:
+- If HS3 timeouts occur near the cap (e.g., ~2000ms), raise `HS3_TIMEOUT_MS` to 2500ms.
+- Only increase further (e.g., 3000ms) if timeout rate remains high after re-testing.
+- Avoid lowering the global threshold to “force” HS3; keep 600 unless an optional, meta-explain-only short-definition flag is introduced.
+
 ---
 
 ## Semantic Fallback (Gated, Default-On)

@@ -1138,10 +1138,11 @@ export interface ExplanationResult {
   chunkId?: string   // Chunk ID for HS2 tracking (undefined if from cache or Phase 1)
   fromCache: boolean // True if returned from cache
   status?: 'found' | 'ambiguous' | 'weak' | 'no_match'  // For UI to show pills on ambiguous
-  options?: Array<{   // Doc options for ambiguous status (pills)
+  options?: Array<{   // Doc options for ambiguous/weak status (pills)
     docSlug: string
     label: string     // header_path for display
     title: string
+    category?: string // Doc category (for weak status sublabel)
   }>
 }
 
@@ -1220,11 +1221,19 @@ export async function getSmartExplanation(concept: string, options?: SmartExplan
   }
 
   if (response?.status === 'weak' && response.results?.length > 0) {
+    const weakResult = response.results[0]
     return {
       explanation: response.clarification || null,
-      docSlug: response.results[0].doc_slug,
+      docSlug: weakResult.doc_slug,
       fromCache: false,
       status: 'weak',
+      // Return single option for pill (parity with ambiguous)
+      options: [{
+        docSlug: weakResult.doc_slug,
+        label: 'header_path' in weakResult && weakResult.header_path ? weakResult.header_path : weakResult.title,
+        title: weakResult.title,
+        category: weakResult.category,
+      }],
     }
   }
 

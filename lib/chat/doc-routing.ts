@@ -46,6 +46,164 @@ const SEMANTIC_FALLBACK_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_SEMANTIC_FAL
 const SEMANTIC_FALLBACK_TIMEOUT_DOC_STYLE_MS = Number(process.env.NEXT_PUBLIC_SEMANTIC_FALLBACK_TIMEOUT_DOC_STYLE_MS ?? 1500)
 const SEMANTIC_FALLBACK_CONFIDENCE_MIN = Number(process.env.NEXT_PUBLIC_SEMANTIC_FALLBACK_CONFIDENCE_MIN ?? 0.7)
 
+// =============================================================================
+// HS3: Bounded Formatting (Excerpt-Only LLM Formatting)
+// =============================================================================
+
+const HS3_ENABLED = process.env.NEXT_PUBLIC_HS3_ENABLED !== 'false'
+const HS3_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_HS3_TIMEOUT_MS ?? 2500)
+const HS3_LENGTH_THRESHOLD = Number(process.env.NEXT_PUBLIC_HS3_LENGTH_THRESHOLD ?? 600)
+
+type Hs3FormatStyle = 'short' | 'medium' | 'steps'
+type Hs3TriggerReason = 'long_snippet' | 'steps_request' | 'two_chunks'
+
+interface Hs3Result {
+  ok: boolean
+  latencyMs: number
+  formatted?: string
+  inputLen?: number
+  outputLen?: number
+  triggerReason: Hs3TriggerReason
+  timeout?: boolean
+  error?: boolean
+}
+
+/**
+ * Detect if user is asking for step-by-step instructions.
+ */
+function isStepsRequest(input: string): boolean {
+  return /\b(walk me through|step by step|steps|how to|how do i)\b/i.test(input)
+}
+
+/**
+ * Determine HS3 format style based on user input and response policy.
+ */
+function getHs3FormatStyle(userInput: string, responseStyle: 'short' | 'medium' | 'detailed'): Hs3FormatStyle {
+  if (isStepsRequest(userInput)) return 'steps'
+  if (responseStyle === 'short') return 'short'
+  return 'medium'
+}
+
+/**
+ * Check if HS3 should be triggered and return the reason.
+ */
+function shouldTriggerHs3(
+  snippetLength: number,
+  userInput: string,
+  appendedChunkCount: number
+): Hs3TriggerReason | null {
+  // Trigger 1: Long snippet
+  if (snippetLength > HS3_LENGTH_THRESHOLD) return 'long_snippet'
+
+  // Trigger 2: User asked for steps
+  if (isStepsRequest(userInput)) return 'steps_request'
+
+  // Trigger 3: Two chunks appended (needs condensation)
+  if (appendedChunkCount >= 2) return 'two_chunks'
+
+  return null
+}
+
+/**
+ * Call the HS3 formatter endpoint with timeout handling.
+ */
+async function runHs3Formatter(
+  snippet: string,
+  style: Hs3FormatStyle,
+  userQuery: string,
+  docTitle?: string
+): Promise<{
+  ok: boolean
+  latencyMs: number
+  formatted?: string
+  inputLen?: number
+  outputLen?: number
+  timeout: boolean
+  error: boolean
+}> {
+  const startTime = Date.now()
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), HS3_TIMEOUT_MS)
+
+  try {
+    const response = await fetch('/api/chat/format-snippet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        snippet,
+        style,
+        userQuery,
+        docTitle,
+      }),
+      signal: controller.signal,
+    })
+    clearTimeout(timeoutId)
+
+    const data = await response.json()
+    return {
+      ok: data.ok,
+      latencyMs: Date.now() - startTime,
+      formatted: data.formatted,
+      inputLen: data.inputLen,
+      outputLen: data.outputLen,
+      timeout: false,
+      error: !data.ok && !data.formatted,
+    }
+  } catch (err) {
+    clearTimeout(timeoutId)
+    const isAbort = err instanceof Error && err.name === 'AbortError'
+    return {
+      ok: false,
+      latencyMs: Date.now() - startTime,
+      timeout: isAbort,
+      error: !isAbort,
+    }
+  }
+}
+
+/**
+ * Attempt to format a snippet using HS3 if conditions are met.
+ * Returns the formatted snippet or the original if HS3 is disabled/fails.
+ */
+export async function maybeFormatSnippetWithHs3(
+  snippet: string,
+  userInput: string,
+  responseStyle: 'short' | 'medium' | 'detailed',
+  appendedChunkCount: number,
+  docTitle?: string
+): Promise<Hs3Result & { finalSnippet: string }> {
+  // Check if HS3 should trigger
+  const triggerReason = shouldTriggerHs3(snippet.length, userInput, appendedChunkCount)
+
+  // Return early if no trigger or HS3 disabled
+  if (!HS3_ENABLED || !triggerReason) {
+    return {
+      ok: false,
+      latencyMs: 0,
+      triggerReason: triggerReason || 'long_snippet', // default for type safety
+      finalSnippet: snippet,
+    }
+  }
+
+  const hs3Style = getHs3FormatStyle(userInput, responseStyle)
+  const result = await runHs3Formatter(snippet, hs3Style, userInput, docTitle)
+
+  // Use formatted result if successful, otherwise fall back to raw snippet
+  const finalSnippet = result.ok && result.formatted ? result.formatted : snippet
+
+  return {
+    ok: result.ok,
+    latencyMs: result.latencyMs,
+    formatted: result.formatted,
+    inputLen: result.inputLen,
+    outputLen: result.outputLen,
+    triggerReason,
+    timeout: result.timeout,
+    error: result.error,
+    finalSnippet,
+  }
+}
+
 type SemanticRouteResult = {
   domain: 'app' | 'general'
   intent: 'doc_explain' | 'action' | 'search_notes' | 'other'
@@ -932,7 +1090,36 @@ export async function handleDocRetrieval(ctx: DocRetrievalHandlerContext): Promi
             }
           }
 
-          const formattedSnippet = formatSnippet(rawSnippet, responseStyle)
+          // Track appended chunks for HS3 trigger detection
+          const appendedChunkCount = chunkIdsShown.length
+
+          // V5 HS3: Bounded Formatting (excerpt-only LLM formatting)
+          const hs3Result = await maybeFormatSnippetWithHs3(
+            rawSnippet,
+            trimmedInput,
+            responseStyle,
+            appendedChunkCount,
+            topResult.title
+          )
+
+          // Update telemetry with HS3 results
+          if (hs3Result.ok || hs3Result.latencyMs > 0) {
+            telemetryEvent.hs3_called = true
+            telemetryEvent.hs3_latency_ms = hs3Result.latencyMs
+            telemetryEvent.hs3_input_len = hs3Result.inputLen
+            telemetryEvent.hs3_output_len = hs3Result.outputLen
+            telemetryEvent.hs3_trigger_reason = hs3Result.triggerReason
+            telemetryEvent.hs3_timeout = hs3Result.timeout
+            telemetryEvent.hs3_error = hs3Result.error
+
+            // Re-log with HS3 telemetry
+            void logRoutingDecision(telemetryEvent as RoutingTelemetryEvent)
+          }
+
+          // Use HS3 result if successful, otherwise fall back to simple formatting
+          const formattedSnippet = hs3Result.ok && hs3Result.formatted
+            ? hs3Result.finalSnippet
+            : formatSnippet(rawSnippet, responseStyle)
           const hasMoreContent = rawSnippet.length > formattedSnippet.length
           const nextStepOffer = getNextStepOffer(responseStyle, hasMoreContent)
 

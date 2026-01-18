@@ -28,7 +28,7 @@ import {
   isNewQuestionOrCommand,
   hasFuzzyMatch,
 } from '@/lib/chat/query-patterns'
-import { isBareNounQuery } from '@/lib/chat/doc-routing'
+import { isBareNounQuery, maybeFormatSnippetWithHs3 } from '@/lib/chat/doc-routing'
 import type { UIContext } from '@/lib/chat/intent-prompt'
 import type { ChatMessage, DocRetrievalState, SelectionOption, LastClarificationState } from '@/lib/chat'
 import type { ClarificationOption } from '@/lib/chat/chat-navigation-context'
@@ -382,8 +382,114 @@ export async function handleMetaExplain(ctx: MetaExplainHandlerContext): Promise
         return { handled: true }
       }
 
-      // Non-ambiguous: show explanation text directly
-      const explanation = result.explanation || 'Which part would you like me to explain?'
+      // Handle weak results with single-pill confirmation (parity with doc-routing)
+      if (result.status === 'weak' && result.options?.length > 0) {
+        const weakOpt = result.options[0]
+        const messageId = `assistant-${Date.now()}`
+
+        const weakOption: SelectionOption = {
+          type: 'doc' as const,
+          id: weakOpt.docSlug,
+          label: weakOpt.label,
+          sublabel: weakOpt.category || weakOpt.title,
+          data: { docSlug: weakOpt.docSlug },
+        }
+
+        const assistantMessage: ChatMessage = {
+          id: messageId,
+          role: 'assistant',
+          content: result.explanation || `I think you mean "${weakOpt.label}". Is that right?`,
+          timestamp: new Date(),
+          isError: false,
+          options: [weakOption],
+        }
+        addMessage(assistantMessage)
+
+        setPendingOptions([{
+          index: 1,
+          label: weakOption.label,
+          sublabel: weakOption.sublabel,
+          type: weakOption.type,
+          id: weakOption.id,
+          data: weakOption.data,
+        }])
+        setPendingOptionsMessageId(messageId)
+
+        setLastClarification({
+          type: 'doc_disambiguation',
+          originalIntent: 'meta_explain',
+          messageId,
+          timestamp: Date.now(),
+          clarificationQuestion: assistantMessage.content,
+          options: [{
+            id: weakOption.id,
+            label: weakOption.label,
+            sublabel: weakOption.sublabel,
+            type: weakOption.type,
+          }],
+          metaCount: 0,
+        })
+
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'meta_explain_weak_pill',
+          metadata: { label: weakOption.label, source: 'meta_explain' },
+          metrics: {
+            event: 'clarification_shown',
+            optionCount: 1,
+            timestamp: Date.now(),
+          },
+        })
+
+        // TD-8: do NOT set lastDocSlug on weak; keep tokens for context
+        const metaQueryTerm = queryTerm || trimmedInput
+        const { tokens: metaTokens } = normalizeInputForRouting(metaQueryTerm)
+        updateDocRetrievalState({
+          lastTopicTokens: metaTokens,
+          lastMode: 'doc',
+        })
+
+        setIsLoading(false)
+        return { handled: true }
+      }
+
+      // Non-ambiguous: show explanation text directly (with HS3 formatting if applicable)
+      const rawExplanation = result.explanation || 'Which part would you like me to explain?'
+
+      // TD-5: Apply HS3 bounded formatting for long/steps responses
+      const metaQueryTerm = queryTerm || trimmedInput
+
+      // Optional: Enable HS3 for short meta-explain definitions via flag
+      // Only applies to snippets > 100 chars (very short ones don't need formatting)
+      const metaExplainShortEnabled = process.env.NEXT_PUBLIC_HS3_META_EXPLAIN_SHORT === 'true'
+      const shouldForceHs3 = metaExplainShortEnabled && rawExplanation.length > 100
+
+      const hs3Result = await maybeFormatSnippetWithHs3(
+        rawExplanation,
+        trimmedInput,
+        'short', // Meta-explain uses short style
+        shouldForceHs3 ? 2 : 1, // Force two_chunks trigger if flag enabled and snippet > 100 chars
+        result.docSlug || metaQueryTerm
+      )
+
+      const explanation = hs3Result.finalSnippet
+
+      // Log HS3 telemetry if it was called
+      if (hs3Result.ok) {
+        await debugLog({
+          component: 'ChatRouting',
+          action: 'meta_explain_hs3',
+          content_preview: `HS3 formatted: ${explanation.slice(0, 50)}...`,
+          forceLog: true,
+          metadata: {
+            trigger_reason: hs3Result.triggerReason,
+            latency_ms: hs3Result.latencyMs,
+            input_len: hs3Result.inputLen,
+            output_len: hs3Result.outputLen,
+            doc_slug: result.docSlug,
+          },
+        })
+      }
 
       const assistantMessage: ChatMessage = {
         id: `assistant-${Date.now()}`,
@@ -395,7 +501,6 @@ export async function handleMetaExplain(ctx: MetaExplainHandlerContext): Promise
       addMessage(assistantMessage)
 
       // Wire meta-explain into v4 state for follow-ups
-      const metaQueryTerm = queryTerm || trimmedInput
       const { tokens: metaTokens } = normalizeInputForRouting(metaQueryTerm)
 
       // TD-8: Only set lastDocSlug for confident results
@@ -648,10 +753,35 @@ export async function handleFollowUp(ctx: FollowUpHandlerContext): Promise<Follo
 
       // Check if we actually have new content
       if (snippet.length > 0) {
+        // HS3: Apply bounded formatting for follow-up chunks
+        // appendedChunkCount = total chunks shown including this one
+        const appendedChunkCount = excludeChunkIds.length + 1
+        const hs3Result = await maybeFormatSnippetWithHs3(
+          snippet,
+          trimmedInput,
+          'medium', // Follow-ups typically want more detail
+          appendedChunkCount,
+          docRetrievalState.lastDocSlug
+        )
+
+        // Update telemetry with HS3 results (re-log like doc-routing)
+        if (hs3Result.ok || hs3Result.latencyMs > 0) {
+          followupTelemetryEvent.hs3_called = true
+          followupTelemetryEvent.hs3_latency_ms = hs3Result.latencyMs
+          followupTelemetryEvent.hs3_input_len = hs3Result.inputLen
+          followupTelemetryEvent.hs3_output_len = hs3Result.outputLen
+          followupTelemetryEvent.hs3_trigger_reason = hs3Result.triggerReason
+          followupTelemetryEvent.hs3_timeout = hs3Result.timeout
+          followupTelemetryEvent.hs3_error = hs3Result.error
+          void logRoutingDecision(followupTelemetryEvent as RoutingTelemetryEvent)
+        }
+
+        const formattedContent = hs3Result.finalSnippet
+
         const assistantMessage: ChatMessage = {
           id: `assistant-${Date.now()}`,
           role: 'assistant',
-          content: snippet + (snippet.length >= 500 ? '...' : ''),
+          content: formattedContent + (snippet.length >= 500 && !hs3Result.ok ? '...' : ''),
           timestamp: new Date(),
           isError: false,
         }
