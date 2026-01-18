@@ -328,7 +328,7 @@ export async function handleMetaExplain(ctx: MetaExplainHandlerContext): Promise
           id: opt.docSlug,
           label: opt.label || opt.title,
           sublabel: opt.title !== opt.label ? opt.title : undefined,
-          data: { docSlug: opt.docSlug },
+          data: { docSlug: opt.docSlug, originalQuery: trimmedInput },
         }))
 
         const assistantMessage: ChatMessage = {
@@ -392,7 +392,7 @@ export async function handleMetaExplain(ctx: MetaExplainHandlerContext): Promise
           id: weakOpt.docSlug,
           label: weakOpt.label,
           sublabel: weakOpt.category || weakOpt.title,
-          data: { docSlug: weakOpt.docSlug },
+          data: { docSlug: weakOpt.docSlug, originalQuery: trimmedInput },
         }
 
         const assistantMessage: ChatMessage = {

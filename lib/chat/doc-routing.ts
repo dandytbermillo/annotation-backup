@@ -1154,7 +1154,7 @@ export async function handleDocRetrieval(ctx: DocRetrievalHandlerContext): Promi
             id: topResult.doc_slug,
             label: headerPath,
             sublabel: topResult.category || 'Documentation',
-            data: { docSlug: topResult.doc_slug },
+            data: { docSlug: topResult.doc_slug, originalQuery: trimmedInput },
           }
 
           const assistantMessage: ChatMessage = {
@@ -1194,7 +1194,7 @@ export async function handleDocRetrieval(ctx: DocRetrievalHandlerContext): Promi
             id: r.doc_slug,
             label: r.header_path || r.title,
             sublabel: r.category,
-            data: { docSlug: r.doc_slug },
+            data: { docSlug: r.doc_slug, originalQuery: trimmedInput },
           }))
 
           const assistantMessage: ChatMessage = {

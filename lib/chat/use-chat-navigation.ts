@@ -759,10 +759,10 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
         case 'doc':
           // User selected a doc from disambiguation - fetch doc content
           // Per general-doc-retrieval-routing-plan.md: use docSlug to scope retrieval
-          const docData = option.data as { docSlug: string }
+          const docData = option.data as { docSlug: string; originalQuery?: string }
           if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('chat-select-doc', {
-              detail: { docSlug: docData.docSlug },
+              detail: { docSlug: docData.docSlug, originalQuery: docData.originalQuery },
             }))
           }
           return {

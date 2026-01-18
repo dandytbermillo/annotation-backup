@@ -945,8 +945,8 @@ function ChatNavigationPanelContent({
   // Handle doc selection (from doc_disambiguation pill)
   // Per general-doc-retrieval-routing-plan.md: use docSlug to scope retrieval
   useEffect(() => {
-    const handleDocSelection = async (event: CustomEvent<{ docSlug: string }>) => {
-      const { docSlug } = event.detail
+    const handleDocSelection = async (event: CustomEvent<{ docSlug: string; originalQuery?: string }>) => {
+      const { docSlug, originalQuery } = event.detail
 
       setIsLoading(true)
       try {
@@ -969,7 +969,7 @@ function ChatNavigationPanelContent({
           // V5 HS3: Apply bounded formatting if triggered
           const hs3Result = await maybeFormatSnippetWithHs3(
             rawSnippet,
-            docSlug, // Use docSlug as context for formatting
+            originalQuery || docSlug, // Preserve user intent (steps) when available
             'medium', // Default to medium style for selections
             1, // Single chunk (no appending in selection path)
             topResult.title
