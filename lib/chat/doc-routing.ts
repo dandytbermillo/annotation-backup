@@ -1111,9 +1111,13 @@ export async function handleDocRetrieval(ctx: DocRetrievalHandlerContext): Promi
           // Track appended chunks for HS3 trigger detection
           const appendedChunkCount = chunkIdsShown.length
 
+          // Strip markdown headers before HS3 for cleaner output
+          const strippedSnippet = stripMarkdownHeadersForUI(rawSnippet)
+          const snippetForHs3 = strippedSnippet.length > 0 ? strippedSnippet : rawSnippet
+
           // V5 HS3: Bounded Formatting (excerpt-only LLM formatting)
           const hs3Result = await maybeFormatSnippetWithHs3(
-            rawSnippet,
+            snippetForHs3,
             trimmedInput,
             responseStyle,
             appendedChunkCount,
@@ -1135,9 +1139,10 @@ export async function handleDocRetrieval(ctx: DocRetrievalHandlerContext): Promi
           }
 
           // Use HS3 result if successful, otherwise fall back to simple formatting
+          // Note: fallback uses stripped snippet for consistent header-free output
           const formattedSnippet = hs3Result.ok && hs3Result.formatted
             ? hs3Result.finalSnippet
-            : formatSnippet(rawSnippet, responseStyle)
+            : formatSnippet(snippetForHs3, responseStyle)
           const hasMoreContent = rawSnippet.length > formattedSnippet.length
           const nextStepOffer = getNextStepOffer(responseStyle, hasMoreContent)
 

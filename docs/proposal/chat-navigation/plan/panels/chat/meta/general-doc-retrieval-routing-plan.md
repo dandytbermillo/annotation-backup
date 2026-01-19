@@ -595,6 +595,19 @@ Clarification success should count all resolution paths (pill click, typed label
   - Only after indexing + permissions are ready.
   - Add cross‑corpus ambiguity pills and HS1/HS2 reuse.
 
+### Post-Release Fixes
+
+| Date | Issue | Fix | Report |
+|------|-------|-----|--------|
+| 2026-01-14 | Definitional query routing | TD3 fix | `reports/2026-01-14-definitional-query-fix-implementation-report.md` |
+| 2026-01-14 | TD3 implementation | Definitional queries | `reports/2026-01-14-td3-implementation-report.md` |
+| 2026-01-15 | KnownTerms race condition | SSR snapshot | `reports/2026-01-15-knownterms-race-fix-report.md` |
+| 2026-01-15 | TD2 fuzzy matching | Fuzzy term matching | `reports/2026-01-15-td2-fuzzy-matching-implementation-report.md` |
+| 2026-01-15 | TD4/TD8 implementation | Multiple fixes | `reports/2026-01-15-td4-td8-implementation-report.md` |
+| 2026-01-16 | TD7 implementation | Stricter app relevance | `reports/2026-01-16-td7-implementation-report.md` |
+| 2026-01-18 | Weak pills + HS3 integration | Meta-explain HS3 | `reports/2026-01-18-weak-pills-hs3-meta-explain-implementation-report.md` |
+| 2026-01-18 | HS3 follow-up formatting | Example/Related literal lists + vague followup guard | `reports/2026-01-18-example-section-literal-formatting-fix-report.md` |
+
 
 ## Sample Code (Routing Skeleton)
 

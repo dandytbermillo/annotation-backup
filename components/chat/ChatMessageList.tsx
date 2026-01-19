@@ -8,6 +8,7 @@
 
 'use client'
 
+import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import type { ChatMessage, SelectionOption, ChatSuggestions } from '@/lib/chat'
 import { MessageResultPreview } from './message-result-preview'
@@ -32,6 +33,33 @@ function isDifferentDay(date1: Date, date2: Date): boolean {
  */
 function isToday(date: Date): boolean {
   return date.toDateString() === new Date().toDateString()
+}
+
+// =============================================================================
+// Simple Markdown Renderer
+// =============================================================================
+
+/**
+ * Render simple markdown: **bold** only
+ * Lightweight - no external dependencies
+ */
+function renderSimpleMarkdown(content: string): ReactNode {
+  // Split by **bold** patterns while preserving the delimiters for processing
+  const parts = content.split(/(\*\*[^*]+\*\*)/g)
+
+  if (parts.length === 1) {
+    // No bold markers found, return as-is
+    return content
+  }
+
+  return parts.map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
+      // Bold text - remove ** and wrap in <strong>
+      const boldText = part.slice(2, -2)
+      return <strong key={index} className="font-semibold">{boldText}</strong>
+    }
+    return part
+  })
 }
 
 // =============================================================================
@@ -106,7 +134,10 @@ export function ChatMessageList({
                       : 'bg-white/90 text-indigo-900 backdrop-blur-xl border border-white/20'
                 )}
               >
-                {message.content}
+                {/* Render markdown for assistant messages, plain text for user/error */}
+                {message.role === 'assistant' && !message.isError
+                  ? renderSimpleMarkdown(message.content)
+                  : message.content}
               </div>
 
               {/* Message Result Preview (for "Show all" view panel content) */}

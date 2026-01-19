@@ -28,7 +28,7 @@ import {
   isNewQuestionOrCommand,
   hasFuzzyMatch,
 } from '@/lib/chat/query-patterns'
-import { isBareNounQuery, maybeFormatSnippetWithHs3, dedupeHeaderPath } from '@/lib/chat/doc-routing'
+import { isBareNounQuery, maybeFormatSnippetWithHs3, dedupeHeaderPath, stripMarkdownHeadersForUI } from '@/lib/chat/doc-routing'
 import type { UIContext } from '@/lib/chat/intent-prompt'
 import type { ChatMessage, DocRetrievalState, SelectionOption, LastClarificationState } from '@/lib/chat'
 import type { ClarificationOption } from '@/lib/chat/chat-navigation-context'
@@ -459,13 +459,17 @@ export async function handleMetaExplain(ctx: MetaExplainHandlerContext): Promise
       // TD-5: Apply HS3 bounded formatting for long/steps responses
       const metaQueryTerm = queryTerm || trimmedInput
 
+      // Strip markdown headers before HS3 for cleaner output
+      const strippedExplanation = stripMarkdownHeadersForUI(rawExplanation)
+      const explanationForHs3 = strippedExplanation.length > 0 ? strippedExplanation : rawExplanation
+
       // Optional: Enable HS3 for short meta-explain definitions via flag
       // Only applies to snippets > 100 chars (very short ones don't need formatting)
       const metaExplainShortEnabled = process.env.NEXT_PUBLIC_HS3_META_EXPLAIN_SHORT === 'true'
-      const shouldForceHs3 = metaExplainShortEnabled && rawExplanation.length > 100
+      const shouldForceHs3 = metaExplainShortEnabled && explanationForHs3.length > 100
 
       const hs3Result = await maybeFormatSnippetWithHs3(
-        rawExplanation,
+        explanationForHs3,
         trimmedInput,
         'short', // Meta-explain uses short style
         shouldForceHs3 ? 2 : 1, // Force two_chunks trigger if flag enabled and snippet > 100 chars
@@ -716,21 +720,12 @@ export async function handleFollowUp(ctx: FollowUpHandlerContext): Promise<Follo
       }),
     })
 
-    let result = retrieveResponse.ok ? await retrieveResponse.json() : null
+    const result = retrieveResponse.ok ? await retrieveResponse.json() : null
 
-    // If scoped retrieval fails, try query-based without scope
-    if (!result || result.status === 'no_match' || !result.results?.length) {
-      retrieveResponse = await fetch('/api/docs/retrieve', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mode: 'chunks',
-          query: docRetrievalState.lastDocSlug,
-          excludeChunkIds,
-        }),
-      })
-      result = retrieveResponse.ok ? await retrieveResponse.json() : null
-    }
+    // Note: We intentionally do NOT fallback to unscoped search when scoped retrieval fails.
+    // The unscoped fallback was causing off-topic results (e.g., "Sprint 6" appearing when
+    // asking about "workspace") because it would match any doc containing the query term.
+    // Better to return "That's all I have" than drift into unrelated documents.
 
     if (result && (result.status === 'found' || result.status === 'weak') && result.results?.length > 0) {
       // V5 HS2: Find first non-heading-only chunk (quality filter)
@@ -748,21 +743,64 @@ export async function handleFollowUp(ctx: FollowUpHandlerContext): Promise<Follo
         console.log('[DocRetrieval:HS2] All follow-up chunks are low quality, using first')
       }
 
-      const snippet = selectedResult.snippet || selectedResult.content?.slice(0, 500) || ''
+      const rawSnippet = selectedResult.snippet || selectedResult.content?.slice(0, 500) || ''
       const newChunkId = selectedResult.chunkId
+      const headerPath = selectedResult.header_path || selectedResult.title || ''
 
       // Check if we actually have new content
-      if (snippet.length > 0) {
-        // HS3: Apply bounded formatting for follow-up chunks
-        // appendedChunkCount = total chunks shown including this one
-        const appendedChunkCount = excludeChunkIds.length + 1
-        const hs3Result = await maybeFormatSnippetWithHs3(
-          snippet,
-          trimmedInput,
-          'medium', // Follow-ups typically want more detail
-          appendedChunkCount,
-          docRetrievalState.lastDocSlug
-        )
+      if (rawSnippet.length > 0) {
+        // Detect list-type sections that should be shown verbatim, not reformatted
+        // to avoid misleading "you're interested in..." conversational inferences
+        // Covers: "Examples", "Example questions", "Related concepts", "Related topics"
+        const isExampleSection = /\bexample/i.test(headerPath)
+        const isRelatedSection = /\brelated/i.test(headerPath)
+        const isLiteralListSection = isExampleSection || isRelatedSection
+
+        // Strip markdown headers before HS3 for cleaner output
+        const strippedSnippet = stripMarkdownHeadersForUI(rawSnippet)
+        const snippetForHs3 = strippedSnippet.length > 0 ? strippedSnippet : rawSnippet
+
+        let hs3Result: { ok: boolean; finalSnippet: string; latencyMs: number; inputLen?: number; outputLen?: number; triggerReason?: 'long_snippet' | 'steps_request' | 'two_chunks'; timeout?: boolean; error?: boolean }
+
+        if (isLiteralListSection) {
+          // List-type sections: format as literal list, skip HS3 to avoid misleading rewrites
+          const listLines = snippetForHs3
+            .split('\n')
+            .map((line: string) => line.trim())
+            .filter((line: string) => line.length > 0)
+
+          // Choose appropriate intro based on section type
+          const introText = isExampleSection ? 'Here are some examples' : 'Related topics'
+          const singleIntro = isExampleSection ? 'Example' : 'Related'
+
+          const formattedList = listLines.length > 1
+            ? `${introText}:\n${listLines.map((l: string) => `• ${l.replace(/^[-•]\s*/, '').replace(/^["']|["']$/g, '')}`).join('\n')}`
+            : `${singleIntro}: ${listLines[0]?.replace(/^[-•]\s*/, '').replace(/^["']|["']$/g, '') || snippetForHs3}`
+
+          hs3Result = {
+            ok: false, // Mark as not HS3-processed for telemetry
+            finalSnippet: formattedList,
+            latencyMs: 0,
+            triggerReason: undefined, // Not HS3-processed
+          }
+        } else {
+          // Normal content: apply HS3 bounded formatting
+          // appendedChunkCount = total chunks shown including this one
+          const appendedChunkCount = excludeChunkIds.length + 1
+
+          // Guard: Don't pass vague pronoun-style queries to HS3 (e.g., "tell me more", "continue")
+          // These cause HS3 to say "I don't see that info" since they're not real questions
+          const isVagueFollowup = /^(tell me more|more|continue|go on|keep going|and\??|yes|ok|okay)$/i.test(trimmedInput.trim())
+          const hs3Query = isVagueFollowup ? '' : trimmedInput
+
+          hs3Result = await maybeFormatSnippetWithHs3(
+            snippetForHs3,
+            hs3Query,
+            'medium', // Follow-ups typically want more detail
+            appendedChunkCount,
+            docRetrievalState.lastDocSlug
+          )
+        }
 
         // Update telemetry with HS3 results (re-log like doc-routing)
         if (hs3Result.ok || hs3Result.latencyMs > 0) {
@@ -781,7 +819,7 @@ export async function handleFollowUp(ctx: FollowUpHandlerContext): Promise<Follo
         const assistantMessage: ChatMessage = {
           id: `assistant-${Date.now()}`,
           role: 'assistant',
-          content: formattedContent + (snippet.length >= 500 && !hs3Result.ok ? '...' : ''),
+          content: formattedContent + (rawSnippet.length >= 500 && !hs3Result.ok ? '...' : ''),
           timestamp: new Date(),
           isError: false,
         }
