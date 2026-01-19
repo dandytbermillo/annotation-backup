@@ -153,6 +153,58 @@ const hs3Result = await maybeFormatSnippetWithHs3(
 - Requires snippet > 100 chars (very short ones don't need formatting)
 - Forces `two_chunks` trigger by setting `appendedChunkCount = 2`
 
+### 6. Steps Request After Disambiguation (originalQuery Fix)
+
+**Problem:** When users select a disambiguation pill, the original query intent (e.g., "walk me through") was lost because only the `docSlug` was passed to HS3.
+
+**Solution:** Preserve `originalQuery` through the disambiguation flow:
+
+**Step 1: Store originalQuery in pill data**
+
+**File:** `lib/chat/doc-routing.ts`
+```typescript
+// In handleDocRetrieval - weak pills
+data: { docSlug: topResult.doc_slug, originalQuery: trimmedInput }
+
+// In handleDocRetrieval - ambiguous pills
+data: { docSlug: r.doc_slug, originalQuery: trimmedInput }
+```
+
+**File:** `lib/chat/chat-routing.ts`
+```typescript
+// In handleMetaExplain - weak/ambiguous pills
+data: { docSlug: option.docSlug, originalQuery: trimmedInput }
+```
+
+**Step 2: Pass originalQuery through event dispatch**
+
+**File:** `lib/chat/use-chat-navigation.ts`
+```typescript
+const docData = option.data as { docSlug: string; originalQuery?: string }
+window.dispatchEvent(new CustomEvent('chat-select-doc', {
+  detail: { docSlug: docData.docSlug, originalQuery: docData.originalQuery },
+}))
+```
+
+**Step 3: Use originalQuery in HS3 call**
+
+**File:** `components/chat/chat-navigation-panel.tsx`
+```typescript
+const handleDocSelection = async (event: CustomEvent<{ docSlug: string; originalQuery?: string }>) => {
+  const { docSlug, originalQuery } = event.detail
+  // ...
+  const hs3Result = await maybeFormatSnippetWithHs3(
+    rawSnippet,
+    originalQuery || docSlug, // Preserve user intent (steps) when available
+    'medium',
+    1,
+    topResult.title
+  )
+}
+```
+
+**Result:** After pill selection, HS3 now receives the original query "walk me through workspace actions" instead of just "workspace-actions", allowing the `steps_request` trigger to fire correctly.
+
 ---
 
 ## Files Modified
@@ -160,8 +212,11 @@ const hs3Result = await maybeFormatSnippetWithHs3(
 | File | Changes |
 |------|---------|
 | `lib/docs/keyword-retrieval.ts` | Added `options` return for weak status |
-| `lib/chat/chat-routing.ts` | Added weak handler, HS3 meta-explain integration, HS3 follow-up integration, optional short flag |
-| `lib/chat/doc-routing.ts` | Increased HS3 timeout to 2500ms |
+| `lib/chat/chat-routing.ts` | Added weak handler, HS3 meta-explain integration, HS3 follow-up integration, optional short flag, originalQuery in pill data |
+| `lib/chat/doc-routing.ts` | Increased HS3 timeout to 2500ms, added originalQuery in pill data |
+| `lib/chat/use-chat-navigation.ts` | Pass originalQuery through chat-select-doc event |
+| `lib/chat/chat-navigation-context.tsx` | Added `originalQuery?: string` to DocData interface |
+| `components/chat/chat-navigation-panel.tsx` | Use originalQuery for HS3 call in handleDocSelection |
 | `app/api/chat/format-snippet/route.ts` | Cleaned up debug logs |
 
 ---
@@ -188,6 +243,15 @@ const hs3Result = await maybeFormatSnippetWithHs3(
 ### Test 4: Timeout Elimination
 - Before: Intermittent `hs3_timeout=true` at ~2001ms
 - After: All `hs3_timeout=false` with latencies 1010-1812ms
+
+### Test 5: Steps Request After Disambiguation
+- Query: "walk me through workspace actions"
+- Result: Disambiguation pills displayed (ambiguous status)
+- User action: Selected "Workspace Actions" pill
+- Response: **Numbered steps (1. 2. 3.)** displayed
+- Verification: Response contained "1.", "2.", "3." formatting, confirming `steps_request` trigger fired
+- Before fix: Plain paragraph text (no numbered steps)
+- After fix: Properly formatted numbered steps
 
 ### Type Check
 ```bash
@@ -267,6 +331,7 @@ followup | true | two_chunks | false   | 1230ms
 - [x] Consistent formatting across test runs
 - [x] Type-check passes
 - [x] Debug logs cleaned up
+- [x] Steps request triggers after disambiguation (originalQuery preserved)
 
 ---
 
@@ -279,4 +344,4 @@ followup | true | two_chunks | false   | 1230ms
 ---
 
 *Report generated: 2026-01-18*
-*Updated with HS3 follow-up integration, timeout fix, and optional meta-explain flag*
+*Updated with HS3 follow-up integration, timeout fix, optional meta-explain flag, and originalQuery fix for steps_request after disambiguation*

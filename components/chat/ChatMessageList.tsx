@@ -97,6 +97,8 @@ export function ChatMessageList({
               <div
                 className={cn(
                   'rounded-lg px-3 py-2 text-sm max-w-[90%] shadow-lg',
+                  // Only preserve whitespace for assistant messages (HS3 steps formatting)
+                  message.role === 'assistant' && !message.isError && 'whitespace-pre-wrap',
                   message.role === 'user'
                     ? 'bg-zinc-900/90 text-white backdrop-blur-xl border border-white/10'
                     : message.isError

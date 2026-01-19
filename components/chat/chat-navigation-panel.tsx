@@ -57,7 +57,7 @@ import {
 // Step 1 refactor: Pure UI helpers
 import { normalizeUserMessage, extractQuickLinksBadge } from '@/lib/chat/ui-helpers'
 // Step 3 refactor: Doc routing helpers
-import { handleDocRetrieval, maybeFormatSnippetWithHs3 } from '@/lib/chat/doc-routing'
+import { handleDocRetrieval, maybeFormatSnippetWithHs3, stripMarkdownHeadersForUI, dedupeHeaderPath } from '@/lib/chat/doc-routing'
 
 export interface ChatNavigationPanelProps {
   /** Current entry ID for context */
@@ -963,12 +963,15 @@ function ChatNavigationPanelContent({
 
         if (result.status === 'found' && result.results?.length > 0) {
           const topResult = result.results[0]
-          const headerPath = topResult.header_path || topResult.title
+          const rawHeaderPath = topResult.header_path || topResult.title
+          const headerPath = dedupeHeaderPath(rawHeaderPath)
           const rawSnippet = topResult.snippet || ''
+          const strippedSnippet = stripMarkdownHeadersForUI(rawSnippet)
+          const snippetForDisplay = strippedSnippet.length > 0 ? strippedSnippet : rawSnippet
 
           // V5 HS3: Apply bounded formatting if triggered
           const hs3Result = await maybeFormatSnippetWithHs3(
-            rawSnippet,
+            snippetForDisplay,
             originalQuery || docSlug, // Preserve user intent (steps) when available
             'medium', // Default to medium style for selections
             1, // Single chunk (no appending in selection path)
@@ -977,7 +980,7 @@ function ChatNavigationPanelContent({
 
           const finalSnippet = hs3Result.ok && hs3Result.formatted
             ? hs3Result.finalSnippet
-            : rawSnippet
+            : snippetForDisplay
 
           const assistantMessage: ChatMessage = {
             id: `assistant-${Date.now()}`,

@@ -28,7 +28,7 @@ import {
   isNewQuestionOrCommand,
   hasFuzzyMatch,
 } from '@/lib/chat/query-patterns'
-import { isBareNounQuery, maybeFormatSnippetWithHs3 } from '@/lib/chat/doc-routing'
+import { isBareNounQuery, maybeFormatSnippetWithHs3, dedupeHeaderPath } from '@/lib/chat/doc-routing'
 import type { UIContext } from '@/lib/chat/intent-prompt'
 import type { ChatMessage, DocRetrievalState, SelectionOption, LastClarificationState } from '@/lib/chat'
 import type { ClarificationOption } from '@/lib/chat/chat-navigation-context'
@@ -326,7 +326,7 @@ export async function handleMetaExplain(ctx: MetaExplainHandlerContext): Promise
         const options: SelectionOption[] = result.options.slice(0, 2).map((opt: { docSlug: string; label: string; title: string }) => ({
           type: 'doc' as const,
           id: opt.docSlug,
-          label: opt.label || opt.title,
+          label: dedupeHeaderPath(opt.label || opt.title),
           sublabel: opt.title !== opt.label ? opt.title : undefined,
           data: { docSlug: opt.docSlug, originalQuery: trimmedInput },
         }))

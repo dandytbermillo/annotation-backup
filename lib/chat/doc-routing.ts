@@ -513,6 +513,24 @@ export function stripMarkdownHeadersForUI(text: string): string {
 }
 
 /**
+ * Deduplicate consecutive identical segments in header path.
+ * e.g., "Note Actions > Note Actions > Overview" → "Note Actions > Overview"
+ */
+export function dedupeHeaderPath(headerPath: string): string {
+  const segments = headerPath.split(' > ').map(s => s.trim())
+  const deduped: string[] = []
+
+  for (const segment of segments) {
+    // Only add if different from the previous segment
+    if (deduped.length === 0 || deduped[deduped.length - 1] !== segment) {
+      deduped.push(segment)
+    }
+  }
+
+  return deduped.join(' > ')
+}
+
+/**
  * Check if snippet is low quality (heading-only or too short).
  * Per v5 plan: HS1 snippet quality guard.
  */
@@ -1192,7 +1210,7 @@ export async function handleDocRetrieval(ctx: DocRetrievalHandlerContext): Promi
           const options: SelectionOption[] = result.results.slice(0, 2).map((r: { doc_slug: string; header_path?: string; title: string; category: string }) => ({
             type: 'doc' as const,
             id: r.doc_slug,
-            label: r.header_path || r.title,
+            label: dedupeHeaderPath(r.header_path || r.title),
             sublabel: r.category,
             data: { docSlug: r.doc_slug, originalQuery: trimmedInput },
           }))

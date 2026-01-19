@@ -81,7 +81,19 @@ OUTPUT STYLE: Medium (2-3 sentences + 1 key detail)
 
     steps: `
 OUTPUT STYLE: Steps (3-7 numbered steps)
-- Format as numbered steps (1. 2. 3. etc.)
+
+CRITICAL FORMAT REQUIREMENT:
+Each numbered step MUST be on its own line. Use a line break after each step.
+
+CORRECT format:
+1. First step here
+2. Second step here
+3. Third step here
+
+WRONG format (DO NOT do this):
+1. First step here 2. Second step here 3. Third step here
+
+Rules:
 - Keep each step concise and actionable
 - Include only steps mentioned in the excerpt
 - If the excerpt doesn't have clear steps, summarize the key points instead`

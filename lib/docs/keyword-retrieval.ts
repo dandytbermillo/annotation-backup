@@ -49,6 +49,23 @@ const SCORE_TITLE_TOKEN = 3
 const SCORE_KEYWORD = 2
 const SCORE_CONTENT = 1
 
+/**
+ * Deduplicate consecutive identical segments in header path.
+ * e.g., "Note Actions > Note Actions > Overview" → "Note Actions > Overview"
+ */
+function dedupeHeaderPath(headerPath: string): string {
+  const segments = headerPath.split(' > ').map(s => s.trim())
+  const deduped: string[] = []
+
+  for (const segment of segments) {
+    if (deduped.length === 0 || deduped[deduped.length - 1] !== segment) {
+      deduped.push(segment)
+    }
+  }
+
+  return deduped.join(' > ')
+}
+
 // Confidence thresholds
 const MIN_SCORE = 3
 const MIN_CONFIDENCE = 0.3
@@ -877,7 +894,7 @@ export async function retrieveChunks(
     return {
       status: 'weak',
       results: topResults.slice(0, 3),
-      clarification: `I'm not sure which feature you mean. Are you asking about "${topResult.header_path}"?`,
+      clarification: `I'm not sure which feature you mean. Are you asking about "${dedupeHeaderPath(topResult.header_path)}"?`,
       confidence,
       phase: 2,
       metrics,
@@ -888,7 +905,7 @@ export async function retrieveChunks(
     return {
       status: 'weak',
       results: topResults.slice(0, 3),
-      clarification: `I found a possible match in "${topResult.header_path}". Is that what you're asking about?`,
+      clarification: `I found a possible match in "${dedupeHeaderPath(topResult.header_path)}". Is that what you're asking about?`,
       confidence,
       phase: 2,
       metrics,
@@ -899,7 +916,7 @@ export async function retrieveChunks(
     return {
       status: 'weak',
       results: topResults.slice(0, 3),
-      clarification: `I think you mean "${topResult.header_path}". Is that right?`,
+      clarification: `I think you mean "${dedupeHeaderPath(topResult.header_path)}". Is that right?`,
       confidence,
       phase: 2,
       metrics,
@@ -935,7 +952,7 @@ export async function retrieveChunks(
       return {
         status: 'ambiguous',
         results: [topResults[0], crossDocCandidate],
-        clarification: `Do you mean "${topResults[0].header_path}" or "${crossDocCandidate.header_path}"?`,
+        clarification: `Do you mean "${dedupeHeaderPath(topResults[0].header_path)}" or "${dedupeHeaderPath(crossDocCandidate.header_path)}"?`,
         confidence,
         phase: 2,
         metrics,
@@ -946,7 +963,7 @@ export async function retrieveChunks(
     return {
       status: 'weak',
       results: [topResult],
-      clarification: `I found info in "${topResult.header_path}". Is that what you meant?`,
+      clarification: `I found info in "${dedupeHeaderPath(topResult.header_path)}". Is that what you meant?`,
       confidence,
       phase: 2,
       metrics,
@@ -958,7 +975,7 @@ export async function retrieveChunks(
     return {
       status: 'ambiguous',
       results: topResults.slice(0, 2),
-      clarification: `Do you mean "${topResult.header_path}" or "${topResults[1].header_path}"?`,
+      clarification: `Do you mean "${dedupeHeaderPath(topResult.header_path)}" or "${dedupeHeaderPath(topResults[1].header_path)}"?`,
       confidence,
       phase: 2,
       metrics,
@@ -969,7 +986,7 @@ export async function retrieveChunks(
     return {
       status: 'ambiguous',
       results: topResults.slice(0, 2),
-      clarification: `Do you mean "${topResult.header_path}" or "${topResults[1].header_path}"?`,
+      clarification: `Do you mean "${dedupeHeaderPath(topResult.header_path)}" or "${dedupeHeaderPath(topResults[1].header_path)}"?`,
       confidence,
       phase: 2,
       metrics,

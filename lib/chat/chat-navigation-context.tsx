@@ -42,6 +42,7 @@ export interface PanelDrawerData {
 /** Data for doc disambiguation pills (definitional-query-fix-proposal.md) */
 export interface DocData {
   docSlug: string
+  originalQuery?: string // Preserve user's original query for HS3 steps_request trigger
 }
 
 /** TD-7: Data for high-ambiguity clarification pills */
