@@ -588,12 +588,45 @@ Clarification success should count all resolution paths (pill click, typed label
   - [x] "not that" → repair loop (doc_correction logged)
 
 ### Optional Features (Phase In)
-- Semantic fallback classifier (gated, default‑on):
-  - Enable in staging → monitor usage rate + latency p95.
-  - Roll out to prod if correction rate improves without latency spikes.
-- Unified retrieval (notes/files):
-  - Only after indexing + permissions are ready.
-  - Add cross‑corpus ambiguity pills and HS1/HS2 reuse.
+
+#### Semantic Fallback Classifier (gated, default‑on)
+- Enable in staging → monitor usage rate + latency p95.
+- Roll out to prod if correction rate improves without latency spikes.
+
+**Telemetry Check (7‑day window):**
+
+```sql
+SELECT
+  COUNT(*) AS total_events,
+  COUNT(*) FILTER (WHERE metadata->>'semantic_classifier_called' = 'true') AS classifier_calls,
+  AVG((metadata->>'semantic_classifier_latency_ms')::int)
+    FILTER (WHERE metadata->>'semantic_classifier_called' = 'true') AS avg_latency_ms,
+  PERCENTILE_CONT(0.95) WITHIN GROUP (
+    ORDER BY (metadata->>'semantic_classifier_latency_ms')::int
+  ) FILTER (WHERE metadata->>'semantic_classifier_called' = 'true') AS p95_latency_ms,
+  COUNT(*) FILTER (WHERE metadata->>'semantic_classifier_timeout' = 'true') AS timeout_count
+FROM debug_logs
+WHERE component = 'DocRouting'
+  AND action = 'route_decision'
+  AND created_at > NOW() - INTERVAL '7 days';
+```
+
+**Decision Gate:**
+- p95 latency < 1200ms for general classifier path; < 2000ms for doc‑style classifier path.
+- `semantic_classifier_timeout` rate < 5%.
+- Correction rate improves vs baseline window.
+
+**Timeout Tuning (2026-01-19):**
+- Initial: 800ms general / 1500ms doc-style
+- Issue: 88% timeout rate (17 calls, 15 timeouts) — actual API latency ~800-1500ms
+- Change 1: Raised general timeout to 1200ms
+- Change 2: Raised doc-style timeout to 2000ms (doc-style queries hitting 1501ms boundary)
+- Re-measure: After 50+ classifier calls, re-run telemetry check
+- Decision gate: Timeout rate < 5%, p95 < 2000ms → keep; else tighten gating or switch model
+
+#### Unified Retrieval (notes/files) — Future Phase
+- Only after indexing + permissions are ready.
+- Add cross‑corpus ambiguity pills and HS1/HS2 reuse.
 
 ### Post-Release Fixes
 

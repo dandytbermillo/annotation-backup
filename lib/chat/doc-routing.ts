@@ -42,8 +42,8 @@ import type { PendingOptionState } from '@/lib/chat/chat-routing'
 // =============================================================================
 
 const SEMANTIC_FALLBACK_ENABLED = process.env.NEXT_PUBLIC_SEMANTIC_FALLBACK_ENABLED !== 'false'
-const SEMANTIC_FALLBACK_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_SEMANTIC_FALLBACK_TIMEOUT_MS ?? 800)
-const SEMANTIC_FALLBACK_TIMEOUT_DOC_STYLE_MS = Number(process.env.NEXT_PUBLIC_SEMANTIC_FALLBACK_TIMEOUT_DOC_STYLE_MS ?? 1500)
+const SEMANTIC_FALLBACK_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_SEMANTIC_FALLBACK_TIMEOUT_MS ?? 1200)
+const SEMANTIC_FALLBACK_TIMEOUT_DOC_STYLE_MS = Number(process.env.NEXT_PUBLIC_SEMANTIC_FALLBACK_TIMEOUT_DOC_STYLE_MS ?? 2000)
 const SEMANTIC_FALLBACK_CONFIDENCE_MIN = Number(process.env.NEXT_PUBLIC_SEMANTIC_FALLBACK_CONFIDENCE_MIN ?? 0.7)
 
 // =============================================================================
