@@ -137,6 +137,10 @@ export interface ChatMessage {
   // Drawer target for "Show all" when panel preview maps to a panel
   drawerPanelId?: string
   drawerPanelTitle?: string
+  // Doc retrieval metadata for "Show more" button (per show-more-button-spec.md)
+  docSlug?: string
+  chunkId?: string
+  headerPath?: string
 }
 
 // Re-export SessionState for convenience

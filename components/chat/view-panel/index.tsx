@@ -4,7 +4,11 @@
  * Main view panel that slides in from the right edge to display
  * various content types (lists, documents, notes, Quick Links).
  *
- * Width: 30% with 320px min and 560px max
+ * Modes:
+ * - Overlay (default): Fixed positioned, slides from right with backdrop
+ * - Inline: Positioned within parent flex container (side-by-side with chat)
+ *
+ * Width: 30% with 320px min and 560px max (overlay mode)
  * Animation: 250ms slide with backdrop dim
  */
 
@@ -19,7 +23,26 @@ import { ViewPanelSearch } from './view-panel-search'
 import { ViewPanelContent } from './view-panel-content'
 import { ViewPanelFooter } from './view-panel-footer'
 
-export function ViewPanel() {
+export interface ViewPanelProps {
+  /**
+   * Inline mode: Panel is positioned as a fixed element with custom positioning (Claude-style side-by-side)
+   * When true: No backdrop, uses provided style for positioning
+   * When false (default): Fixed overlay with backdrop, slides from right
+   */
+  inline?: boolean
+  /**
+   * Custom positioning styles for inline mode (left offset, width, etc.)
+   * Only used when inline={true}
+   */
+  inlineStyle?: React.CSSProperties
+  /**
+   * Whether the parent panel (e.g., chat) is open - controls visibility in inline mode
+   * Only used when inline={true}
+   */
+  parentOpen?: boolean
+}
+
+export function ViewPanel({ inline = false, inlineStyle, parentOpen = true }: ViewPanelProps) {
   const { state, closePanel } = useViewPanel()
   const { isOpen, content } = state
 
@@ -43,6 +66,43 @@ export function ViewPanel() {
     content?.type === ViewContentType.PDF ||
     content?.type === ViewContentType.NOTE
 
+  // Inline mode: Fixed positioning next to parent panel (Claude-style side-by-side)
+  if (inline) {
+    // Don't render if parent panel is closed
+    if (!parentOpen) return null
+
+    return (
+      <div
+        className={`
+          fixed top-0 z-50
+          h-screen
+          bg-slate-950/98 backdrop-blur-xl
+          border-l border-white/8
+          flex flex-col
+          transition-all duration-[250ms] ease-[cubic-bezier(0.4,0,0.2,1)]
+          ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}
+        `}
+        style={inlineStyle}
+        data-testid="view-panel-inline"
+      >
+        {isOpen && (
+          <>
+            <ViewPanelHeader />
+
+            {isDocType && <ViewPanelToolbar />}
+            {isListType && <ViewPanelSearch />}
+            {isListType && <ViewPanelStats />}
+
+            <ViewPanelContent />
+
+            <ViewPanelFooter />
+          </>
+        )}
+      </div>
+    )
+  }
+
+  // Overlay mode (default): Fixed positioned with backdrop
   return (
     <>
       {/* Backdrop */}

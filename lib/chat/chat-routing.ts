@@ -501,6 +501,10 @@ export async function handleMetaExplain(ctx: MetaExplainHandlerContext): Promise
         content: explanation,
         timestamp: new Date(),
         isError: false,
+        // Doc metadata for "Show more" button (per show-more-button-spec.md)
+        docSlug: result.docSlug,
+        chunkId: result.chunkId,
+        headerPath: metaQueryTerm, // Use query term as header path fallback
       }
       addMessage(assistantMessage)
 
@@ -822,6 +826,10 @@ export async function handleFollowUp(ctx: FollowUpHandlerContext): Promise<Follo
           content: formattedContent + (rawSnippet.length >= 500 && !hs3Result.ok ? '...' : ''),
           timestamp: new Date(),
           isError: false,
+          // Doc metadata for "Show more" button (per show-more-button-spec.md)
+          docSlug: docRetrievalState.lastDocSlug,
+          chunkId: newChunkId,
+          headerPath: headerPath,
         }
         addMessage(assistantMessage)
 

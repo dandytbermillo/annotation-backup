@@ -20,6 +20,7 @@ import {
   useChatNavigationContext,
   ViewPanelProvider,
   useViewPanel,
+  ViewContentType,
   type IntentResolutionResult,
   type ChatMessage,
   type SelectionOption,
@@ -1319,6 +1320,77 @@ function ChatNavigationPanelContent({
       }, 50)
     },
     [setInput]
+  )
+
+  // ---------------------------------------------------------------------------
+  // Show More Handler (per show-more-button-spec.md)
+  // ---------------------------------------------------------------------------
+
+  const handleShowMore = useCallback(
+    (docSlug: string, chunkId?: string) => {
+      // Log telemetry - PRIMARY action: open panel
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'show_more_clicked',
+        metadata: { docSlug, chunkId, action: 'open_panel' },
+      })
+
+      // PRIMARY behavior: Fetch doc content and open ViewPanel
+      // Per show-more-button-spec.md: Open docs side panel for docSlug
+      void (async () => {
+        try {
+          // Request fullContent: true to get ALL chunks combined (not truncated)
+          const response = await fetch('/api/docs/retrieve', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ docSlug, fullContent: true }),
+          })
+
+          if (!response.ok) {
+            throw new Error('Failed to fetch doc content')
+          }
+
+          const data = await response.json()
+
+          if (data.success && data.results && data.results.length > 0) {
+            const result = data.results[0]
+
+            // Create ViewPanelContent with doc content
+            const viewContent: ViewPanelContent = {
+              type: ViewContentType.TEXT,
+              title: result.title || docSlug,
+              subtitle: result.header_path || result.category,
+              content: result.snippet || 'No content available',
+            }
+
+            // Open the ViewPanel with the doc content
+            openPanelWithTracking(viewContent, `doc-${docSlug}`)
+          } else {
+            // Fallback: Log error and show error in panel
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'show_more_failed',
+              metadata: { docSlug, reason: 'no_doc' },
+            })
+
+            const errorContent: ViewPanelContent = {
+              type: ViewContentType.TEXT,
+              title: 'Document Not Found',
+              content: `Could not find documentation for "${docSlug}".`,
+            }
+            openPanelWithTracking(errorContent, `doc-${docSlug}-error`)
+          }
+        } catch (error) {
+          console.error('[ShowMore] Failed to fetch doc:', error)
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'show_more_failed',
+            metadata: { docSlug, reason: 'fetch_error' },
+          })
+        }
+      })()
+    },
+    [openPanelWithTracking]
   )
 
   // ---------------------------------------------------------------------------
@@ -2769,16 +2841,20 @@ function ChatNavigationPanelContent({
     )
   ) : null
 
+  // Check if ViewPanel is open for side-by-side positioning
+  const { state: viewPanelState } = useViewPanel()
+  const isViewPanelOpen = viewPanelState.isOpen
+
+  // Calculate chat panel width - fixed size, ViewPanel positions next to it
+  const chatPanelWidth = '360px'
+  const viewPanelWidth = '500px'
+
   return (
     <>
       {/* Trigger button (only when showTrigger is true) */}
       {triggerButton}
 
-      {/* View Panel - slides in from right for displaying content */}
-      <ViewPanel />
-
-      {/* Left-side overlay panel - uses CSS hiding to preserve scroll position */}
-      {/* Backdrop - click to close */}
+      {/* Backdrop - click to close (only when chat is open) */}
       <div
         className="fixed inset-0 bg-black/20 z-40 transition-opacity duration-200"
         onClick={() => setOpen(false)}
@@ -2789,19 +2865,21 @@ function ChatNavigationPanelContent({
         }}
       />
 
-      {/* Panel - Glassmorphism effect */}
+      {/* Chat Panel - Fixed on left */}
       <div
         className={cn(
           'fixed left-0 top-0 z-50',
           'h-screen',
-          'bg-background/80 backdrop-blur-xl border-r border-white/20 shadow-2xl',
+          'bg-background/80 backdrop-blur-xl border-r border-white/10 shadow-2xl',
           'flex flex-col',
           'transition-transform duration-200',
           isOpen ? 'translate-x-0' : '-translate-x-full',
           className
         )}
-        style={{ width: '25vw', minWidth: '320px' }}
+        style={{ width: chatPanelWidth }}
       >
+        {/* Chat content wrapper */}
+        <div className="flex flex-col h-full">
             {/* Header - high contrast for readability */}
             <div className="flex items-center justify-between border-b border-white/20 px-4 py-3 shrink-0 bg-white/90 backdrop-blur-md">
               <div className="flex items-center gap-2">
@@ -2886,6 +2964,7 @@ function ChatNavigationPanelContent({
                     onSelectOption={handleSelectOption}
                     onSuggestionClick={handleSuggestionClick}
                     onOpenPanelDrawer={openPanelDrawer}
+                    onShowMore={handleShowMore}
                   />
                 )}
 
@@ -2911,7 +2990,18 @@ function ChatNavigationPanelContent({
               onSend={sendMessage}
               isLoading={isLoading}
             />
-          </div>
+        </div>
+      </div>
+
+      {/* View Panel - Inline mode positioned next to chat panel (Claude-style side-by-side) */}
+      <ViewPanel
+        inline
+        parentOpen={isOpen}
+        inlineStyle={{
+          left: chatPanelWidth,
+          width: viewPanelWidth,
+        }}
+      />
     </>
   )
 }

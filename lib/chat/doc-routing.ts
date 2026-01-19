@@ -1152,6 +1152,10 @@ export async function handleDocRetrieval(ctx: DocRetrievalHandlerContext): Promi
             content: formattedSnippet + nextStepOffer,
             timestamp: new Date(),
             isError: false,
+            // Doc metadata for "Show more" button (per show-more-button-spec.md)
+            docSlug: topResult.doc_slug,
+            chunkId: chunkIdsShown[0],
+            headerPath: topResult.header_path || topResult.title,
           }
           addMessage(assistantMessage)
 

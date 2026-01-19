@@ -14,6 +14,7 @@ import type { ChatMessage, SelectionOption, ChatSuggestions } from '@/lib/chat'
 import { MessageResultPreview } from './message-result-preview'
 import { SelectionPills } from './SelectionPills'
 import { SuggestionPills } from './SuggestionPills'
+import { ShowMoreButton } from './ShowMoreButton'
 import { DateHeader } from './DateHeader'
 import { SessionDivider } from './SessionDivider'
 
@@ -79,6 +80,8 @@ export interface ChatMessageListProps {
   onSuggestionClick: (label: string, action: 'open' | 'list') => void
   /** Callback to open the panel drawer for "show all" */
   onOpenPanelDrawer?: (panelId: string, panelTitle?: string) => void
+  /** Callback when "Show more" is clicked on a doc response (per show-more-button-spec.md) */
+  onShowMore?: (docSlug: string, chunkId?: string) => void
 }
 
 // =============================================================================
@@ -96,6 +99,7 @@ export function ChatMessageList({
   onSelectOption,
   onSuggestionClick,
   onOpenPanelDrawer,
+  onShowMore,
 }: ChatMessageListProps) {
   return (
     <>
@@ -124,15 +128,19 @@ export function ChatMessageList({
             >
               <div
                 className={cn(
-                  'rounded-lg px-3 py-2 text-sm max-w-[90%] shadow-lg',
-                  // Only preserve whitespace for assistant messages (HS3 steps formatting)
-                  message.role === 'assistant' && !message.isError && 'whitespace-pre-wrap',
+                  // Match ViewPanel TextRenderer styling exactly
+                  'rounded-lg p-4 max-w-[90%] font-mono overflow-hidden',
+                  'whitespace-pre-wrap break-words',
                   message.role === 'user'
-                    ? 'bg-zinc-900/90 text-white backdrop-blur-xl border border-white/10'
+                    ? 'bg-zinc-900 text-white border border-white/10'
                     : message.isError
-                      ? 'bg-red-950/90 text-red-200 backdrop-blur-xl border border-red-500/20'
-                      : 'bg-white/90 text-indigo-900 backdrop-blur-xl border border-white/20'
+                      ? 'bg-red-950 text-red-200 border border-red-500/20'
+                      : 'bg-slate-900 text-white/80 border border-white/10' // Solid dark like ViewPanel
                 )}
+                style={{
+                  fontSize: '13px',
+                  lineHeight: '20px',
+                }}
               >
                 {/* Render markdown for assistant messages, plain text for user/error */}
                 {message.role === 'assistant' && !message.isError
@@ -172,6 +180,21 @@ export function ChatMessageList({
                   disabled={isLoading}
                 />
               )}
+
+              {/* Show More Button (doc responses only, per show-more-button-spec.md) */}
+              {message.role === 'assistant' &&
+                !message.isError &&
+                message.docSlug &&
+                !message.options?.length && // Don't show during disambiguation
+                onShowMore && (
+                  <ShowMoreButton
+                    docSlug={message.docSlug}
+                    chunkId={message.chunkId}
+                    headerPath={message.headerPath}
+                    onClick={onShowMore}
+                    disabled={isLoading}
+                  />
+                )}
             </div>
           </div>
         )

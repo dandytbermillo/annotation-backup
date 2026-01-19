@@ -1015,9 +1015,16 @@ export async function retrieveChunks(
  * Retrieve the best chunk from a specific doc by slug.
  * Used for disambiguation follow-up: user selects a doc, we return its best content.
  * Per general-doc-retrieval-routing-plan.md: use docSlug to scope retrieval.
+ *
+ * @param docSlug - The document slug to retrieve
+ * @param options.fullContent - If true, returns ALL chunks combined (for "Show more" feature)
  */
-export async function retrieveByDocSlug(docSlug: string): Promise<ChunkRetrievalResponse> {
+export async function retrieveByDocSlug(
+  docSlug: string,
+  options?: { fullContent?: boolean }
+): Promise<ChunkRetrievalResponse> {
   const startTime = Date.now()
+  const { fullContent = false } = options || {}
 
   // Fetch chunks for this specific doc
   const result = await serverPool.query(
@@ -1047,6 +1054,53 @@ export async function retrieveByDocSlug(docSlug: string): Promise<ChunkRetrieval
     }
   }
 
+  // Full content mode: combine all chunks for "Show more" feature
+  // Per show-more-button-spec.md: Open the full doc section
+  if (fullContent) {
+    const combinedContent = chunks
+      .map(c => c.content.trim())
+      .join('\n\n')
+
+    const firstChunk = chunks[0]
+    const retrievalTimeMs = Date.now() - startTime
+
+    const fullResult: ChunkRetrievalResult = {
+      doc_slug: firstChunk.doc_slug,
+      chunk_index: 0,
+      header_path: firstChunk.header_path,
+      title: firstChunk.title,
+      category: firstChunk.category,
+      snippet: combinedContent, // Full content, not truncated
+      score: 10,
+      rawScore: 10,
+      chunk_hash: firstChunk.chunk_hash,
+      matched_terms: ['full_doc_lookup'],
+      source: 'keyword',
+      match_explain: ['Full doc lookup by slug'],
+      chunkId: generateChunkId(firstChunk.doc_slug, 0),
+      isHeadingOnly: false,
+      bodyCharCount: combinedContent.length,
+      nextChunkId: undefined, // No next chunk - we have all content
+    }
+
+    console.log(`[Retrieval] DocSlug full lookup: slug="${docSlug}" chunks=${totalChunks} chars=${combinedContent.length} latency=${retrievalTimeMs}ms`)
+
+    return {
+      status: 'found',
+      results: [fullResult],
+      clarification: undefined,
+      confidence: 1,
+      phase: 2,
+      metrics: {
+        totalChunks,
+        matchedChunks: totalChunks,
+        dedupedChunks: totalChunks,
+        retrievalTimeMs,
+      },
+    }
+  }
+
+  // Standard mode: return best single chunk with truncated snippet
   // HS1 Guard: Prefer first non-heading-only chunk
   // This ensures pill clicks and direct lookups return useful content
   let bestChunk = chunks[0]

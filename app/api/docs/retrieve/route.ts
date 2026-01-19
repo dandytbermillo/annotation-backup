@@ -22,12 +22,13 @@ import {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { query, mode, phase, docSlug, excludeChunkIds, scopeDocSlug, isDefinitionalQuery } = body
+    const { query, mode, phase, docSlug, excludeChunkIds, scopeDocSlug, isDefinitionalQuery, fullContent } = body
 
     // DocSlug mode: retrieve specific doc by slug (disambiguation follow-up)
     // Per general-doc-retrieval-routing-plan.md
+    // fullContent: true returns ALL chunks combined (for "Show more" feature)
     if (docSlug && typeof docSlug === 'string') {
-      const result = await retrieveByDocSlug(docSlug)
+      const result = await retrieveByDocSlug(docSlug, { fullContent: !!fullContent })
       return NextResponse.json({
         success: true,
         ...result,
