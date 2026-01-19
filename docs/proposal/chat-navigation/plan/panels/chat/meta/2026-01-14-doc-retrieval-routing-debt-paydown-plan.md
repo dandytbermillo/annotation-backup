@@ -1,8 +1,8 @@
 # Plan: Doc Retrieval Routing Debt Paydown
 
 **Date:** 2026-01-14
-**Updated:** 2026-01-15 (TD-1 decision criteria refined)
-**Status:** In Progress
+**Updated:** 2026-01-19 (TD-5 telemetry decision, plan complete)
+**Status:** ✅ Complete (TD-5 deferred, TD-6 optional)
 **Feature Slug:** `chat-navigation`
 **Source Debt Doc:** `docs/proposal/chat-navigation/plan/panels/chat/meta/technical-debt/2026-01-14-doc-retrieval-routing-debt.md`
 **Implementation Reports:**
@@ -29,8 +29,8 @@
 4) ✅ TD-1: Remove CORE_APP_TERMS duplication — **COMPLETE** (2026-01-16)
 5) ✅ TD-2: Gated typo tolerance (fuzzy match) — **COMPLETE** (2026-01-15)
 6) ✅ TD-7: Stricter app-relevance fallback — **COMPLETE** (2026-01-16)
-7) TD-5: Polite follow-up guard (only if telemetry shows need)
-8) TD-6: LLM intent extraction (optional, last)
+7) TD-5: Polite follow-up guard — **DEFERRED** (below thresholds, 2026-01-19)
+8) TD-6: LLM intent extraction — **OPTIONAL** (future work if needed)
 9) ✅ TD-9: Cross-doc ambiguity override — **COMPLETE** (pre-existing)
 
 ---
@@ -400,12 +400,20 @@ Reduce false routes for marginally relevant queries.
 ---
 
 ## TD-5: Follow-up Guard Edge Case (Conditional)
+### Status: ⏸️ Deferred (2026-01-19)
 ### Why
 Polite follow-ups can be misclassified as new questions.
 
 ### Plan
 - Monitor for frequency via telemetry.
 - If common, add `POLITE_FOLLOWUP_PATTERN` to treat as follow-up.
+
+### Decision (2026-01-19)
+- Total DocRouting events: 526
+- Short inputs (≤ 15 chars): 316
+- Misroutes: 2 (0.63%)
+- Thresholds: ≥ 10 misroutes OR > 5% rate
+- Result: **Defer TD-5** (below threshold)
 
 ### Acceptance Criteria
 - "can you tell me more?" treated as follow-up.
@@ -414,6 +422,8 @@ Polite follow-ups can be misclassified as new questions.
 ---
 
 ## TD-6: LLM Intent Extraction (Optional)
+### Status: ⏸️ Optional Future Work
+
 ### Why
 Only if patterns remain too brittle after the above.
 
@@ -467,4 +477,3 @@ Weak clarifications can lock the user into the wrong doc and make follow-ups exp
 - Telemetry event schema + dashboard query.
 - `query-patterns` module + tests.
 - knownTerms preload + CORE_APP_TERMS removal.
-

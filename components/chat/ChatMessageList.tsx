@@ -82,6 +82,8 @@ export interface ChatMessageListProps {
   onOpenPanelDrawer?: (panelId: string, panelTitle?: string) => void
   /** Callback when "Show more" is clicked on a doc response (per show-more-button-spec.md) */
   onShowMore?: (docSlug: string, chunkId?: string) => void
+  /** The docSlug currently displayed in ViewPanel (hides "Show more" for that doc only) */
+  viewPanelDocSlug?: string
 }
 
 // =============================================================================
@@ -100,6 +102,7 @@ export function ChatMessageList({
   onSuggestionClick,
   onOpenPanelDrawer,
   onShowMore,
+  viewPanelDocSlug,
 }: ChatMessageListProps) {
   return (
     <>
@@ -186,6 +189,7 @@ export function ChatMessageList({
                 !message.isError &&
                 message.docSlug &&
                 !message.options?.length && // Don't show during disambiguation
+                viewPanelDocSlug !== message.docSlug && // Hide only if ViewPanel shows THIS doc
                 onShowMore && (
                   <ShowMoreButton
                     docSlug={message.docSlug}

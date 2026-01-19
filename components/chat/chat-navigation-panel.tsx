@@ -989,12 +989,17 @@ function ChatNavigationPanelContent({
             content: `**${headerPath}**\n\n${finalSnippet}`,
             timestamp: new Date(),
             isError: false,
+            // Doc metadata for "Show more" button (per show-more-button-spec.md)
+            // Show after pill click confirms doc selection
+            docSlug: topResult.doc_slug || docSlug,
+            chunkId: topResult.chunkId,
+            headerPath: headerPath,
           }
           addMessage(assistantMessage)
 
           // Update docRetrievalState so correction/"not that" works after pill selection
           updateDocRetrievalState({
-            lastDocSlug: docSlug,
+            lastDocSlug: topResult.doc_slug || docSlug,
             lastChunkIdsShown: topResult.chunkId ? [topResult.chunkId] : [],
           })
         } else {
@@ -1083,11 +1088,18 @@ function ChatNavigationPanelContent({
                   content: result.topMatch.snippet || `Here's what I found about ${td7Data.term}.`,
                   timestamp: new Date(),
                   isError: false,
+                  // Doc metadata for "Show more" button (per show-more-button-spec.md)
+                  docSlug: result.topMatch.slug,
+                  chunkId: result.topMatch.chunkId,
+                  headerPath: result.topMatch.header_path || result.topMatch.title,
                 }
                 addMessage(assistantMessage)
 
                 // Set lastDocSlug for follow-ups
-                updateDocRetrievalState({ lastDocSlug: result.topMatch.slug })
+                updateDocRetrievalState({
+                  lastDocSlug: result.topMatch.slug,
+                  lastChunkIdsShown: result.topMatch.chunkId ? [result.topMatch.chunkId] : [],
+                })
               } else {
                 // No match found
                 const noMatchMessage: ChatMessage = {
@@ -1361,6 +1373,7 @@ function ChatNavigationPanelContent({
               title: result.title || docSlug,
               subtitle: result.header_path || result.category,
               content: result.snippet || 'No content available',
+              docSlug: docSlug, // Track which doc is displayed for Show more button visibility
             }
 
             // Open the ViewPanel with the doc content
@@ -2844,6 +2857,8 @@ function ChatNavigationPanelContent({
   // Check if ViewPanel is open for side-by-side positioning
   const { state: viewPanelState } = useViewPanel()
   const isViewPanelOpen = viewPanelState.isOpen
+  // Track which doc is currently displayed (for Show more button visibility)
+  const viewPanelDocSlug = viewPanelState.isOpen ? viewPanelState.content?.docSlug : undefined
 
   // Calculate chat panel width - fixed size, ViewPanel positions next to it
   const chatPanelWidth = '360px'
@@ -2965,6 +2980,7 @@ function ChatNavigationPanelContent({
                     onSuggestionClick={handleSuggestionClick}
                     onOpenPanelDrawer={openPanelDrawer}
                     onShowMore={handleShowMore}
+                    viewPanelDocSlug={viewPanelDocSlug}
                   />
                 )}
 

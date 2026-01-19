@@ -69,6 +69,7 @@ export interface ViewPanelContent {
   // Metadata
   sourceIntent?: string  // Original chat intent that triggered this
   sourceMessageId?: string
+  docSlug?: string       // For doc content - tracks which doc is displayed
 }
 
 // =============================================================================
