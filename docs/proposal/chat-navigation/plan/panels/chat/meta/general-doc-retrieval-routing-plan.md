@@ -627,6 +627,7 @@ WHERE component = 'DocRouting'
   - Rationale: classifier returning "other" or timing out both route to LLM anyway; skip to reduce latency
 - Re-measure: After 30-50 classifier calls, re-run telemetry check
 - Decision gate: Timeout rate < 5%, p95 < 2200ms → keep; else tighten gating or switch model
+- Note (2026-01-19): Continue passive monitoring while working on other tasks; re-check periodically
 
 #### Unified Retrieval (notes/files) — Future Phase
 - Only after indexing + permissions are ready.
@@ -644,12 +645,13 @@ WHERE component = 'DocRouting'
 | 2026-01-16 | TD7 implementation | Stricter app relevance | `reports/2026-01-16-td7-implementation-report.md` |
 | 2026-01-18 | Weak pills + HS3 integration | Meta-explain HS3 | `reports/2026-01-18-weak-pills-hs3-meta-explain-implementation-report.md` |
 | 2026-01-18 | HS3 follow-up formatting | Example/Related literal lists + vague followup guard | `reports/2026-01-18-example-section-literal-formatting-fix-report.md` |
+| 2026-01-19 | Interface weak-match quality | Weak + low score → clarify/LLM | `reports/2026-01-19-interface-weak-match-fix-implementation-report.md` |
 
 ### Open Follow-ups (Draft)
 
 | Date | Issue | Proposed Direction | Notes |
 |------|-------|--------------------|-------|
-| 2026-01-19 | Weak match quality for “interface” → example questions | Add confidence threshold + clarify on weak; consider alias only if doc exists | Separate from classifier gating/timeout tuning |
+| 2026-01-19 | Weak match quality for “interface” → example questions | Implemented (weak + score < 2 → clarify); alias deferred | See `interface-weak-match-fix-plan.md` |
 
 
 ## Sample Code (Routing Skeleton)

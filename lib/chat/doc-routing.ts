@@ -1191,6 +1191,28 @@ export async function handleDocRetrieval(ctx: DocRetrievalHandlerContext): Promi
         if (result.status === 'weak' && result.results?.length > 0) {
           const topResult = result.results[0]
           const headerPath = topResult.header_path || topResult.title
+
+          // Weak-match quality gate: reject very low-score weak matches
+          // Per interface-weak-match-fix-plan.md: score < 2 → clarify/LLM fallback
+          const WEAK_SCORE_MIN = 2
+          if (topResult.score < WEAK_SCORE_MIN) {
+            console.log(`[DocRetrieval] Rejecting weak match: score=${topResult.score} < ${WEAK_SCORE_MIN}, query="${queryTerm}"`)
+
+            const weakRejectMessage: ChatMessage = {
+              id: `assistant-${Date.now()}`,
+              role: 'assistant',
+              content: "I'm not sure what you're asking about. Try asking about workspaces, notes, widgets, or navigation.",
+              timestamp: new Date(),
+              isError: false,
+            }
+            addMessage(weakRejectMessage)
+
+            updateDocRetrievalState({ lastDocSlug: undefined, lastTopicTokens: queryTokensForRetrieval })
+
+            setIsLoading(false)
+            return { handled: true, route: docRoute }
+          }
+
           const messageId = `assistant-${Date.now()}`
 
           const weakOption: SelectionOption = {
