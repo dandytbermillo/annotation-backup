@@ -43,7 +43,7 @@ import type { PendingOptionState } from '@/lib/chat/chat-routing'
 
 const SEMANTIC_FALLBACK_ENABLED = process.env.NEXT_PUBLIC_SEMANTIC_FALLBACK_ENABLED !== 'false'
 const SEMANTIC_FALLBACK_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_SEMANTIC_FALLBACK_TIMEOUT_MS ?? 1200)
-const SEMANTIC_FALLBACK_TIMEOUT_DOC_STYLE_MS = Number(process.env.NEXT_PUBLIC_SEMANTIC_FALLBACK_TIMEOUT_DOC_STYLE_MS ?? 2000)
+const SEMANTIC_FALLBACK_TIMEOUT_DOC_STYLE_MS = Number(process.env.NEXT_PUBLIC_SEMANTIC_FALLBACK_TIMEOUT_DOC_STYLE_MS ?? 2200)
 const SEMANTIC_FALLBACK_CONFIDENCE_MIN = Number(process.env.NEXT_PUBLIC_SEMANTIC_FALLBACK_CONFIDENCE_MIN ?? 0.7)
 
 // =============================================================================
@@ -706,11 +706,27 @@ export async function handleDocRetrieval(ctx: DocRetrievalHandlerContext): Promi
     (!lastClarification || clarificationCleared) &&
     !isFollowUp
   ) {
-    semanticClassifierCalled = true
-    // Use higher timeout for doc-style queries that failed app relevance gate
-    // (e.g., "describe the settings" has doc-style pattern but "settings" not in knownTerms)
+    // Tighter gating: only call classifier for doc-style patterns with substantive terms
+    // Avoids wasting API calls on queries like "tell me about Y" where Y is clearly non-app
     const isDocStylePattern = isDocStyleQuery(trimmedInput, uiContext)
-    const classifierResult = await runSemanticClassifier(
+    let shouldCallClassifier = false
+
+    if (isDocStylePattern) {
+      const extractedTerm = extractDocQueryTerm(trimmedInput)
+      const normalizedInput = trimmedInput.trim().toLowerCase()
+
+      // Skip classifier for clearly non-app terms:
+      // 1. Extracted term is just a single letter (e.g., "tell me about z" → "z")
+      // 2. Query matches "how does [single-letter] [verb]" pattern (not handled by extractDocQueryTerm)
+      const isSingleLetterTerm = /^[a-z]$/i.test(extractedTerm)
+      const isSingleLetterHowDoes = /^how does [a-z] \w+/.test(normalizedInput)
+
+      shouldCallClassifier = !isSingleLetterTerm && !isSingleLetterHowDoes
+    }
+
+    if (shouldCallClassifier) {
+      semanticClassifierCalled = true
+      const classifierResult = await runSemanticClassifier(
       trimmedInput,
       docRetrievalState?.lastDocSlug,
       docRetrievalState?.lastTopicTokens,
@@ -734,6 +750,7 @@ export async function handleDocRetrieval(ctx: DocRetrievalHandlerContext): Promi
       }
     } else if (!classifierResult.ok && !classifierResult.timeout) {
       semanticClassifierError = true
+    }
     }
   }
 

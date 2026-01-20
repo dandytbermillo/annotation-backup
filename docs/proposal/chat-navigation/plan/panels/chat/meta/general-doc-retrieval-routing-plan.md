@@ -612,7 +612,7 @@ WHERE component = 'DocRouting'
 ```
 
 **Decision Gate:**
-- p95 latency < 1200ms for general classifier path; < 2000ms for doc‑style classifier path.
+- p95 latency < 1200ms for general classifier path; < 2200ms for doc‑style classifier path.
 - `semantic_classifier_timeout` rate < 5%.
 - Correction rate improves vs baseline window.
 
@@ -621,8 +621,12 @@ WHERE component = 'DocRouting'
 - Issue: 88% timeout rate (17 calls, 15 timeouts) — actual API latency ~800-1500ms
 - Change 1: Raised general timeout to 1200ms
 - Change 2: Raised doc-style timeout to 2000ms (doc-style queries hitting 1501ms boundary)
-- Re-measure: After 50+ classifier calls, re-run telemetry check
-- Decision gate: Timeout rate < 5%, p95 < 2000ms → keep; else tighten gating or switch model
+- Change 3: Raised doc-style timeout to 2200ms (boundary timeouts at 2001-2002ms, 31% timeout rate)
+- Change 4: Tightened classifier gating — only call for doc-style patterns with substantive terms
+  - Skip single-letter subjects (e.g., "tell me about Y", "how does Z work")
+  - Rationale: classifier returning "other" or timing out both route to LLM anyway; skip to reduce latency
+- Re-measure: After 30-50 classifier calls, re-run telemetry check
+- Decision gate: Timeout rate < 5%, p95 < 2200ms → keep; else tighten gating or switch model
 
 #### Unified Retrieval (notes/files) — Future Phase
 - Only after indexing + permissions are ready.
