@@ -645,6 +645,12 @@ WHERE component = 'DocRouting'
 | 2026-01-18 | Weak pills + HS3 integration | Meta-explain HS3 | `reports/2026-01-18-weak-pills-hs3-meta-explain-implementation-report.md` |
 | 2026-01-18 | HS3 follow-up formatting | Example/Related literal lists + vague followup guard | `reports/2026-01-18-example-section-literal-formatting-fix-report.md` |
 
+### Open Follow-ups (Draft)
+
+| Date | Issue | Proposed Direction | Notes |
+|------|-------|--------------------|-------|
+| 2026-01-19 | Weak match quality for “interface” → example questions | Add confidence threshold + clarify on weak; consider alias only if doc exists | Separate from classifier gating/timeout tuning |
+
 
 ## Sample Code (Routing Skeleton)
 
