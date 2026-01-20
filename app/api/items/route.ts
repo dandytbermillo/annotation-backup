@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { serverPool } from '@/lib/db/pool'
 import { withWorkspaceClient } from '@/lib/workspace/workspace-store'
+import { indexItem } from '@/lib/docs/items-indexing'
 
 // GET /api/items - Get tree or search items
 export async function GET(request: NextRequest) {
@@ -302,6 +303,17 @@ export async function POST(request: NextRequest) {
             `,
             [row.id, row.name, metadata, activeWorkspaceId, row.created_at, row.updated_at],
           )
+
+          // Fire-and-forget: index note for retrieval (non-blocking)
+          if (row.content) {
+            indexItem({
+              id: row.id,
+              name: row.name,
+              path: row.path,
+              content: row.content,
+              userId: row.user_id,
+            }).catch(err => console.error('[ItemsAPI] Background index failed:', err))
+          }
         }
 
         return NextResponse.json({ item }, { status: 201 })

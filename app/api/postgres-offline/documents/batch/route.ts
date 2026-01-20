@@ -3,6 +3,7 @@ import { serverPool } from '@/lib/db/pool'
 import { WorkspaceStore } from '@/lib/workspace/workspace-store'
 import { v5 as uuidv5, validate as validateUuid } from 'uuid'
 import { extractFullText } from '@/lib/utils/branch-preview'
+import { indexItem } from '@/lib/docs/items-indexing'
 
 // Ensure Node.js runtime (pg requires Node)
 export const runtime = 'nodejs'
@@ -229,6 +230,24 @@ async function handleBatchSave(operations: any[], logLabel: string): Promise<Bat
          RETURNING id`,
         [entry.noteKey, entry.panelKey, contentString, documentText, entry.version, workspaceId]
       )
+
+      // Fire-and-forget: index note for retrieval (non-blocking)
+      // Query item metadata and index in background
+      client.query(
+        'SELECT name, path, user_id FROM items WHERE id = $1 AND deleted_at IS NULL',
+        [entry.noteKey]
+      ).then(itemResult => {
+        if (itemResult.rows.length > 0) {
+          const item = itemResult.rows[0]
+          indexItem({
+            id: entry.noteKey,
+            name: item.name,
+            path: item.path,
+            content: entry.contentJson,
+            userId: item.user_id,
+          }).catch(err => console.error('[BatchDocuments] Background index failed:', err))
+        }
+      }).catch(err => console.error('[BatchDocuments] Item query for indexing failed:', err))
 
       const operationResult: SaveResult = {
         noteId: entry.responseNoteId,

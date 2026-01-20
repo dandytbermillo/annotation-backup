@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg'
+import { removeItemChunks } from '@/lib/docs/items-indexing'
 
 export type DeleteNoteCascadeOptions = {
   noteId: string
@@ -98,6 +99,10 @@ export async function deleteNoteCascade(
          WHERE id = $1 AND workspace_id = $2
          RETURNING id`
     const itemResult = await client.query(itemQuery, [noteId, effectiveWorkspaceId])
+
+    // Remove search index chunks (for both soft and hard delete)
+    // Soft-deleted items shouldn't appear in retrieval results
+    await removeItemChunks(noteId, client)
 
     await client.query('COMMIT')
 

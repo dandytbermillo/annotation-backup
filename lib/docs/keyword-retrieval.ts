@@ -111,8 +111,16 @@ export interface RetrievalResponse {
  * Normalize query: lowercase, strip punctuation, remove stopwords
  */
 export function normalizeQuery(query: string): string[] {
-  // Apply phrase synonyms first
   let normalized = query.toLowerCase()
+
+  // Special handling for "how does X work" pattern
+  // Strip trailing "work" to avoid "work" → "workspace" scoring artifact
+  const howDoesWorkMatch = normalized.match(/^how does\s+(the\s+|a\s+|an\s+)?(.+?)\s+work$/)
+  if (howDoesWorkMatch) {
+    normalized = howDoesWorkMatch[2].trim()
+  }
+
+  // Apply phrase synonyms
   for (const [from, to] of Object.entries(SYNONYMS)) {
     if (from.includes(' ')) {
       normalized = normalized.replace(new RegExp(from, 'g'), to)

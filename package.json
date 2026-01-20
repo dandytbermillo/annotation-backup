@@ -19,6 +19,7 @@
     "migrate": "tsx scripts/migrate-to-enhanced-architecture.ts",
     "db:migrate": "node scripts/run-migrations.js",
     "db:migrate:rollback": "node scripts/run-migrations.js --rollback",
+    "index:items": "npx tsx scripts/index-items.ts",
     "db:validate": "./scripts/validate-migrations.sh",
     "electron:dev": "npm run build && electron .",
     "pretest": "npm run type-check",

@@ -1,6 +1,6 @@
 # Doc Retrieval Plans — Index
 
-**Last Updated:** 2026-01-16
+**Last Updated:** 2026-01-20
 
 This index documents the plan timeline for the doc retrieval feature in chat navigation.
 
@@ -39,8 +39,8 @@ This index documents the plan timeline for the doc retrieval feature in chat nav
 |---------|-------------|--------|
 | v5 Core | Routing + HS1/HS2 response selection | ✅ Complete (2026-01-13) |
 | Semantic classifier | LLM fallback for borderline cases | ⏸️ Optional (not implemented; follow-up classifier only; gated on unknown doc terms) |
-| Unified retrieval | Notes/files corpus | ⏸️ Future (blocked on indexing) |
-| Unified retrieval prerequisites | Notes/files indexing + permissions checklist | ⏸️ Draft (`unified-retrieval-prereq-plan.md`) |
+| Unified retrieval | Notes/files corpus | ⏸️ Future (blocked on remaining prereqs) |
+| Unified retrieval prerequisites | Notes/files indexing + permissions checklist | 🔄 In Progress (`unified-retrieval-prereq-plan.md`) |
 
 **Key Deliverables:**
 - Routing order in `chat-navigation-panel.tsx`
@@ -75,6 +75,26 @@ This index documents the plan timeline for the doc retrieval feature in chat nav
 
 ---
 
+### 4. Unified Retrieval Prerequisites Plan
+**File:** `unified-retrieval-prereq-plan.md`
+**Purpose:** Define prerequisites before implementing unified retrieval across docs + notes/files
+
+| Prerequisite | Description | Status |
+|--------------|-------------|--------|
+| 1. Indexing Strategy | Schema + chunking + lifecycle wiring | ✅ Complete (2026-01-20) |
+| 2. Permissions + Visibility | User scoping + access control | 🔄 Partial (schema ready) |
+| 3. Unified API Contract | Single `/api/retrieve` endpoint | ⏸️ Not Started |
+| 4. Cross-Corpus Ambiguity UX | Docs vs Notes pills | ⏸️ Not Started |
+| 5. Safety + Fallback | Graceful degradation | ⏸️ Not Started |
+
+**Key Deliverables:**
+- `migrations/064_create_items_knowledge_chunks.up.sql` — Items chunks table
+- `lib/docs/items-indexing.ts` — Indexing service for notes
+- `scripts/index-items.ts` — Backfill CLI (`npm run index:items`)
+- Lifecycle hooks in: `app/api/items/route.ts`, `app/api/postgres-offline/documents/batch/route.ts`, `lib/server/note-deletion.ts`
+
+---
+
 ## Implementation Reports
 
 | Date | Report | Plan |
@@ -88,6 +108,9 @@ This index documents the plan timeline for the doc retrieval feature in chat nav
 | 2026-01-15 | `reports/2026-01-15-td2-fuzzy-matching-implementation-report.md` | Debt TD-2 |
 | 2026-01-15 | `reports/2026-01-15-td4-td8-implementation-report.md` | Debt TD-4, TD-8 |
 | 2026-01-16 | `reports/2026-01-16-td7-implementation-report.md` | Debt TD-7 |
+| 2026-01-19 | `reports/2026-01-19-interface-weak-match-fix-implementation-report.md` | Interface weak-match |
+| 2026-01-20 | `reports/2026-01-20-classifier-gemini-and-alias-coverage-implementation-report.md` | Classifier Gemini + Alias coverage |
+| 2026-01-20 | `reports/2026-01-20-unified-retrieval-prereq-indexing-implementation-report.md` | Unified Retrieval Prereq 1 |
 
 ---
 
@@ -98,7 +121,7 @@ This index documents the plan timeline for the doc retrieval feature in chat nav
 | Phase 3 Embeddings | Fuzzy queries fail frequently, keyword retrieval success drops |
 | Phase 4 Context Builder | Need consistent context assembly |
 | Semantic classifier | If correction rate improves in staging without latency spikes |
-| Unified retrieval | After notes/files indexing + permissions are ready |
+| Unified retrieval | After remaining prereqs (API, UX, fallback) are ready |
 | TD-6 LLM intent | If patterns remain too brittle after other fixes |
 
 ---
@@ -111,6 +134,7 @@ docs/proposal/chat-navigation/plan/panels/chat/meta/
 ├── cursor-style-doc-retrieval-plan.md               ← Plan 1 (Foundation)
 ├── general-doc-retrieval-routing-plan.md            ← Plan 2 (Routing v5)
 ├── 2026-01-14-doc-retrieval-routing-debt-paydown-plan.md  ← Plan 3 (Debt)
+├── unified-retrieval-prereq-plan.md                 ← Plan 4 (Unified Prereqs)
 ├── technical-debt/
 │   └── 2026-01-14-doc-retrieval-routing-debt.md     ← Debt tracking doc
 ├── report/                                           ← Cursor-style + v5 reports

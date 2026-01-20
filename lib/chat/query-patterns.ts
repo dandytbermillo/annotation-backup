@@ -517,14 +517,22 @@ export function extractMetaExplainConcept(input: string): string | null {
 /**
  * Extract the query term from a doc-style query.
  * e.g., "how do I add a widget" → "add widget"
+ * e.g., "how does the interface work" → "interface" (strips trailing "work")
  */
 export function extractDocQueryTerm(input: string): string {
   const { normalized } = normalizeInputForRouting(input)
 
+  // Special handling for "how does X work" pattern
+  // Strip trailing "work" to avoid "work" → "workspace" scoring artifact
+  const howDoesWorkMatch = normalized.match(/^how does\s+(the\s+|a\s+|an\s+)?(.+?)\s+work$/i)
+  if (howDoesWorkMatch) {
+    return howDoesWorkMatch[2].trim()
+  }
+
   // Remove common prefixes
   let term = normalized
     .replace(/^what (is|are)\s+(a\s+|an\s+|the\s+)?/i, '')
-    .replace(/^how (do i|to|can i)\s+/i, '')
+    .replace(/^how (do i|does|to|can i)\s+(the\s+|a\s+|an\s+)?/i, '')
     .replace(/^tell me (about\s+)?(a\s+|an\s+|the\s+)?/i, '')
     .replace(/^tell me how (to\s+)?/i, '')
     .replace(/^explain\s+(a\s+|an\s+|the\s+)?/i, '')

@@ -130,3 +130,13 @@ if (topResult.score < WEAK_SCORE_MIN) {
 ```
 
 **Behavior:** When `status === 'weak'` AND `score < 2`, rejects the weak match and shows a clarification prompt instead of the low-quality doc result.
+
+---
+
+## Follow‑Up (Optional)
+
+**Problem:** After aliasing “interface → dashboard,” `Entry > Overview` can still compete because it contains “dashboard.”
+
+**Potential fix:** Add a small score boost when a query term is replaced by an alias target (e.g., +1 to the alias target doc).
+
+**Expected effect:** Keeps the primary doc (Dashboard) at the top without changing global scoring.
