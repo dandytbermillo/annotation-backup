@@ -41,7 +41,7 @@ import type { PendingOptionState } from '@/lib/chat/chat-routing'
 // Semantic Fallback Classifier (Gated)
 // =============================================================================
 
-const SEMANTIC_FALLBACK_ENABLED = process.env.NEXT_PUBLIC_SEMANTIC_FALLBACK_ENABLED !== 'false'
+const SEMANTIC_FALLBACK_ENABLED = true
 const SEMANTIC_FALLBACK_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_SEMANTIC_FALLBACK_TIMEOUT_MS ?? 1200)
 const SEMANTIC_FALLBACK_TIMEOUT_DOC_STYLE_MS = Number(process.env.NEXT_PUBLIC_SEMANTIC_FALLBACK_TIMEOUT_DOC_STYLE_MS ?? 2200)
 const SEMANTIC_FALLBACK_CONFIDENCE_MIN = Number(process.env.NEXT_PUBLIC_SEMANTIC_FALLBACK_CONFIDENCE_MIN ?? 0.7)

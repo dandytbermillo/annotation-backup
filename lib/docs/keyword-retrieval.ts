@@ -41,6 +41,13 @@ const SYNONYMS: Record<string, string> = {
   bookmarks: 'quick links',
   favorites: 'quick links',
   navigate: 'navigation',
+  // Coverage aliases for common terms (2026-01-20)
+  settings: 'dashboard',
+  toolbar: 'panels',
+  interface: 'dashboard',
+  ui: 'dashboard',
+  config: 'dashboard',
+  configuration: 'dashboard',
 }
 
 // Scoring weights
@@ -1417,7 +1424,12 @@ export async function buildKnownTerms(widgetTitles?: string[]): Promise<Set<stri
     // Continue with what we have
   }
 
-  // Source 3: Widget titles (if provided)
+  // Source 3: SYNONYMS keys (so aliased terms are recognized as known)
+  for (const key of Object.keys(SYNONYMS)) {
+    terms.add(normalizeTermForKnown(key))
+  }
+
+  // Source 4: Widget titles (if provided)
   if (widgetTitles?.length) {
     for (const title of widgetTitles) {
       terms.add(normalizeTermForKnown(title))

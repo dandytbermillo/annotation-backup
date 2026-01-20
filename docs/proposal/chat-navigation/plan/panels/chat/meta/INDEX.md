@@ -40,6 +40,7 @@ This index documents the plan timeline for the doc retrieval feature in chat nav
 | v5 Core | Routing + HS1/HS2 response selection | ✅ Complete (2026-01-13) |
 | Semantic classifier | LLM fallback for borderline cases | ⏸️ Optional (not implemented; follow-up classifier only; gated on unknown doc terms) |
 | Unified retrieval | Notes/files corpus | ⏸️ Future (blocked on indexing) |
+| Unified retrieval prerequisites | Notes/files indexing + permissions checklist | ⏸️ Draft (`unified-retrieval-prereq-plan.md`) |
 
 **Key Deliverables:**
 - Routing order in `chat-navigation-panel.tsx`

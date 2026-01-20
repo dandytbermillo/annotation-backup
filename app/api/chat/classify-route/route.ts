@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import OpenAI from 'openai'
+import { GoogleGenerativeAI } from '@google/generative-ai'
 import { readFileSync, existsSync } from 'fs'
 import { join } from 'path'
 
@@ -13,24 +13,31 @@ import { join } from 'path'
  * - Only called when deterministic routing returns llm
  * - Timeout + safe fallback on errors
  * - Does NOT select content, only routes intent
+ *
+ * Model: Gemini 2.0 Flash (fast, low-latency classification)
  */
 
 // =============================================================================
-// OpenAI Client
+// Gemini Client
 // =============================================================================
 
-function getOpenAIApiKey(): string | null {
-  const envKey = process.env.OPENAI_API_KEY
-  if (envKey && envKey.startsWith('sk-') && envKey.length > 40 && !envKey.includes('paste')) {
+function getGeminiApiKey(): string | null {
+  // Check environment variables
+  const envKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY
+  if (envKey && envKey.length > 20 && !envKey.includes('paste')) {
     return envKey
   }
 
+  // Check secrets file
   try {
     const secretsPath = join(process.cwd(), 'config', 'secrets.json')
     if (existsSync(secretsPath)) {
       const secrets = JSON.parse(readFileSync(secretsPath, 'utf-8'))
-      if (secrets.OPENAI_API_KEY) {
-        return secrets.OPENAI_API_KEY
+      if (secrets.GEMINI_API_KEY) {
+        return secrets.GEMINI_API_KEY
+      }
+      if (secrets.GOOGLE_API_KEY) {
+        return secrets.GOOGLE_API_KEY
       }
     }
   } catch {
@@ -40,12 +47,12 @@ function getOpenAIApiKey(): string | null {
   return null
 }
 
-function getOpenAIClient(): OpenAI {
-  const apiKey = getOpenAIApiKey()
+function getGeminiClient(): GoogleGenerativeAI {
+  const apiKey = getGeminiApiKey()
   if (!apiKey) {
-    throw new Error('OPENAI_API_KEY not found')
+    throw new Error('GEMINI_API_KEY or GOOGLE_API_KEY not found')
   }
-  return new OpenAI({ apiKey })
+  return new GoogleGenerativeAI(apiKey)
 }
 
 // =============================================================================
@@ -97,7 +104,17 @@ type SemanticRouteResult = {
 
 function safeParseJson<T>(value: string): T | null {
   try {
-    return JSON.parse(value) as T
+    // Handle markdown code blocks if present
+    let cleaned = value.trim()
+    if (cleaned.startsWith('```json')) {
+      cleaned = cleaned.slice(7)
+    } else if (cleaned.startsWith('```')) {
+      cleaned = cleaned.slice(3)
+    }
+    if (cleaned.endsWith('```')) {
+      cleaned = cleaned.slice(0, -3)
+    }
+    return JSON.parse(cleaned.trim()) as T
   } catch {
     return null
   }
@@ -117,7 +134,14 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    const openai = getOpenAIClient()
+    const genAI = getGeminiClient()
+    const model = genAI.getGenerativeModel({
+      model: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+      generationConfig: {
+        temperature: 0,
+        maxOutputTokens: 220,
+      },
+    })
 
     const contextParts = [
       lastDocSlug ? `Last doc: "${lastDocSlug}"` : null,
@@ -125,18 +149,12 @@ export async function POST(request: NextRequest) {
     ].filter(Boolean)
 
     const userContent = `${contextParts.join('\n')}\n\nUser message: "${userMessage}"`
+    const fullPrompt = `${CLASSIFIER_SYSTEM_PROMPT}\n\n${userContent}`
 
-    const response = await openai.chat.completions.create({
-      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
-      temperature: 0,
-      max_tokens: 220,
-      messages: [
-        { role: 'system', content: CLASSIFIER_SYSTEM_PROMPT },
-        { role: 'user', content: userContent },
-      ],
-    })
+    const result = await model.generateContent(fullPrompt)
+    const response = result.response
+    const content = response.text().trim()
 
-    const content = response.choices[0]?.message?.content?.trim() || ''
     const parsed = safeParseJson<SemanticRouteResult>(content)
     const latencyMs = Date.now() - startTime
 
