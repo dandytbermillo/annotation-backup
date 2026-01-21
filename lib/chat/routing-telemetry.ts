@@ -52,6 +52,11 @@ export enum RoutingPatternId {
   // Semantic fallback classifier
   SEMANTIC_FALLBACK = 'SEMANTIC_FALLBACK',           // Classifier routed to docs/actions
 
+  // Prereq 4: Cross-corpus patterns
+  CROSS_CORPUS_AMBIGUOUS = 'CROSS_CORPUS_AMBIGUOUS', // Both corpora have viable results
+  CROSS_CORPUS_NOTES_EXPLICIT = 'CROSS_CORPUS_NOTES_EXPLICIT', // Explicit notes intent
+  CROSS_CORPUS_DOCS_EXPLICIT = 'CROSS_CORPUS_DOCS_EXPLICIT',   // Explicit docs intent
+
   // Unknown/unmatched
   UNKNOWN = 'UNKNOWN',
 }
@@ -129,6 +134,14 @@ export interface RoutingTelemetryEvent {
   // Cross-turn tracking (set by subsequent turn if user corrects)
   // Note: This is set retrospectively when "no / not that" is detected
   user_corrected_next_turn?: boolean
+
+  // Prereq 4: Cross-corpus telemetry
+  cross_corpus_ambiguity_shown?: boolean  // Were cross-corpus pills shown?
+  cross_corpus_choice?: 'docs' | 'notes'  // User's corpus selection
+  cross_corpus_score_gap?: number         // Score gap between top doc and top note
+  cross_corpus_docs_status?: 'found' | 'weak' | 'ambiguous' | 'no_match'
+  cross_corpus_notes_status?: 'found' | 'weak' | 'ambiguous' | 'no_match'
+  cross_corpus_intent?: 'docs' | 'notes' | 'both' | 'none'  // Detected intent signals
 }
 
 // =============================================================================
@@ -213,6 +226,14 @@ export async function logRoutingDecision(event: RoutingTelemetryEvent): Promise<
 
       // Cross-turn tracking (set retrospectively when user corrects)
       user_corrected_next_turn: event.user_corrected_next_turn,
+
+      // Prereq 4: Cross-corpus telemetry
+      cross_corpus_ambiguity_shown: event.cross_corpus_ambiguity_shown,
+      cross_corpus_choice: event.cross_corpus_choice,
+      cross_corpus_score_gap: event.cross_corpus_score_gap,
+      cross_corpus_docs_status: event.cross_corpus_docs_status,
+      cross_corpus_notes_status: event.cross_corpus_notes_status,
+      cross_corpus_intent: event.cross_corpus_intent,
     },
     metrics: {
       event: 'doc_routing_decision',

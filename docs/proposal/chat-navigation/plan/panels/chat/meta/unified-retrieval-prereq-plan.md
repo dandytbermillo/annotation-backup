@@ -221,7 +221,7 @@ Fire-and-forget indexing runs outside the transaction. If the main transaction r
 - Docs direct lookup: ✅ by docSlug
 - Notes direct lookup: ✅ by itemId
 
-### Prerequisite 4: Cross-Corpus Ambiguity UX — Draft
+### Prerequisite 4: Cross-Corpus Ambiguity UX — Verified Complete ✅
 
 **Goal:**
 When a query could refer to both docs and notes, present a clear, two-option choice
@@ -274,8 +274,85 @@ instead of guessing. This keeps the experience “human” and avoids wrong-corp
 3) "tell me about my notes" → notes result only.
 4) Notes selected → follow-up "tell me more" continues within notes corpus.
 
+**Implementation (2026-01-20):**
+
+*Files created:*
+- `lib/chat/cross-corpus-retrieval.ts` — Decision logic, parallel corpus fetching
+- `lib/chat/cross-corpus-handler.ts` — Handler for cross-corpus routing + pill selection
+
+*Files modified:*
+- `lib/chat/query-patterns.ts` — Added `NOTES_CORPUS_PATTERNS`, `DOCS_CORPUS_PATTERNS`, `detectCorpusIntent()`, `hasNotesCorpusIntent()`, `hasDocsCorpusIntent()`
+- `lib/chat/routing-telemetry.ts` — Added `CROSS_CORPUS_AMBIGUOUS`, `CROSS_CORPUS_NOTES_EXPLICIT`, `CROSS_CORPUS_DOCS_EXPLICIT` pattern IDs; added telemetry fields for cross-corpus events
+- `lib/chat/chat-navigation-context.tsx` — Extended `DocRetrievalState` with `lastRetrievalCorpus`, `lastItemId`, `lastResourceId`
+
+*Implementation status:*
+- ✅ Corpus signal detection patterns
+- ✅ Cross-corpus decision logic (`decideCrossCorpus`)
+- ✅ Parallel corpus fetching (`queryCrossCorpus`, `fetchCorpusResults`)
+- ✅ Cross-corpus handler (`handleCrossCorpusRetrieval`)
+- ✅ Pill selection handler (`handleCrossCorpusPillSelection`)
+- ✅ State tracking types extended
+- ✅ Telemetry events defined
+- ✅ Chat panel integration (cross-corpus before metaExplain in handler chain)
+- ✅ Pill selection wiring in `handleSelectOption`
+- ✅ Score-gap trigger logic (queries both corpora when intent is term-based only)
+- ✅ End-to-end testing (verified 2026-01-20)
+
+*Files modified for chat panel integration:*
+- `components/chat/chat-navigation-panel.tsx` — Imported handlers, wired `handleCrossCorpusRetrieval` before `handleDocRetrieval`, added `cross_corpus_select` pill selection handling
+- `lib/chat/index.ts` — Exported `CrossCorpusSelectData` type
+- `lib/chat/cross-corpus-handler.ts` — Fixed type assertions for options mapping; fixed trigger logic to distinguish explicit vs term-based docs intent
+
+*Trigger logic fix (2026-01-20):*
+- Original issue: Handler returned early for `intent === 'docs'`, which included term-based matches. This meant queries like "what is workspace" (where "workspace" is a known doc term) would never query notes, even if there's a note titled "Workspace" with a close score.
+- Fix: Now distinguishes between explicit docs intent (phrases like "in the docs") vs term-based inference (just contains a known term). Only skips notes query when docs intent is *explicit*. For term-only or 'none' intent, queries both corpora to check score gap.
+- `shouldQueryBoth` triggers when: `intent === 'both'` OR `intent === 'none'` OR (`intent === 'docs'` AND NOT explicit)
+
+*Handler order fix (2026-01-20):*
+- Original issue: `handleMetaExplain` was intercepting "what is X" queries before cross-corpus could check notes. The `isMetaExplainOutsideClarification` pattern matched "what is X" as an explain request.
+- Fix: Moved cross-corpus handler to run BEFORE metaExplain in the handler chain.
+- New handler order: clarificationIntercept → crossCorpus → metaExplain → correction → followUp → docRetrieval
+- Now "what is workspace" hits cross-corpus first and shows pills (if both corpora have close results).
+
+*Verification results (2026-01-20):*
+- ✅ "search my notes for workspace" → notes result, no pills (explicit notes intent)
+- ✅ "what is workspace" → pills (Docs vs Notes) when both corpora have viable results
+- ✅ "in the docs, what is X" → crossCorpus returns `handled: false`, falls through to docs
+- ✅ Debug logs removed from production code
+
+*Future improvements (optional):*
+- Consider adding unit tests for cross-corpus decision logic
+- Verify notes-explicit follow-up ("tell me more" within notes corpus)
+
 ### Prerequisite 5: Safety + Fallback — Not Started
 
 **TODO:**
 - Add fallback when items index unavailable
 - Error handling in unified API
+
+### Future Expansion: Additional Personal Corpora
+
+This applies to any new user‑saved corpus (emails, widgets, tasks, files, etc.).
+
+**Corpus onboarding checklist:**
+- Define explicit intent signals (e.g., "my emails", "search files", "recent items").
+- Define scope rules (workspace_id / user_id filters required).
+- Define per‑corpus scoring (recency vs title vs metadata).
+- Define ambiguity rules (how to compare against docs/notes).
+
+**Intent routing required:**
+- Use explicit signals to query a single corpus.
+- Avoid querying all corpora on every request.
+
+**Ambiguity UX cap:**
+- Show at most two pills.
+- If more than two corpora are plausible, ask a short clarifying question.
+
+**Per-corpus scoring examples (adjust per corpus):**
+- Recents: boost recency.
+- Todos: boost title + status keywords.
+- Emails/files: boost subject/title + sender/path.
+- Widgets: boost widget title + stored metadata.
+
+**Permissions:**
+- All personal corpora must be scoped by workspace/user.

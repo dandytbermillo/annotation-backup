@@ -51,12 +51,19 @@ export interface TD7ClarificationData {
   action: 'doc' | 'llm'
 }
 
+/** Prereq 4: Data for cross-corpus disambiguation pills */
+export interface CrossCorpusSelectData {
+  corpus: 'docs' | 'notes'
+  resourceId: string
+  title: string
+}
+
 export interface SelectionOption {
-  type: 'workspace' | 'note' | 'entry' | 'confirm_delete' | 'quick_links_panel' | 'confirm_panel_write' | 'panel_drawer' | 'doc' | 'td7_clarification'
+  type: 'workspace' | 'note' | 'entry' | 'confirm_delete' | 'quick_links_panel' | 'confirm_panel_write' | 'panel_drawer' | 'doc' | 'td7_clarification' | 'cross_corpus_select'
   id: string
   label: string
   sublabel?: string
-  data: WorkspaceMatch | NoteMatch | EntryMatch | QuickLinksPanelData | PanelIntentData | PanelDrawerData | DocData | TD7ClarificationData
+  data: WorkspaceMatch | NoteMatch | EntryMatch | QuickLinksPanelData | PanelIntentData | PanelDrawerData | DocData | TD7ClarificationData | CrossCorpusSelectData
 }
 
 /** Suggestion candidate for typo fallback */
@@ -107,6 +114,7 @@ export interface LastClarificationState {
  * Doc retrieval conversation state for follow-ups and corrections.
  * Per general-doc-retrieval-routing-plan.md (v4)
  * Updated for v5 Hybrid Response Selection (lastChunkIdsShown for HS2)
+ * Updated for Prereq 4: Cross-corpus tracking
  */
 export interface DocRetrievalState {
   /** Last doc slug from retrieval (for "tell me more" follow-ups) */
@@ -119,6 +127,12 @@ export interface DocRetrievalState {
   timestamp?: number
   /** V5: Chunk IDs that have been shown (for HS2 follow-up expansion) */
   lastChunkIdsShown?: string[]
+  /** Prereq 4: Last corpus used (for keeping follow-ups in same corpus) */
+  lastRetrievalCorpus?: 'docs' | 'notes'
+  /** Prereq 4: Last item ID for notes (parallel to lastDocSlug) */
+  lastItemId?: string
+  /** Prereq 4: Last resource ID (unified: docSlug or itemId) */
+  lastResourceId?: string
 }
 
 export interface ChatMessage {

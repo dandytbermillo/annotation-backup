@@ -84,7 +84,7 @@ This index documents the plan timeline for the doc retrieval feature in chat nav
 | 1. Indexing Strategy | Schema + chunking + lifecycle wiring | ✅ Complete (2026-01-20) |
 | 2. Permissions + Visibility | Workspace scoping (Option A) | ✅ Complete (2026-01-20) |
 | 3. Unified API Contract | Single `/api/retrieve` endpoint | ✅ Complete (2026-01-20) |
-| 4. Cross-Corpus Ambiguity UX | Docs vs Notes pills | ⏸️ Not Started |
+| 4. Cross-Corpus Ambiguity UX | Docs vs Notes pills + chat integration | ✅ Verified Complete (2026-01-20) |
 | 5. Safety + Fallback | Graceful degradation | ⏸️ Not Started |
 
 **Key Deliverables:**
@@ -95,6 +95,10 @@ This index documents the plan timeline for the doc retrieval feature in chat nav
 - `app/api/retrieve/route.ts` — Unified retrieval endpoint (docs/notes routing)
 - `scripts/index-items.ts` — Backfill CLI (`npm run index:items`)
 - Lifecycle hooks in: `app/api/items/route.ts`, `app/api/postgres-offline/documents/batch/route.ts`, `lib/server/note-deletion.ts`
+- `lib/chat/query-patterns.ts` — Corpus signal detection (NOTES_CORPUS_PATTERNS, DOCS_CORPUS_PATTERNS)
+- `lib/chat/cross-corpus-retrieval.ts` — Cross-corpus decision logic
+- `lib/chat/cross-corpus-handler.ts` — Cross-corpus routing handler
+- `lib/chat/routing-telemetry.ts` — Cross-corpus telemetry events
 
 ---
 
@@ -115,6 +119,7 @@ This index documents the plan timeline for the doc retrieval feature in chat nav
 | 2026-01-19 | `reports/2026-01-19-interface-weak-match-fix-implementation-report.md` | Interface weak-match |
 | 2026-01-20 | `reports/2026-01-20-classifier-gemini-and-alias-coverage-implementation-report.md` | Classifier Gemini + Alias coverage |
 | 2026-01-20 | `reports/2026-01-20-unified-retrieval-prereq-indexing-implementation-report.md` | Unified Retrieval Prereq 1 |
+| 2026-01-20 | `reports/2026-01-20-prereq4-cross-corpus-ambiguity-implementation-report.md` | Unified Retrieval Prereq 4 |
 
 ---
 

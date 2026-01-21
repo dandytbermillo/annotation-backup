@@ -206,6 +206,36 @@ export const HIGH_AMBIGUITY_TERMS = new Set<string>([
 ])
 
 // =============================================================================
+// Prereq 4: Cross-Corpus Signal Patterns
+// =============================================================================
+
+/**
+ * Notes corpus intent patterns.
+ * These phrases indicate the user wants to search their personal notes/files.
+ */
+export const NOTES_CORPUS_PATTERNS = [
+  /\b(my notes?|in my notes?)\b/i,
+  /\b(search notes?|find in notes?|search my notes?)\b/i,
+  /\bnote titled\b/i,
+  /\b(my files?|in my files?)\b/i,
+  /\b(search files?|find in files?|search my files?)\b/i,
+]
+
+/**
+ * Docs corpus intent patterns.
+ * These phrases indicate the user wants documentation/help content.
+ * Note: Known doc terms (from knownTerms) also indicate docs intent.
+ */
+export const DOCS_CORPUS_PATTERNS = [
+  /\b(in the docs?|in documentation)\b/i,
+  /\b(help docs?|help documentation)\b/i,
+  // Note: "how do i" and "what is X" are NOT explicit docs intent for cross-corpus purposes.
+  // They should go through term-matching, allowing cross-corpus ambiguity pills if
+  // a user note also matches the query (e.g., note titled "Workspace").
+  // These queries are handled via knownTerms matching instead.
+]
+
+// =============================================================================
 // Normalization Functions
 // =============================================================================
 
@@ -771,4 +801,57 @@ export function hasFuzzyMatch(
   knownTerms: Set<string>
 ): boolean {
   return tokens.some(token => findFuzzyMatch(token, knownTerms) !== null)
+}
+
+// =============================================================================
+// Prereq 4: Cross-Corpus Intent Detection
+// =============================================================================
+
+/**
+ * Check if input has explicit notes corpus intent.
+ * Returns true if the query contains phrases like "my notes", "search notes", etc.
+ */
+export function hasNotesCorpusIntent(input: string): boolean {
+  return NOTES_CORPUS_PATTERNS.some(pattern => pattern.test(input))
+}
+
+/**
+ * Check if input has explicit docs corpus intent.
+ * Returns true if the query contains phrases like "in the docs", "how do i", etc.
+ * Note: This only checks explicit doc phrases. knownTerms matching is separate.
+ */
+export function hasDocsCorpusIntent(input: string): boolean {
+  return DOCS_CORPUS_PATTERNS.some(pattern => pattern.test(input))
+}
+
+export type CorpusIntent = 'docs' | 'notes' | 'both' | 'none'
+
+/**
+ * Detect corpus intent from query.
+ * Returns which corpus the user is likely targeting based on explicit signals.
+ *
+ * @param input - Raw user input
+ * @param knownTerms - Optional set of known doc terms (matches indicate docs intent)
+ * @returns 'docs' | 'notes' | 'both' | 'none'
+ */
+export function detectCorpusIntent(
+  input: string,
+  knownTerms?: Set<string> | null
+): CorpusIntent {
+  const hasNotes = hasNotesCorpusIntent(input)
+  const hasDocsExplicit = hasDocsCorpusIntent(input)
+
+  // Check if any token matches knownTerms (indicates docs intent)
+  let hasDocsFromTerms = false
+  if (knownTerms && knownTerms.size > 0) {
+    const { tokens, normalized } = normalizeInputForRouting(input)
+    hasDocsFromTerms = tokens.some(t => knownTerms.has(t)) || knownTerms.has(normalized)
+  }
+
+  const hasDocs = hasDocsExplicit || hasDocsFromTerms
+
+  if (hasNotes && hasDocs) return 'both'
+  if (hasNotes) return 'notes'
+  if (hasDocs) return 'docs'
+  return 'none'
 }

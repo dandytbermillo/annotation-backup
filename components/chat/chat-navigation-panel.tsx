@@ -59,6 +59,8 @@ import {
 import { normalizeUserMessage, extractQuickLinksBadge } from '@/lib/chat/ui-helpers'
 // Step 3 refactor: Doc routing helpers
 import { handleDocRetrieval, maybeFormatSnippetWithHs3, stripMarkdownHeadersForUI, dedupeHeaderPath } from '@/lib/chat/doc-routing'
+// Prereq 4: Cross-corpus handlers
+import { handleCrossCorpusRetrieval, handleCrossCorpusPillSelection } from '@/lib/chat/cross-corpus-handler'
 
 export interface ChatNavigationPanelProps {
   /** Current entry ID for context */
@@ -1140,6 +1142,29 @@ function ChatNavigationPanelContent({
         return
       }
 
+      // Prereq 4: Handle cross-corpus pill selection
+      if (option.type === 'cross_corpus_select') {
+        const result = await handleCrossCorpusPillSelection(option as PendingOptionState, {
+          addMessage,
+          updateDocRetrievalState,
+          setIsLoading,
+        })
+
+        if (!result.success) {
+          const errorMessage: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: 'Sorry, I had trouble loading that content. Please try again.',
+            timestamp: new Date(),
+            isError: true,
+          }
+          addMessage(errorMessage)
+        }
+
+        setIsLoading(false)
+        return
+      }
+
       try {
         // Check if this is a pending delete selection (disambiguation for delete)
         const workspaceData = option.data as WorkspaceMatch & { pendingDelete?: boolean }
@@ -1152,12 +1177,12 @@ function ChatNavigationPanelContent({
           }
         }
 
-        // Note: TD-7 clarification options are handled above and return early,
-        // so this code path is never reached for td7_clarification type
+        // Note: TD-7 and cross-corpus options are handled above and return early,
+        // so this code path is never reached for those types
         const result = await selectOption({
-          type: option.type as Exclude<SelectionOption['type'], 'td7_clarification'>,
+          type: option.type as Exclude<SelectionOption['type'], 'td7_clarification' | 'cross_corpus_select'>,
           id: option.id,
-          data: option.data as Exclude<SelectionOption['data'], import('@/lib/chat/chat-navigation-context').TD7ClarificationData>,
+          data: option.data as Exclude<SelectionOption['data'], import('@/lib/chat/chat-navigation-context').TD7ClarificationData | import('@/lib/chat/chat-navigation-context').CrossCorpusSelectData>,
         })
 
         // Note: Don't clear pending options here - grace window logic handles clearing.
@@ -1412,6 +1437,7 @@ function ChatNavigationPanelContent({
 
   const sendMessage = useCallback(async () => {
     const trimmedInput = input.trim()
+    console.log('[ChatPanel] sendMessage called with:', trimmedInput)
     if (!trimmedInput || isLoading) return
 
     // Add user message
@@ -1467,6 +1493,7 @@ function ChatNavigationPanelContent({
       // Rejection Detection: Check if user is rejecting a suggestion
       // Per suggestion-rejection-handling-plan.md
       // ---------------------------------------------------------------------------
+      console.log('[ChatPanel] Checkpoint 1: Rejection check', { lastSuggestion: !!lastSuggestion, isRejection: isRejectionPhrase(trimmedInput) })
       if (lastSuggestion && isRejectionPhrase(trimmedInput)) {
         // User rejected the suggestion - clear state and respond
         const rejectedLabels = lastSuggestion.candidates.map(c => c.label)
@@ -1502,6 +1529,7 @@ function ChatNavigationPanelContent({
       // Affirmation With Suggestion: Handle "yes" to confirm active suggestion
       // Per suggestion-confirm-yes-plan.md
       // ---------------------------------------------------------------------------
+      console.log('[ChatPanel] Checkpoint 2: Affirmation check', { lastSuggestion: !!lastSuggestion, isAffirmation: isAffirmationPhrase(trimmedInput) })
       if (lastSuggestion && isAffirmationPhrase(trimmedInput)) {
         const candidates = lastSuggestion.candidates
 
@@ -1657,6 +1685,7 @@ function ChatNavigationPanelContent({
       // Phase 2a.3: CLARIFICATION-MODE INTERCEPT
       // Step 3 refactor: Extracted to lib/chat/chat-routing.ts
       // ---------------------------------------------------------------------------
+      console.log('[ChatPanel] Checkpoint 3: Before clarificationIntercept', { lastClarification: !!lastClarification, pendingOptions: pendingOptions?.length })
       const clarificationResult = await handleClarificationIntercept({
         trimmedInput,
         lastClarification,
@@ -1675,6 +1704,24 @@ function ChatNavigationPanelContent({
       })
       const { clarificationCleared, isNewQuestionOrCommandDetected } = clarificationResult
       if (clarificationResult.handled) {
+        return
+      }
+
+      // ---------------------------------------------------------------------------
+      // Prereq 4: Cross-Corpus Retrieval Check (BEFORE metaExplain)
+      // Check for notes corpus intent or cross-corpus ambiguity before docs routing.
+      // Must run before metaExplain to allow "what is X" to check notes corpus.
+      // ---------------------------------------------------------------------------
+      const crossCorpusResult = await handleCrossCorpusRetrieval({
+        trimmedInput,
+        docRetrievalState,
+        addMessage,
+        updateDocRetrievalState,
+        setIsLoading,
+        setPendingOptions,
+        setPendingOptionsMessageId,
+      })
+      if (crossCorpusResult.handled) {
         return
       }
 
@@ -1742,11 +1789,12 @@ function ChatNavigationPanelContent({
         classifierError,
       } = followUpResult
       const isFollowUp = followUpResult.handled
+      console.log('[ChatPanel] followUpResult.handled:', followUpResult.handled, 'for input:', trimmedInput)
       if (followUpResult.handled) {
         return
       }
 
-// ---------------------------------------------------------------------------
+      // ---------------------------------------------------------------------------
       // General Doc Retrieval Routing: Handle "what is X", "how do I X" queries
       // AND bare nouns like "notes", "widgets" (not action nouns like "recent")
       // Per general-doc-retrieval-routing-plan.md (v4)

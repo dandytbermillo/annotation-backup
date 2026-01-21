@@ -59,6 +59,7 @@ export type {
   LastClarificationState,
   ActionHistoryEntry,
   DocRetrievalState,
+  CrossCorpusSelectData,
 } from './chat-navigation-context'
 
 // Schema utilities (for reference)
