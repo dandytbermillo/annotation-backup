@@ -70,6 +70,7 @@ export interface ViewPanelContent {
   sourceIntent?: string  // Original chat intent that triggered this
   sourceMessageId?: string
   docSlug?: string       // For doc content - tracks which doc is displayed
+  itemId?: string        // For note content - tracks which note is displayed
 }
 
 // =============================================================================

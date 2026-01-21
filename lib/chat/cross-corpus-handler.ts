@@ -169,6 +169,10 @@ export async function handleCrossCorpusRetrieval(
           role: 'assistant',
           content: `From your notes - **${notesResult.topTitle}**:\n\n${notesResult.topResourceId ? 'Found relevant content in your notes.' : 'No preview available.'}`,
           timestamp: new Date(),
+          // Notes metadata for "Show more" button
+          itemId: notesResult.topResourceId,
+          itemName: notesResult.topTitle,
+          corpus: 'notes',
         }
         addMessage(message)
 
@@ -330,6 +334,10 @@ export async function handleCrossCorpusRetrieval(
           role: 'assistant',
           content: `From your notes - **${decision.notesResult.topTitle}**`,
           timestamp: new Date(),
+          // Notes metadata for "Show more" button
+          itemId: decision.notesResult.topResourceId,
+          itemName: decision.notesResult.topTitle,
+          corpus: 'notes',
         }
         addMessage(message)
 
@@ -435,6 +443,18 @@ export async function handleCrossCorpusPillSelection(
           ? `**${topResult.title}**\n\n${topResult.snippet || 'No content available.'}`
           : `From your notes - **${topResult.title}**\n\n${topResult.snippet || 'No content available.'}`,
         timestamp: new Date(),
+        // Metadata for "Show more" button - conditional based on corpus
+        ...(data.corpus === 'docs' ? {
+          docSlug: data.resourceId,
+          chunkId: topResult.chunkId,
+          headerPath: topResult.headerPath,
+          corpus: 'docs' as const,
+        } : {
+          itemId: data.resourceId,
+          itemName: topResult.title,
+          chunkId: topResult.chunkId,
+          corpus: 'notes' as const,
+        }),
       }
       ctx.addMessage(message)
 

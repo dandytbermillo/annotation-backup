@@ -325,6 +325,8 @@ instead of guessing. This keeps the experience “human” and avoids wrong-corp
 *Future improvements (optional):*
 - Consider adding unit tests for cross-corpus decision logic
 - Verify notes-explicit follow-up ("tell me more" within notes corpus)
+- Add typo normalization before cross-corpus retrieval so misspellings still
+  produce docs vs notes pills (current fallback path works, but this improves UX)
 
 ### Prerequisite 5: Safety + Fallback — Implemented
 

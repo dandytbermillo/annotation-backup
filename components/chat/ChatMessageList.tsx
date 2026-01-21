@@ -80,10 +80,12 @@ export interface ChatMessageListProps {
   onSuggestionClick: (label: string, action: 'open' | 'list') => void
   /** Callback to open the panel drawer for "show all" */
   onOpenPanelDrawer?: (panelId: string, panelTitle?: string) => void
-  /** Callback when "Show more" is clicked on a doc response (per show-more-button-spec.md) */
-  onShowMore?: (docSlug: string, chunkId?: string) => void
+  /** Callback when "Show more" is clicked on a doc/note response (per show-more-button-spec.md) */
+  onShowMore?: (docSlug?: string, itemId?: string, chunkId?: string) => void
   /** The docSlug currently displayed in ViewPanel (hides "Show more" for that doc only) */
   viewPanelDocSlug?: string
+  /** The itemId currently displayed in ViewPanel (hides "Show more" for that note only) */
+  viewPanelItemId?: string
 }
 
 // =============================================================================
@@ -103,6 +105,7 @@ export function ChatMessageList({
   onOpenPanelDrawer,
   onShowMore,
   viewPanelDocSlug,
+  viewPanelItemId,
 }: ChatMessageListProps) {
   return (
     <>
@@ -188,15 +191,19 @@ export function ChatMessageList({
                 />
               )}
 
-              {/* Show More Button (doc responses only, per show-more-button-spec.md) */}
+              {/* Show More Button (doc/note responses, per show-more-button-spec.md) */}
               {message.role === 'assistant' &&
                 !message.isError &&
-                message.docSlug &&
+                (message.docSlug || message.itemId) &&
                 !message.options?.length && // Don't show during disambiguation
-                viewPanelDocSlug !== message.docSlug && // Hide only if ViewPanel shows THIS doc
+                // Hide if ViewPanel shows THIS resource
+                !(message.docSlug && viewPanelDocSlug === message.docSlug) &&
+                !(message.itemId && viewPanelItemId === message.itemId) &&
                 onShowMore && (
                   <ShowMoreButton
                     docSlug={message.docSlug}
+                    itemId={message.itemId}
+                    itemName={message.itemName}
                     chunkId={message.chunkId}
                     headerPath={message.headerPath}
                     onClick={onShowMore}

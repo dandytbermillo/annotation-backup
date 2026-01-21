@@ -2,8 +2,8 @@
  * Show More Button Component
  * Per: show-more-button-spec.md
  *
- * Provides a clear "Show more" affordance for doc-based answers
- * so users can open the full doc section without typing a follow-up.
+ * Provides a clear "Show more" affordance for doc-based and notes-based answers
+ * so users can open the full content without typing a follow-up.
  */
 
 'use client'
@@ -11,14 +11,18 @@
 import { cn } from '@/lib/utils'
 
 export interface ShowMoreButtonProps {
-  /** Doc slug for the source document */
-  docSlug: string
+  /** Doc slug for the source document (docs corpus) */
+  docSlug?: string
+  /** Item ID for the source note (notes corpus) */
+  itemId?: string
+  /** Item name for display (notes corpus, optional) */
+  itemName?: string
   /** Chunk ID to scroll to (optional) */
   chunkId?: string
   /** Header path for breadcrumb display (optional) */
   headerPath?: string
-  /** Click handler - opens doc panel or triggers HS2 expand */
-  onClick: (docSlug: string, chunkId?: string) => void
+  /** Click handler - opens doc/note panel */
+  onClick: (docSlug?: string, itemId?: string, chunkId?: string) => void
   /** Whether the button is disabled */
   disabled?: boolean
   /** Additional CSS classes */
@@ -26,23 +30,33 @@ export interface ShowMoreButtonProps {
 }
 
 /**
- * Renders a "Show more" button for doc-based responses.
- * Only shown when eligibility criteria are met (found/weak with docSlug).
+ * Renders a "Show more" button for doc-based and notes-based responses.
+ * Only shown when eligibility criteria are met (found/weak with docSlug or itemId).
  */
 export function ShowMoreButton({
   docSlug,
+  itemId,
+  itemName,
   chunkId,
   headerPath,
   onClick,
   disabled = false,
   className,
 }: ShowMoreButtonProps) {
+  // Don't render if neither docSlug nor itemId is provided
+  if (!docSlug && !itemId) return null
+
+  // Determine display title based on available data
+  const displayTitle = docSlug
+    ? (headerPath ? `Open: ${headerPath}` : 'Open the full doc section')
+    : (itemName ? `Open: ${itemName}` : 'Open the full note')
+
   return (
     <button
       type="button"
-      onClick={() => onClick(docSlug, chunkId)}
+      onClick={() => onClick(docSlug, itemId, chunkId)}
       disabled={disabled}
-      title={headerPath ? `Open: ${headerPath}` : 'Open the full doc section'}
+      title={displayTitle}
       className={cn(
         'inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium',
         'rounded-full border transition-all duration-200',

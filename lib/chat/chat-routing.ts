@@ -684,6 +684,11 @@ export async function handleFollowUp(ctx: FollowUpHandlerContext): Promise<Follo
           role: 'assistant',
           content: `From your notes - **${topResult.title}**:\n\n${topResult.snippet || 'Here\'s more from your notes.'}`,
           timestamp: new Date(),
+          // Notes metadata for "Show more" button
+          itemId: docRetrievalState.lastItemId,
+          itemName: topResult.title,
+          chunkId: topResult.chunkId,
+          corpus: 'notes',
         }
         addMessage(message)
 

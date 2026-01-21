@@ -155,6 +155,10 @@ export interface ChatMessage {
   docSlug?: string
   chunkId?: string
   headerPath?: string
+  // Notes retrieval metadata for "Show more" button (notes corpus)
+  itemId?: string
+  itemName?: string
+  corpus?: 'docs' | 'notes'
 }
 
 // Re-export SessionState for convenience

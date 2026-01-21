@@ -1364,27 +1364,45 @@ function ChatNavigationPanelContent({
   // ---------------------------------------------------------------------------
 
   const handleShowMore = useCallback(
-    (docSlug: string, chunkId?: string) => {
+    (docSlug?: string, itemId?: string, chunkId?: string) => {
       // Log telemetry - PRIMARY action: open panel
       void debugLog({
         component: 'ChatNavigation',
         action: 'show_more_clicked',
-        metadata: { docSlug, chunkId, action: 'open_panel' },
+        metadata: { docSlug, itemId, chunkId, action: 'open_panel' },
       })
 
-      // PRIMARY behavior: Fetch doc content and open ViewPanel
-      // Per show-more-button-spec.md: Open docs side panel for docSlug
+      // Determine corpus and resource
+      const corpus = docSlug ? 'docs' : 'notes'
+      const resourceId = docSlug || itemId
+
+      if (!resourceId) {
+        console.error('[ShowMore] No resourceId provided')
+        return
+      }
+
       void (async () => {
         try {
-          // Request fullContent: true to get ALL chunks combined (not truncated)
-          const response = await fetch('/api/docs/retrieve', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ docSlug, fullContent: true }),
-          })
+          let response: Response
+
+          if (docSlug) {
+            // DOCS: Use existing /api/docs/retrieve endpoint
+            response = await fetch('/api/docs/retrieve', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ docSlug, fullContent: true }),
+            })
+          } else {
+            // NOTES: Use /api/retrieve with corpus: 'notes'
+            response = await fetch('/api/retrieve', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ corpus: 'notes', resourceId: itemId, fullContent: true }),
+            })
+          }
 
           if (!response.ok) {
-            throw new Error('Failed to fetch doc content')
+            throw new Error(`Failed to fetch ${corpus} content`)
           }
 
           const data = await response.json()
@@ -1392,38 +1410,43 @@ function ChatNavigationPanelContent({
           if (data.success && data.results && data.results.length > 0) {
             const result = data.results[0]
 
-            // Create ViewPanelContent with doc content
+            // Create ViewPanelContent with content
             const viewContent: ViewPanelContent = {
               type: ViewContentType.TEXT,
-              title: result.title || docSlug,
-              subtitle: result.header_path || result.category,
+              title: result.title || resourceId,
+              subtitle: docSlug
+                ? (result.header_path || result.category)
+                : (result.path || result.headerPath),
               content: result.snippet || 'No content available',
-              docSlug: docSlug, // Track which doc is displayed for Show more button visibility
+              docSlug: docSlug, // Track which doc is displayed (for docs)
+              itemId: itemId,   // Track which note is displayed (for notes)
             }
 
-            // Open the ViewPanel with the doc content
-            openPanelWithTracking(viewContent, `doc-${docSlug}`)
+            // Open the ViewPanel with the content
+            openPanelWithTracking(viewContent, `${corpus}-${resourceId}`)
           } else {
             // Fallback: Log error and show error in panel
             void debugLog({
               component: 'ChatNavigation',
               action: 'show_more_failed',
-              metadata: { docSlug, reason: 'no_doc' },
+              metadata: { corpus, resourceId, reason: 'no_content' },
             })
 
             const errorContent: ViewPanelContent = {
               type: ViewContentType.TEXT,
-              title: 'Document Not Found',
-              content: `Could not find documentation for "${docSlug}".`,
+              title: corpus === 'docs' ? 'Document Not Found' : 'Note Not Found',
+              content: corpus === 'docs'
+                ? `Could not find documentation for "${resourceId}".`
+                : `Could not find note "${resourceId}".`,
             }
-            openPanelWithTracking(errorContent, `doc-${docSlug}-error`)
+            openPanelWithTracking(errorContent, `${corpus}-${resourceId}-error`)
           }
         } catch (error) {
-          console.error('[ShowMore] Failed to fetch doc:', error)
+          console.error(`[ShowMore] Failed to fetch ${corpus}:`, error)
           void debugLog({
             component: 'ChatNavigation',
             action: 'show_more_failed',
-            metadata: { docSlug, reason: 'fetch_error' },
+            metadata: { corpus, resourceId, reason: 'fetch_error' },
           })
         }
       })()
@@ -2905,8 +2928,10 @@ function ChatNavigationPanelContent({
   // Check if ViewPanel is open for side-by-side positioning
   const { state: viewPanelState } = useViewPanel()
   const isViewPanelOpen = viewPanelState.isOpen
-  // Track which doc is currently displayed (for Show more button visibility)
+  // Track which resource is currently displayed (for Show more button visibility)
   const viewPanelDocSlug = viewPanelState.isOpen ? viewPanelState.content?.docSlug : undefined
+  // Extract itemId from ViewPanelContent for notes tracking (hides "Show more" for displayed note)
+  const viewPanelItemId = viewPanelState.isOpen ? viewPanelState.content?.itemId : undefined
 
   // Calculate chat panel width - fixed size, ViewPanel positions next to it
   const chatPanelWidth = '360px'
@@ -3029,6 +3054,7 @@ function ChatNavigationPanelContent({
                     onOpenPanelDrawer={openPanelDrawer}
                     onShowMore={handleShowMore}
                     viewPanelDocSlug={viewPanelDocSlug}
+                    viewPanelItemId={viewPanelItemId}
                   />
                 )}
 
