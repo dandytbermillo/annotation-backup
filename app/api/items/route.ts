@@ -312,6 +312,7 @@ export async function POST(request: NextRequest) {
               path: row.path,
               content: row.content,
               userId: row.user_id,
+              workspaceId: activeWorkspaceId,
             }).catch(err => console.error('[ItemsAPI] Background index failed:', err))
           }
         }

@@ -143,25 +143,136 @@ Fire-and-forget indexing runs outside the transaction. If the main transaction r
 - Supports `--dry-run` and `--user-id` flags
 - Initial run: 2871 notes → 1357 indexed → 1454 chunks (0.98s)
 
-### Prerequisite 2: Permissions + Visibility — Partial
+### Prerequisite 2: Permissions + Visibility — Implemented (Option A)
 
-- Schema includes `user_id` column for scoping
-- Indexing function accepts `userId` parameter
-- **TODO:** Integrate with auth context to auto-populate user_id
-- **TODO:** Add server-side permission filter before scoring
+**Workspace scoping (2026-01-20):**
+- Added `workspace_id` column to `items_knowledge_chunks` (migration 065)
+- Indexed for efficient filtering
+- Backfilled all 1454 existing chunks
+- Lifecycle hooks now populate workspace_id on create/save
 
-### Prerequisite 3: Unified Retrieval API — Not Started
+**Schema includes:**
+- `user_id` column (NULL in Option A single-user mode)
+- `workspace_id` column (primary isolation for Option A)
+- Composite index `(workspace_id, user_id)` for scoped queries
 
-**TODO:**
-- Create `POST /api/retrieve` endpoint
-- Add corpus parameter handling
-- Merge docs + items results
+**Ready for unified API:**
+- Retrieval can filter by `workspace_id` without joins
+- user_id filter available for future multi-user (Option B)
 
-### Prerequisite 4: Cross-Corpus Ambiguity UX — Not Started
+**Remaining (Option B / multi-user):**
+- Integrate with auth context to auto-populate user_id
+- Add server-side permission filter before scoring
 
-**TODO:**
-- Define corpus signal patterns
-- Implement docs vs notes pills
+### Prerequisite 3: Unified Retrieval API — Implemented (Phase 1)
+
+**Endpoint (2026-01-20):**
+- Created `POST /api/retrieve` unified endpoint
+- Routes by `corpus` parameter: `"docs"` or `"notes"`
+- `corpus="auto"` deferred to Prereq 4 (cross-corpus ambiguity UX)
+
+**Files added:**
+- `app/api/retrieve/route.ts` — unified routing endpoint
+- `lib/docs/items-retrieval.ts` — notes retrieval service (mirrors docs retrieval)
+
+**Request contract:**
+```json
+{
+  "corpus": "docs" | "notes",
+  "query": "search terms",
+  "resourceId": "docSlug or itemId (for direct lookup)",
+  "excludeChunkIds": [],
+  "topK": 5,
+  "fullContent": false
+}
+```
+
+**Response contract:**
+```json
+{
+  "success": true,
+  "corpus": "docs" | "notes",
+  "status": "found" | "ambiguous" | "weak" | "no_match",
+  "results": [{
+    "corpus": "docs" | "notes",
+    "resourceId": "docSlug or itemId",
+    "chunkId": "...",
+    "title": "...",
+    "path": "item path (notes only)",
+    "headerPath": "...",
+    "snippet": "...",
+    "score": 5.2,
+    "matchedTerms": []
+  }],
+  "confidence": 0.8,
+  "metrics": { ... }
+}
+```
+
+**Key design decisions:**
+- `workspaceId` is server-derived via `withWorkspaceClient` (not client input)
+- Notes retrieval requires workspace scoping
+- Docs retrieval is workspace-agnostic (shared knowledge base)
+- Adapters normalize corpus-specific results to unified format
+
+**Verified (2026-01-20):**
+- Docs query: ✅ returns docs results
+- Notes query: ✅ returns notes results (workspace-scoped)
+- Docs direct lookup: ✅ by docSlug
+- Notes direct lookup: ✅ by itemId
+
+### Prerequisite 4: Cross-Corpus Ambiguity UX — Draft
+
+**Goal:**
+When a query could refer to both docs and notes, present a clear, two-option choice
+instead of guessing. This keeps the experience “human” and avoids wrong-corpus answers.
+
+**Non-goals:**
+- Do not change retrieval scoring logic in this prereq.
+- Do not introduce cross-corpus merging or ranking beyond a simple top-candidate check.
+
+**Trigger conditions (show cross-corpus pills):**
+1) Both corpora return a viable result (status in {found, weak, ambiguous} and passes existing weak rejection rules).
+2) Score gap between top doc and top note is within MIN_GAP (reuse existing doc threshold), OR
+3) Query contains explicit corpus signals for both.
+
+**Corpus signal patterns:**
+- Notes intent: "my notes", "in my notes", "search notes", "find in notes", "note titled",
+  "in my files", "find in files", "search files".
+- Docs intent: known doc terms, UI components, and doc concepts.
+
+**Decision logic:**
+- If notes intent is explicit and docs intent is not: show notes results directly.
+- If docs intent is explicit and notes intent is not: show docs results directly.
+- If both intents are present or scores are close: show two pills (Docs vs Notes).
+
+**UX behavior (pills):**
+- Render two pills max (top doc result + top note result):
+  - "Docs: <doc title>"
+  - "Notes: <note title>"
+- Selecting a pill:
+  - Docs → call `/api/retrieve` with corpus="docs", resourceId=docSlug.
+  - Notes → call `/api/retrieve` with corpus="notes", resourceId=itemId.
+  - Do not auto-select when pills are shown; user must choose.
+
+**State updates:**
+- Store `lastRetrievalCorpus` to keep follow-ups in the same corpus.
+- Store `lastResourceId` to support "tell me more" on notes as well as docs.
+
+**Fallback rules:**
+- If one corpus returns no_match, show results from the other corpus (no pills).
+- If both return no_match, fall back to existing LLM response policy.
+
+**Telemetry to add:**
+- `cross_corpus_ambiguity_shown` (boolean)
+- `cross_corpus_choice` ("docs" | "notes")
+- `cross_corpus_score_gap`
+
+**Acceptance tests:**
+1) "search my notes for workspace" → notes result, no pills.
+2) "what is workspace" with a note titled "Workspace" → pills (Docs vs Notes).
+3) "tell me about my notes" → notes result only.
+4) Notes selected → follow-up "tell me more" continues within notes corpus.
 
 ### Prerequisite 5: Safety + Fallback — Not Started
 

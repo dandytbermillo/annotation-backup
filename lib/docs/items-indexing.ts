@@ -44,11 +44,13 @@ interface ItemToIndex {
   path: string
   content: unknown  // TipTap JSON
   userId?: string
+  workspaceId?: string
 }
 
 interface ItemChunk {
   itemId: string
   userId?: string
+  workspaceId?: string
   itemName: string
   itemPath: string
   headerPath: string
@@ -262,6 +264,7 @@ export function chunkItem(item: ItemToIndex): ItemChunk[] {
       chunks.push({
         itemId: item.id,
         userId: item.userId,
+        workspaceId: item.workspaceId,
         itemName: item.name,
         itemPath: item.path,
         headerPath,
@@ -286,6 +289,7 @@ export function chunkItem(item: ItemToIndex): ItemChunk[] {
           chunks.push({
             itemId: item.id,
             userId: item.userId,
+            workspaceId: item.workspaceId,
             itemName: item.name,
             itemPath: item.path,
             headerPath,
@@ -309,6 +313,7 @@ export function chunkItem(item: ItemToIndex): ItemChunk[] {
         chunks.push({
           itemId: item.id,
           userId: item.userId,
+          workspaceId: item.workspaceId,
           itemName: item.name,
           itemPath: item.path,
           headerPath,
@@ -357,18 +362,18 @@ export async function indexItem(item: ItemToIndex): Promise<{ inserted: number; 
     if (!existingHash) {
       // Insert new chunk
       await serverPool.query(
-        `INSERT INTO items_knowledge_chunks (item_id, user_id, item_name, item_path, header_path, chunk_index, content, keywords, chunk_hash)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-        [chunk.itemId, chunk.userId, chunk.itemName, chunk.itemPath, chunk.headerPath, chunk.chunkIndex, chunk.content, chunk.keywords, chunk.chunkHash]
+        `INSERT INTO items_knowledge_chunks (item_id, user_id, workspace_id, item_name, item_path, header_path, chunk_index, content, keywords, chunk_hash)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [chunk.itemId, chunk.userId, chunk.workspaceId, chunk.itemName, chunk.itemPath, chunk.headerPath, chunk.chunkIndex, chunk.content, chunk.keywords, chunk.chunkHash]
       )
       inserted++
     } else if (existingHash !== chunk.chunkHash) {
       // Update if hash differs
       await serverPool.query(
         `UPDATE items_knowledge_chunks
-         SET user_id = $2, item_name = $3, item_path = $4, header_path = $5, content = $6, keywords = $7, chunk_hash = $8, updated_at = NOW()
-         WHERE item_id = $1 AND chunk_index = $9`,
-        [chunk.itemId, chunk.userId, chunk.itemName, chunk.itemPath, chunk.headerPath, chunk.content, chunk.keywords, chunk.chunkHash, chunk.chunkIndex]
+         SET user_id = $2, workspace_id = $3, item_name = $4, item_path = $5, header_path = $6, content = $7, keywords = $8, chunk_hash = $9, updated_at = NOW()
+         WHERE item_id = $1 AND chunk_index = $10`,
+        [chunk.itemId, chunk.userId, chunk.workspaceId, chunk.itemName, chunk.itemPath, chunk.headerPath, chunk.content, chunk.keywords, chunk.chunkHash, chunk.chunkIndex]
       )
       updated++
     } else {
@@ -416,7 +421,8 @@ export async function indexAllItems(userId?: string): Promise<{ total: number; i
       i.name,
       i.path,
       COALESCE(i.content, ds.content) as content,
-      i.user_id as "userId"
+      i.user_id as "userId",
+      i.workspace_id as "workspaceId"
     FROM items i
     LEFT JOIN LATERAL (
       SELECT content FROM document_saves

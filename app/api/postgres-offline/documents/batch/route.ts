@@ -234,7 +234,7 @@ async function handleBatchSave(operations: any[], logLabel: string): Promise<Bat
       // Fire-and-forget: index note for retrieval (non-blocking)
       // Query item metadata and index in background
       client.query(
-        'SELECT name, path, user_id FROM items WHERE id = $1 AND deleted_at IS NULL',
+        'SELECT name, path, user_id, workspace_id FROM items WHERE id = $1 AND deleted_at IS NULL',
         [entry.noteKey]
       ).then(itemResult => {
         if (itemResult.rows.length > 0) {
@@ -245,6 +245,7 @@ async function handleBatchSave(operations: any[], logLabel: string): Promise<Bat
             path: item.path,
             content: entry.contentJson,
             userId: item.user_id,
+            workspaceId: item.workspace_id,
           }).catch(err => console.error('[BatchDocuments] Background index failed:', err))
         }
       }).catch(err => console.error('[BatchDocuments] Item query for indexing failed:', err))

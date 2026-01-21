@@ -82,14 +82,17 @@ This index documents the plan timeline for the doc retrieval feature in chat nav
 | Prerequisite | Description | Status |
 |--------------|-------------|--------|
 | 1. Indexing Strategy | Schema + chunking + lifecycle wiring | ✅ Complete (2026-01-20) |
-| 2. Permissions + Visibility | User scoping + access control | 🔄 Partial (schema ready) |
-| 3. Unified API Contract | Single `/api/retrieve` endpoint | ⏸️ Not Started |
+| 2. Permissions + Visibility | Workspace scoping (Option A) | ✅ Complete (2026-01-20) |
+| 3. Unified API Contract | Single `/api/retrieve` endpoint | ✅ Complete (2026-01-20) |
 | 4. Cross-Corpus Ambiguity UX | Docs vs Notes pills | ⏸️ Not Started |
 | 5. Safety + Fallback | Graceful degradation | ⏸️ Not Started |
 
 **Key Deliverables:**
 - `migrations/064_create_items_knowledge_chunks.up.sql` — Items chunks table
+- `migrations/065_add_workspace_id_to_items_chunks.up.sql` — Workspace scoping
 - `lib/docs/items-indexing.ts` — Indexing service for notes
+- `lib/docs/items-retrieval.ts` — Retrieval service for notes
+- `app/api/retrieve/route.ts` — Unified retrieval endpoint (docs/notes routing)
 - `scripts/index-items.ts` — Backfill CLI (`npm run index:items`)
 - Lifecycle hooks in: `app/api/items/route.ts`, `app/api/postgres-offline/documents/batch/route.ts`, `lib/server/note-deletion.ts`
 
@@ -108,6 +111,7 @@ This index documents the plan timeline for the doc retrieval feature in chat nav
 | 2026-01-15 | `reports/2026-01-15-td2-fuzzy-matching-implementation-report.md` | Debt TD-2 |
 | 2026-01-15 | `reports/2026-01-15-td4-td8-implementation-report.md` | Debt TD-4, TD-8 |
 | 2026-01-16 | `reports/2026-01-16-td7-implementation-report.md` | Debt TD-7 |
+| 2026-01-20 | `reports/2026-01-20-unified-retrieval-prereq-permissions-workspace-scope-report.md` | Unified Retrieval Prereq 2 |
 | 2026-01-19 | `reports/2026-01-19-interface-weak-match-fix-implementation-report.md` | Interface weak-match |
 | 2026-01-20 | `reports/2026-01-20-classifier-gemini-and-alias-coverage-implementation-report.md` | Classifier Gemini + Alias coverage |
 | 2026-01-20 | `reports/2026-01-20-unified-retrieval-prereq-indexing-implementation-report.md` | Unified Retrieval Prereq 1 |
