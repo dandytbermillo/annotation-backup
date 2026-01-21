@@ -288,7 +288,14 @@ if (hasExplicitNotesIntent && !hasExplicitDocsIntent) {
 
 ## Telemetry Events
 
-New telemetry fields added to routing events:
+Cross-corpus telemetry is logged via `debugLog` with component `'CrossCorpus'`, persisted to PostgreSQL via `/api/debug/log`. This is separate from the `route_decision` telemetry pattern used elsewhere.
+
+**Design decision:** The plan specified fields to capture but not the event structure. Using `debugLog` provides:
+- Immediate persistence to PostgreSQL
+- Structured metadata fields
+- Consistent with other component-level logging
+
+**Fields captured:**
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -300,6 +307,8 @@ New telemetry fields added to routing events:
 | `cross_corpus_explicit_notes` | boolean | Whether notes intent was from explicit phrase |
 | `cross_corpus_docs_status` | string | Docs retrieval status |
 | `cross_corpus_notes_status` | string | Notes retrieval status |
+
+**Future option:** If unified telemetry analysis is needed, these fields can be migrated to `route_decision` events by calling `logRoutingDecision()` alongside `debugLog()`.
 
 ---
 

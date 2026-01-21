@@ -268,6 +268,8 @@ instead of guessing. This keeps the experience “human” and avoids wrong-corp
 - `cross_corpus_choice` ("docs" | "notes")
 - `cross_corpus_score_gap`
 
+**Telemetry implementation note:** These fields are logged via `debugLog` with component `'CrossCorpus'` (persisted to PostgreSQL), not the `route_decision` event pattern. This captures the required data; if unified analysis is needed later, fields can be migrated to `route_decision`.
+
 **Acceptance tests:**
 1) "search my notes for workspace" → notes result, no pills.
 2) "what is workspace" with a note titled "Workspace" → pills (Docs vs Notes).
@@ -324,11 +326,54 @@ instead of guessing. This keeps the experience “human” and avoids wrong-corp
 - Consider adding unit tests for cross-corpus decision logic
 - Verify notes-explicit follow-up ("tell me more" within notes corpus)
 
-### Prerequisite 5: Safety + Fallback — Not Started
+### Prerequisite 5: Safety + Fallback — Draft
 
-**TODO:**
-- Add fallback when items index unavailable
-- Error handling in unified API
+**Goal:**
+Ensure chat responses degrade gracefully when the notes index is unavailable,
+corrupt, or temporarily unreachable. The system should never block or crash; it
+should fall back to docs or a neutral message depending on intent.
+
+**Non-goals:**
+- Do not change retrieval scoring.
+- Do not add new UI components beyond existing message/pill patterns.
+
+**Failure modes to handle:**
+1) Notes index table missing or empty.
+2) Notes retrieval returns error/timeout.
+3) Workspace context unavailable.
+4) Notes corpus explicitly requested but no results.
+
+**Fallback rules:**
+- If notes index unavailable:
+  - For explicit notes intent → respond: "I couldn't access your notes right now. Want to try again or search docs?"
+  - For ambiguous cross‑corpus → show docs only, with a note: "Notes unavailable."
+  - For docs‑only intent → proceed with docs as usual.
+- If notes retrieval errors:
+  - Same handling as index unavailable (do not fail the request).
+- If workspace context missing:
+  - Skip notes retrieval and fall back to docs only.
+- If notes retrieval succeeds but returns no_match:
+  - Follow Prereq 4 behavior (docs fallback or pills if both viable).
+
+**Placement (where fallback is handled):**
+- Implement in handler layer (cross‑corpus handler), not in the API response layer.
+
+**Timeouts:**
+- Notes retrieval timeout: 3000ms (default). On timeout, treat as notes unavailable.
+
+**Telemetry to add:**
+- `notes_index_available` (boolean)
+- `notes_retrieval_error` (boolean)
+- `notes_fallback_reason` ("index_missing" | "workspace_missing" | "fetch_error")
+
+**"Notes unavailable" UX:**
+- Inline text appended to the assistant message (no new UI component).
+
+**Acceptance tests:**
+1) Notes index missing + explicit notes query → graceful error message, no crash.
+2) Notes index missing + ambiguous query → docs only + "notes unavailable" hint.
+3) Notes retrieval error + docs intent → docs response proceeds.
+4) Workspace context missing → docs only (no pills).
 
 ### Future Expansion: Additional Personal Corpora
 
