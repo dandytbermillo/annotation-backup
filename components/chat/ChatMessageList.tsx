@@ -123,7 +123,7 @@ export function ChatMessageList({
             )}
             <div
               className={cn(
-                'flex flex-col gap-1',
+                'flex flex-col gap-1 w-full',
                 message.role === 'user' ? 'items-end' : 'items-start',
                 // Slightly fade history messages
                 index < initialMessageCount && 'opacity-75'
@@ -132,17 +132,21 @@ export function ChatMessageList({
               <div
                 className={cn(
                   // Match ViewPanel TextRenderer styling exactly
-                  'rounded-lg p-4 max-w-[90%] font-mono overflow-hidden',
-                  'whitespace-pre-wrap break-words',
+                  'rounded-lg p-4 max-w-[90%] font-mono',
+                  // User messages: no overflow-hidden to prevent text clipping
+                  // Assistant messages: overflow-hidden for consistent card appearance
                   message.role === 'user'
                     ? 'bg-zinc-900 text-white border border-white/10'
-                    : message.isError
+                    : 'overflow-hidden ' + (message.isError
                       ? 'bg-red-950 text-red-200 border border-red-500/20'
-                      : 'bg-slate-900 text-white/80 border border-white/10' // Solid dark like ViewPanel
+                      : 'bg-slate-900 text-white/80 border border-white/10') // Solid dark like ViewPanel
                 )}
                 style={{
                   fontSize: '13px',
                   lineHeight: '20px',
+                  wordBreak: 'break-word',
+                  overflowWrap: 'break-word',
+                  whiteSpace: 'pre-wrap',
                 }}
               >
                 {/* Render markdown for assistant messages, plain text for user/error */}

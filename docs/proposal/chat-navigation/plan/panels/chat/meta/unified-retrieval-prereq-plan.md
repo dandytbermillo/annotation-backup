@@ -326,7 +326,7 @@ instead of guessing. This keeps the experience “human” and avoids wrong-corp
 - Consider adding unit tests for cross-corpus decision logic
 - Verify notes-explicit follow-up ("tell me more" within notes corpus)
 
-### Prerequisite 5: Safety + Fallback — Draft
+### Prerequisite 5: Safety + Fallback — Implemented
 
 **Goal:**
 Ensure chat responses degrade gracefully when the notes index is unavailable,
@@ -374,6 +374,24 @@ should fall back to docs or a neutral message depending on intent.
 2) Notes index missing + ambiguous query → docs only + "notes unavailable" hint.
 3) Notes retrieval error + docs intent → docs response proceeds.
 4) Workspace context missing → docs only (no pills).
+
+**Implementation (2026-01-20):**
+
+*Files modified:*
+- `lib/chat/cross-corpus-retrieval.ts` — Added `NotesFallbackReason`, `NotesFailureInfo`, `CorpusFetchResult` types; added `fetchNotesWithFallback()` with 3000ms timeout; extended `queryCrossCorpus()` to track failures
+- `lib/chat/cross-corpus-handler.ts` — Updated explicit notes path to show graceful error message; added Prereq 5 telemetry fields to all logging
+
+*Key changes:*
+- `fetchNotesWithFallback()`: Uses AbortController for 3000ms timeout, returns structured `CorpusFetchResult` with failure info
+- Explicit notes intent + failure → shows "I couldn't access your notes right now..." message
+- Ambiguous query + notes failure → falls through to docs with telemetry tracking
+- All telemetry events now include `notes_index_available`, `notes_retrieval_error`, `notes_fallback_reason`
+
+*Verification (2026-01-20):*
+- ✅ Test 1: Notes index missing + explicit notes → "I couldn't access your notes right now..." (graceful message)
+- ✅ Test 2: Notes index missing + ambiguous → Docs result shown directly (no pills, no crash)
+- ⏸️ Test 3: Timeout simulation (not tested - requires network delay injection)
+- ⏸️ Test 4: Workspace missing (not tested - requires context manipulation)
 
 ### Future Expansion: Additional Personal Corpora
 

@@ -575,19 +575,36 @@ export async function retrieveItemChunks(
 export async function retrieveByItemId(
   itemId: string,
   workspaceId: string,
-  options?: { fullContent?: boolean; client?: PoolClient }
+  options?: { fullContent?: boolean; client?: PoolClient; excludeChunkIds?: string[] }
 ): Promise<ItemChunkRetrievalResponse> {
   const startTime = Date.now()
-  const { fullContent = false, client } = options || {}
+  const { fullContent = false, client, excludeChunkIds = [] } = options || {}
 
   const db = client || serverPool
-  const result = await db.query(
-    `SELECT item_id, item_name, item_path, header_path, chunk_index, content, keywords, chunk_hash, workspace_id
+
+  // Build query with optional excludeChunkIds filter
+  let query = `SELECT item_id, item_name, item_path, header_path, chunk_index, content, keywords, chunk_hash, workspace_id
      FROM items_knowledge_chunks
-     WHERE item_id = $1 AND workspace_id = $2
-     ORDER BY chunk_index ASC`,
-    [itemId, workspaceId]
-  )
+     WHERE item_id = $1 AND workspace_id = $2`
+  const params: (string | string[])[] = [itemId, workspaceId]
+
+  // Phase 2: Support excludeChunkIds for follow-up expansion
+  if (excludeChunkIds.length > 0) {
+    // Generate chunk IDs to exclude (format: itemId#chunk-chunkIndex)
+    const excludeIndices = excludeChunkIds
+      .filter(id => id.startsWith(itemId + '#chunk-'))
+      .map(id => parseInt(id.split('#chunk-')[1], 10))
+      .filter(idx => !isNaN(idx))
+
+    if (excludeIndices.length > 0) {
+      query += ` AND chunk_index NOT IN (${excludeIndices.map((_, i) => `$${i + 3}`).join(', ')})`
+      params.push(...excludeIndices.map(String))
+    }
+  }
+
+  query += ` ORDER BY chunk_index ASC`
+
+  const result = await db.query(query, params)
 
   const chunks: ItemChunkRow[] = result.rows
   const totalChunks = chunks.length

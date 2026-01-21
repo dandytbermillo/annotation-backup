@@ -201,6 +201,7 @@ export async function POST(request: NextRequest) {
           const result = await retrieveByItemId(resourceId, workspaceId, {
             fullContent: !!fullContent,
             client,
+            excludeChunkIds, // Phase 2: Support follow-up expansion
           })
           return NextResponse.json(adaptNotesResult(result))
         }

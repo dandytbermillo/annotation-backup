@@ -11,11 +11,15 @@ import {
   normalizeInputForRouting,
   hasDocsCorpusIntent,
   hasNotesCorpusIntent,
+  isPronounFollowUp,
 } from '@/lib/chat/query-patterns'
 import {
   queryCrossCorpus,
   CrossCorpusDecision,
+  CrossCorpusDecisionWithFailure,
   fetchCorpusResults,
+  fetchNotesWithFallback,
+  NotesFallbackReason,
 } from '@/lib/chat/cross-corpus-retrieval'
 import {
   RoutingPatternId,
@@ -91,6 +95,27 @@ export async function handleCrossCorpusRetrieval(
   const hasExplicitDocsIntent = hasDocsCorpusIntent(trimmedInput)
   const hasExplicitNotesIntent = hasNotesCorpusIntent(trimmedInput)
 
+  // Phase 2: Guard for notes follow-up continuity
+  // If user is in notes context and says "tell me more", let handleFollowUp handle it
+  if (
+    docRetrievalState?.lastRetrievalCorpus === 'notes' &&
+    docRetrievalState?.lastItemId &&
+    isPronounFollowUp(trimmedInput)
+  ) {
+    void debugLog({
+      component: 'CrossCorpus',
+      action: 'skip_for_notes_followup',
+      content_preview: `Notes follow-up guard: "${trimmedInput.slice(0, 30)}"`,
+      forceLog: true,
+      metadata: {
+        cross_corpus_intent: intent,
+        last_retrieval_corpus: 'notes',
+        last_item_id: docRetrievalState.lastItemId,
+      },
+    })
+    return { handled: false }
+  }
+
   // Quick exit: Only when explicit docs intent WITHOUT any notes intent
   // This is the "documentation please" case - user clearly wants docs
   if (hasExplicitDocsIntent && !hasExplicitNotesIntent && intent === 'docs') {
@@ -102,7 +127,40 @@ export async function handleCrossCorpusRetrieval(
   if (hasExplicitNotesIntent && !hasExplicitDocsIntent) {
     setIsLoading(true)
     try {
-      const notesResult = await fetchCorpusResults('notes', trimmedInput)
+      // Prereq 5: Use fetch with failure tracking
+      const notesFetchResult = await fetchNotesWithFallback(trimmedInput)
+      const notesResult = notesFetchResult.result
+      const notesFailure = notesFetchResult.failure
+
+      // Prereq 5: Handle notes fetch failure with graceful message
+      if (notesFailure) {
+        const message: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: "I couldn't access your notes right now. Would you like to try again or search the documentation instead?",
+          timestamp: new Date(),
+        }
+        addMessage(message)
+
+        // Emit telemetry for notes failure
+        void debugLog({
+          component: 'CrossCorpus',
+          action: 'notes_explicit_failed',
+          content_preview: `Notes fetch failed: ${notesFailure.reason}`,
+          forceLog: true,
+          metadata: {
+            cross_corpus_intent: 'notes',
+            notes_index_available: false,
+            notes_retrieval_error: true,
+            notes_fallback_reason: notesFailure.reason,
+          },
+        })
+
+        return {
+          handled: true,
+          patternId: RoutingPatternId.CROSS_CORPUS_NOTES_EXPLICIT,
+        }
+      }
 
       if (notesResult && notesResult.status !== 'no_match') {
         // Show notes result directly
@@ -132,6 +190,8 @@ export async function handleCrossCorpusRetrieval(
             cross_corpus_intent: 'notes',
             cross_corpus_notes_status: notesResult.status,
             cross_corpus_ambiguity_shown: false,
+            notes_index_available: true,
+            notes_retrieval_error: false,
           },
         })
 
@@ -162,7 +222,29 @@ export async function handleCrossCorpusRetrieval(
     try {
       const decision = await queryCrossCorpus(trimmedInput, knownTerms, {
         isExplicitDocsIntent: hasExplicitDocsIntent,
-      })
+      }) as CrossCorpusDecisionWithFailure
+
+      // Prereq 5: If notes failed but docs succeeded, fall through with telemetry
+      // The docs retrieval will handle showing results; we add telemetry here
+      if (decision.notesFailure && decision.singleCorpus === 'docs') {
+        void debugLog({
+          component: 'CrossCorpus',
+          action: 'notes_fallback_to_docs',
+          content_preview: `Notes unavailable (${decision.notesFailure.reason}), using docs only`,
+          forceLog: true,
+          metadata: {
+            cross_corpus_intent: intent,
+            notes_index_available: false,
+            notes_retrieval_error: true,
+            notes_fallback_reason: decision.notesFailure.reason,
+            cross_corpus_reason: decision.reason,
+          },
+        })
+
+        // Fall through to docs retrieval - the standard doc handler will show results
+        // No special message needed here since user didn't explicitly ask for notes
+        return { handled: false, decision }
+      }
 
       if (decision.showPills && decision.docsResult && decision.notesResult) {
         // Show cross-corpus pills
@@ -227,6 +309,9 @@ export async function handleCrossCorpusRetrieval(
             cross_corpus_notes_status: decision.notesResult.status,
             cross_corpus_docs_score: decision.docsResult.topScore,
             cross_corpus_notes_score: decision.notesResult.topScore,
+            // Prereq 5: Fallback telemetry
+            notes_index_available: true,
+            notes_retrieval_error: false,
           },
         })
 
@@ -276,6 +361,10 @@ export async function handleCrossCorpusRetrieval(
           cross_corpus_docs_score: decision.docsResult?.topScore,
           cross_corpus_notes_score: decision.notesResult?.topScore,
           cross_corpus_score_gap: decision.scoreGap,
+          // Prereq 5: Fallback telemetry
+          notes_index_available: !decision.notesFailure,
+          notes_retrieval_error: !!decision.notesFailure,
+          notes_fallback_reason: decision.notesFailure?.reason,
         },
       })
 

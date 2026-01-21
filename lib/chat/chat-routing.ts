@@ -201,11 +201,13 @@ export async function handleMetaExplain(ctx: MetaExplainHandlerContext): Promise
     setLastClarification,
   } = ctx
 
-  // Check if we should defer to follow-up handler
-  const shouldDeferToV4FollowUp = docRetrievalState?.lastDocSlug && isPronounFollowUp(trimmedInput)
+  // Check if we should defer to follow-up handler (docs or notes context)
+  const hasActiveContext = docRetrievalState?.lastDocSlug ||
+    (docRetrievalState?.lastRetrievalCorpus === 'notes' && docRetrievalState?.lastItemId)
+  const shouldDeferToFollowUp = hasActiveContext && isPronounFollowUp(trimmedInput)
 
   // Check if this is a meta-explain scenario
-  if ((lastClarification && !clarificationCleared) || !isMetaExplainOutsideClarification(trimmedInput) || shouldDeferToV4FollowUp) {
+  if ((lastClarification && !clarificationCleared) || !isMetaExplainOutsideClarification(trimmedInput) || shouldDeferToFollowUp) {
     return { handled: false }
   }
 
@@ -648,6 +650,109 @@ export async function handleFollowUp(ctx: FollowUpHandlerContext): Promise<Follo
         console.error('[ChatNavigation] Follow-up classifier backup error:', error)
       }
       // Continue without classifier result - fall through to normal routing
+    }
+  }
+
+  // Phase 2: Handle notes follow-up (before docs follow-up check)
+  // If user selected notes and says "tell me more", continue within notes corpus
+  if (
+    docRetrievalState?.lastRetrievalCorpus === 'notes' &&
+    docRetrievalState?.lastItemId &&
+    isFollowUp
+  ) {
+    setIsLoading(true)
+    try {
+      const excludeChunkIds = docRetrievalState.lastChunkIdsShown || []
+
+      // Query notes corpus with excludeChunkIds for expansion
+      const response = await fetch('/api/retrieve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          corpus: 'notes',
+          resourceId: docRetrievalState.lastItemId,
+          excludeChunkIds,
+        }),
+      })
+
+      const result = response.ok ? await response.json() : null
+
+      if (result && result.results?.length > 0) {
+        const topResult = result.results[0]
+        const message: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: `From your notes - **${topResult.title}**:\n\n${topResult.snippet || 'Here\'s more from your notes.'}`,
+          timestamp: new Date(),
+        }
+        addMessage(message)
+
+        // Update state - append new chunk ID
+        const newChunkIds = topResult.chunkId
+          ? [...excludeChunkIds, topResult.chunkId]
+          : excludeChunkIds
+
+        updateDocRetrievalState({
+          lastRetrievalCorpus: 'notes',
+          lastItemId: docRetrievalState.lastItemId,
+          lastResourceId: docRetrievalState.lastItemId,
+          lastChunkIdsShown: newChunkIds,
+          timestamp: Date.now(),
+        })
+
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'notes_followup_expanded',
+          content_preview: `Notes follow-up: ${topResult.title}`,
+          forceLog: true,
+          metadata: {
+            last_item_id: docRetrievalState.lastItemId,
+            chunks_shown: newChunkIds.length,
+          },
+        })
+
+        return {
+          handled: true,
+          classifierCalled,
+          classifierResult,
+          classifierTimeout,
+          classifierLatencyMs,
+          classifierError,
+        }
+      }
+
+      // No more content from notes
+      const message: ChatMessage = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: "That's all I have from this note. Would you like to search for something else?",
+        timestamp: new Date(),
+      }
+      addMessage(message)
+
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'notes_followup_exhausted',
+        content_preview: 'No more notes content',
+        forceLog: true,
+        metadata: {
+          last_item_id: docRetrievalState.lastItemId,
+        },
+      })
+
+      return {
+        handled: true,
+        classifierCalled,
+        classifierResult,
+        classifierTimeout,
+        classifierLatencyMs,
+        classifierError,
+      }
+    } catch (error) {
+      console.error('[ChatNavigation] Notes follow-up error:', error)
+      // Fall through to docs on error
+    } finally {
+      setIsLoading(false)
     }
   }
 

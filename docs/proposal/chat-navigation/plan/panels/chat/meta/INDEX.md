@@ -85,7 +85,7 @@ This index documents the plan timeline for the doc retrieval feature in chat nav
 | 2. Permissions + Visibility | Workspace scoping (Option A) | ✅ Complete (2026-01-20) |
 | 3. Unified API Contract | Single `/api/retrieve` endpoint | ✅ Complete (2026-01-20) |
 | 4. Cross-Corpus Ambiguity UX | Docs vs Notes pills + chat integration | ✅ Verified Complete (2026-01-20) |
-| 5. Safety + Fallback | Graceful degradation | ⏸️ Not Started |
+| 5. Safety + Fallback | Graceful degradation | ✅ Verified (2026-01-20) |
 
 **Key Deliverables:**
 - `migrations/064_create_items_knowledge_chunks.up.sql` — Items chunks table
@@ -120,6 +120,7 @@ This index documents the plan timeline for the doc retrieval feature in chat nav
 | 2026-01-20 | `reports/2026-01-20-classifier-gemini-and-alias-coverage-implementation-report.md` | Classifier Gemini + Alias coverage |
 | 2026-01-20 | `reports/2026-01-20-unified-retrieval-prereq-indexing-implementation-report.md` | Unified Retrieval Prereq 1 |
 | 2026-01-20 | `reports/2026-01-20-prereq4-cross-corpus-ambiguity-implementation-report.md` | Unified Retrieval Prereq 4 |
+| 2026-01-20 | `reports/2026-01-20-prereq5-safety-fallback-implementation-report.md` | Unified Retrieval Prereq 5 |
 
 ---
 
@@ -130,8 +131,15 @@ This index documents the plan timeline for the doc retrieval feature in chat nav
 | Phase 3 Embeddings | Fuzzy queries fail frequently, keyword retrieval success drops |
 | Phase 4 Context Builder | Need consistent context assembly |
 | Semantic classifier | If correction rate improves in staging without latency spikes |
-| Unified retrieval | After remaining prereqs (API, UX, fallback) are ready |
 | TD-6 LLM intent | If patterns remain too brittle after other fixes |
+
+## Completed Milestones
+
+| Item | Completion Date | Notes |
+|------|-----------------|-------|
+| Unified Retrieval Prerequisites | 2026-01-20 | All 5 prereqs verified: indexing, permissions, API, cross-corpus UX, safety fallback |
+| Doc Retrieval Routing v5 | 2026-01-13 | HS1/HS2 selection, disambiguation, follow-up expansion |
+| Technical Debt Paydown | 2026-01-16 | TD-1 through TD-9 (except TD-6 deferred) |
 
 ---
 
