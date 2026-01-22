@@ -322,6 +322,24 @@ async function resolveOpenRecentWorkspace(
     }
   }
 
+  // Fallback: If no recent workspace, check if "Recent" panel is visible
+  // This handles "open my recent" being classified as workspace intent when user meant panel
+  if (context.visibleWidgets && context.visibleWidgets.length > 0) {
+    const recentPanel = context.visibleWidgets.find(
+      (w) => w.title.toLowerCase() === 'recent' || w.type === 'recent'
+    )
+    if (recentPanel) {
+      return {
+        success: true,
+        action: 'open_panel_drawer',
+        panelId: recentPanel.id,
+        panelTitle: recentPanel.title || 'Recent',
+        semanticPanelId: 'recent',
+        message: `Opening ${recentPanel.title || 'Recent'}...`,
+      }
+    }
+  }
+
   return {
     success: false,
     action: 'error',
@@ -2485,9 +2503,23 @@ async function resolvePanelIntent(
     // Step 3: Multiple matches → return 'multiple' for disambiguation
     // Step 4: Fuzzy match only if it yields exactly one result
 
+    // Helper: Normalize by sorting tokens for word-order-invariant matching (Step 0b only)
+    // Strips minimal stopwords (my/your/the/a/an) to handle "open my recent" → "recent"
+    // "widget demo" → "demo widget", "my recent" → "recent", "Demo Widget" → "demo widget"
+    const PANEL_STOPWORDS = new Set(['my', 'your', 'the', 'a', 'an'])
+    const normalizeWithSortedTokens = (s: string) =>
+      s.toLowerCase()
+       .replace(/[^a-z0-9\s]/g, '')
+       .split(/\s+/)
+       .filter(t => t && !PANEL_STOPWORDS.has(t))
+       .sort()
+       .join(' ')
+
     // Step 0: Check visibleWidgets for exact title match (no DB query needed)
     if (context.visibleWidgets && context.visibleWidgets.length > 0) {
       const normalizedPanelId = panelId.toLowerCase().replace(/-/g, ' ')
+
+      // Step 0a: Exact match (original logic)
       const exactMatch = context.visibleWidgets.find(
         (w) => w.title.toLowerCase() === normalizedPanelId ||
                w.title.toLowerCase().replace(/[^a-z0-9]/g, '') === panelId.toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -2500,6 +2532,22 @@ async function resolvePanelIntent(
           semanticPanelId: panelId,
         }
       }
+
+      // Step 0b: Word-order-invariant match (handles "widget demo" → "Demo Widget")
+      // Only auto-open if exactly ONE widget matches; otherwise fall through to disambiguation
+      const sortedPanelId = normalizeWithSortedTokens(panelId)
+      const tokenMatches = context.visibleWidgets.filter(
+        (w) => normalizeWithSortedTokens(w.title) === sortedPanelId
+      )
+      if (tokenMatches.length === 1) {
+        return {
+          status: 'found' as const,
+          panelId: tokenMatches[0].id,
+          panelTitle: tokenMatches[0].title,
+          semanticPanelId: panelId,
+        }
+      }
+      // If multiple token-matches, fall through to DB-based disambiguation
     }
 
     // Step 1: Exact panel_type match
@@ -2713,6 +2761,22 @@ async function resolvePanelIntent(
   })
 
   if (!result.success) {
+    // Fallback: If panel intent fails for Recent panel, open drawer instead of showing error
+    // This handles "open my recent" being routed to panel_intent with unsupported action
+    if (panelId === 'recent') {
+      const drawerFallback = await resolveDrawerPanelTarget()
+      if (drawerFallback.status === 'found') {
+        return {
+          success: true,
+          action: 'open_panel_drawer',
+          panelId: drawerFallback.panelId,
+          panelTitle: drawerFallback.panelTitle,
+          semanticPanelId: drawerFallback.semanticPanelId,
+          message: `Opening ${drawerFallback.panelTitle}...`,
+        }
+      }
+    }
+
     return {
       success: false,
       action: 'error',

@@ -12,6 +12,9 @@ import {
   hasDocsCorpusIntent,
   hasNotesCorpusIntent,
   isPronounFollowUp,
+  findAllFuzzyMatches,
+  isCommandLike,
+  type FuzzyMatchResult,
 } from '@/lib/chat/query-patterns'
 import {
   queryCrossCorpus,
@@ -88,12 +91,70 @@ export async function handleCrossCorpusRetrieval(
     setPendingOptionsMessageId,
   } = ctx
 
+  // ==========================================================================
+  // Action Command Guard (routing-order fix)
+  // Skip cross-corpus for action commands like "open recents", "show quick links".
+  // These should go to action routing, not corpus retrieval.
+  // Must be BEFORE fuzzy normalization and intent detection.
+  // ==========================================================================
+  if (isCommandLike(trimmedInput)) {
+    return { handled: false }
+  }
+
   const knownTerms = getKnownTermsSync()
-  const intent = detectCorpusIntent(trimmedInput, knownTerms)
+  let intent = detectCorpusIntent(trimmedInput, knownTerms)
+
+  // ==========================================================================
+  // Cross-Corpus Fuzzy Normalization (Polish)
+  // When no exact term match, check for typos and correct before retrieval.
+  // Feature flag: NEXT_PUBLIC_CROSS_CORPUS_FUZZY (default: false)
+  // ==========================================================================
+  let queryForRetrieval = trimmedInput
+  let fuzzyApplied = false
+  let fuzzyMatch: FuzzyMatchResult | null = null
+
+  const fuzzyEnabled = process.env.NEXT_PUBLIC_CROSS_CORPUS_FUZZY === 'true'
+
+  if (fuzzyEnabled && intent === 'none' && knownTerms && knownTerms.size > 0) {
+    // No exact match - try fuzzy matching
+    const { tokens } = normalizeInputForRouting(trimmedInput)
+    const fuzzyMatches = findAllFuzzyMatches(tokens, knownTerms)
+
+    if (fuzzyMatches.length > 0) {
+      // Use the first (best) fuzzy match
+      fuzzyMatch = fuzzyMatches[0]
+      fuzzyApplied = true
+
+      // Replace the typo token with the corrected term in the query
+      // Use case-insensitive replacement to preserve original casing structure
+      const typoPattern = new RegExp(`\\b${fuzzyMatch.inputToken}\\b`, 'gi')
+      queryForRetrieval = trimmedInput.replace(typoPattern, fuzzyMatch.matchedTerm)
+
+      // Re-detect intent with corrected query
+      intent = detectCorpusIntent(queryForRetrieval, knownTerms)
+
+      void debugLog({
+        component: 'CrossCorpus',
+        action: 'fuzzy_normalization_applied',
+        content_preview: `Corrected "${fuzzyMatch.inputToken}" → "${fuzzyMatch.matchedTerm}"`,
+        forceLog: true,
+        metadata: {
+          cross_corpus_fuzzy_applied: true,
+          cross_corpus_fuzzy_token: fuzzyMatch.inputToken,
+          cross_corpus_fuzzy_term: fuzzyMatch.matchedTerm,
+          cross_corpus_fuzzy_distance: fuzzyMatch.distance,
+          original_query: trimmedInput,
+          corrected_query: queryForRetrieval,
+          original_intent: 'none',
+          corrected_intent: intent,
+        },
+      })
+    }
+  }
 
   // Check if docs intent is EXPLICIT (via phrases) vs just from known terms
-  const hasExplicitDocsIntent = hasDocsCorpusIntent(trimmedInput)
-  const hasExplicitNotesIntent = hasNotesCorpusIntent(trimmedInput)
+  const hasExplicitDocsIntent = hasDocsCorpusIntent(queryForRetrieval)
+  const hasExplicitNotesIntent = hasNotesCorpusIntent(queryForRetrieval)
 
   // Phase 2: Guard for notes follow-up continuity
   // If user is in notes context and says "tell me more", let handleFollowUp handle it
@@ -196,6 +257,8 @@ export async function handleCrossCorpusRetrieval(
             cross_corpus_ambiguity_shown: false,
             notes_index_available: true,
             notes_retrieval_error: false,
+            // Fuzzy not applied for explicit notes intent
+            cross_corpus_fuzzy_applied: false,
           },
         })
 
@@ -224,7 +287,7 @@ export async function handleCrossCorpusRetrieval(
   if (shouldQueryBoth) {
     setIsLoading(true)
     try {
-      const decision = await queryCrossCorpus(trimmedInput, knownTerms, {
+      const decision = await queryCrossCorpus(queryForRetrieval, knownTerms, {
         isExplicitDocsIntent: hasExplicitDocsIntent,
       }) as CrossCorpusDecisionWithFailure
 
@@ -242,6 +305,13 @@ export async function handleCrossCorpusRetrieval(
             notes_retrieval_error: true,
             notes_fallback_reason: decision.notesFailure.reason,
             cross_corpus_reason: decision.reason,
+            // Fuzzy normalization telemetry
+            cross_corpus_fuzzy_applied: fuzzyApplied,
+            ...(fuzzyMatch && {
+              cross_corpus_fuzzy_token: fuzzyMatch.inputToken,
+              cross_corpus_fuzzy_term: fuzzyMatch.matchedTerm,
+              cross_corpus_fuzzy_distance: fuzzyMatch.distance,
+            }),
           },
         })
 
@@ -316,6 +386,13 @@ export async function handleCrossCorpusRetrieval(
             // Prereq 5: Fallback telemetry
             notes_index_available: true,
             notes_retrieval_error: false,
+            // Fuzzy normalization telemetry
+            cross_corpus_fuzzy_applied: fuzzyApplied,
+            ...(fuzzyMatch && {
+              cross_corpus_fuzzy_token: fuzzyMatch.inputToken,
+              cross_corpus_fuzzy_term: fuzzyMatch.matchedTerm,
+              cross_corpus_fuzzy_distance: fuzzyMatch.distance,
+            }),
           },
         })
 
