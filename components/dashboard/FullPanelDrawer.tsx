@@ -112,8 +112,8 @@ export function FullPanelDrawer({
       case 'links_note':
       case 'links_note_tiptap':
         return panel.badge ? (
-          <>Quick Links <span className="text-indigo-400">{panel.badge}</span></>
-        ) : 'Quick Links'
+          <>Link Notes <span className="text-indigo-400">{panel.badge}</span></>
+        ) : 'Link Notes'
       case 'continue':
         return 'Continue'
       case 'quick_capture':

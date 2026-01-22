@@ -394,7 +394,12 @@ export function routeDocInput(
       if (hasFuzzy) {
         isAppRelevant = true
       } else {
-        // Not app-relevant (no known terms, no fuzzy) - skip retrieval, go to LLM
+        // Check for command-like before returning 'llm' (handles "open categories" etc.)
+        // This ensures action commands with unknown nouns still route to intent resolver
+        if (isCommandLike(normalized)) {
+          return 'action'
+        }
+        // Not app-relevant (no known terms, no fuzzy, not command) - skip retrieval, go to LLM
         return 'llm'
       }
     }
@@ -1336,6 +1341,24 @@ export async function handleDocRetrieval(ctx: DocRetrievalHandlerContext): Promi
 
   // LLM route: not app-relevant
   if (docRoute === 'llm' && (!lastClarification || clarificationCleared)) {
+    // Fallback: If command-like input matches a visible widget, let it fall through to intent resolver
+    // This handles "open categories" where doc routing doesn't recognize the panel name
+    const widgets = uiContext?.dashboard?.visibleWidgets
+    if (isCommandLike(normalizedQuery) && widgets && widgets.length > 0) {
+      // Extract potential panel name from command (e.g., "open categories" → "categories")
+      const openMatch = trimmedInput.match(/^(?:open|show|display)\s+(?:the\s+|my\s+|a\s+)?(.+?)(?:\s+panel)?$/i)
+      if (openMatch) {
+        const panelName = openMatch[1].toLowerCase().replace(/[^a-z0-9]/g, '')
+        const matchesWidget = widgets.some(w =>
+          w.title.toLowerCase().replace(/[^a-z0-9]/g, '') === panelName
+        )
+        if (matchesWidget) {
+          // Let it fall through to intent resolver to handle panel opening
+          return { handled: false, route: docRoute }
+        }
+      }
+    }
+
     telemetryEvent.route_final = 'llm'
     telemetryEvent.matched_pattern_id = RoutingPatternId.ROUTE_LLM_FALLBACK
     telemetryEvent.routing_latency_ms = Date.now() - routingStartTime

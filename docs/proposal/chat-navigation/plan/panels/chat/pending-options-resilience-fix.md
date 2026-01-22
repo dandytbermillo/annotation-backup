@@ -17,7 +17,7 @@ After options are shown, a non‑matching input (e.g., “ffrs”) can trigger t
 - Only clear `pendingOptions` when:
   - user selects an option
   - a new explicit command is detected (create/rename/delete/open workspace, etc.)
-  - grace window expires
+  - grace window expires (see below)
 - Do **not** clear just because a fallback response is triggered.
 
 ### 2) Ordinal matching should use `lastOptions`
@@ -29,6 +29,14 @@ After options are shown, a non‑matching input (e.g., “ffrs”) can trigger t
 - If input doesn’t match any option and grace window is active:
   - show “Please choose one” + re‑render the last options
   - skip typo fallback list
+
+## Grace Window (Required)
+Define a concrete grace window for `lastOptions` (e.g., 30 seconds or N turns).  
+The window should be stored alongside `lastOptions` (timestamp or turn index) and
+checked before:
+1) ordinal matching from `lastOptions`
+2) re‑showing options on no‑match
+
 
 ## Expected Behavior
 
@@ -58,8 +66,10 @@ User: first one → selects correctly
    - Type “go home” → options cleared
 
 ## Files to Touch (expected)
-- `components/chat/chat-navigation-panel.tsx`
+- `lib/chat/chat-routing.ts`
   - pendingOptions clearing logic
   - ordinal selection logic
   - no‑match fallback handling
-
+- `components/chat/chat-navigation-panel.tsx`
+  - state ownership / wiring for `pendingOptions` and `lastOptions`
+  - message rendering for re‑showing options

@@ -115,7 +115,7 @@ export function QuickLinksWidget({
 
   // Widget Chat State: Report internal state for LLM context
   useEffect(() => {
-    const widgetTitle = badge ? `Quick Links ${badge}` : 'Quick Links'
+    const widgetTitle = panel.title || (badge ? `Link Notes ${badge}` : 'Link Notes')
     upsertWidgetState({
       _version: 1,
       widgetId: 'quick-links',
@@ -143,7 +143,7 @@ export function QuickLinksWidget({
       onMouseDown={onMouseDown}
     >
       <WidgetLabel>
-        QUICK LINKS{badge && <span className="text-indigo-400 ml-1">{badge}</span>}
+        {(panel.title || 'QUICK LINKS').toUpperCase()}
       </WidgetLabel>
 
       {links.length === 0 ? (

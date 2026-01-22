@@ -30,6 +30,84 @@ import { executePanelIntent, panelRegistry } from '@/lib/panels/panel-registry'
 import { debugLog } from '@/lib/utils/debug-logger'
 
 // =============================================================================
+// Centralized Panel Matching Helper
+// =============================================================================
+
+/**
+ * Stopwords to strip from panel name matching.
+ * Used for "open my categories" → "categories" matching.
+ */
+const PANEL_STOPWORDS = new Set(['my', 'your', 'the', 'a', 'an'])
+
+/**
+ * Normalize a string for panel matching:
+ * - Lowercase
+ * - Remove non-alphanumeric (except spaces)
+ * - Strip stopwords
+ * - Sort tokens alphabetically
+ *
+ * Examples:
+ * - "my categories" → "categories"
+ * - "widget demo" → "demo widget"
+ * - "the Recent panel" → "panel recent"
+ */
+function normalizePanelName(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')
+    .split(/\s+/)
+    .filter(t => t && !PANEL_STOPWORDS.has(t))
+    .sort()
+    .join(' ')
+}
+
+/**
+ * Match input against visible widgets using unified normalization.
+ * Returns the matched widget if exactly one match, null otherwise.
+ *
+ * @param input - User input (e.g., "my categories", "widget demo")
+ * @param visibleWidgets - Array of visible widgets with id, title, type
+ * @returns Matched widget or null
+ */
+function matchVisiblePanel(
+  input: string,
+  visibleWidgets?: Array<{ id: string; title: string; type: string }>
+): { id: string; title: string; type: string } | null {
+  if (!visibleWidgets || visibleWidgets.length === 0) return null
+
+  const normalizedInput = normalizePanelName(input)
+  if (!normalizedInput) return null
+
+  const matches = visibleWidgets.filter(
+    w => normalizePanelName(w.title) === normalizedInput
+  )
+
+  // Only return if exactly one match (avoid ambiguity)
+  return matches.length === 1 ? matches[0] : null
+}
+
+/**
+ * Match input against visible widgets, returning all matches for disambiguation.
+ *
+ * @param input - User input
+ * @param visibleWidgets - Array of visible widgets
+ * @returns Array of matched widgets (may be empty or multiple)
+ */
+function matchVisiblePanels(
+  input: string,
+  visibleWidgets?: Array<{ id: string; title: string; type: string }>
+): Array<{ id: string; title: string; type: string }> {
+  if (!visibleWidgets || visibleWidgets.length === 0) return []
+
+  const normalizedInput = normalizePanelName(input)
+  if (!normalizedInput) return []
+
+  return visibleWidgets.filter(
+    w => normalizePanelName(w.title) === normalizedInput
+  )
+}
+
+// =============================================================================
 // Resolution Result
 // =============================================================================
 
@@ -300,6 +378,20 @@ async function resolveOpenWorkspace(
 
     case 'not_found':
     default:
+      // Fallback: Check if workspaceName matches a visible panel
+      // Handles "open my categories" being parsed as workspace intent when user meant panel
+      const panelMatch = matchVisiblePanel(workspaceName, context.visibleWidgets)
+      if (panelMatch) {
+        return {
+          success: true,
+          action: 'open_panel_drawer',
+          panelId: panelMatch.id,
+          panelTitle: panelMatch.title,
+          semanticPanelId: workspaceName.toLowerCase(),
+          message: `Opening ${panelMatch.title}...`,
+        }
+      }
+
       return {
         success: false,
         action: 'error',
@@ -324,19 +416,15 @@ async function resolveOpenRecentWorkspace(
 
   // Fallback: If no recent workspace, check if "Recent" panel is visible
   // This handles "open my recent" being classified as workspace intent when user meant panel
-  if (context.visibleWidgets && context.visibleWidgets.length > 0) {
-    const recentPanel = context.visibleWidgets.find(
-      (w) => w.title.toLowerCase() === 'recent' || w.type === 'recent'
-    )
-    if (recentPanel) {
-      return {
-        success: true,
-        action: 'open_panel_drawer',
-        panelId: recentPanel.id,
-        panelTitle: recentPanel.title || 'Recent',
-        semanticPanelId: 'recent',
-        message: `Opening ${recentPanel.title || 'Recent'}...`,
-      }
+  const recentPanel = matchVisiblePanel('recent', context.visibleWidgets)
+  if (recentPanel) {
+    return {
+      success: true,
+      action: 'open_panel_drawer',
+      panelId: recentPanel.id,
+      panelTitle: recentPanel.title,
+      semanticPanelId: 'recent',
+      message: `Opening ${recentPanel.title}...`,
     }
   }
 
@@ -1059,9 +1147,9 @@ function resolveVerifyAction(
   const toFriendlyPanelName = (input: string): string => {
     const lower = input.trim().toLowerCase()
     if (lower === 'recent' || lower === 'recents') return 'Recent'
-    if (lower.startsWith('quick link') || lower.startsWith('links')) {
-      const badge = lower.match(/quick\s*links?\s*([a-z])?$/i)?.[1] || lower.match(/links?\s+([a-z])$/i)?.[1]
-      return badge ? `Quick Links ${badge.toUpperCase()}` : 'Quick Links'
+    if (lower.startsWith('quick link') || lower.startsWith('link note') || lower.startsWith('links')) {
+      const badge = lower.match(/(?:quick\s*links?|link\s*notes?)\s*([a-z])?$/i)?.[1] || lower.match(/links?\s+([a-z])$/i)?.[1]
+      return badge ? `Link Notes ${badge.toUpperCase()}` : 'Link Notes'
     }
     return input.trim()
   }
@@ -1432,9 +1520,9 @@ function resolveVerifyRequest(
   const toFriendlyName = (input: string): string => {
     const lower = input.trim().toLowerCase()
     if (lower === 'recent' || lower === 'recents') return 'Recent'
-    if (lower.startsWith('quick link') || lower.startsWith('links')) {
-      const badge = lower.match(/quick\s*links?\s*([a-z])?$/i)?.[1] || lower.match(/links?\s+([a-z])$/i)?.[1]
-      return badge ? `Quick Links ${badge.toUpperCase()}` : 'Quick Links'
+    if (lower.startsWith('quick link') || lower.startsWith('link note') || lower.startsWith('links')) {
+      const badge = lower.match(/(?:quick\s*links?|link\s*notes?)\s*([a-z])?$/i)?.[1] || lower.match(/links?\s+([a-z])$/i)?.[1]
+      return badge ? `Link Notes ${badge.toUpperCase()}` : 'Link Notes'
     }
     return input.trim()
   }
@@ -1642,7 +1730,7 @@ async function resolveShowQuickLinks(
     return {
       success: false,
       action: 'error',
-      message: 'Please open an entry first to view Quick Links.',
+      message: 'Please open an entry first to view Link Notes.',
     }
   }
 
@@ -1702,13 +1790,13 @@ async function resolveShowQuickLinks(
       return {
         success: false,
         action: 'error',
-        message: `No Quick Links panel with badge "${quickLinksPanelBadge.toUpperCase()}" found.`,
+        message: `No Link Notes panel with badge "${quickLinksPanelBadge.toUpperCase()}" found.`,
       }
     }
     return {
       success: false,
       action: 'error',
-      message: 'No Quick Links panels found in this entry.',
+      message: 'No Link Notes panels found in this entry.',
     }
   }
 
@@ -1742,17 +1830,17 @@ async function resolveShowQuickLinks(
       options: panels.map((p) => ({
         type: 'quick_links_panel' as const,
         id: p.id,
-        label: `Quick Links ${p.badge || ''}`.trim(),
-        sublabel: p.title || undefined,
+        label: p.title || `Link Notes ${p.badge || ''}`.trim(),
+        sublabel: undefined,
         data: { panelId: p.id, badge: p.badge || '', panelType: 'quick_links' as const },
       })),
-      message: `Found ${panels.length} Quick Links panels. Which one would you like to see?`,
+      message: `Found ${panels.length} Link Notes panels. Which one would you like to see?`,
     }
   }
 
   // Single panel found (or specific badge requested)
   const panel = panelsResult.rows[0]
-  const panelTitle = panel.badge ? `Quick Links ${panel.badge}` : 'Quick Links'
+  const panelTitle = panel.title || 'Link Notes'
   const badge = (panel.badge || 'a').toLowerCase()
 
   // If forcePreviewMode is set (user said "list", "preview", etc.),
@@ -2194,8 +2282,41 @@ async function resolveBareName(
   const hasWorkspaces = workspaceResult.status !== 'not_found'
   const hasEntries = entryResult.status !== 'not_found'
 
-  // Case 1: No matches at all
+  // Case 1: No matches at all - try visibleWidgets fallback before error
   if (!hasWorkspaces && !hasEntries) {
+    // Fallback: Check if name matches a visible panel (handles "open continue", "open categories", etc.)
+    const panelMatches = matchVisiblePanels(name, context.visibleWidgets)
+
+    if (panelMatches.length === 1) {
+      // Single match - open directly
+      return {
+        success: true,
+        action: 'open_panel_drawer',
+        panelId: panelMatches[0].id,
+        panelTitle: panelMatches[0].title,
+        semanticPanelId: name.toLowerCase(),
+        message: `Opening ${panelMatches[0].title}...`,
+      }
+    } else if (panelMatches.length > 1) {
+      // Multiple matches - disambiguation
+      // Convert input name to user-friendly display
+      const displayName = name.toLowerCase().includes('link') && name.toLowerCase().includes('note')
+        ? 'Link Notes'
+        : name
+      return {
+        success: true,
+        action: 'select',
+        options: panelMatches.map((w) => ({
+          type: 'panel_drawer' as const,
+          id: w.id,
+          label: w.title,
+          sublabel: w.type,
+          data: { panelId: w.id, panelTitle: w.title, semanticPanelId: name.toLowerCase() },
+        })),
+        message: `Multiple ${displayName} panels found. Which one would you like to open?`,
+      }
+    }
+
     return {
       success: false,
       action: 'error',
@@ -2371,6 +2492,16 @@ async function resolvePanelIntent(
     resolvedIntentName = 'show_links'
   }
 
+  // Coerce open-related intents to show_links for Link Notes panels
+  // This handles LLM returning "open", "open_panel", etc. instead of "show_links"
+  if (
+    panelId.startsWith('quick-links-') &&
+    resolvedIntentName !== 'show_links' &&
+    ['open', 'open_panel', 'view', 'show'].some(v => resolvedIntentName.toLowerCase().includes(v))
+  ) {
+    resolvedIntentName = 'show_links'
+  }
+
   const requestedMode = typeof resolvedParams?.mode === 'string' ? resolvedParams.mode : undefined
 
   // Check if this is a "show/open" intent that should open a drawer
@@ -2450,7 +2581,7 @@ async function resolvePanelIntent(
 
         if (allQuickLinksResult.rows.length === 1) {
           const row = allQuickLinksResult.rows[0]
-          const panelTitle = row.badge ? `Quick Links ${row.badge.toUpperCase()}` : (row.title || 'Quick Links')
+          const panelTitle = row.title || 'Link Notes'
           return {
             status: 'found' as const,
             panelId: row.id,
@@ -2459,12 +2590,12 @@ async function resolvePanelIntent(
           }
         }
 
-        // Multiple Quick Links → disambiguation
+        // Multiple Link Notes → disambiguation
         return {
           status: 'multiple' as const,
           panels: allQuickLinksResult.rows.map((r: { id: string; title: string; badge: string; panel_type: string }) => ({
             id: r.id,
-            title: r.badge ? `Quick Links ${r.badge.toUpperCase()}` : (r.title || 'Quick Links'),
+            title: r.title || 'Link Notes',
             panel_type: r.panel_type,
           })),
         }
@@ -2486,7 +2617,7 @@ async function resolvePanelIntent(
       if (quickLinksResult.rows.length === 0) return { status: 'not_found' }
 
       const row = quickLinksResult.rows[0]
-      const panelTitle = row.badge ? `Quick Links ${row.badge.toUpperCase()}` : (row.title || 'Quick Links')
+      const panelTitle = row.title || 'Link Notes'
 
       return {
         status: 'found' as const,
@@ -2503,19 +2634,7 @@ async function resolvePanelIntent(
     // Step 3: Multiple matches → return 'multiple' for disambiguation
     // Step 4: Fuzzy match only if it yields exactly one result
 
-    // Helper: Normalize by sorting tokens for word-order-invariant matching (Step 0b only)
-    // Strips minimal stopwords (my/your/the/a/an) to handle "open my recent" → "recent"
-    // "widget demo" → "demo widget", "my recent" → "recent", "Demo Widget" → "demo widget"
-    const PANEL_STOPWORDS = new Set(['my', 'your', 'the', 'a', 'an'])
-    const normalizeWithSortedTokens = (s: string) =>
-      s.toLowerCase()
-       .replace(/[^a-z0-9\s]/g, '')
-       .split(/\s+/)
-       .filter(t => t && !PANEL_STOPWORDS.has(t))
-       .sort()
-       .join(' ')
-
-    // Step 0: Check visibleWidgets for exact title match (no DB query needed)
+    // Step 0: Check visibleWidgets using centralized panel matching
     if (context.visibleWidgets && context.visibleWidgets.length > 0) {
       const normalizedPanelId = panelId.toLowerCase().replace(/-/g, ' ')
 
@@ -2533,31 +2652,25 @@ async function resolvePanelIntent(
         }
       }
 
-      // Step 0b: Word-order-invariant match (handles "widget demo" → "Demo Widget")
-      // Only auto-open if exactly ONE widget matches; otherwise fall through to disambiguation
-      const sortedPanelId = normalizeWithSortedTokens(panelId)
-      const tokenMatches = context.visibleWidgets.filter(
-        (w) => normalizeWithSortedTokens(w.title) === sortedPanelId
-      )
-      if (tokenMatches.length === 1) {
+      // Step 0b: Word-order-invariant match using centralized helper
+      // Handles "widget demo" → "Demo Widget", "my categories" → "Categories"
+      const panelMatch = matchVisiblePanel(panelId, context.visibleWidgets)
+      if (panelMatch) {
         return {
           status: 'found' as const,
-          panelId: tokenMatches[0].id,
-          panelTitle: tokenMatches[0].title,
+          panelId: panelMatch.id,
+          panelTitle: panelMatch.title,
           semanticPanelId: panelId,
         }
       }
-      // If multiple token-matches, fall through to DB-based disambiguation
+      // If multiple matches or no match, fall through to DB-based disambiguation
     }
 
     // Step 1: Exact panel_type match
     const normalizedPanelType = panelId.replace(/-/g, '_').toLowerCase()
 
-    // Helper: Format panel title with badge if available (for Quick Links disambiguation)
+    // Helper: Format panel title - use database title, fallback to panelId
     const formatPanelTitle = (row: { title: string; badge?: string; panel_type: string }) => {
-      if (row.badge && (row.panel_type === 'links_note' || row.panel_type === 'links_note_tiptap')) {
-        return `Quick Links ${row.badge.toUpperCase()}`
-      }
       return row.title || panelId
     }
 
@@ -2699,6 +2812,8 @@ async function resolvePanelIntent(
 
     if (drawerResult.status === 'multiple') {
       // Multiple panels match - show disambiguation pills
+      // Convert internal panelId to user-friendly name
+      const friendlyName = panelId.startsWith('quick-links') ? 'Link Notes' : panelId
       return {
         success: true,
         action: 'select',
@@ -2709,7 +2824,7 @@ async function resolvePanelIntent(
           sublabel: p.panel_type,
           data: { panelId: p.id, panelTitle: p.title, panelType: p.panel_type },
         })),
-        message: `Multiple panels match "${panelId}". Which one would you like to open?`,
+        message: `Multiple ${friendlyName} panels found. Which one would you like to open?`,
       }
     }
 
@@ -2761,9 +2876,9 @@ async function resolvePanelIntent(
   })
 
   if (!result.success) {
-    // Fallback: If panel intent fails for Recent panel, open drawer instead of showing error
-    // This handles "open my recent" being routed to panel_intent with unsupported action
-    if (panelId === 'recent') {
+    // Fallback: If panel intent fails for Recent or Link Notes panels, open drawer instead of showing error
+    // This handles "open my recent" or "open link notes d" being routed to panel_intent with unsupported action
+    if (panelId === 'recent' || panelId.startsWith('quick-links-')) {
       const drawerFallback = await resolveDrawerPanelTarget()
       if (drawerFallback.status === 'found') {
         return {
@@ -2773,6 +2888,21 @@ async function resolvePanelIntent(
           panelTitle: drawerFallback.panelTitle,
           semanticPanelId: drawerFallback.semanticPanelId,
           message: `Opening ${drawerFallback.panelTitle}...`,
+        }
+      }
+      // If drawer resolution failed for quick-links, try multiple panels disambiguation
+      if (drawerFallback.status === 'multiple' && panelId.startsWith('quick-links-')) {
+        return {
+          success: true,
+          action: 'select',
+          options: drawerFallback.panels.map((p: { id: string; title: string; panel_type: string }) => ({
+            type: 'panel_drawer' as const,
+            id: p.id,
+            label: p.title,
+            sublabel: p.panel_type,
+            data: { panelId: p.id, panelTitle: p.title, panelType: p.panel_type },
+          })),
+          message: `Multiple Link Notes panels found. Which one would you like to open?`,
         }
       }
     }

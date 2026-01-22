@@ -20,7 +20,7 @@ import {
 
 // Import built-in manifests
 import { recentPanelManifest } from './manifests/recent-panel'
-import { quickLinksPanelManifests, createQuickLinksManifest } from './manifests/quick-links-panel'
+import { linkNotesPanelManifests, createLinkNotesManifest } from './manifests/link-notes-panel'
 import { navigatorPanelManifest } from './manifests/navigator-panel'
 import { quickCapturePanelManifest } from './manifests/quick-capture-panel'
 import { linksOverviewPanelManifest } from './manifests/links-overview-panel'
@@ -45,7 +45,7 @@ class PanelIntentRegistry {
     const match = panelId.match(/^quick-links-([a-z])$/i)
     if (!match) return
     const badge = match[1]
-    this.register(createQuickLinksManifest(badge))
+    this.register(createLinkNotesManifest(badge))
   }
 
   constructor() {
@@ -60,8 +60,8 @@ class PanelIntentRegistry {
     // Recent panel
     this.register(recentPanelManifest)
 
-    // Quick Links panels (A, B, C, D)
-    for (const manifest of quickLinksPanelManifests) {
+    // Link Notes panels (A, B, C, D, E)
+    for (const manifest of linkNotesPanelManifests) {
       this.register(manifest)
     }
 
@@ -269,7 +269,7 @@ Available panel intents:
     // Add priority rules
     prompt += `
 ### Priority Rules
-1. If user explicitly mentions a panel name (e.g., "Quick Links A", "Recent"), use that panel.
+1. If user explicitly mentions a panel name (e.g., "Link Notes A", "Recent"), use that panel.
 2. If ambiguous between panels, prefer the panel marked [FOCUSED]: ${effectiveFocusedPanel || 'none'}.
 3. If still ambiguous, ask for clarification.
 `

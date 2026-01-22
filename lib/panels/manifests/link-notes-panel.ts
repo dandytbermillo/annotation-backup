@@ -1,31 +1,41 @@
 /**
- * Quick Links Panel Manifests
+ * Link Notes Panel Manifests
  *
- * Chat capabilities for Quick Links panels (A, B, C, D, etc.).
+ * Chat capabilities for Link Notes panels (A, B, C, D, E, etc.).
  * Each badge is a separate panel instance.
- * Migrated to use createPanelManifest/createIntent helpers.
+ *
+ * Note: Internal panelId remains 'quick-links-X' for API route compatibility.
+ * User-facing name is "Link Notes".
  */
 
 import { createPanelManifest, createIntent } from '../create-manifest'
 import type { PanelChatManifest } from '../panel-manifest'
 
 /**
- * Create manifest for a Quick Links panel badge
+ * Create manifest for a Link Notes panel badge
  */
-export function createQuickLinksManifest(badge: string): PanelChatManifest {
+export function createLinkNotesManifest(badge: string): PanelChatManifest {
   const badgeLower = badge.trim().toLowerCase()
   const badgeUpper = badge.trim().toUpperCase()
 
   return createPanelManifest({
+    // Keep 'quick-links' for API route compatibility
     panelId: `quick-links-${badgeLower}`,
     panelType: 'quick-links',
-    title: `Quick Links ${badgeUpper}`,
-    // version defaults to '1.0'
+    title: `Link Notes ${badgeUpper}`,
     intents: [
       createIntent({
         name: 'show_links',
-        description: `Show all links in Quick Links ${badgeUpper} panel`,
+        description: `Show all links in Link Notes ${badgeUpper} panel`,
         examples: [
+          // Link notes variations (primary)
+          `show link notes ${badgeLower}`,
+          `show link notes ${badgeUpper}`,
+          `open link notes ${badgeLower}`,
+          `open link notes ${badgeUpper}`,
+          `link notes ${badgeLower}`,
+          `link notes ${badgeUpper}`,
+          // Quick links variations (legacy)
           `show quick links ${badgeLower}`,
           `show quick links ${badgeUpper}`,
           `open quick link ${badgeLower}`,
@@ -38,9 +48,7 @@ export function createQuickLinksManifest(badge: string): PanelChatManifest {
           `links ${badgeUpper}`,
           `open quick links ${badgeLower}`,
           `list quick links ${badgeLower}`,
-          `list quick links ${badgeUpper}`,
-          `list my quick links ${badgeLower}`,
-          `list links ${badgeLower}`,
+          `list link notes ${badgeLower}`,
         ],
         paramsSchema: {
           mode: {
@@ -51,12 +59,12 @@ export function createQuickLinksManifest(badge: string): PanelChatManifest {
           },
         },
         handler: `api:/api/panels/quick-links/${badgeLower}/list`,
-        // permission defaults to 'read'
       }),
       createIntent({
         name: 'open_link',
-        description: `Open a specific link from Quick Links ${badgeUpper}`,
+        description: `Open a specific link from Link Notes ${badgeUpper}`,
         examples: [
+          `open link X from link notes ${badgeLower}`,
           `open link X from quick links ${badgeLower}`,
           `go to X in links ${badgeLower}`,
         ],
@@ -73,14 +81,14 @@ export function createQuickLinksManifest(badge: string): PanelChatManifest {
           },
         },
         handler: `api:/api/panels/quick-links/${badgeLower}/open`,
-        // permission defaults to 'read'
       }),
       createIntent({
         name: 'add_link',
-        description: `Add a new link to Quick Links ${badgeUpper}`,
+        description: `Add a new link to Link Notes ${badgeUpper}`,
         examples: [
+          `add link to link notes ${badgeLower}`,
           `add link to quick links ${badgeLower}`,
-          `save to quick links ${badgeLower}`,
+          `save to link notes ${badgeLower}`,
           `add current to links ${badgeLower}`,
         ],
         paramsSchema: {
@@ -96,12 +104,13 @@ export function createQuickLinksManifest(badge: string): PanelChatManifest {
           },
         },
         handler: `api:/api/panels/quick-links/${badgeLower}/add`,
-        permission: 'write', // explicit: destructive action
+        permission: 'write',
       }),
       createIntent({
         name: 'remove_link',
-        description: `Remove a link from Quick Links ${badgeUpper}`,
+        description: `Remove a link from Link Notes ${badgeUpper}`,
         examples: [
+          `remove link X from link notes ${badgeLower}`,
           `remove link X from quick links ${badgeLower}`,
           `delete link from links ${badgeLower}`,
         ],
@@ -118,22 +127,30 @@ export function createQuickLinksManifest(badge: string): PanelChatManifest {
           },
         },
         handler: `api:/api/panels/quick-links/${badgeLower}/remove`,
-        permission: 'write', // explicit: destructive action
+        permission: 'write',
       }),
     ],
   })
 }
 
-// Export manifests for all Quick Links badges
-export const quickLinksPanelManifests: PanelChatManifest[] = [
-  createQuickLinksManifest('a'),
-  createQuickLinksManifest('b'),
-  createQuickLinksManifest('c'),
-  createQuickLinksManifest('d'),
+// Export manifests for all Link Notes badges
+export const linkNotesPanelManifests: PanelChatManifest[] = [
+  createLinkNotesManifest('a'),
+  createLinkNotesManifest('b'),
+  createLinkNotesManifest('c'),
+  createLinkNotesManifest('d'),
+  createLinkNotesManifest('e'),
 ]
 
 // Export individual manifests for direct access
-export const quickLinksAManifest = quickLinksPanelManifests[0]
-export const quickLinksBManifest = quickLinksPanelManifests[1]
-export const quickLinksCManifest = quickLinksPanelManifests[2]
-export const quickLinksDManifest = quickLinksPanelManifests[3]
+export const linkNotesAManifest = linkNotesPanelManifests[0]
+export const linkNotesBManifest = linkNotesPanelManifests[1]
+export const linkNotesCManifest = linkNotesPanelManifests[2]
+export const linkNotesDManifest = linkNotesPanelManifests[3]
+export const linkNotesEManifest = linkNotesPanelManifests[4]
+
+// Backward-compatible aliases (deprecated - use linkNotes* instead)
+/** @deprecated Use createLinkNotesManifest instead */
+export const createQuickLinksManifest = createLinkNotesManifest
+/** @deprecated Use linkNotesPanelManifests instead */
+export const quickLinksPanelManifests = linkNotesPanelManifests

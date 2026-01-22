@@ -42,7 +42,7 @@ export async function POST(
     if (panelResult.rows.length === 0) {
       return NextResponse.json({
         success: false,
-        message: `No Quick Links panel with badge "${badge.toUpperCase()}" found.`,
+        message: `No Link Notes panel with badge "${badge.toUpperCase()}" found.`,
       })
     }
 
@@ -52,7 +52,7 @@ export async function POST(
     if (!contentJson) {
       return NextResponse.json({
         success: false,
-        message: `Quick Links ${badge.toUpperCase()} needs content. Please add some links in the editor.`,
+        message: `Link Notes ${badge.toUpperCase()} needs content. Please add some links in the editor.`,
       })
     }
 
@@ -65,15 +65,15 @@ export async function POST(
     return NextResponse.json({
       success: true,
       items: viewItems,
-      title: `Quick Links ${badge.toUpperCase()}`,
+      title: `Link Notes ${badge.toUpperCase()}`,
       subtitle: `${linkCount} link${linkCount !== 1 ? 's' : ''} · ${noteCount} note${noteCount !== 1 ? 's' : ''}`,
-      message: `Found ${viewItems.length} items in Quick Links ${badge.toUpperCase()}`,
+      message: `Found ${viewItems.length} items in Link Notes ${badge.toUpperCase()}`,
     })
 
   } catch (error) {
     console.error('[POST /api/panels/quick-links/[badge]/list] Error:', error)
     return NextResponse.json(
-      { success: false, error: 'Failed to list quick links' },
+      { success: false, error: 'Failed to list link notes' },
       { status: 500 }
     )
   }

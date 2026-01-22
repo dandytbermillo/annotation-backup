@@ -4,7 +4,7 @@
  * Provides friendly suggestions when intent parsing fails due to typos.
  * Uses fuzzy matching against a dynamic vocabulary built from:
  * - Core commands (workspaces, dashboard, home)
- * - Visible panels (Recent, Quick Links)
+ * - Visible panels (Recent, Link Notes)
  * - Installed widget manifests (Demo Widget, etc.)
  *
  * Reference: docs/proposal/chat-navigation/plan/panels/chat/typo-suggestion-fallback-plan.md
@@ -72,10 +72,10 @@ interface CommandDef {
 }
 
 const COMMAND_VOCABULARY: CommandDef[] = [
-  // Quick Links
+  // Link Notes (formerly Quick Links)
   {
-    phrases: ['quick links', 'quicklinks', 'quick link', 'quicklink'],
-    label: 'Quick Links',
+    phrases: ['link notes', 'linknotes', 'link note', 'linknote', 'quick links', 'quicklinks', 'quick link', 'quicklink'],
+    label: 'Link Notes',
     primaryAction: 'open',
     intentName: 'show_quick_links',
   },
@@ -211,14 +211,14 @@ function buildDynamicVocabulary(manifests: PanelChatManifest[]): CommandDef[] {
 }
 
 /**
- * Build quick-links badge variants from visible panels
+ * Build link-notes badge variants from visible panels
  * Extracts quick-links-a, quick-links-b, etc. from visiblePanels and creates
- * CommandDef entries like "Quick Links A", "Quick Links D"
+ * CommandDef entries like "Link Notes A", "Link Notes D"
  */
 function buildVisibleQuickLinksVocabulary(visiblePanels?: string[]): CommandDef[] {
   if (!visiblePanels || visiblePanels.length === 0) return []
 
-  const quickLinksCommands: CommandDef[] = []
+  const linkNotesCommands: CommandDef[] = []
 
   for (const panelId of visiblePanels) {
     // Match quick-links-X pattern (e.g., quick-links-a, quick-links-d)
@@ -226,17 +226,23 @@ function buildVisibleQuickLinksVocabulary(visiblePanels?: string[]): CommandDef[
     if (!match) continue
 
     const badge = match[1].toUpperCase()
-    const label = `Quick Links ${badge}`
+    const label = `Link Notes ${badge}`
     const badgeLower = badge.toLowerCase()
 
-    quickLinksCommands.push({
+    linkNotesCommands.push({
       phrases: [
+        // Link Notes (primary)
+        `link notes ${badgeLower}`,
+        `link note ${badgeLower}`,
+        `linknotes ${badgeLower}`,
+        `notes ${badgeLower}`,
+        `show link notes ${badgeLower}`,
+        `open link notes ${badgeLower}`,
+        // Quick Links (backward compatibility)
         `quick links ${badgeLower}`,
         `quick link ${badgeLower}`,
         `quicklinks ${badgeLower}`,
         `links ${badgeLower}`,
-        `show quick links ${badgeLower}`,
-        `open quick links ${badgeLower}`,
       ],
       label,
       primaryAction: 'open',
@@ -245,16 +251,16 @@ function buildVisibleQuickLinksVocabulary(visiblePanels?: string[]): CommandDef[
     })
   }
 
-  return quickLinksCommands
+  return linkNotesCommands
 }
 
 /**
  * Get merged vocabulary: static core commands + dynamic panel/widget commands
  *
  * Per dynamic-typo-suggestions-fixes-plan.md:
- * - Generic "Quick Links" is kept in vocabulary (API handles disambiguation)
- * - Badge-specific variants (Quick Links D, etc.) are added from visible panels
- * - When user confirms "Quick Links" with multiple panels, API returns selection
+ * - Generic "Link Notes" is kept in vocabulary (API handles disambiguation)
+ * - Badge-specific variants (Link Notes D, etc.) are added from visible panels
+ * - When user confirms "Link Notes" with multiple panels, API returns selection
  */
 function getMergedVocabulary(context?: DynamicSuggestionContext): CommandDef[] {
   // Start with core commands

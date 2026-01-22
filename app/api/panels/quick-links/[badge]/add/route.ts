@@ -34,8 +34,8 @@ export async function POST(
     return NextResponse.json({
       success: false,
       message: url
-        ? `To add "${name || url}" to Quick Links ${badge.toUpperCase()}, please use the Quick Links panel directly.`
-        : `To add links to Quick Links ${badge.toUpperCase()}, please open the panel and add them there.`,
+        ? `To add "${name || url}" to Link Notes ${badge.toUpperCase()}, please use the Link Notes panel directly.`
+        : `To add links to Link Notes ${badge.toUpperCase()}, please open the panel and add them there.`,
     })
 
   } catch (error) {

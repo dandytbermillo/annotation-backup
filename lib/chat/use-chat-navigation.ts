@@ -710,7 +710,7 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
           const workspace = option.data as WorkspaceMatch
           return deleteWorkspace(workspace.id, workspace.name)
         case 'quick_links_panel':
-          // User selected a Quick Links panel from disambiguation
+          // User selected a Link Notes panel from disambiguation
           // Dispatch event for chat to re-resolve with specific badge
           const panelData = option.data as { panelId: string; badge: string; panelType: 'quick_links' }
           if (typeof window !== 'undefined') {
@@ -720,7 +720,7 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
           }
           return {
             success: true,
-            message: `Loading Quick Links ${panelData.badge}...`,
+            message: `Loading Link Notes ${panelData.badge}...`,
             action: 'selected',
           }
         case 'confirm_panel_write':

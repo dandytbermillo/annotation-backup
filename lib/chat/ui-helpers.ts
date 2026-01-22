@@ -69,13 +69,17 @@ export function parseOrdinal(input: string): number | null {
 }
 
 /**
- * Extract quick links badge letter from a title string.
- * Returns the badge letter (lowercase) or null if not found.
+ * Extract Link Notes badge letter from user input or title string.
+ * Returns the badge letter (uppercase) or null if not found.
  *
- * Example: "Quick Links A" → "a"
+ * Example: "link notes d" → "D", "open link notes f" → "F"
  */
-export function extractQuickLinksBadge(title?: string): string | null {
-  if (!title) return null
-  const match = title.match(/quick\s*links?\s*([a-z])/i)
-  return match ? match[1].toLowerCase() : null
+export function extractLinkNotesBadge(input?: string): string | null {
+  if (!input) return null
+  // Match "link notes X" or "link note X" where X is a single letter
+  const match = input.match(/\blink\s*notes?\s+([a-z])\b/i)
+  return match ? match[1].toUpperCase() : null
 }
+
+// Backward-compatible alias (deprecated)
+export const extractQuickLinksBadge = extractLinkNotesBadge

@@ -34,8 +34,8 @@ export async function POST(
     return NextResponse.json({
       success: false,
       message: name || position
-        ? `To remove ${name ? `"${name}"` : `item ${position}`} from Quick Links ${badge.toUpperCase()}, please use the Quick Links panel directly.`
-        : `To remove links from Quick Links ${badge.toUpperCase()}, please open the panel and remove them there.`,
+        ? `To remove ${name ? `"${name}"` : `item ${position}`} from Link Notes ${badge.toUpperCase()}, please use the Link Notes panel directly.`
+        : `To remove links from Link Notes ${badge.toUpperCase()}, please open the panel and remove them there.`,
     })
 
   } catch (error) {

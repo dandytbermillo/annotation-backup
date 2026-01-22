@@ -97,6 +97,12 @@ export interface ResolutionContext {
   // "list", "preview", "in the chatbox", or "in chat" keywords
   // (per panel-intent-registry-plan.md Routing Precedence)
   forcePreviewMode?: boolean
+  // Raw user message for deterministic fallback extraction
+  // (per link-notes-generic-disambiguation-fix.md: "Keep deterministic action routing")
+  rawUserMessage?: string
+  // Explicit Link Notes badge extracted from user input (deterministic)
+  // Per link-notes-generic-disambiguation-fix.md: overrides LLM-extracted badge
+  explicitLinkNotesBadge?: string
   // Pending disambiguation options (for reshow_options intent)
   pendingOptions?: Array<{
     index: number

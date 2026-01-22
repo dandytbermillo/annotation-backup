@@ -14,6 +14,7 @@ import { resolveIntent, type IntentResolutionResult } from '@/lib/chat/intent-re
 import { getSuggestions, type SuggestionResult, type DynamicSuggestionContext } from '@/lib/chat/typo-suggestions'
 import { panelRegistry } from '@/lib/panels/panel-registry'
 import { resolveNoteWorkspaceUserId } from '@/app/api/note-workspaces/user-id'
+import { extractLinkNotesBadge } from '@/lib/chat/ui-helpers'
 
 // =============================================================================
 // OpenAI Client
@@ -494,6 +495,33 @@ export async function POST(request: NextRequest) {
     const PREVIEW_KEYWORDS_REGEX = /\b(list|preview)\b|in the chatbox|in chat/i
     const forcePreviewMode = PREVIEW_KEYWORDS_REGEX.test(userMessage)
 
+    // Deterministic badge detection for Link Notes
+    // Per link-notes-generic-disambiguation-fix.md: "Keep deterministic action routing (no LLM dependence)"
+    // If user explicitly says "link notes f", extract badge deterministically
+    const explicitLinkNotesBadge = extractLinkNotesBadge(userMessage)
+
+    // Deterministic intent override for explicit Link Notes badge
+    // If user explicitly said "link notes X" but LLM returned wrong intent, override to show_quick_links
+    // This ensures consistent behavior regardless of LLM variance
+    if (explicitLinkNotesBadge && intent.intent !== 'show_quick_links') {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'deterministic_link_notes_override',
+        metadata: {
+          originalIntent: intent.intent,
+          explicitBadge: explicitLinkNotesBadge,
+          userMessage: userMessage.substring(0, 50),
+        },
+      })
+      intent = {
+        intent: 'show_quick_links',
+        args: {
+          ...intent.args,
+          quickLinksPanelBadge: explicitLinkNotesBadge,
+        },
+      }
+    }
+
     const resolutionContext = {
       userId,
       currentEntryId: currentEntryId || undefined,
@@ -509,6 +537,11 @@ export async function POST(request: NextRequest) {
       pendingPanelIntent: context?.pendingPanelIntent,
       // Deterministic preview mode fallback
       forcePreviewMode,
+      // Raw user message for deterministic badge extraction fallback
+      // (per link-notes-generic-disambiguation-fix.md)
+      rawUserMessage: userMessage,
+      // Explicit Link Notes badge extracted from user input (deterministic)
+      explicitLinkNotesBadge,
       // Pending options for reshow_options intent
       pendingOptions: conversationContext?.pendingOptions,
     }
@@ -559,12 +592,18 @@ export async function POST(request: NextRequest) {
     // These are verify_action or verify_request intents that the LLM should handle
     const isVerifyQuery = /^did\s+i\b/i.test(normalizedInput)
 
+    // Explicit Link Notes badge guard
+    // Per link-notes-generic-disambiguation-fix.md: When user explicitly says "link notes F",
+    // NEVER fuzzy-match to another badge - show clear error if not found
+    const hasExplicitLinkNotesBadge = !!explicitLinkNotesBadge
+
     // Phase 1a: Error Message Preservation
     // Only apply typo fallback when:
     // 1. LLM returned 'unsupported' intent (not a valid intent that failed resolution)
     // 2. AND input is not a question (questions should get LLM's unsupported reason, not typo suggestions)
     // 3. AND no active clarification (Phase 2a.3: let LLM interpret clarification replies)
-    if (!resolution.success && resolution.action === 'error' && intent.intent === 'unsupported' && !isQuestionLike && !context?.lastClarification) {
+    // 4. AND no explicit Link Notes badge (don't fuzzy-match badge letters)
+    if (!resolution.success && resolution.action === 'error' && intent.intent === 'unsupported' && !isQuestionLike && !context?.lastClarification && !hasExplicitLinkNotesBadge) {
       suggestions = getSuggestions(userMessage, suggestionContext)
       if (suggestions) {
         // Replace generic unsupported message with friendly suggestion
