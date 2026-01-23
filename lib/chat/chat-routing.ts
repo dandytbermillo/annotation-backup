@@ -32,6 +32,7 @@ import { isBareNounQuery, maybeFormatSnippetWithHs3, dedupeHeaderPath, stripMark
 import type { UIContext } from '@/lib/chat/intent-prompt'
 import type { ChatMessage, DocRetrievalState, SelectionOption, LastClarificationState } from '@/lib/chat'
 import type { ClarificationOption } from '@/lib/chat/chat-navigation-context'
+import { matchVisiblePanelCommand, type VisibleWidget } from '@/lib/chat/panel-command-matcher'
 
 // =============================================================================
 // Handler Result Type
@@ -1286,6 +1287,7 @@ export async function handleClarificationIntercept(
     }
 
     // Helper: Handle unclear response
+    // Per pending-options-resilience-fix.md: Re-show options on no-match instead of generic fallback
     const handleUnclear = (): boolean => {
       if (isNewQuestionOrCommandDetected) {
         void debugLog({
@@ -1296,6 +1298,35 @@ export async function handleClarificationIntercept(
         setLastClarification(null)
         return true
       }
+
+      // Per pending-options-resilience-fix.md: If options exist, re-show them with pills
+      // instead of showing a generic yes/no message
+      if (lastClarification?.type === 'option_selection' && lastClarification.options && lastClarification.options.length > 0) {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'clarification_unclear_reshow_options',
+          metadata: { userInput: trimmedInput, optionsCount: lastClarification.options.length },
+        })
+
+        const reaskMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: 'Please choose one of the options:',
+          timestamp: new Date(),
+          isError: false,
+          options: lastClarification.options.map(opt => ({
+            type: opt.type as SelectionOption['type'],
+            id: opt.id,
+            label: opt.label,
+            sublabel: opt.sublabel,
+            data: {} as SelectionOption['data'],
+          })),
+        }
+        addMessage(reaskMessage)
+        return false
+      }
+
+      // Fallback for non-option clarifications (yes/no questions)
       const reaskMessage: ChatMessage = {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
@@ -1394,6 +1425,122 @@ export async function handleClarificationIntercept(
       handleRejection()
       setIsLoading(false)
       return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+    }
+
+    // Tier 1b.3: Label matching for option selection (BEFORE new-intent escape)
+    // Per pending-options-resilience-fix.md: "link notes e" should match "Link Notes E" option
+    // even if it looks like a new command. Selection takes priority over new-intent escape.
+    // IMPORTANT: If input matches MULTIPLE options (e.g., "link notes" matches both D and E),
+    // do NOT auto-select - fall through to re-show options instead.
+    if (lastClarification?.options && lastClarification.options.length > 0) {
+      const normalizedInput = trimmedInput.toLowerCase().trim()
+
+      // Helper: Check if label matches in input with word boundary
+      // e.g., "workspace 2" in "workspace 2 please" → true (followed by space)
+      // e.g., "workspace 2" in "workspace 22" → false (followed by digit, not word boundary)
+      const matchesWithWordBoundary = (input: string, label: string): boolean => {
+        if (!input.includes(label)) return false
+        const index = input.indexOf(label)
+        const endIndex = index + label.length
+        // Label must end at word boundary (end of string or followed by space/punctuation)
+        if (endIndex === input.length) return true
+        const charAfter = input[endIndex]
+        return /[\s,!?.]/.test(charAfter)
+      }
+
+      // Find ALL matching options, not just the first one
+      const matchingOptions = lastClarification.options.filter(opt => {
+        const normalizedLabel = opt.label.toLowerCase()
+        // Exact match, or input is contained in label, or label is contained in input WITH word boundary
+        return normalizedLabel === normalizedInput ||
+               normalizedLabel.includes(normalizedInput) ||
+               matchesWithWordBoundary(normalizedInput, normalizedLabel)
+      })
+
+      // Only auto-select if EXACTLY ONE option matches
+      // If multiple match (e.g., "link notes" matches both D and E), fall through to re-show
+      if (matchingOptions.length === 1) {
+        const matchedOption = matchingOptions[0]
+        const fullOption = pendingOptions.find(opt => opt.id === matchedOption.id)
+
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'clarification_tier1b3_label_selection',
+          metadata: {
+            input: trimmedInput,
+            matchedLabel: matchedOption.label,
+            hasFullOption: !!fullOption,
+            matchCount: 1,
+          },
+        })
+
+        setLastClarification(null)
+
+        if (fullOption) {
+          const optionToSelect: SelectionOption = {
+            type: fullOption.type as SelectionOption['type'],
+            id: fullOption.id,
+            label: fullOption.label,
+            sublabel: fullOption.sublabel,
+            data: fullOption.data as SelectionOption['data'],
+          }
+          setIsLoading(false)
+          handleSelectOption(optionToSelect)
+          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+        } else {
+          const optionToSelect: SelectionOption = {
+            type: matchedOption.type as SelectionOption['type'],
+            id: matchedOption.id,
+            label: matchedOption.label,
+            sublabel: matchedOption.sublabel,
+            data: matchedOption.type === 'doc'
+              ? { docSlug: matchedOption.id }
+              : { term: matchedOption.id, action: 'doc' as const },
+          }
+          setIsLoading(false)
+          handleSelectOption(optionToSelect)
+          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+        }
+      } else if (matchingOptions.length > 1) {
+        // Multiple options match (e.g., "link notes" matches both D and E)
+        // EXPLICITLY re-show options - don't fall through to new-intent escape or LLM
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'clarification_tier1b3_multi_match_reshow',
+          metadata: {
+            input: trimmedInput,
+            matchCount: matchingOptions.length,
+            matchedLabels: matchingOptions.map(o => o.label),
+          },
+        })
+
+        // Re-show the disambiguation options directly, using pendingOptions for full data
+        const messageId = `assistant-${Date.now()}`
+        const reaskMessage: ChatMessage = {
+          id: messageId,
+          role: 'assistant',
+          content: 'Here are your options:',
+          timestamp: new Date(),
+          isError: false,
+          options: lastClarification.options.map(opt => {
+            // Try to get full option data from pendingOptions
+            const fullOpt = pendingOptions.find(p => p.id === opt.id)
+            return {
+              type: opt.type as SelectionOption['type'],
+              id: opt.id,
+              label: opt.label,
+              sublabel: opt.sublabel,
+              data: fullOpt?.data as SelectionOption['data'] ?? {} as SelectionOption['data'],
+            }
+          }),
+        }
+        addMessage(reaskMessage)
+        // Sync message ID for proper state tracking
+        setPendingOptionsMessageId(messageId)
+        setIsLoading(false)
+        // Return handled=true to prevent fall-through to LLM intent resolution
+        return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+      }
     }
 
     // Tier 1b.5: New intent escape
@@ -1542,4 +1689,126 @@ export async function handleClarificationIntercept(
 
   // Not handled or fell through after new intent detection
   return { handled: false, clarificationCleared, isNewQuestionOrCommandDetected }
+}
+
+// =============================================================================
+// Panel Disambiguation Handler (Pre-LLM)
+// =============================================================================
+
+export interface PanelDisambiguationHandlerContext {
+  trimmedInput: string
+  visibleWidgets?: VisibleWidget[]
+  addMessage: (message: ChatMessage) => void
+  setIsLoading: (loading: boolean) => void
+  setPendingOptions: (options: PendingOptionState[]) => void
+  setPendingOptionsMessageId: (messageId: string) => void
+  setLastClarification: (state: LastClarificationState | null) => void
+}
+
+export interface PanelDisambiguationHandlerResult extends HandlerResult {
+  matchType?: 'exact' | 'partial' | 'none'
+  matchCount?: number
+}
+
+/**
+ * Handle panel disambiguation BEFORE LLM.
+ *
+ * When user types "link notes" (partial match for multiple panels),
+ * show disambiguation directly without going to LLM.
+ * This ensures deterministic behavior instead of relying on LLM parsing.
+ *
+ * Matches:
+ * - Partial match (multiple panels): "link notes" → D and E → disambiguation
+ * - Does NOT handle exact match (single panel) - let LLM handle for richer response
+ * - Does NOT handle no match - let LLM try to interpret
+ */
+export function handlePanelDisambiguation(
+  context: PanelDisambiguationHandlerContext
+): PanelDisambiguationHandlerResult {
+  const {
+    trimmedInput,
+    visibleWidgets,
+    addMessage,
+    setIsLoading,
+    setPendingOptions,
+    setPendingOptionsMessageId,
+    setLastClarification,
+  } = context
+
+  const matchResult = matchVisiblePanelCommand(trimmedInput, visibleWidgets)
+
+  // Only handle partial matches with multiple panels (disambiguation case)
+  // Exact match (single panel) and no match are handled by LLM for richer responses
+  if (matchResult.type === 'partial' && matchResult.matches.length > 1) {
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'panel_disambiguation_pre_llm',
+      metadata: {
+        input: trimmedInput,
+        matchType: matchResult.type,
+        matchCount: matchResult.matches.length,
+        matchedTitles: matchResult.matches.map(m => m.title),
+      },
+    })
+
+    // Create disambiguation options
+    const messageId = `assistant-${Date.now()}`
+    const options: SelectionOption[] = matchResult.matches.map((widget, idx) => ({
+      type: 'panel_drawer' as const,
+      id: widget.id,
+      label: widget.title,
+      sublabel: widget.type,
+      data: { panelId: widget.id, panelTitle: widget.title, panelType: widget.type },
+    }))
+
+    // Build a friendly name for the message (e.g., "Link Notes" for quick-links panels)
+    const isQuickLinks = matchResult.matches.some(m =>
+      m.type === 'links_note' || m.type === 'links_note_tiptap'
+    )
+    const friendlyName = isQuickLinks ? 'Link Notes' : 'panels'
+
+    const assistantMessage: ChatMessage = {
+      id: messageId,
+      role: 'assistant',
+      content: `Multiple ${friendlyName} panels found. Which one would you like to open?`,
+      timestamp: new Date(),
+      isError: false,
+      options,
+    }
+    addMessage(assistantMessage)
+
+    // Set pending options for pill selection
+    const pendingOptions: PendingOptionState[] = options.map((opt, idx) => ({
+      index: idx + 1,
+      label: opt.label,
+      sublabel: opt.sublabel,
+      type: opt.type,
+      id: opt.id,
+      data: opt.data,
+    }))
+    setPendingOptions(pendingOptions)
+    setPendingOptionsMessageId(messageId)
+
+    // Sync lastClarification for follow-up handling
+    setLastClarification({
+      type: 'option_selection',
+      originalIntent: 'panel_disambiguation',
+      messageId,
+      timestamp: Date.now(),
+      clarificationQuestion: `Multiple ${friendlyName} panels found. Which one would you like to open?`,
+      options: options.map(opt => ({
+        id: opt.id,
+        label: opt.label,
+        sublabel: opt.sublabel,
+        type: opt.type,
+      })),
+      metaCount: 0,
+    })
+
+    setIsLoading(false)
+    return { handled: true, matchType: matchResult.type, matchCount: matchResult.matches.length }
+  }
+
+  // Let LLM handle other cases (exact match, no match)
+  return { handled: false, matchType: matchResult.type, matchCount: matchResult.matches.length }
 }

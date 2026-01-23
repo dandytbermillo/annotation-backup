@@ -8,8 +8,8 @@ Status notes are based on the latest reports/tests; adjust if anything changed.
 - `pending-options-message-source-plan.md` — Implemented; still relevant for options-as-source-of-truth.
 - `pending-options-explicit-command-bypass.md` — Implemented; still relevant to avoid blocking explicit commands.
 - `pending-options-reshow-grace-window.md` — Implemented; still relevant for re-showing options.
-- `quick-links-generic-disambiguation-fix.md` — **Pending** (needed to enforce disambiguation when multiple Quick Links exist).
-- `pending-options-resilience-fix.md` — **Pending** (improves resilience after typos/off-list input).
+- `quick-links-generic-disambiguation-fix.md` — **Superseded** by `meta/link-notes-generic-disambiguation-fix.md` (implemented 2026-01-22).
+- `pending-options-resilience-fix.md` — **Implemented** (2026-01-22) (improves resilience after typos/off-list input).
 
 ## Implemented (Keep for Reference)
 - `session-query-routing-plan.md` — Implemented; keep as reference (requested to retain).

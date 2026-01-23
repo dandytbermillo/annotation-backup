@@ -23,6 +23,7 @@ import {
   findAllFuzzyMatches,
   stripConversationalPrefix,
 } from '@/lib/chat/query-patterns'
+import { inputMatchesVisiblePanel } from '@/lib/chat/panel-command-matcher'
 import { debugLog } from '@/lib/utils/debug-logger'
 import {
   createRoutingTelemetryEvent,
@@ -312,7 +313,9 @@ export function isDocStyleQuery(input: string, uiContext?: UIContext | null): bo
   // Action noun bypass
   if (ACTION_NOUNS.has(normalized)) return false
 
-  // Visible widget bypass
+  // Visible widget bypass (token-based matching for panel commands)
+  const visibleWidgets = uiContext?.dashboard?.visibleWidgets
+  if (inputMatchesVisiblePanel(input, visibleWidgets)) return false
   if (matchesVisibleWidgetTitle(normalized, uiContext)) return false
 
   // Command-like bypass
@@ -355,7 +358,9 @@ export function isBareNounQuery(
   // Bypass: action noun
   if (ACTION_NOUNS.has(normalized)) return false
 
-  // Bypass: visible widget
+  // Bypass: visible widget (token-based matching for panel commands)
+  const visibleWidgets = uiContext?.dashboard?.visibleWidgets
+  if (inputMatchesVisiblePanel(input, visibleWidgets)) return false
   if (matchesVisibleWidgetTitle(normalized, uiContext)) return false
 
   // Passes all guards - this is a bare noun that should try retrieval
@@ -410,6 +415,11 @@ export function routeDocInput(
   }
 
   // Step 2: visible widget bypass
+  // Per panel-aware-command-routing-plan.md: Use token-based matching for panel commands
+  // This catches "link notes" → "Link Notes D/E", "link notes d pls" → "Link Notes D"
+  const visibleWidgets = uiContext?.dashboard?.visibleWidgets
+  if (inputMatchesVisiblePanel(input, visibleWidgets)) return 'action'
+  // Fallback to exact normalized match (legacy behavior)
   if (matchesVisibleWidgetTitle(normalized, uiContext)) return 'action'
 
   // Step 3: action-noun bypass

@@ -47,7 +47,7 @@ import {
 import { fetchKnownTerms, isKnownTermsCacheValid, getKnownTermsFetchStatus } from '@/lib/docs/known-terms-client'
 import type { RoutingTelemetryEvent } from '@/lib/chat/routing-telemetry'
 // Step 3 refactor: Routing handlers
-import { handleCorrection, handleMetaExplain, handleFollowUp, handleClarificationIntercept, type PendingOptionState } from '@/lib/chat/chat-routing'
+import { handleCorrection, handleMetaExplain, handleFollowUp, handleClarificationIntercept, handlePanelDisambiguation, type PendingOptionState } from '@/lib/chat/chat-routing'
 // TD-3: Import consolidated patterns from query-patterns module
 import {
   stripConversationalPrefix,
@@ -1738,13 +1738,34 @@ function ChatNavigationPanelContent({
       const crossCorpusResult = await handleCrossCorpusRetrieval({
         trimmedInput,
         docRetrievalState,
+        // Per panel-aware-command-routing-plan.md: pass visible widgets for context-aware matching
+        visibleWidgets: uiContext?.dashboard?.visibleWidgets,
         addMessage,
         updateDocRetrievalState,
         setIsLoading,
         setPendingOptions,
         setPendingOptionsMessageId,
+        setLastClarification,
       })
       if (crossCorpusResult.handled) {
+        return
+      }
+
+      // ---------------------------------------------------------------------------
+      // Panel Disambiguation (Pre-LLM): Handle partial matches like "link notes"
+      // Per panel-aware-command-routing-plan.md: Show disambiguation deterministically
+      // before going to LLM to avoid non-deterministic LLM badge guessing.
+      // ---------------------------------------------------------------------------
+      const panelDisambiguationResult = handlePanelDisambiguation({
+        trimmedInput,
+        visibleWidgets: uiContext?.dashboard?.visibleWidgets,
+        addMessage,
+        setIsLoading,
+        setPendingOptions,
+        setPendingOptionsMessageId,
+        setLastClarification,
+      })
+      if (panelDisambiguationResult.handled) {
         return
       }
 

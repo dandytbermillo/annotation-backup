@@ -453,6 +453,11 @@ export function isCommandLike(input: string): boolean {
     return true
   }
 
+  // Note: Panel-specific patterns (e.g., "link notes d") are now handled by
+  // context-aware matching in cross-corpus-handler.ts using visibleWidgets.
+  // See: panel-aware-command-routing-plan.md
+  // This eliminates the need for hardcoded panel names here.
+
   return false
 }
 

@@ -17,6 +17,10 @@ import {
   type FuzzyMatchResult,
 } from '@/lib/chat/query-patterns'
 import {
+  inputMatchesVisiblePanel,
+  type VisibleWidget,
+} from '@/lib/chat/panel-command-matcher'
+import {
   queryCrossCorpus,
   CrossCorpusDecision,
   CrossCorpusDecisionWithFailure,
@@ -31,8 +35,9 @@ import {
 } from '@/lib/chat/routing-telemetry'
 import { debugLog } from '@/lib/utils/debug-logger'
 import { getKnownTermsSync } from '@/lib/docs/known-terms-client'
-import type { DocRetrievalState, ChatMessage, CrossCorpusSelectData, SelectionOption } from '@/lib/chat'
+import type { DocRetrievalState, ChatMessage, CrossCorpusSelectData, SelectionOption, LastClarificationState } from '@/lib/chat'
 import type { PendingOptionState } from '@/lib/chat/chat-routing'
+import type { ClarificationOption } from '@/lib/chat/chat-navigation-context'
 
 // =============================================================================
 // Types
@@ -51,12 +56,18 @@ export interface CrossCorpusHandlerContext {
   // State
   docRetrievalState: DocRetrievalState | null
 
+  // Panel awareness (for context-aware command detection)
+  // Per panel-aware-command-routing-plan.md: use visible widgets instead of hardcoded patterns
+  visibleWidgets?: VisibleWidget[]
+
   // Callbacks
   addMessage: (message: ChatMessage) => void
   updateDocRetrievalState: (update: Partial<DocRetrievalState>) => void
   setIsLoading: (loading: boolean) => void
   setPendingOptions: (options: PendingOptionState[]) => void
   setPendingOptionsMessageId: (messageId: string) => void
+  // Per pending-options-resilience-fix.md: sync lastClarification for re-show on garbage input
+  setLastClarification: (state: LastClarificationState | null) => void
 }
 
 // =============================================================================
@@ -84,11 +95,13 @@ export async function handleCrossCorpusRetrieval(
   const {
     trimmedInput,
     docRetrievalState,
+    visibleWidgets,
     addMessage,
     updateDocRetrievalState,
     setIsLoading,
     setPendingOptions,
     setPendingOptionsMessageId,
+    setLastClarification,
   } = ctx
 
   // ==========================================================================
@@ -98,6 +111,32 @@ export async function handleCrossCorpusRetrieval(
   // Must be BEFORE fuzzy normalization and intent detection.
   // ==========================================================================
   if (isCommandLike(trimmedInput)) {
+    return { handled: false }
+  }
+
+  // ==========================================================================
+  // Panel Command Guard (context-aware)
+  // Per panel-aware-command-routing-plan.md: Skip cross-corpus for panel commands.
+  // Uses visible widget titles instead of hardcoded patterns.
+  // "link notes d", "link notes d pls", "open recent" → skip cross-corpus
+  // ==========================================================================
+  const panelMatchResult = inputMatchesVisiblePanel(trimmedInput, visibleWidgets)
+
+  // Debug: Log panel command matching
+  void debugLog({
+    component: 'CrossCorpus',
+    action: 'panel_command_check',
+    content_preview: `Input: "${trimmedInput.slice(0, 40)}", Match: ${panelMatchResult}`,
+    forceLog: true,
+    metadata: {
+      panel_command_input: trimmedInput,
+      panel_command_match: panelMatchResult,
+      visible_widgets_count: visibleWidgets?.length ?? 0,
+      visible_widget_titles: visibleWidgets?.map(w => w.title) ?? [],
+    },
+  })
+
+  if (panelMatchResult) {
     return { handled: false }
   }
 
@@ -366,6 +405,22 @@ export async function handleCrossCorpusRetrieval(
         addMessage(message)
         setPendingOptions(options)
         setPendingOptionsMessageId(message.id)
+
+        // Per pending-options-resilience-fix.md: sync lastClarification for re-show on garbage input
+        setLastClarification({
+          type: 'option_selection',
+          originalIntent: 'cross_corpus_ambiguity',
+          messageId: message.id,
+          timestamp: Date.now(),
+          clarificationQuestion: 'I found results in both documentation and your notes. Which would you like to see?',
+          options: options.map(opt => ({
+            id: opt.id,
+            label: opt.label,
+            sublabel: opt.sublabel,
+            type: opt.type,
+          })) as ClarificationOption[],
+          metaCount: 0,
+        })
 
         // Emit telemetry for cross-corpus ambiguity
         void debugLog({

@@ -599,7 +599,13 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
           if (resolution.panelId) {
             // Phase 1b.1: Notify caller for lastAction tracking
             onPanelDrawerOpen?.(resolution.panelId, resolution.panelTitle)
-            return openPanelDrawer(resolution.panelId)
+            const drawerResult = openPanelDrawer(resolution.panelId)
+            // Preserve resolution.message if it has a specific panel title
+            // (e.g., "Opening Link Notes D...") instead of generic "Opening panel..."
+            return {
+              ...drawerResult,
+              message: resolution.message || drawerResult.message,
+            }
           }
           return {
             success: false,
