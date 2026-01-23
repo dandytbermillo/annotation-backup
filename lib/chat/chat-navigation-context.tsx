@@ -96,7 +96,7 @@ export interface ClarificationOption {
 
 /** Last clarification state for follow-up handling (Phase 2a) */
 export interface LastClarificationState {
-  type: 'notes_scope' | 'option_selection' | 'doc_disambiguation' | 'td7_high_ambiguity'
+  type: 'notes_scope' | 'option_selection' | 'doc_disambiguation' | 'td7_high_ambiguity' | 'cross_corpus' | 'panel_disambiguation' | 'workspace_list'
   originalIntent: string
   /** Generic action to execute when user affirms (Phase 2a deterministic handler) - optional for option_selection */
   nextAction?: string
@@ -108,6 +108,8 @@ export interface LastClarificationState {
   clarificationQuestion?: string
   /** Options for multi-choice clarifications (per options-visible-clarification-sync-plan.md) */
   options?: ClarificationOption[]
+  /** Off-menu attempt count for escalation (per clarification-offmenu-handling-plan.md) */
+  attemptCount?: number
 }
 
 /**

@@ -33,6 +33,15 @@ import type { UIContext } from '@/lib/chat/intent-prompt'
 import type { ChatMessage, DocRetrievalState, SelectionOption, LastClarificationState } from '@/lib/chat'
 import type { ClarificationOption } from '@/lib/chat/chat-navigation-context'
 import { matchVisiblePanelCommand, type VisibleWidget } from '@/lib/chat/panel-command-matcher'
+import {
+  mapOffMenuInput,
+  detectNewTopic,
+  getEscalationMessage,
+  isExitPhrase,
+  MAX_ATTEMPT_COUNT,
+  type OffMenuMappingResult,
+  type ClarificationType,
+} from '@/lib/chat/clarification-offmenu'
 
 // =============================================================================
 // Handler Result Type
@@ -1415,11 +1424,36 @@ export async function handleClarificationIntercept(
       return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
     }
 
-    // Tier 1b: Local rejection check
+    // Tier 1b.1: Exit phrase detection (per clarification-offmenu-handling-plan.md)
+    // "cancel / never mind / none / stop" → clear clarification and ask open-ended
+    // NOTE: Must come BEFORE rejection check since phrases overlap
+    if (isExitPhrase(trimmedInput)) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'clarification_tier1b1_exit_phrase',
+        metadata: { userInput: trimmedInput },
+      })
+      setLastClarification(null)
+      setPendingOptions([])
+      setPendingOptionsMessageId(null)
+      setPendingOptionsGraceCount(0)
+      const exitMessage: ChatMessage = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: 'No problem — what would you like to do instead?',
+        timestamp: new Date(),
+        isError: false,
+      }
+      addMessage(exitMessage)
+      setIsLoading(false)
+      return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+    }
+
+    // Tier 1b.2: Local rejection check (simple "no")
     if (isRejectionPhrase(trimmedInput)) {
       void debugLog({
         component: 'ChatNavigation',
-        action: 'clarification_tier1_rejection',
+        action: 'clarification_tier1b2_rejection',
         metadata: { userInput: trimmedInput },
       })
       handleRejection()
@@ -1566,6 +1600,224 @@ export async function handleClarificationIntercept(
         setPendingOptionsMessageId(messageId)
         setIsLoading(false)
         // Return handled=true to prevent fall-through to LLM intent resolution
+        return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+      }
+    }
+
+    // Tier 1b.3b: Off-menu mapping (per clarification-offmenu-handling-plan.md Section B)
+    // Uses micro-alias tokens for broader matching when direct label match fails
+    if (lastClarification?.options && lastClarification.options.length > 0) {
+      // Map clarification type to ClarificationType for off-menu mapping
+      const clarificationType: ClarificationType = lastClarification.type === 'cross_corpus'
+        ? 'cross_corpus'
+        : lastClarification.type === 'workspace_list'
+          ? 'workspace_list'
+          : lastClarification.originalIntent === 'panel_disambiguation'
+            ? 'panel_disambiguation'
+            : 'option_selection'
+
+      // Convert ClarificationOption[] to the format expected by mapOffMenuInput
+      const clarificationOptionsForMapping = lastClarification.options.map(opt => ({
+        id: opt.id,
+        label: opt.label,
+        sublabel: opt.sublabel,
+        type: opt.type,
+      }))
+
+      const offMenuResult = mapOffMenuInput(trimmedInput, clarificationOptionsForMapping, clarificationType)
+
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'clarification_tier1b3b_offmenu_mapping',
+        metadata: {
+          input: trimmedInput,
+          clarificationType,
+          resultType: offMenuResult.type,
+          confidence: offMenuResult.confidence,
+          reason: offMenuResult.reason,
+          matchedLabel: offMenuResult.matchedOption?.label,
+        },
+      })
+
+      if (offMenuResult.type === 'mapped' && offMenuResult.matchedOption) {
+        // Confident mapping - select the option
+        const matchedOption = offMenuResult.matchedOption
+        const fullOption = pendingOptions.find(opt => opt.id === matchedOption.id)
+
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'clarification_offmenu_mapped',
+          metadata: {
+            input: trimmedInput,
+            matchedLabel: matchedOption.label,
+            confidence: offMenuResult.confidence,
+            hasFullOption: !!fullOption,
+          },
+          metrics: {
+            event: 'clarification_offmenu_mapped',
+            timestamp: Date.now(),
+          },
+        })
+
+        setLastClarification(null)
+
+        if (fullOption) {
+          const optionToSelect: SelectionOption = {
+            type: fullOption.type as SelectionOption['type'],
+            id: fullOption.id,
+            label: fullOption.label,
+            sublabel: fullOption.sublabel,
+            data: fullOption.data as SelectionOption['data'],
+          }
+          setIsLoading(false)
+          handleSelectOption(optionToSelect)
+          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+        } else {
+          const optionToSelect: SelectionOption = {
+            type: matchedOption.type as SelectionOption['type'],
+            id: matchedOption.id,
+            label: matchedOption.label,
+            sublabel: matchedOption.sublabel,
+            data: matchedOption.type === 'doc'
+              ? { docSlug: matchedOption.id }
+              : { term: matchedOption.id, action: 'doc' as const },
+          }
+          setIsLoading(false)
+          handleSelectOption(optionToSelect)
+          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+        }
+      }
+
+      if (offMenuResult.type === 'ambiguous') {
+        // Ambiguous - re-show options with escalation message
+        const currentAttemptCount = lastClarification.attemptCount ?? 0
+        const newAttemptCount = currentAttemptCount + 1
+        const escalation = getEscalationMessage(newAttemptCount)
+
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'clarification_offmenu_ambiguous',
+          metadata: {
+            input: trimmedInput,
+            attemptCount: newAttemptCount,
+            showExits: escalation.showExits,
+          },
+          metrics: {
+            event: 'clarification_offmenu_ambiguous',
+            timestamp: Date.now(),
+          },
+        })
+
+        const messageId = `assistant-${Date.now()}`
+        const reaskMessage: ChatMessage = {
+          id: messageId,
+          role: 'assistant',
+          content: escalation.content,
+          timestamp: new Date(),
+          isError: false,
+          options: lastClarification.options.map(opt => {
+            const fullOpt = pendingOptions.find(p => p.id === opt.id)
+            return {
+              type: opt.type as SelectionOption['type'],
+              id: opt.id,
+              label: opt.label,
+              sublabel: opt.sublabel,
+              data: fullOpt?.data as SelectionOption['data'] ?? {} as SelectionOption['data'],
+            }
+          }),
+        }
+        addMessage(reaskMessage)
+        setPendingOptionsMessageId(messageId)
+
+        // Update attemptCount in clarification state
+        setLastClarification({
+          ...lastClarification,
+          attemptCount: newAttemptCount,
+        })
+
+        setIsLoading(false)
+        return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+      }
+
+      // offMenuResult.type === 'no_match' - check for new topic before falling through
+      const newTopicResult = detectNewTopic(trimmedInput, clarificationOptionsForMapping, offMenuResult)
+
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'clarification_offmenu_new_topic_check',
+        metadata: {
+          input: trimmedInput,
+          isNewTopic: newTopicResult.isNewTopic,
+          reason: newTopicResult.reason,
+          nonOverlappingTokens: newTopicResult.nonOverlappingTokens,
+        },
+      })
+
+      if (newTopicResult.isNewTopic) {
+        // Bounded new topic detection - exit clarification and route normally
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'clarification_offmenu_new_topic_exit',
+          metadata: {
+            input: trimmedInput,
+            nonOverlappingTokens: newTopicResult.nonOverlappingTokens,
+          },
+          metrics: {
+            event: 'clarification_offmenu_reroute',
+            timestamp: Date.now(),
+          },
+        })
+        setLastClarification(null)
+        clarificationCleared = true
+        // Don't return - fall through to normal routing
+      } else {
+        // No match and not a new topic - re-show options with escalation
+        const currentAttemptCount = lastClarification.attemptCount ?? 0
+        const newAttemptCount = currentAttemptCount + 1
+        const escalation = getEscalationMessage(newAttemptCount)
+
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'clarification_offmenu_no_match_reshow',
+          metadata: {
+            input: trimmedInput,
+            attemptCount: newAttemptCount,
+            showExits: escalation.showExits,
+          },
+          metrics: {
+            event: 'clarification_offmenu_attempts',
+            timestamp: Date.now(),
+          },
+        })
+
+        const messageId = `assistant-${Date.now()}`
+        const reaskMessage: ChatMessage = {
+          id: messageId,
+          role: 'assistant',
+          content: escalation.content,
+          timestamp: new Date(),
+          isError: false,
+          options: lastClarification.options.map(opt => {
+            const fullOpt = pendingOptions.find(p => p.id === opt.id)
+            return {
+              type: opt.type as SelectionOption['type'],
+              id: opt.id,
+              label: opt.label,
+              sublabel: opt.sublabel,
+              data: fullOpt?.data as SelectionOption['data'] ?? {} as SelectionOption['data'],
+            }
+          }),
+        }
+        addMessage(reaskMessage)
+        setPendingOptionsMessageId(messageId)
+
+        // Update attemptCount in clarification state
+        setLastClarification({
+          ...lastClarification,
+          attemptCount: newAttemptCount,
+        })
+
+        setIsLoading(false)
         return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
       }
     }
