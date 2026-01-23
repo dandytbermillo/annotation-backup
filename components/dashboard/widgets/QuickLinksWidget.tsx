@@ -115,7 +115,7 @@ export function QuickLinksWidget({
 
   // Widget Chat State: Report internal state for LLM context
   useEffect(() => {
-    const widgetTitle = panel.title || (badge ? `Link Notes ${badge}` : 'Link Notes')
+    const widgetTitle = panel.title || (badge ? `Links Panel ${badge}` : 'Links Panel')
     upsertWidgetState({
       _version: 1,
       widgetId: 'quick-links',

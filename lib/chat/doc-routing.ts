@@ -416,7 +416,7 @@ export function routeDocInput(
 
   // Step 2: visible widget bypass
   // Per panel-aware-command-routing-plan.md: Use token-based matching for panel commands
-  // This catches "link notes" → "Link Notes D/E", "link notes d pls" → "Link Notes D"
+  // This catches "links panel" → "Links Panel D/E", "links panel d pls" → "Links Panel D"
   const visibleWidgets = uiContext?.dashboard?.visibleWidgets
   if (inputMatchesVisiblePanel(input, visibleWidgets)) return 'action'
   // Fallback to exact normalized match (legacy behavior)

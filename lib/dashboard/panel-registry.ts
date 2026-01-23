@@ -172,8 +172,8 @@ export const panelTypeRegistry: Record<PanelTypeId, PanelTypeDefinition> = {
   },
   links_note: {
     id: 'links_note',
-    name: 'Quick Links',
-    description: 'Note with workspace links',
+    name: 'Links Panel',
+    description: 'Panel with workspace links',
     icon: '🔗',
     defaultGridSize: 'large',
     defaultSize: { width: PANEL_SIZES.large.width, height: PANEL_SIZES.large.height },
@@ -183,8 +183,8 @@ export const panelTypeRegistry: Record<PanelTypeId, PanelTypeDefinition> = {
   },
   links_note_tiptap: {
     id: 'links_note_tiptap',
-    name: 'Quick Links (TipTap)',
-    description: 'Note with workspace links using TipTap editor',
+    name: 'Links Panel',
+    description: 'Panel with workspace links using TipTap editor',
     icon: '🔗',
     defaultGridSize: 'large',
     defaultSize: { width: PANEL_SIZES.large.width, height: PANEL_SIZES.large.height },

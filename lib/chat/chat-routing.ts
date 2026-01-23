@@ -1428,9 +1428,9 @@ export async function handleClarificationIntercept(
     }
 
     // Tier 1b.3: Label matching for option selection (BEFORE new-intent escape)
-    // Per pending-options-resilience-fix.md: "link notes e" should match "Link Notes E" option
+    // Per pending-options-resilience-fix.md: "links panel e" should match "Links Panel E" option
     // even if it looks like a new command. Selection takes priority over new-intent escape.
-    // IMPORTANT: If input matches MULTIPLE options (e.g., "link notes" matches both D and E),
+    // IMPORTANT: If input matches MULTIPLE options (e.g., "links panel" matches both D and E),
     // do NOT auto-select - fall through to re-show options instead.
     if (lastClarification?.options && lastClarification.options.length > 0) {
       const normalizedInput = trimmedInput.toLowerCase().trim()
@@ -1458,7 +1458,7 @@ export async function handleClarificationIntercept(
       })
 
       // Only auto-select if EXACTLY ONE option matches
-      // If multiple match (e.g., "link notes" matches both D and E), fall through to re-show
+      // If multiple match (e.g., "links panel" matches both D and E), fall through to re-show
       if (matchingOptions.length === 1) {
         const matchedOption = matchingOptions[0]
         const fullOption = pendingOptions.find(opt => opt.id === matchedOption.id)
@@ -1502,7 +1502,7 @@ export async function handleClarificationIntercept(
           return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
         }
       } else if (matchingOptions.length > 1) {
-        // Multiple options match (e.g., "link notes" matches both D and E)
+        // Multiple options match (e.g., "links panel" matches both D and E)
         // EXPLICITLY re-show options - don't fall through to new-intent escape or LLM
         void debugLog({
           component: 'ChatNavigation',
@@ -1539,6 +1539,100 @@ export async function handleClarificationIntercept(
         setPendingOptionsMessageId(messageId)
         setIsLoading(false)
         // Return handled=true to prevent fall-through to LLM intent resolution
+        return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+      }
+    }
+
+    // Tier 1b.4: Fuzzy/typo match against pending options (before new-intent escape)
+    // Per clarification-typo-resilience-fix: Catches typos like:
+    // - "links panelx" → resembles "Links Panel D/E" options
+    // - "workspaces 2b" → resembles "Workspace 2" option
+    // If input resembles a pending option but triggered isNewQuestionOrCommandDetected,
+    // it's likely a typo - re-show options instead of escaping to cross-corpus.
+    if (lastClarification?.options && lastClarification.options.length > 0 && isNewQuestionOrCommandDetected) {
+      const normalizedInputForFuzzy = trimmedInput.toLowerCase().trim()
+      const inputResemblesOption = lastClarification.options.some(opt => {
+        const normalizedLabel = opt.label.toLowerCase()
+        // Extract label prefix (before parenthetical info)
+        // "Workspace 2 (0 notes · just now)" → "workspace 2"
+        const labelPrefix = normalizedLabel.split(/\s*\(/)[0].trim()
+
+        // Check 1: Input with trailing char removed matches label prefix
+        // "links panelx" → "links panel" matches "links panel d"
+        if (normalizedInputForFuzzy.length > 4) {
+          const inputTrimmed = normalizedInputForFuzzy.replace(/[a-z]$/, '') // Remove trailing letter
+          if (labelPrefix.startsWith(inputTrimmed) || inputTrimmed.startsWith(labelPrefix)) {
+            return true
+          }
+        }
+
+        // Check 2: Core word overlap (handles plural/singular and trailing junk)
+        // "workspaces 2b" → core words: ["workspace"] → matches "workspace 2"
+        // Normalize: remove digits, trailing letters, singularize
+        const getCanonicalWords = (str: string): string[] => {
+          return str
+            .replace(/\d+[a-z]*/g, '') // Remove digit+trailing (e.g., "2b")
+            .split(/\s+/)
+            .map(w => w.replace(/s$/, '').replace(/[^a-z]/g, '')) // Singularize, alpha only
+            .filter(w => w.length >= 4)
+        }
+
+        const inputCoreWords = getCanonicalWords(normalizedInputForFuzzy)
+        const labelCoreWords = getCanonicalWords(labelPrefix)
+
+        // If any significant core word from input matches a label core word, it resembles
+        const hasWordOverlap = inputCoreWords.some(iw =>
+          labelCoreWords.some(lw => lw === iw || lw.startsWith(iw) || iw.startsWith(lw))
+        )
+        if (hasWordOverlap) return true
+
+        // Check 3: Input contains a digit that appears in option label
+        // "workspaces 2b" has "2" → matches "Workspace 2"
+        const inputDigits = normalizedInputForFuzzy.match(/\d+/g)
+        if (inputDigits) {
+          for (const digit of inputDigits) {
+            if (new RegExp(`\\b${digit}\\b`).test(normalizedLabel)) {
+              return true
+            }
+          }
+        }
+
+        return false
+      })
+
+      if (inputResemblesOption) {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'clarification_tier1b4_fuzzy_reshow',
+          metadata: {
+            input: trimmedInput,
+            optionsCount: lastClarification.options.length,
+            reason: 'input_resembles_pending_option',
+          },
+        })
+
+        // Re-show options instead of escaping to new intent
+        const messageId = `assistant-${Date.now()}`
+        const reaskMessage: ChatMessage = {
+          id: messageId,
+          role: 'assistant',
+          content: 'Please choose one of the options:',
+          timestamp: new Date(),
+          isError: false,
+          options: lastClarification.options.map(opt => {
+            const fullOpt = pendingOptions.find(p => p.id === opt.id)
+            return {
+              type: opt.type as SelectionOption['type'],
+              id: opt.id,
+              label: opt.label,
+              sublabel: opt.sublabel,
+              data: fullOpt?.data as SelectionOption['data'] ?? {} as SelectionOption['data'],
+            }
+          }),
+        }
+        addMessage(reaskMessage)
+        setPendingOptionsMessageId(messageId)
+        setIsLoading(false)
         return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
       }
     }
@@ -1713,12 +1807,12 @@ export interface PanelDisambiguationHandlerResult extends HandlerResult {
 /**
  * Handle panel disambiguation BEFORE LLM.
  *
- * When user types "link notes" (partial match for multiple panels),
+ * When user types "links panel" (partial match for multiple panels),
  * show disambiguation directly without going to LLM.
  * This ensures deterministic behavior instead of relying on LLM parsing.
  *
  * Matches:
- * - Partial match (multiple panels): "link notes" → D and E → disambiguation
+ * - Partial match (multiple panels): "links panel" → D and E → disambiguation
  * - Does NOT handle exact match (single panel) - let LLM handle for richer response
  * - Does NOT handle no match - let LLM try to interpret
  */
@@ -1761,11 +1855,11 @@ export function handlePanelDisambiguation(
       data: { panelId: widget.id, panelTitle: widget.title, panelType: widget.type },
     }))
 
-    // Build a friendly name for the message (e.g., "Link Notes" for quick-links panels)
+    // Build a friendly name for the message (e.g., "Links Panel" for quick-links panels)
     const isQuickLinks = matchResult.matches.some(m =>
       m.type === 'links_note' || m.type === 'links_note_tiptap'
     )
-    const friendlyName = isQuickLinks ? 'Link Notes' : 'panels'
+    const friendlyName = isQuickLinks ? 'Links Panel' : 'panels'
 
     const assistantMessage: ChatMessage = {
       id: messageId,

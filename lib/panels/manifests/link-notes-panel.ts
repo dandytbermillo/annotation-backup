@@ -1,18 +1,18 @@
 /**
- * Link Notes Panel Manifests
+ * Links Panel Manifests
  *
- * Chat capabilities for Link Notes panels (A, B, C, D, E, etc.).
+ * Chat capabilities for Links Panels (A, B, C, D, E, etc.).
  * Each badge is a separate panel instance.
  *
  * Note: Internal panelId remains 'quick-links-X' for API route compatibility.
- * User-facing name is "Link Notes".
+ * User-facing name is "Links Panel".
  */
 
 import { createPanelManifest, createIntent } from '../create-manifest'
 import type { PanelChatManifest } from '../panel-manifest'
 
 /**
- * Create manifest for a Link Notes panel badge
+ * Create manifest for a Links Panel badge
  */
 export function createLinkNotesManifest(badge: string): PanelChatManifest {
   const badgeLower = badge.trim().toLowerCase()
@@ -22,19 +22,19 @@ export function createLinkNotesManifest(badge: string): PanelChatManifest {
     // Keep 'quick-links' for API route compatibility
     panelId: `quick-links-${badgeLower}`,
     panelType: 'quick-links',
-    title: `Link Notes ${badgeUpper}`,
+    title: `Links Panel ${badgeUpper}`,
     intents: [
       createIntent({
         name: 'show_links',
-        description: `Show all links in Link Notes ${badgeUpper} panel`,
+        description: `Show all links in Links Panel ${badgeUpper}`,
         examples: [
-          // Link notes variations (primary)
-          `show link notes ${badgeLower}`,
-          `show link notes ${badgeUpper}`,
-          `open link notes ${badgeLower}`,
-          `open link notes ${badgeUpper}`,
-          `link notes ${badgeLower}`,
-          `link notes ${badgeUpper}`,
+          // Links Panel variations (primary)
+          `show links panel ${badgeLower}`,
+          `show links panel ${badgeUpper}`,
+          `open links panel ${badgeLower}`,
+          `open links panel ${badgeUpper}`,
+          `links panel ${badgeLower}`,
+          `links panel ${badgeUpper}`,
           // Quick links variations (legacy)
           `show quick links ${badgeLower}`,
           `show quick links ${badgeUpper}`,
@@ -48,7 +48,7 @@ export function createLinkNotesManifest(badge: string): PanelChatManifest {
           `links ${badgeUpper}`,
           `open quick links ${badgeLower}`,
           `list quick links ${badgeLower}`,
-          `list link notes ${badgeLower}`,
+          `list links panel ${badgeLower}`,
         ],
         paramsSchema: {
           mode: {
@@ -62,9 +62,9 @@ export function createLinkNotesManifest(badge: string): PanelChatManifest {
       }),
       createIntent({
         name: 'open_link',
-        description: `Open a specific link from Link Notes ${badgeUpper}`,
+        description: `Open a specific link from Links Panel ${badgeUpper}`,
         examples: [
-          `open link X from link notes ${badgeLower}`,
+          `open link X from links panel ${badgeLower}`,
           `open link X from quick links ${badgeLower}`,
           `go to X in links ${badgeLower}`,
         ],
@@ -84,11 +84,11 @@ export function createLinkNotesManifest(badge: string): PanelChatManifest {
       }),
       createIntent({
         name: 'add_link',
-        description: `Add a new link to Link Notes ${badgeUpper}`,
+        description: `Add a new link to Links Panel ${badgeUpper}`,
         examples: [
-          `add link to link notes ${badgeLower}`,
+          `add link to links panel ${badgeLower}`,
           `add link to quick links ${badgeLower}`,
-          `save to link notes ${badgeLower}`,
+          `save to links panel ${badgeLower}`,
           `add current to links ${badgeLower}`,
         ],
         paramsSchema: {
@@ -108,9 +108,9 @@ export function createLinkNotesManifest(badge: string): PanelChatManifest {
       }),
       createIntent({
         name: 'remove_link',
-        description: `Remove a link from Link Notes ${badgeUpper}`,
+        description: `Remove a link from Links Panel ${badgeUpper}`,
         examples: [
-          `remove link X from link notes ${badgeLower}`,
+          `remove link X from links panel ${badgeLower}`,
           `remove link X from quick links ${badgeLower}`,
           `delete link from links ${badgeLower}`,
         ],
@@ -133,7 +133,7 @@ export function createLinkNotesManifest(badge: string): PanelChatManifest {
   })
 }
 
-// Export manifests for all Link Notes badges
+// Export manifests for all Links Panel badges
 export const linkNotesPanelManifests: PanelChatManifest[] = [
   createLinkNotesManifest('a'),
   createLinkNotesManifest('b'),

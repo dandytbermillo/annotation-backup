@@ -50,7 +50,7 @@ export async function POST(
     if (panelResult.rows.length === 0) {
       return NextResponse.json({
         success: false,
-        message: `No Link Notes panel with badge "${badge.toUpperCase()}" found.`,
+        message: `No Links Panel panel with badge "${badge.toUpperCase()}" found.`,
       })
     }
 
@@ -60,7 +60,7 @@ export async function POST(
     if (!contentJson) {
       return NextResponse.json({
         success: false,
-        message: `Link Notes ${badge.toUpperCase()} is empty.`,
+        message: `Links Panel ${badge.toUpperCase()} is empty.`,
       })
     }
 
@@ -70,7 +70,7 @@ export async function POST(
     if (viewItems.length === 0) {
       return NextResponse.json({
         success: false,
-        message: `No links found in Link Notes ${badge.toUpperCase()}.`,
+        message: `No links found in Links Panel ${badge.toUpperCase()}.`,
       })
     }
 
@@ -82,7 +82,7 @@ export async function POST(
       if (idx < 0 || idx >= viewItems.length) {
         return NextResponse.json({
           success: false,
-          message: `Position ${position} is out of range. Link Notes ${badge.toUpperCase()} has ${viewItems.length} items.`,
+          message: `Position ${position} is out of range. Links Panel ${badge.toUpperCase()} has ${viewItems.length} items.`,
         })
       }
       targetItem = viewItems[idx]
@@ -95,7 +95,7 @@ export async function POST(
       if (!targetItem) {
         return NextResponse.json({
           success: false,
-          message: `No link matching "${name}" found in Link Notes ${badge.toUpperCase()}.`,
+          message: `No link matching "${name}" found in Links Panel ${badge.toUpperCase()}.`,
         })
       }
     }

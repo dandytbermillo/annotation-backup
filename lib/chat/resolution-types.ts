@@ -100,7 +100,7 @@ export interface ResolutionContext {
   // Raw user message for deterministic fallback extraction
   // (per link-notes-generic-disambiguation-fix.md: "Keep deterministic action routing")
   rawUserMessage?: string
-  // Explicit Link Notes badge extracted from user input (deterministic)
+  // Explicit Links Panel badge extracted from user input (deterministic)
   // Per link-notes-generic-disambiguation-fix.md: overrides LLM-extracted badge
   explicitLinkNotesBadge?: string
   // Pending disambiguation options (for reshow_options intent)

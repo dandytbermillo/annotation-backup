@@ -118,7 +118,7 @@ export async function handleCrossCorpusRetrieval(
   // Panel Command Guard (context-aware)
   // Per panel-aware-command-routing-plan.md: Skip cross-corpus for panel commands.
   // Uses visible widget titles instead of hardcoded patterns.
-  // "link notes d", "link notes d pls", "open recent" → skip cross-corpus
+  // "links panel d", "links panel d pls", "open recent" → skip cross-corpus
   // ==========================================================================
   const panelMatchResult = inputMatchesVisiblePanel(trimmedInput, visibleWidgets)
 

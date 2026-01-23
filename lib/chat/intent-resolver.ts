@@ -1149,7 +1149,7 @@ function resolveVerifyAction(
     if (lower === 'recent' || lower === 'recents') return 'Recent'
     if (lower.startsWith('quick link') || lower.startsWith('link note') || lower.startsWith('links')) {
       const badge = lower.match(/(?:quick\s*links?|link\s*notes?)\s*([a-z])?$/i)?.[1] || lower.match(/links?\s+([a-z])$/i)?.[1]
-      return badge ? `Link Notes ${badge.toUpperCase()}` : 'Link Notes'
+      return badge ? `Links Panel ${badge.toUpperCase()}` : 'Links Panel'
     }
     return input.trim()
   }
@@ -1522,7 +1522,7 @@ function resolveVerifyRequest(
     if (lower === 'recent' || lower === 'recents') return 'Recent'
     if (lower.startsWith('quick link') || lower.startsWith('link note') || lower.startsWith('links')) {
       const badge = lower.match(/(?:quick\s*links?|link\s*notes?)\s*([a-z])?$/i)?.[1] || lower.match(/links?\s+([a-z])$/i)?.[1]
-      return badge ? `Link Notes ${badge.toUpperCase()}` : 'Link Notes'
+      return badge ? `Links Panel ${badge.toUpperCase()}` : 'Links Panel'
     }
     return input.trim()
   }
@@ -1730,7 +1730,7 @@ async function resolveShowQuickLinks(
     return {
       success: false,
       action: 'error',
-      message: 'Please open an entry first to view Link Notes.',
+      message: 'Please open an entry first to view Links Panel.',
     }
   }
 
@@ -1790,13 +1790,13 @@ async function resolveShowQuickLinks(
       return {
         success: false,
         action: 'error',
-        message: `No Link Notes panel with badge "${quickLinksPanelBadge.toUpperCase()}" found.`,
+        message: `No Links Panel panel with badge "${quickLinksPanelBadge.toUpperCase()}" found.`,
       }
     }
     return {
       success: false,
       action: 'error',
-      message: 'No Link Notes panels found in this entry.',
+      message: 'No Links Panel panels found in this entry.',
     }
   }
 
@@ -1830,17 +1830,17 @@ async function resolveShowQuickLinks(
       options: panels.map((p) => ({
         type: 'quick_links_panel' as const,
         id: p.id,
-        label: p.title || `Link Notes ${p.badge || ''}`.trim(),
+        label: p.title || `Links Panel ${p.badge || ''}`.trim(),
         sublabel: undefined,
         data: { panelId: p.id, badge: p.badge || '', panelType: 'quick_links' as const },
       })),
-      message: `Found ${panels.length} Link Notes panels. Which one would you like to see?`,
+      message: `Found ${panels.length} Links Panel panels. Which one would you like to see?`,
     }
   }
 
   // Single panel found (or specific badge requested)
   const panel = panelsResult.rows[0]
-  const panelTitle = panel.title || 'Link Notes'
+  const panelTitle = panel.title || 'Links Panel'
   const badge = (panel.badge || 'a').toLowerCase()
 
   // If forcePreviewMode is set (user said "list", "preview", etc.),
@@ -2301,7 +2301,7 @@ async function resolveBareName(
       // Multiple matches - disambiguation
       // Convert input name to user-friendly display
       const displayName = name.toLowerCase().includes('link') && name.toLowerCase().includes('note')
-        ? 'Link Notes'
+        ? 'Links Panel'
         : name
       return {
         success: true,
@@ -2492,7 +2492,7 @@ async function resolvePanelIntent(
     resolvedIntentName = 'show_links'
   }
 
-  // Coerce open-related intents to show_links for Link Notes panels
+  // Coerce open-related intents to show_links for Links Panel panels
   // This handles LLM returning "open", "open_panel", etc. instead of "show_links"
   if (
     panelId.startsWith('quick-links-') &&
@@ -2581,7 +2581,7 @@ async function resolvePanelIntent(
 
         if (allQuickLinksResult.rows.length === 1) {
           const row = allQuickLinksResult.rows[0]
-          const panelTitle = row.title || 'Link Notes'
+          const panelTitle = row.title || 'Links Panel'
           return {
             status: 'found' as const,
             panelId: row.id,
@@ -2590,12 +2590,12 @@ async function resolvePanelIntent(
           }
         }
 
-        // Multiple Link Notes → disambiguation
+        // Multiple Links Panel → disambiguation
         return {
           status: 'multiple' as const,
           panels: allQuickLinksResult.rows.map((r: { id: string; title: string; badge: string; panel_type: string }) => ({
             id: r.id,
-            title: r.title || 'Link Notes',
+            title: r.title || 'Links Panel',
             panel_type: r.panel_type,
           })),
         }
@@ -2617,7 +2617,7 @@ async function resolvePanelIntent(
       if (quickLinksResult.rows.length === 0) return { status: 'not_found' }
 
       const row = quickLinksResult.rows[0]
-      const panelTitle = row.title || 'Link Notes'
+      const panelTitle = row.title || 'Links Panel'
 
       return {
         status: 'found' as const,
@@ -2813,7 +2813,7 @@ async function resolvePanelIntent(
     if (drawerResult.status === 'multiple') {
       // Multiple panels match - show disambiguation pills
       // Convert internal panelId to user-friendly name
-      const friendlyName = panelId.startsWith('quick-links') ? 'Link Notes' : panelId
+      const friendlyName = panelId.startsWith('quick-links') ? 'Links Panel' : panelId
       return {
         success: true,
         action: 'select',
@@ -2876,7 +2876,7 @@ async function resolvePanelIntent(
   })
 
   if (!result.success) {
-    // Fallback: If panel intent fails for Recent or Link Notes panels, open drawer instead of showing error
+    // Fallback: If panel intent fails for Recent or Links Panel panels, open drawer instead of showing error
     // This handles "open my recent" or "open link notes d" being routed to panel_intent with unsupported action
     if (panelId === 'recent' || panelId.startsWith('quick-links-')) {
       const drawerFallback = await resolveDrawerPanelTarget()
@@ -2902,7 +2902,7 @@ async function resolvePanelIntent(
             sublabel: p.panel_type,
             data: { panelId: p.id, panelTitle: p.title, panelType: p.panel_type },
           })),
-          message: `Multiple Link Notes panels found. Which one would you like to open?`,
+          message: `Multiple Links Panel panels found. Which one would you like to open?`,
         }
       }
     }

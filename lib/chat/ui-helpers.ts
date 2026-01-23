@@ -69,15 +69,16 @@ export function parseOrdinal(input: string): number | null {
 }
 
 /**
- * Extract Link Notes badge letter from user input or title string.
+ * Extract Links Panel badge letter from user input or title string.
  * Returns the badge letter (uppercase) or null if not found.
  *
- * Example: "link notes d" → "D", "open link notes f" → "F"
+ * Example: "links panel d" → "D", "open links panel f" → "F"
+ * Also supports legacy "link notes" pattern for backwards compatibility.
  */
 export function extractLinkNotesBadge(input?: string): string | null {
   if (!input) return null
-  // Match "link notes X" or "link note X" where X is a single letter
-  const match = input.match(/\blink\s*notes?\s+([a-z])\b/i)
+  // Match "links panel X" or "link notes X" or "link note X" where X is a single letter
+  const match = input.match(/\b(?:links?\s*panel|link\s*notes?)\s+([a-z])\b/i)
   return match ? match[1].toUpperCase() : null
 }
 

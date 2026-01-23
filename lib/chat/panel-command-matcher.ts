@@ -86,10 +86,10 @@ function isSubset(setA: Set<string>, setB: Set<string>): boolean {
  * Match user input against visible widget titles.
  *
  * Matching behavior:
- * - **Exact match**: All title tokens are in input (e.g., "link notes d pls" matches "Link Notes D")
- * - **Partial match**: All input tokens are in title (e.g., "link notes" matches "Link Notes D" and "Link Notes E")
+ * - **Exact match**: All title tokens are in input (e.g., "links panel d pls" matches "Links Panel D")
+ * - **Partial match**: All input tokens are in title (e.g., "links panel" matches "Links Panel D" and "Links Panel E")
  *
- * @param input - User input (e.g., "link notes d", "open recent", "link notes d pls")
+ * @param input - User input (e.g., "links panel d", "open recent", "links panel d pls")
  * @param visibleWidgets - Array of visible widgets with id, title, type
  * @returns Match result with type and matched widgets
  */
@@ -114,12 +114,12 @@ export function matchVisiblePanelCommand(
     if (titleTokens.size === 0) continue
 
     // Exact match: all title tokens are in input
-    // "link notes d pls" contains all tokens of "Link Notes D" → exact match
+    // "links panel d pls" contains all tokens of "Links Panel D" → exact match
     if (isSubset(titleTokens, inputTokens)) {
       exactMatches.push(widget)
     }
     // Partial match: all input tokens are in title
-    // "link notes" tokens are all in "Link Notes D" → partial match (for disambiguation)
+    // "links panel" tokens are all in "Links Panel D" → partial match (for disambiguation)
     else if (isSubset(inputTokens, titleTokens)) {
       partialMatches.push(widget)
     }

@@ -517,7 +517,7 @@ function findExactOptionMatch(
   if (sublabelMatch) return sublabelMatch
 
   // Try "contains" match - input contains the option label
-  // e.g., "pls show the Link Notes D" contains "Link Notes D"
+  // e.g., "pls show the Links Panel D" contains "Links Panel D"
   // Only match if exactly one option label is found (avoid ambiguity)
   const containsMatches = options.filter(opt =>
     normalized.includes(opt.label.toLowerCase())
@@ -817,7 +817,7 @@ function ChatNavigationPanelContent({
           }),
         })
 
-        if (!response.ok) throw new Error('Failed to load Link Notes')
+        if (!response.ok) throw new Error('Failed to load Links Panel')
 
         const { resolution } = await response.json() as { resolution: IntentResolutionResult }
 
@@ -859,7 +859,7 @@ function ChatNavigationPanelContent({
         const errorMessage: ChatMessage = {
           id: `error-${Date.now()}`,
           role: 'assistant',
-          content: 'Failed to load Link Notes.',
+          content: 'Failed to load Links Panel.',
           timestamp: new Date(),
           isError: true,
         }
@@ -1330,7 +1330,7 @@ function ChatNavigationPanelContent({
 
   /**
    * Handle suggestion button click.
-   * @param suggestionLabel The command label (e.g., "Link Notes")
+   * @param suggestionLabel The command label (e.g., "Links Panel")
    * @param actionMode 'open' sends label directly, 'list' triggers preview mode
    */
   const handleSuggestionClick = useCallback(
@@ -1752,7 +1752,7 @@ function ChatNavigationPanelContent({
       }
 
       // ---------------------------------------------------------------------------
-      // Panel Disambiguation (Pre-LLM): Handle partial matches like "link notes"
+      // Panel Disambiguation (Pre-LLM): Handle partial matches like "links panel"
       // Per panel-aware-command-routing-plan.md: Show disambiguation deterministically
       // before going to LLM to avoid non-deterministic LLM badge guessing.
       // ---------------------------------------------------------------------------

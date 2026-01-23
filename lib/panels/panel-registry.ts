@@ -60,7 +60,7 @@ class PanelIntentRegistry {
     // Recent panel
     this.register(recentPanelManifest)
 
-    // Link Notes panels (A, B, C, D, E)
+    // Links Panel (A, B, C, D, E)
     for (const manifest of linkNotesPanelManifests) {
       this.register(manifest)
     }
@@ -269,7 +269,7 @@ Available panel intents:
     // Add priority rules
     prompt += `
 ### Priority Rules
-1. If user explicitly mentions a panel name (e.g., "Link Notes A", "Recent"), use that panel.
+1. If user explicitly mentions a panel name (e.g., "Links Panel A", "Recent"), use that panel.
 2. If ambiguous between panels, prefer the panel marked [FOCUSED]: ${effectiveFocusedPanel || 'none'}.
 3. If still ambiguous, ask for clarification.
 `

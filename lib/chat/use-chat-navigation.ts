@@ -601,7 +601,7 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
             onPanelDrawerOpen?.(resolution.panelId, resolution.panelTitle)
             const drawerResult = openPanelDrawer(resolution.panelId)
             // Preserve resolution.message if it has a specific panel title
-            // (e.g., "Opening Link Notes D...") instead of generic "Opening panel..."
+            // (e.g., "Opening Links Panel D...") instead of generic "Opening panel..."
             return {
               ...drawerResult,
               message: resolution.message || drawerResult.message,
@@ -716,7 +716,7 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
           const workspace = option.data as WorkspaceMatch
           return deleteWorkspace(workspace.id, workspace.name)
         case 'quick_links_panel':
-          // User selected a Link Notes panel from disambiguation
+          // User selected a Links Panel from disambiguation
           // Dispatch event for chat to re-resolve with specific badge
           const panelData = option.data as { panelId: string; badge: string; panelType: 'quick_links' }
           if (typeof window !== 'undefined') {
@@ -726,7 +726,7 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
           }
           return {
             success: true,
-            message: `Loading Link Notes ${panelData.badge}...`,
+            message: `Loading Links Panel ${panelData.badge}...`,
             action: 'selected',
           }
         case 'confirm_panel_write':
