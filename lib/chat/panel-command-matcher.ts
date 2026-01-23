@@ -36,6 +36,8 @@ export interface PanelMatchResult {
 /**
  * Stopwords to remove during normalization.
  * Includes articles, possessives, and politeness words.
+ *
+ * NOTE: Panel/widget terms are normalized (singular/plural) instead of removed.
  */
 const STOPWORDS = new Set([
   // Articles
@@ -44,8 +46,6 @@ const STOPWORDS = new Set([
   'my', 'your', 'our', 'their',
   // Politeness / filler
   'pls', 'please', 'plz', 'now', 'thanks', 'thank', 'thx',
-  // Common panel words (optional - keep if causes issues)
-  'panel', 'widget',
 ])
 
 // =============================================================================
@@ -60,11 +60,20 @@ const STOPWORDS = new Set([
  * - Return as Set (order-independent matching)
  */
 function normalizeToTokenSet(s: string): Set<string> {
+  const canonicalTokens: Record<string, string> = {
+    panel: 'panel',
+    panels: 'panel',
+    widget: 'widget',
+    widgets: 'widget',
+    link: 'links',
+    links: 'links',
+  }
   const tokens = s
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, '')
     .split(/\s+/)
     .filter(t => t && !STOPWORDS.has(t))
+    .map(t => canonicalTokens[t] ?? t)
   return new Set(tokens)
 }
 

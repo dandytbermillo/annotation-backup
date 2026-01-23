@@ -1448,13 +1448,40 @@ export async function handleClarificationIntercept(
         return /[\s,!?.]/.test(charAfter)
       }
 
+      // Helper: Canonical token matching for singular/plural handling
+      // e.g., "links panels d" → tokens {links, panel, d} matches "Links Panel D" → {links, panel, d}
+      // e.g., "link panels d" → tokens {links, panel, d} matches "Links Panel D"
+      const canonicalTokens: Record<string, string> = {
+        panel: 'panel', panels: 'panel',
+        widget: 'widget', widgets: 'widget',
+        link: 'links', links: 'links',
+      }
+      const toCanonicalTokens = (s: string): Set<string> => {
+        const tokens = s.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean)
+        return new Set(tokens.map(t => canonicalTokens[t] ?? t))
+      }
+      const tokensMatch = (inputTokens: Set<string>, labelTokens: Set<string>): boolean => {
+        // Exact token match: all label tokens in input AND all input tokens in label
+        if (inputTokens.size !== labelTokens.size) return false
+        for (const t of inputTokens) {
+          if (!labelTokens.has(t)) return false
+        }
+        return true
+      }
+
       // Find ALL matching options, not just the first one
       const matchingOptions = lastClarification.options.filter(opt => {
         const normalizedLabel = opt.label.toLowerCase()
-        // Exact match, or input is contained in label, or label is contained in input WITH word boundary
-        return normalizedLabel === normalizedInput ||
-               normalizedLabel.includes(normalizedInput) ||
-               matchesWithWordBoundary(normalizedInput, normalizedLabel)
+        // 1. Exact string match, or input is contained in label, or label is contained in input WITH word boundary
+        if (normalizedLabel === normalizedInput ||
+            normalizedLabel.includes(normalizedInput) ||
+            matchesWithWordBoundary(normalizedInput, normalizedLabel)) {
+          return true
+        }
+        // 2. Canonical token matching (handles "links panels d" → "Links Panel D")
+        const inputTokens = toCanonicalTokens(normalizedInput)
+        const labelTokens = toCanonicalTokens(normalizedLabel)
+        return tokensMatch(inputTokens, labelTokens)
       })
 
       // Only auto-select if EXACTLY ONE option matches
