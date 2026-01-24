@@ -43,6 +43,10 @@ import {
   type OffMenuMappingResult,
   type ClarificationType,
 } from '@/lib/chat/clarification-offmenu'
+import {
+  shouldCallLLMFallback,
+  callClarificationLLMClient,
+} from '@/lib/chat/clarification-llm-fallback'
 
 // =============================================================================
 // Handler Result Type
@@ -1078,46 +1082,91 @@ export interface ClarificationInterceptContext {
 
 /**
  * Check if input is a selection-only pattern (ordinal or single letter).
- * Per llm-chat-context-first-plan.md: Only intercept pure selection patterns.
+ * Per clarification-llm-last-resort-plan.md: Expanded ordinal parsing before LLM.
+ *
+ * Handles:
+ * - Basic ordinals: "first", "second", "1", "2", "a", "b"
+ * - Ordinal suffixes: "1st", "2nd", "3rd"
+ * - Word numbers: "number one", "number two"
+ * - Positional: "top", "bottom", "upper", "lower", "the other one"
+ * - Phrases: "the first one", "the second one", "option 1"
+ * - Polite suffixes: "second pls", "first please", "2 plz"
+ * - Common typos: "secnd", "secon", "frist", "2n"
  */
 function isSelectionOnly(
   input: string,
   optionCount: number,
   optionLabels: string[]
 ): { isSelection: boolean; index?: number } {
-  const normalized = input.trim().toLowerCase()
-
-  // Option phrases: option 1, option 2, the first one, the second one
-  // Plus ordinals and single letters
-  const selectionPattern = /^(first|second|third|fourth|fifth|last|[1-9]|option\s*[1-9]|the\s+(first|second|third|fourth|fifth|last)\s+one|[a-e])$/i
-
-  if (!selectionPattern.test(normalized)) {
-    return { isSelection: false }
-  }
+  // Normalize and strip polite suffixes
+  let normalized = input.trim().toLowerCase()
+  normalized = normalized.replace(/\s*(pls|plz|please|thx|thanks|ty)\.?$/i, '').trim()
 
   // Map input to index
   let index: number | undefined
 
-  // Check ordinals first
+  // Static ordinal map (includes typos and variations)
   const ordinalMap: Record<string, number> = {
+    // Basic ordinals
     'first': 0, 'second': 1, 'third': 2, 'fourth': 3, 'fifth': 4,
+    '1st': 0, '2nd': 1, '3rd': 2, '4th': 3, '5th': 4,
+    // Word numbers
+    'one': 0, 'two': 1, 'three': 2, 'four': 3, 'five': 4,
+    'number one': 0, 'number two': 1, 'number three': 2, 'number four': 3, 'number five': 4,
+    'num one': 0, 'num two': 1, 'num 1': 0, 'num 2': 1,
+    // Phrases
+    'the first': 0, 'the second': 1, 'the third': 2, 'the fourth': 3, 'the fifth': 4,
     'the first one': 0, 'the second one': 1, 'the third one': 2,
-    'the fourth one': 3, 'the fifth one': 4, 'the last one': optionCount - 1,
-    'last': optionCount - 1,
+    'the fourth one': 3, 'the fifth one': 4,
+    // Common typos
+    'frist': 0, 'fisrt': 0, 'frst': 0,
+    'secnd': 1, 'secon': 1, 'scond': 1, 'secod': 1,
+    '2n': 1, '1s': 0, '3r': 2,
+    // Last
+    'last': optionCount - 1, 'the last': optionCount - 1, 'the last one': optionCount - 1,
   }
 
+  // Check static map first
   if (ordinalMap[normalized] !== undefined) {
     index = ordinalMap[normalized]
-  } else if (/^[1-9]$/.test(normalized)) {
+  }
+  // Numeric: "1", "2", etc.
+  else if (/^[1-9]$/.test(normalized)) {
     index = parseInt(normalized, 10) - 1
-  } else if (/^option\s*[1-9]$/i.test(normalized)) {
+  }
+  // Option phrases: "option 1", "option 2"
+  else if (/^option\s*[1-9]$/i.test(normalized)) {
     const num = normalized.match(/[1-9]/)?.[0]
     if (num) index = parseInt(num, 10) - 1
-  } else if (/^[a-e]$/i.test(normalized)) {
+  }
+  // Single letters: "a", "b", "c", "d", "e"
+  else if (/^[a-e]$/i.test(normalized)) {
     index = normalized.charCodeAt(0) - 'a'.charCodeAt(0)
-    // Letter doesn't match any option - not a selection
     if (index >= optionCount) {
       return { isSelection: false }
+    }
+  }
+  // Positional: "top", "bottom", "upper", "lower"
+  else if (/^(top|upper|first one|top one)$/.test(normalized)) {
+    index = 0
+  }
+  else if (/^(bottom|lower|last one|bottom one)$/.test(normalized)) {
+    index = optionCount - 1
+  }
+  // "the other one" (only valid when exactly 2 options)
+  else if (/^(the other one|the other|other one|other)$/.test(normalized) && optionCount === 2) {
+    // Ambiguous without context, but conventionally means "not the first" = second
+    index = 1
+  }
+
+  // =========================================================================
+  // NEW: Ordinal Extraction Rule (per clarification-llm-last-resort-plan.md)
+  // Extract ordinals from ANY phrase, not only exact matches.
+  // =========================================================================
+  if (index === undefined) {
+    const extractedIndex = extractOrdinalFromPhrase(normalized, optionCount)
+    if (extractedIndex !== undefined) {
+      index = extractedIndex
     }
   }
 
@@ -1127,6 +1176,68 @@ function isSelectionOnly(
   }
 
   return { isSelection: false }
+}
+
+/**
+ * Extract ordinal from any phrase that contains ordinal tokens.
+ * Per clarification-llm-last-resort-plan.md: "Ordinal Extraction Rule (NEW)"
+ *
+ * Examples:
+ * - "the first option" → 0
+ * - "I pick the first" → 0
+ * - "go with the second" → 1
+ * - "I choose the second one" → 1
+ * - "pick number two" → 1
+ * - "option 2 please" → 1
+ */
+function extractOrdinalFromPhrase(input: string, optionCount: number): number | undefined {
+  // Word-based ordinal patterns (match anywhere in phrase)
+  const wordOrdinals: Array<{ pattern: RegExp; index: number | 'last' }> = [
+    // First
+    { pattern: /\bfirst\b/i, index: 0 },
+    { pattern: /\b1st\b/i, index: 0 },
+    // Second
+    { pattern: /\bsecond\b/i, index: 1 },
+    { pattern: /\b2nd\b/i, index: 1 },
+    // Third
+    { pattern: /\bthird\b/i, index: 2 },
+    { pattern: /\b3rd\b/i, index: 2 },
+    // Fourth
+    { pattern: /\bfourth\b/i, index: 3 },
+    { pattern: /\b4th\b/i, index: 3 },
+    // Fifth
+    { pattern: /\bfifth\b/i, index: 4 },
+    { pattern: /\b5th\b/i, index: 4 },
+    // Last (special handling)
+    { pattern: /\blast\b/i, index: 'last' },
+    // Word numbers with "number" prefix
+    { pattern: /\bnumber\s+one\b/i, index: 0 },
+    { pattern: /\bnumber\s+two\b/i, index: 1 },
+    { pattern: /\bnumber\s+three\b/i, index: 2 },
+  ]
+
+  for (const { pattern, index: rawIndex } of wordOrdinals) {
+    if (pattern.test(input)) {
+      const resolvedIndex = rawIndex === 'last' ? optionCount - 1 : rawIndex
+      if (resolvedIndex >= 0 && resolvedIndex < optionCount) {
+        return resolvedIndex
+      }
+    }
+  }
+
+  // Numeric extraction: "option 2", "pick 1", etc.
+  // Only match standalone numbers 1-5 (to avoid false positives)
+  if (optionCount <= 5) {
+    const numericMatch = input.match(/\b([1-5])\b/)
+    if (numericMatch) {
+      const num = parseInt(numericMatch[1], 10)
+      if (num >= 1 && num <= optionCount) {
+        return num - 1
+      }
+    }
+  }
+
+  return undefined
 }
 
 /**
@@ -1412,26 +1523,12 @@ export async function handleClarificationIntercept(
       })
     }
 
-    // Tier 1: Local affirmation check
-    const hasMultipleOptions = lastClarification!.options && lastClarification!.options.length > 0
-    if (isAffirmationPhrase(trimmedInput) && !hasMultipleOptions) {
-      void debugLog({
-        component: 'ChatNavigation',
-        action: 'clarification_tier1_affirmation',
-        metadata: { userInput: trimmedInput },
-      })
-      await executeNextAction()
-      setIsLoading(false)
-      return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
-    }
-
-    // Tier 1b.1: Exit phrase detection (per clarification-offmenu-handling-plan.md)
-    // "cancel / never mind / none / stop" → clear clarification and ask open-ended
-    // NOTE: Must come BEFORE rejection check since phrases overlap
+    // Tier 1a: Exit phrase detection (BEFORE ALL ELSE per clarification-llm-last-resort-plan.md)
+    // "cancel / never mind / none / stop / doesn't matter / forget it" → clear and ask open-ended
     if (isExitPhrase(trimmedInput)) {
       void debugLog({
         component: 'ChatNavigation',
-        action: 'clarification_tier1b1_exit_phrase',
+        action: 'clarification_tier1a_exit_phrase',
         metadata: { userInput: trimmedInput },
       })
       setLastClarification(null)
@@ -1450,7 +1547,20 @@ export async function handleClarificationIntercept(
       return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
     }
 
-    // Tier 1b.2: Local rejection check (simple "no")
+    // Tier 1b: Local affirmation check
+    const hasMultipleOptions = lastClarification!.options && lastClarification!.options.length > 0
+    if (isAffirmationPhrase(trimmedInput) && !hasMultipleOptions) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'clarification_tier1b_affirmation',
+        metadata: { userInput: trimmedInput },
+      })
+      await executeNextAction()
+      setIsLoading(false)
+      return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+    }
+
+    // Tier 1c: Local rejection check (simple "no")
     if (isRejectionPhrase(trimmedInput)) {
       void debugLog({
         component: 'ChatNavigation',
@@ -1740,8 +1850,69 @@ export async function handleClarificationIntercept(
       }
 
       if (offMenuResult.type === 'ambiguous') {
-        // Ambiguous - re-show options with escalation message
+        // Ambiguous - try LLM fallback before escalation
         const currentAttemptCount = lastClarification.attemptCount ?? 0
+
+        // Tier 1b.3c: LLM fallback for ambiguous cases (per clarification-llm-last-resort-plan.md)
+        if (shouldCallLLMFallback(currentAttemptCount, trimmedInput)) {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'clarification_llm_fallback_ambiguous_triggered',
+            metadata: {
+              input: trimmedInput,
+              attemptCount: currentAttemptCount,
+              optionCount: lastClarification.options.length,
+            },
+          })
+
+          const llmResult = await callClarificationLLMClient({
+            userInput: trimmedInput,
+            options: lastClarification.options.map(opt => ({
+              label: opt.label,
+              sublabel: opt.sublabel,
+            })),
+            context: lastClarification.type === 'cross_corpus' ? 'cross-corpus search' : undefined,
+          })
+
+          if (llmResult.success && llmResult.response) {
+            const { choiceIndex, decision, confidence, reason } = llmResult.response
+
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'clarification_llm_fallback_ambiguous_result',
+              metadata: { decision, choiceIndex, confidence, reason, latencyMs: llmResult.latencyMs },
+            })
+
+            if (decision === 'select' && choiceIndex >= 0 && choiceIndex < lastClarification.options.length) {
+              // LLM resolved the ambiguity - select the option
+              const selectedOpt = lastClarification.options[choiceIndex]
+              const fullOption = pendingOptions.find(opt => opt.id === selectedOpt.id)
+
+              setLastClarification(null)
+
+              if (fullOption) {
+                const optionToSelect: SelectionOption = {
+                  type: fullOption.type as SelectionOption['type'],
+                  id: fullOption.id,
+                  label: fullOption.label,
+                  sublabel: fullOption.sublabel,
+                  data: fullOption.data as SelectionOption['data'],
+                }
+                setIsLoading(false)
+                handleSelectOption(optionToSelect)
+                return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+              }
+            } else if (decision === 'reroute') {
+              // User wants something completely different
+              setLastClarification(null)
+              clarificationCleared = true
+              // Don't return - fall through to normal routing
+            }
+            // 'none' or 'ask_clarify' - fall through to escalation
+          }
+        }
+
+        // Escalation: re-show options with escalation message
         const newAttemptCount = currentAttemptCount + 1
         const escalation = getEscalationMessage(newAttemptCount)
 
@@ -1845,8 +2016,103 @@ export async function handleClarificationIntercept(
         clarificationCleared = true
         // Don't return - fall through to normal routing
       } else {
-        // No match and not a new topic - re-show options with escalation
+        // No match and not a new topic - try LLM fallback before escalation
         const currentAttemptCount = lastClarification.attemptCount ?? 0
+
+        // Tier 1b.3c: LLM Last-Resort Fallback (per clarification-llm-last-resort-plan.md)
+        // Only called after deterministic tiers fail
+        if (shouldCallLLMFallback(currentAttemptCount, trimmedInput)) {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'clarification_llm_fallback_triggered',
+            metadata: {
+              input: trimmedInput,
+              attemptCount: currentAttemptCount,
+              optionCount: lastClarification.options.length,
+            },
+          })
+
+          const llmResult = await callClarificationLLMClient({
+            userInput: trimmedInput,
+            options: lastClarification.options.map(opt => ({
+              label: opt.label,
+              sublabel: opt.sublabel,
+            })),
+            context: lastClarification.type === 'cross_corpus' ? 'cross-corpus search' : undefined,
+          })
+
+          if (llmResult.success && llmResult.response) {
+            const { choiceIndex, decision, confidence, reason } = llmResult.response
+
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'clarification_llm_fallback_result',
+              metadata: {
+                decision,
+                choiceIndex,
+                confidence,
+                reason,
+                latencyMs: llmResult.latencyMs,
+              },
+              metrics: {
+                event: 'clarification_llm_decision',
+                timestamp: Date.now(),
+              },
+            })
+
+            if (decision === 'select' && choiceIndex >= 0 && choiceIndex < lastClarification.options.length) {
+              // LLM confidently selected an option
+              const selectedOpt = lastClarification.options[choiceIndex]
+              const fullOption = pendingOptions.find(opt => opt.id === selectedOpt.id)
+
+              setLastClarification(null)
+
+              if (fullOption) {
+                const optionToSelect: SelectionOption = {
+                  type: fullOption.type as SelectionOption['type'],
+                  id: fullOption.id,
+                  label: fullOption.label,
+                  sublabel: fullOption.sublabel,
+                  data: fullOption.data as SelectionOption['data'],
+                }
+                setIsLoading(false)
+                handleSelectOption(optionToSelect)
+                return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+              }
+            } else if (decision === 'reroute') {
+              // LLM detected user wants something completely different
+              void debugLog({
+                component: 'ChatNavigation',
+                action: 'clarification_llm_reroute',
+                metadata: { reason },
+              })
+              setLastClarification(null)
+              clarificationCleared = true
+              // Fall through to normal routing
+            } else if (decision === 'ask_clarify') {
+              // LLM uncertain - could add confirmation UX here in future
+              // For now, fall through to escalation
+              void debugLog({
+                component: 'ChatNavigation',
+                action: 'clarification_llm_ask_clarify',
+                metadata: { confidence, reason },
+              })
+            }
+            // decision === 'none' or other - fall through to escalation
+          } else {
+            // LLM failed (timeout, error, etc.) - fall through to escalation
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'clarification_llm_fallback_failed',
+              metadata: {
+                error: llmResult.error,
+                latencyMs: llmResult.latencyMs,
+              },
+            })
+          }
+        }
+
+        // Escalation: re-show options with escalation message
         const newAttemptCount = currentAttemptCount + 1
         const escalation = getEscalationMessage(newAttemptCount)
 

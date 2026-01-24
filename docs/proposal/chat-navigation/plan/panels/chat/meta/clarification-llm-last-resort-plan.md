@@ -8,6 +8,7 @@ When clarification pills are active and deterministic handling fails, use a **la
 - Last‑resort LLM selection **only after** deterministic tiers fail.
 - Strict JSON response contract.
 - Low timeout and safe fallback.
+- Server‑side execution (client only gates UI).
 
 **Out of scope**
 - Replacing deterministic tiers.
@@ -25,10 +26,25 @@ LLM fallback is eligible **only when deterministic tiers fail** and one of the f
 - attemptCount >= 2 (default), OR
 - attemptCount >= 1 **and** input contains a “clear natural choice” cue (e.g., “the one about …”, “the one that …”, “the option for …”, “open the … one”).
 
+Additionally:
+- If off‑menu mapping returns **ambiguous**, the LLM fallback **may run** (do not short‑circuit to escalation immediately).
+
 ## Deterministic Ordinal Expansion (Before LLM)
 Expand ordinal parsing before calling LLM:
 - “second”, “2nd”, “number two”, “the last one” (when 2 options), “bottom”, “lower”, “the other one”
 - Common typos: “secnd”, “secon”, “2n”
+- Natural phrasing: “the first option”, “I pick the first”, “I choose the second”
+
+### Ordinal Extraction Rule (NEW)
+Extract ordinals from **any phrase**, not only exact matches.  
+If a phrase contains one of these tokens, treat it as an ordinal selection:
+- `first`, `second`, `third`, `last`
+- `1st`, `2nd`, `3rd`
+- numeric: `1`, `2`, `3` (when options length <= 3)
+- “number one/two/three”
+- “the first option / the second option / go with the first”
+
+**Implementation note:** perform ordinal extraction **before** off‑menu mapping and LLM fallback.
 
 If any of these resolve to a single option, **skip LLM**.
 
@@ -63,6 +79,7 @@ Include in the system instruction:
 - Timeout <= 800ms (configurable).
 - On error/timeout → fall back to deterministic re‑show behavior.
 - Log telemetry for every call and response.
+ - **Do not** call the LLM from the client; use a server route.
 
 ## Telemetry
 - `clarification_llm_called`
@@ -90,4 +107,45 @@ Include in the system instruction:
 ## Rollout
 - Feature flag: `CLARIFICATION_LLM_FALLBACK=true` (default off).
 - Enable in dev, verify telemetry, then enable in staging.
+- Client UI gating: `NEXT_PUBLIC_CLARIFICATION_LLM_FALLBACK=true` (gates when to attempt LLM).
 
+---
+
+## Implementation Checklist (Step‑by‑Step)
+Use this as a practical guide when implementing or validating the fallback.
+
+### 1) Server‑Side Execution
+- [ ] LLM calls run on the server (API route), never in client code
+- [ ] Server flag: `CLARIFICATION_LLM_FALLBACK=true`
+- [ ] Client flag: `NEXT_PUBLIC_CLARIFICATION_LLM_FALLBACK=true`
+
+### 2) Trigger Rules
+- [ ] Deterministic tiers always run first
+- [ ] Trigger if attemptCount >= 2
+- [ ] Trigger if attemptCount >= 1 **and** clear natural choice cue present
+- [ ] Trigger even when off‑menu mapping returns **ambiguous**
+
+### 3) Ordinal Expansion (Before LLM)
+- [ ] “the first option”, “I pick the first”, “the second one”
+- [ ] numeric variants: 2nd, number two, last/other
+- [ ] common typos: secnd, secon, 2n
+
+### 4) Contract Enforcement
+- [ ] Strict JSON only
+- [ ] If decision != select → choiceIndex = -1 or omitted
+- [ ] confidence thresholds enforced (select >= 0.6, ask_clarify 0.4–0.6)
+
+### 5) Safety + Timeout
+- [ ] Timeout <= 800ms
+- [ ] On timeout/error → deterministic re‑show behavior
+
+### 6) Telemetry
+- [ ] clarification_llm_called
+- [ ] clarification_llm_decision
+- [ ] clarification_llm_choice_index
+- [ ] clarification_llm_confidence
+
+### 7) UX Regression Tests
+- [ ] “the first option” → selects without LLM
+- [ ] “the one about panel d” → LLM selects
+- [ ] “never mind” → exits (LLM not called)

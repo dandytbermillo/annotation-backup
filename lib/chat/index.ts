@@ -82,3 +82,18 @@ export type {
 
 // Quick Links parsing
 export { parseQuickLinksContent, buildQuickLinksViewItems } from './parse-quick-links'
+
+// Clarification LLM Fallback
+export {
+  callClarificationLLM,
+  callClarificationLLMClient,
+  shouldCallLLMFallback,
+  hasClearNaturalChoiceCue,
+  isLLMFallbackEnabled,
+  isLLMFallbackEnabledClient,
+} from './clarification-llm-fallback'
+export type {
+  ClarificationLLMRequest,
+  ClarificationLLMResponse,
+  ClarificationLLMResult,
+} from './clarification-llm-fallback'
