@@ -37,6 +37,7 @@ import {
   mapOffMenuInput,
   detectNewTopic,
   getEscalationMessage,
+  getExitOptions,
   isExitPhrase,
   MAX_ATTEMPT_COUNT,
   type OffMenuMappingResult,
@@ -1709,22 +1710,45 @@ export async function handleClarificationIntercept(
         })
 
         const messageId = `assistant-${Date.now()}`
+
+        // Build options array, appending exit pills if showExits is true
+        const baseOptions: SelectionOption[] = lastClarification.options.map(opt => {
+          const fullOpt = pendingOptions.find(p => p.id === opt.id)
+          return {
+            type: opt.type as SelectionOption['type'],
+            id: opt.id,
+            label: opt.label,
+            sublabel: opt.sublabel,
+            data: fullOpt?.data as SelectionOption['data'] ?? {} as SelectionOption['data'],
+          }
+        })
+
+        // Append exit pills when escalation threshold reached (per clarification-exit-pills-plan.md)
+        const exitPills: SelectionOption[] = escalation.showExits
+          ? getExitOptions().map(exit => ({
+              type: 'exit' as const,
+              id: exit.id,
+              label: exit.label,
+              data: { exitType: exit.id === 'exit_none' ? 'none' : 'start_over' } as const,
+            }))
+          : []
+
+        if (escalation.showExits) {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'clarification_exit_pill_shown',
+            metadata: { attemptCount: newAttemptCount },
+            metrics: { event: 'clarification_exit_pill_shown', timestamp: Date.now() },
+          })
+        }
+
         const reaskMessage: ChatMessage = {
           id: messageId,
           role: 'assistant',
           content: escalation.content,
           timestamp: new Date(),
           isError: false,
-          options: lastClarification.options.map(opt => {
-            const fullOpt = pendingOptions.find(p => p.id === opt.id)
-            return {
-              type: opt.type as SelectionOption['type'],
-              id: opt.id,
-              label: opt.label,
-              sublabel: opt.sublabel,
-              data: fullOpt?.data as SelectionOption['data'] ?? {} as SelectionOption['data'],
-            }
-          }),
+          options: [...baseOptions, ...exitPills],
         }
         addMessage(reaskMessage)
         setPendingOptionsMessageId(messageId)
@@ -1791,22 +1815,45 @@ export async function handleClarificationIntercept(
         })
 
         const messageId = `assistant-${Date.now()}`
+
+        // Build options array, appending exit pills if showExits is true
+        const baseOptionsNoMatch: SelectionOption[] = lastClarification.options.map(opt => {
+          const fullOpt = pendingOptions.find(p => p.id === opt.id)
+          return {
+            type: opt.type as SelectionOption['type'],
+            id: opt.id,
+            label: opt.label,
+            sublabel: opt.sublabel,
+            data: fullOpt?.data as SelectionOption['data'] ?? {} as SelectionOption['data'],
+          }
+        })
+
+        // Append exit pills when escalation threshold reached (per clarification-exit-pills-plan.md)
+        const exitPillsNoMatch: SelectionOption[] = escalation.showExits
+          ? getExitOptions().map(exit => ({
+              type: 'exit' as const,
+              id: exit.id,
+              label: exit.label,
+              data: { exitType: exit.id === 'exit_none' ? 'none' : 'start_over' } as const,
+            }))
+          : []
+
+        if (escalation.showExits) {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'clarification_exit_pill_shown',
+            metadata: { attemptCount: newAttemptCount },
+            metrics: { event: 'clarification_exit_pill_shown', timestamp: Date.now() },
+          })
+        }
+
         const reaskMessage: ChatMessage = {
           id: messageId,
           role: 'assistant',
           content: escalation.content,
           timestamp: new Date(),
           isError: false,
-          options: lastClarification.options.map(opt => {
-            const fullOpt = pendingOptions.find(p => p.id === opt.id)
-            return {
-              type: opt.type as SelectionOption['type'],
-              id: opt.id,
-              label: opt.label,
-              sublabel: opt.sublabel,
-              data: fullOpt?.data as SelectionOption['data'] ?? {} as SelectionOption['data'],
-            }
-          }),
+          options: [...baseOptionsNoMatch, ...exitPillsNoMatch],
         }
         addMessage(reaskMessage)
         setPendingOptionsMessageId(messageId)

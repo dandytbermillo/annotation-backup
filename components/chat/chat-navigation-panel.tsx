@@ -1060,6 +1060,38 @@ function ChatNavigationPanelContent({
       // The clarification is resolved once user makes a selection
       setLastClarification(null)
 
+      // Handle exit pill selection (per clarification-exit-pills-plan.md)
+      if (option.type === 'exit') {
+        const exitData = option.data as { exitType: 'none' | 'start_over' }
+
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'clarification_exit_pill_selected',
+          metadata: { exitType: exitData.exitType, optionId: option.id },
+          metrics: { event: 'clarification_exit_pill_selected', timestamp: Date.now() },
+        })
+
+        // Clear pending options
+        setPendingOptions([])
+        setPendingOptionsMessageId(null)
+        setPendingOptionsGraceCount(0)
+
+        // Show appropriate message based on exit type
+        const exitMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: exitData.exitType === 'none'
+            ? 'What would you like to do instead?'
+            : 'Okay — what do you want to do?',
+          timestamp: new Date(),
+          isError: false,
+        }
+        addMessage(exitMessage)
+
+        setIsLoading(false)
+        return
+      }
+
       // TD-7: Handle high-ambiguity clarification selection
       if (option.type === 'td7_clarification') {
         const td7Data = option.data as { term: string; action: 'doc' | 'llm' }
@@ -1177,12 +1209,12 @@ function ChatNavigationPanelContent({
           }
         }
 
-        // Note: TD-7 and cross-corpus options are handled above and return early,
+        // Note: TD-7, cross-corpus, and exit options are handled above and return early,
         // so this code path is never reached for those types
         const result = await selectOption({
-          type: option.type as Exclude<SelectionOption['type'], 'td7_clarification' | 'cross_corpus_select'>,
+          type: option.type as Exclude<SelectionOption['type'], 'td7_clarification' | 'cross_corpus_select' | 'exit'>,
           id: option.id,
-          data: option.data as Exclude<SelectionOption['data'], import('@/lib/chat/chat-navigation-context').TD7ClarificationData | import('@/lib/chat/chat-navigation-context').CrossCorpusSelectData>,
+          data: option.data as Exclude<SelectionOption['data'], import('@/lib/chat/chat-navigation-context').TD7ClarificationData | import('@/lib/chat/chat-navigation-context').CrossCorpusSelectData | import('@/lib/chat/chat-navigation-context').ExitPillData>,
         })
 
         // Note: Don't clear pending options here - grace window logic handles clearing.

@@ -58,12 +58,17 @@ export interface CrossCorpusSelectData {
   title: string
 }
 
+/** Exit pill data for clarification escalation (per clarification-exit-pills-plan.md) */
+export interface ExitPillData {
+  exitType: 'none' | 'start_over'
+}
+
 export interface SelectionOption {
-  type: 'workspace' | 'note' | 'entry' | 'confirm_delete' | 'quick_links_panel' | 'confirm_panel_write' | 'panel_drawer' | 'doc' | 'td7_clarification' | 'cross_corpus_select'
+  type: 'workspace' | 'note' | 'entry' | 'confirm_delete' | 'quick_links_panel' | 'confirm_panel_write' | 'panel_drawer' | 'doc' | 'td7_clarification' | 'cross_corpus_select' | 'exit'
   id: string
   label: string
   sublabel?: string
-  data: WorkspaceMatch | NoteMatch | EntryMatch | QuickLinksPanelData | PanelIntentData | PanelDrawerData | DocData | TD7ClarificationData | CrossCorpusSelectData
+  data: WorkspaceMatch | NoteMatch | EntryMatch | QuickLinksPanelData | PanelIntentData | PanelDrawerData | DocData | TD7ClarificationData | CrossCorpusSelectData | ExitPillData
 }
 
 /** Suggestion candidate for typo fallback */

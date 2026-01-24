@@ -9,6 +9,13 @@
 - Panel: The full, interactive view opened from a widget.
 - Drawer: The right-side panel that displays a full widget/panel view.
 - Quick Links: A widget/panel that stores link shortcuts to workspaces or entries.
+- Links Panel: A text editor widget for creating workspace links from highlighted text.
 - Recent: A widget/panel showing recently opened items.
 - Widget Manager: A widget/panel for installing and managing custom widgets.
+- Category Navigator: A widget showing all workspace links from Quick Links panels.
 - Open Notes popover: The workspace dock menu that lists open notes.
+- Canvas: The main annotation workspace with draggable panels.
+- Floating Toolbar: A context-aware navigation bar on the canvas.
+- Branch: An annotation panel attached to selected text (note, explore, or promote type).
+- Annotation: A branch created from selected text to add comments or explorations.
+- Chat Assistant: The AI-powered interface for navigating and asking questions.

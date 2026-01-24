@@ -5,8 +5,8 @@ chat retrieval. Each file is a small, focused explanation that the LLM can use
 for "explain" and "what is" questions.
 
 ## Structure
-- concepts/: Core app concepts (home, dashboard, entry, workspace, notes, widgets, panels).
-- widgets/: Built-in widget descriptions and how they behave.
+- concepts/: Core app concepts (home, dashboard, entry, workspace, notes, widgets, panels, canvas, floating-toolbar, chat-assistant, annotations).
+- widgets/: Built-in widget descriptions (recent, quick-links, links-panel, navigator, continue, widget-manager, links-overview, quick-capture, demo-widget, category-navigator).
 - actions/: Supported actions and how users can ask for them.
 - glossary.md: Short definitions of common terms.
 

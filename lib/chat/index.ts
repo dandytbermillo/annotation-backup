@@ -60,6 +60,7 @@ export type {
   ActionHistoryEntry,
   DocRetrievalState,
   CrossCorpusSelectData,
+  ExitPillData,
 } from './chat-navigation-context'
 
 // Schema utilities (for reference)
