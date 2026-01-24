@@ -1605,6 +1605,56 @@ export async function handleClarificationIntercept(
       }
     }
 
+    // Tier 1b.3a: Ordinal selection (BEFORE off-menu mapping)
+    // "first", "1", "second", "2", etc. should select the corresponding option
+    // Must come BEFORE off-menu mapping to prevent ordinals from being treated as no_match
+    if (lastClarification?.options && lastClarification.options.length > 0) {
+      const ordinalResult = isSelectionOnly(
+        trimmedInput,
+        lastClarification.options.length,
+        lastClarification.options.map(opt => opt.label)
+      )
+
+      if (ordinalResult.isSelection && ordinalResult.index !== undefined) {
+        const selectedOption = lastClarification.options[ordinalResult.index]
+        const fullOption = pendingOptions.find(opt => opt.id === selectedOption.id)
+
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'clarification_tier1b3a_ordinal_selection',
+          metadata: {
+            input: trimmedInput,
+            index: ordinalResult.index,
+            selectedLabel: selectedOption.label,
+            clarificationType: lastClarification.type,
+          },
+          metrics: {
+            event: 'clarification_resolved',
+            selectedLabel: selectedOption.label,
+            timestamp: Date.now(),
+          },
+        })
+
+        setLastClarification(null)
+
+        const optionToSelect: SelectionOption = {
+          type: (fullOption?.type ?? selectedOption.type) as SelectionOption['type'],
+          id: selectedOption.id,
+          label: selectedOption.label,
+          sublabel: selectedOption.sublabel,
+          data: fullOption?.data as SelectionOption['data'] ??
+            (selectedOption.type === 'doc'
+              ? { docSlug: selectedOption.id }
+              : selectedOption.type === 'note'
+                ? { noteId: selectedOption.id, noteName: selectedOption.label }
+                : { term: selectedOption.id, action: 'doc' as const }),
+        }
+        setIsLoading(false)
+        handleSelectOption(optionToSelect)
+        return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+      }
+    }
+
     // Tier 1b.3b: Off-menu mapping (per clarification-offmenu-handling-plan.md Section B)
     // Uses micro-alias tokens for broader matching when direct label match fails
     if (lastClarification?.options && lastClarification.options.length > 0) {
