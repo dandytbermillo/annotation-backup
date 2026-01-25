@@ -41,7 +41,12 @@ import {
   isExitPhrase,
   isHesitationPhrase,
   isRepairPhrase,
+  isListRejectionPhrase,
   getHesitationPrompt,
+  getBasePrompt,
+  getRepairPrompt,
+  getNoRefusalPrompt,
+  getRefinePrompt,
   MAX_ATTEMPT_COUNT,
   type OffMenuMappingResult,
   type ClarificationType,
@@ -1425,6 +1430,7 @@ export async function handleClarificationIntercept(
 
       // Per pending-options-resilience-fix.md: If options exist, re-show them with pills
       // instead of showing a generic yes/no message
+      // Per clarification-offmenu-handling-plan.md: Use consistent base prompt
       if (lastClarification?.type === 'option_selection' && lastClarification.options && lastClarification.options.length > 0) {
         void debugLog({
           component: 'ChatNavigation',
@@ -1435,7 +1441,7 @@ export async function handleClarificationIntercept(
         const reaskMessage: ChatMessage = {
           id: `assistant-${Date.now()}`,
           role: 'assistant',
-          content: 'Please choose one of the options:',
+          content: getBasePrompt(),
           timestamp: new Date(),
           isError: false,
           options: lastClarification.options.map(opt => ({
@@ -1526,8 +1532,45 @@ export async function handleClarificationIntercept(
       })
     }
 
+    // Tier 0: List rejection detection (BEFORE exit phrase check)
+    // Per clarification-offmenu-handling-plan.md (E):
+    // "none of these", "none of those", "neither" → Refine Mode (NOT exit)
+    // Keep the same intent but ask for one detail
+    if (isListRejectionPhrase(trimmedInput)) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'clarification_tier0_list_rejection',
+        metadata: { userInput: trimmedInput, previousOptions: lastClarification?.options?.length },
+      })
+
+      // Enter Refine Mode: clear options but keep intent context
+      // Don't fully clear clarification - we're refining, not exiting
+      const refineMessage: ChatMessage = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: getRefinePrompt(),
+        timestamp: new Date(),
+        isError: false,
+        // No options - we're asking for detail instead
+      }
+      addMessage(refineMessage)
+
+      // Clear the options but keep clarification active for potential follow-up
+      setLastClarification({
+        ...lastClarification!,
+        options: undefined, // Clear options since user rejected the list
+        attemptCount: 0, // Reset attempt count for new refinement
+      })
+      setPendingOptions([])
+      setPendingOptionsMessageId(null)
+      setPendingOptionsGraceCount(0)
+      setIsLoading(false)
+      return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+    }
+
     // Tier 1a: Exit phrase detection (BEFORE ALL ELSE per clarification-llm-last-resort-plan.md)
-    // "cancel / never mind / none / stop / doesn't matter / forget it" → clear and ask open-ended
+    // "cancel / never mind / stop / forget it" → clear and ask open-ended
+    // NOTE: "none of these/those" is NOT an exit - it's handled above as list rejection
     if (isExitPhrase(trimmedInput)) {
       void debugLog({
         component: 'ChatNavigation',
@@ -1594,22 +1637,23 @@ export async function handleClarificationIntercept(
 
     // Tier 1c: Local rejection / repair phrase handling
     // Per clarification-offmenu-handling-plan.md (E): Repair phrases stay in context
-    const hasExactlyTwoOptions = lastClarification?.options && lastClarification.options.length === 2
-
     // E1: Repair phrases ("not that", "the other one") → stay in context, offer alternative
-    if (isRepairPhrase(trimmedInput) && hasExactlyTwoOptions) {
+    // Per clarification-offmenu-handling-plan.md: Use consistent prompt template
+    // Works with ANY number of options (not just 2) - see Example 8 with 7 workspaces
+    const hasOptions = lastClarification?.options && lastClarification.options.length > 0
+    if (isRepairPhrase(trimmedInput) && hasOptions) {
       void debugLog({
         component: 'ChatNavigation',
         action: 'clarification_tier1c_repair_phrase',
-        metadata: { userInput: trimmedInput, action: 'offer_alternative' },
+        metadata: { userInput: trimmedInput, action: 'offer_alternative', optionCount: lastClarification!.options!.length },
       })
 
-      // Prefer the alternative option (the one NOT most recently discussed)
-      // For now, just re-show with emphasis on the other option
+      // Re-show options with repair prompt
+      // Use consistent prompt template per plan
       const repairMessage: ChatMessage = {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
-        content: 'Got it, not that one. Here are your options:',
+        content: getRepairPrompt(),
         timestamp: new Date(),
         isError: false,
         options: lastClarification!.options?.map(opt => ({
@@ -1625,20 +1669,22 @@ export async function handleClarificationIntercept(
       return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
     }
 
-    // E2: Simple "no" with 2 options → treat as repair, stay in context
+    // E2: Simple "no" → treat as ambiguous refusal, stay in context
+    // Per clarification-offmenu-handling-plan.md: Use consistent prompt template
+    // Works with ANY number of options (not just 2) - see Example 8 with 7 workspaces
     const isSimpleNo = /^(no|nope|nah)$/i.test(trimmedInput.trim())
-    if (isSimpleNo && hasExactlyTwoOptions) {
+    if (isSimpleNo && hasOptions) {
       void debugLog({
         component: 'ChatNavigation',
         action: 'clarification_tier1c_no_as_repair',
-        metadata: { userInput: trimmedInput, action: 'stay_in_context' },
+        metadata: { userInput: trimmedInput, action: 'stay_in_context', optionCount: lastClarification!.options!.length },
       })
 
-      // Stay in context, re-show options
+      // Stay in context, re-show options with consistent prompt
       const noRepairMessage: ChatMessage = {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
-        content: 'Which one would you like?',
+        content: getNoRefusalPrompt(),
         timestamp: new Date(),
         isError: false,
         options: lastClarification!.options?.map(opt => ({
@@ -1781,11 +1827,12 @@ export async function handleClarificationIntercept(
         })
 
         // Re-show the disambiguation options directly, using pendingOptions for full data
+        // Per clarification-offmenu-handling-plan.md: Use consistent base prompt
         const messageId = `assistant-${Date.now()}`
         const reaskMessage: ChatMessage = {
           id: messageId,
           role: 'assistant',
-          content: 'Here are your options:',
+          content: getBasePrompt(),
           timestamp: new Date(),
           isError: false,
           options: lastClarification.options.map(opt => {

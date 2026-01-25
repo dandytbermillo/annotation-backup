@@ -45,10 +45,10 @@ Use this file as a **reference only** for implementation and QA. It is intention
 
 ---
 
-## 5) Unparseable replies (Attempt 3 escalation)
+## 5) Unparseable replies (Attempt 1 escalation)
 
 **User:** asdf
-**Bot:** **I didn’t catch that. Reply 1 or 2, or say “none of these” (or “none of those”), or tell me one detail.**
+**Bot:** I didn't catch that. Reply **first** or **second**, or say **"none of these"** (or **"none of those"**), or tell me one detail.
 **[Links Panel D] [Links Panel E]**
 
 ---

@@ -1,14 +1,19 @@
 /**
  * Unit tests for clarification-offmenu.ts
- * Tests hesitation detection, repair phrases, and escalation messaging
+ * Tests hesitation detection, repair phrases, list rejection, and escalation messaging
  */
 
 import {
   isHesitationPhrase,
   isRepairPhrase,
   isExitPhrase,
+  isListRejectionPhrase,
   getEscalationMessage,
   getHesitationPrompt,
+  getBasePrompt,
+  getRepairPrompt,
+  getNoRefusalPrompt,
+  getRefinePrompt,
 } from '@/lib/chat/clarification-offmenu'
 
 // =============================================================================
@@ -154,14 +159,12 @@ describe('isRepairPhrase', () => {
 // =============================================================================
 
 describe('isExitPhrase', () => {
-  test('recognizes exit phrases', () => {
+  test('recognizes explicit exit phrases', () => {
     expect(isExitPhrase('cancel')).toBe(true)
     expect(isExitPhrase('never mind')).toBe(true)
     expect(isExitPhrase('nevermind')).toBe(true)
-    expect(isExitPhrase('none')).toBe(true)
     expect(isExitPhrase('stop')).toBe(true)
     expect(isExitPhrase('forget it')).toBe(true)
-    expect(isExitPhrase('none of these')).toBe(true)
     expect(isExitPhrase('start over')).toBe(true)
     expect(isExitPhrase('exit')).toBe(true)
     expect(isExitPhrase('quit')).toBe(true)
@@ -181,6 +184,70 @@ describe('isExitPhrase', () => {
     expect(isExitPhrase('not that')).toBe(false)
     expect(isExitPhrase('the other one')).toBe(false)
   })
+
+  test('does NOT recognize list rejection as exit (triggers Refine Mode instead)', () => {
+    // Per clarification-offmenu-handling-plan.md:
+    // "none of these/those/neither" → Refine Mode, NOT exit
+    expect(isExitPhrase('none of these')).toBe(false)
+    expect(isExitPhrase('none of those')).toBe(false)
+    expect(isExitPhrase('neither')).toBe(false)
+    expect(isExitPhrase('neither of these')).toBe(false)
+  })
+})
+
+// =============================================================================
+// isListRejectionPhrase tests
+// =============================================================================
+
+describe('isListRejectionPhrase', () => {
+  test('recognizes list rejection phrases', () => {
+    expect(isListRejectionPhrase('none of these')).toBe(true)
+    expect(isListRejectionPhrase('none of those')).toBe(true)
+    expect(isListRejectionPhrase('neither')).toBe(true)
+    expect(isListRejectionPhrase('neither of these')).toBe(true)
+    expect(isListRejectionPhrase('neither of those')).toBe(true)
+    expect(isListRejectionPhrase('not these')).toBe(true)
+    expect(isListRejectionPhrase('not those')).toBe(true)
+    expect(isListRejectionPhrase('none of them')).toBe(true)
+    expect(isListRejectionPhrase('neither one')).toBe(true)
+    expect(isListRejectionPhrase('neither option')).toBe(true)
+  })
+
+  test('is case insensitive', () => {
+    expect(isListRejectionPhrase('NONE OF THESE')).toBe(true)
+    expect(isListRejectionPhrase('Neither')).toBe(true)
+  })
+
+  test('recognizes polite variations (trailing politeness words)', () => {
+    expect(isListRejectionPhrase('none of those please')).toBe(true)
+    expect(isListRejectionPhrase('none of these thanks')).toBe(true)
+    expect(isListRejectionPhrase('neither, thanks')).toBe(true)
+    expect(isListRejectionPhrase('none of those pls')).toBe(true)
+    expect(isListRejectionPhrase('neither thx')).toBe(true)
+    expect(isListRejectionPhrase('none of these, thank you')).toBe(true)
+  })
+
+  test('does NOT match compound inputs with additional content (should fall through to topic detection)', () => {
+    // These should NOT be list rejection - user is trying to switch topic
+    expect(isListRejectionPhrase('none of those, open dashboard')).toBe(false)
+    expect(isListRejectionPhrase('neither, show me settings')).toBe(false)
+    expect(isListRejectionPhrase('none of these I want something else')).toBe(false)
+  })
+
+  test('does NOT match exit phrases', () => {
+    expect(isListRejectionPhrase('cancel')).toBe(false)
+    expect(isListRejectionPhrase('stop')).toBe(false)
+  })
+
+  test('does NOT match repair phrases', () => {
+    expect(isListRejectionPhrase('not that')).toBe(false)
+    expect(isListRejectionPhrase('the other one')).toBe(false)
+  })
+
+  test('does NOT match simple "no"', () => {
+    expect(isListRejectionPhrase('no')).toBe(false)
+    expect(isListRejectionPhrase('nope')).toBe(false)
+  })
 })
 
 // =============================================================================
@@ -188,9 +255,13 @@ describe('isExitPhrase', () => {
 // =============================================================================
 
 describe('getEscalationMessage', () => {
-  test('attempt 1: gentle redirect, no exits', () => {
+  test('attempt 1: unparseable prompt per Example 5, no exits', () => {
     const result = getEscalationMessage(1)
-    expect(result.content).toBe('Please choose one of the options:')
+    // Per Example 5: "I didn't catch that. Reply first or second..."
+    expect(result.content).toContain("I didn't catch that")
+    expect(result.content).toContain('first')
+    expect(result.content).toContain('second')
+    expect(result.content).toContain('none of these')
     expect(result.showExits).toBe(false)
   })
 
@@ -215,23 +286,47 @@ describe('getEscalationMessage', () => {
 // =============================================================================
 
 describe('getHesitationPrompt', () => {
-  test('returns a non-empty string', () => {
+  test('returns the consistent hesitation prompt', () => {
+    // Per clarification-offmenu-handling-plan.md: Use consistent template
     const prompt = getHesitationPrompt()
     expect(typeof prompt).toBe('string')
     expect(prompt.length).toBeGreaterThan(0)
+    expect(prompt).toContain('Which one do you mean')
+    expect(prompt).toContain('none of these')
+  })
+})
+
+// =============================================================================
+// Consistent Prompt Template tests
+// =============================================================================
+
+describe('Consistent Prompt Templates', () => {
+  test('getBasePrompt returns the consistent base template', () => {
+    const prompt = getBasePrompt()
+    expect(prompt).toContain('Which one do you mean')
+    expect(prompt).toContain('none of these')
+    expect(prompt).toContain('none of those')
+    expect(prompt).toContain('one detail')
   })
 
-  test('returns one of the defined prompts', () => {
-    const validPrompts = [
-      'Take your time. Which one sounds closer to what you need?',
-      'No rush — which one fits better?',
-      "That's okay. Here are your options again:",
-    ]
+  test('getRepairPrompt returns the repair template', () => {
+    const prompt = getRepairPrompt()
+    expect(prompt).toContain('not that one')
+    expect(prompt).toContain('Which one do you mean instead')
+    expect(prompt).toContain('none of these')
+  })
 
-    // Run multiple times to check randomness
-    for (let i = 0; i < 10; i++) {
-      const prompt = getHesitationPrompt()
-      expect(validPrompts).toContain(prompt)
-    }
+  test('getNoRefusalPrompt returns the no refusal template', () => {
+    const prompt = getNoRefusalPrompt()
+    expect(prompt).toContain('No problem')
+    expect(prompt).toContain('Which one do you mean')
+    expect(prompt).toContain('none of these')
+  })
+
+  test('getRefinePrompt returns the refine mode template', () => {
+    const prompt = getRefinePrompt()
+    expect(prompt).toContain('Got it')
+    expect(prompt).toContain('one detail')
+    expect(prompt).toContain('show more results')
   })
 })

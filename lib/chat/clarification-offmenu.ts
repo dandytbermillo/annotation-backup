@@ -359,8 +359,9 @@ export interface EscalationMessage {
  * Get escalation message based on attempt count.
  * Per clarification-offmenu-handling-plan.md: Escalation Messaging Policy + Loop Control (F).
  *
- * Attempt 1: gentle redirect (re-show pills)
- * Attempt 2+: show exit pills + clarifying question
+ * Attempt 1: "I didn't catch that. Reply first or second..." (per Example 5)
+ * Attempt 2: "Which one is closer?" + exit pills
+ * Attempt 3+: guidance + ask for 3–6 word description + exit pills
  *
  * Updated per plan section F: "If attemptCount >= 2 → show explicit exits"
  *
@@ -379,13 +380,14 @@ export function getEscalationMessage(attemptCount: number): EscalationMessage {
   if (attemptCount >= 2) {
     return {
       content: 'Which one is closer to what you need?',
-      showExits: true,  // Changed from false → true per plan
+      showExits: true,
     }
   }
 
-  // Attempt 1 (default)
+  // Attempt 1: Use consistent unparseable prompt per Example 5
+  // "I didn't catch that. Reply first or second, or say 'none of these'..."
   return {
-    content: 'Please choose one of the options:',
+    content: 'I didn\'t catch that. Reply **first** or **second**, or say **"none of these"** (or **"none of those"**), or tell me one detail.',
     showExits: false,
   }
 }
@@ -423,15 +425,25 @@ export function getExitOptions(): ExitOption[] {
 }
 
 /**
- * Check if input is an exit phrase.
- * Per plan: "cancel / never mind / none / stop"
+ * Check if input is an explicit exit phrase.
+ * Per plan: "cancel / never mind / stop / forget it"
+ *
  * NOTE: "no" by itself is NOT an exit - it's handled separately as rejection/repair.
+ * NOTE: "none of these/those" is NOT an exit - it triggers Refine Mode (list rejection).
+ *
+ * Only explicit exits clear clarification completely.
  */
 export function isExitPhrase(input: string): boolean {
   const normalizedInput = input.toLowerCase().trim()
+
+  // First check if it's a list rejection (NOT an exit)
+  if (isListRejectionPhrase(normalizedInput)) {
+    return false
+  }
+
   const exitPhrases = [
-    'cancel', 'never mind', 'nevermind', 'none', 'stop',
-    'forget it', 'none of these', 'start over', 'exit',
+    'cancel', 'never mind', 'nevermind', 'stop',
+    'forget it', 'start over', 'exit',
     'quit', 'no thanks', 'skip', 'something else',
   ]
   return exitPhrases.some(phrase => normalizedInput.includes(phrase))
@@ -503,12 +515,91 @@ export function isRepairPhrase(input: string): boolean {
 /**
  * Get soft prompt for hesitation (gentler than escalation).
  * Per plan: "respond with a softer narrowing prompt"
+ * Updated per clarification-offmenu-handling-plan.md consistent template.
  */
 export function getHesitationPrompt(): string {
-  const prompts = [
-    'Take your time. Which one sounds closer to what you need?',
-    'No rush — which one fits better?',
-    "That's okay. Here are your options again:",
+  return '**Which one do you mean — or** if neither looks right, say **"none of these"** (or **"none of those"**) or tell me one detail (where it is / what it\'s called).'
+}
+
+// =============================================================================
+// Consistent Prompt Templates (per clarification-offmenu-handling-plan.md)
+// =============================================================================
+
+/**
+ * Base prompt template for showing options.
+ * Per plan: "Which one do you mean — or if neither looks right, say 'none of these' or tell me one detail"
+ */
+export function getBasePrompt(): string {
+  return '**Which one do you mean — or** if neither looks right, say **"none of these"** (or **"none of those"**) or tell me one detail (where it is / what it\'s called).'
+}
+
+/**
+ * Prompt after "not that" (item-level repair).
+ * Per plan: "Okay — not that one. Which one do you mean instead..."
+ */
+export function getRepairPrompt(): string {
+  return 'Okay — not that one. **Which one do you mean instead — or** say **"none of these"** (or **"none of those"**) or tell me what it\'s called.'
+}
+
+/**
+ * Prompt after "no" (ambiguous refusal).
+ * Per plan: "No problem. Which one do you mean..."
+ */
+export function getNoRefusalPrompt(): string {
+  return 'No problem. **Which one do you mean — or** say **"none of these"** (or **"none of those"**) or tell me where it is (Docs or Notes).'
+}
+
+/**
+ * Prompt after 2+ unparseable replies (escalation).
+ * Per plan: "I didn't catch that. Reply first or second..."
+ */
+export function getUnparseablePrompt(): string {
+  return 'I didn\'t catch that. Reply **first** or **second**, or say **"none of these"** (or **"none of those"**), or tell me one detail.'
+}
+
+/**
+ * Refine Mode prompt after list rejection ("none of those").
+ * Per plan: "Got it. Tell me one detail (exact name or where it lives) — or I can show more results."
+ */
+export function getRefinePrompt(): string {
+  return 'Got it. Tell me one detail (exact name or where it lives) — or I can show more results.'
+}
+
+// =============================================================================
+// List Rejection Detection (separate from exit)
+// =============================================================================
+
+/**
+ * Check if input is a list rejection phrase (rejects the whole list, not just one item).
+ * Per clarification-offmenu-handling-plan.md (E):
+ * - "none of these", "none of those", "neither" → refine prompt (NOT exit)
+ *
+ * This is DIFFERENT from exit phrases - list rejection keeps the same intent
+ * but asks for more details.
+ *
+ * Uses exact match (after stripping trailing politeness words) to avoid
+ * capturing compound inputs like "none of those, open dashboard" which
+ * should fall through to topic detection instead.
+ */
+export function isListRejectionPhrase(input: string): boolean {
+  const normalized = input.toLowerCase().trim()
+
+  // Strip trailing politeness words before matching
+  // This allows "none of those please" to match while "none of those, open dashboard" falls through
+  const stripped = normalized.replace(/[,.]?\s*(please|thanks|thank you|pls|thx)$/i, '').trim()
+
+  const listRejectionPhrases = [
+    'none of these',
+    'none of those',
+    'neither',
+    'neither of these',
+    'neither of those',
+    'not these',
+    'not those',
+    'none of them',
+    'neither one',
+    'neither option',
   ]
-  return prompts[Math.floor(Math.random() * prompts.length)]
+
+  return listRejectionPhrases.includes(stripped)
 }
