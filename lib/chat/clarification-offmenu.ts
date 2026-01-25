@@ -357,11 +357,12 @@ export interface EscalationMessage {
 
 /**
  * Get escalation message based on attempt count.
- * Per plan: Escalation Messaging Policy.
+ * Per clarification-offmenu-handling-plan.md: Escalation Messaging Policy + Loop Control (F).
  *
  * Attempt 1: gentle redirect (re-show pills)
- * Attempt 2: short clarifying question ("Which one is closer?")
- * Attempt 3: exits + ask for 3-6 word description
+ * Attempt 2+: show exit pills + clarifying question
+ *
+ * Updated per plan section F: "If attemptCount >= 2 → show explicit exits"
  *
  * @param attemptCount - Current attempt count
  * @returns Escalation message and whether to show exit options
@@ -374,10 +375,11 @@ export function getEscalationMessage(attemptCount: number): EscalationMessage {
     }
   }
 
-  if (attemptCount === 2) {
+  // Per plan (F): show exit pills at attempt >= 2
+  if (attemptCount >= 2) {
     return {
       content: 'Which one is closer to what you need?',
-      showExits: false,
+      showExits: true,  // Changed from false → true per plan
     }
   }
 
@@ -423,6 +425,7 @@ export function getExitOptions(): ExitOption[] {
 /**
  * Check if input is an exit phrase.
  * Per plan: "cancel / never mind / none / stop"
+ * NOTE: "no" by itself is NOT an exit - it's handled separately as rejection/repair.
  */
 export function isExitPhrase(input: string): boolean {
   const normalizedInput = input.toLowerCase().trim()
@@ -432,4 +435,80 @@ export function isExitPhrase(input: string): boolean {
     'quit', 'no thanks', 'skip', 'something else',
   ]
   return exitPhrases.some(phrase => normalizedInput.includes(phrase))
+}
+
+/**
+ * Check if input is a hesitation/pause phrase.
+ * Per clarification-offmenu-handling-plan.md (A0):
+ * - Do NOT increment attemptCount
+ * - Re-show pills with softer prompt
+ *
+ * Examples: "hmm", "hmmm", "i don't know", "not sure", "idk"
+ */
+export function isHesitationPhrase(input: string): boolean {
+  const normalized = input.toLowerCase().trim()
+
+  // Exact matches for short hesitation sounds
+  const exactHesitations = [
+    'hmm', 'hmmm', 'hmmmm', 'hm', 'hmn',
+    'umm', 'ummm', 'um', 'uh', 'uhh',
+    'idk', 'dunno', 'i dunno', 'i donno',
+    'not sure', "i'm not sure", 'im not sure',
+    "i don't know", 'i dont know', "don't know", 'dont know',
+    'no idea', 'unsure', 'maybe', 'perhaps',
+    'let me think', 'thinking', 'hold on',
+  ]
+
+  if (exactHesitations.includes(normalized)) {
+    return true
+  }
+
+  // Pattern matches for variations
+  const hesitationPatterns = [
+    /^h+m+$/i,           // "hm", "hmm", "hmmm", "hhhmm"
+    /^u+[hm]+$/i,        // "um", "umm", "uh", "uhm"
+    /^i\s*(don'?t|dont)\s*know/i,
+    /^not\s+sure/i,
+    /^i\s*(don'?t|dont)\s*really\s*know/i,
+    /^(i\s*)?dunno/i,
+    /^(i\s*)?donno/i,
+  ]
+
+  return hesitationPatterns.some(pattern => pattern.test(normalized))
+}
+
+/**
+ * Check if input is a repair phrase (rejection that should stay in context).
+ * Per clarification-offmenu-handling-plan.md (E):
+ * - "not that", "no, the other one" → keep clarification active
+ * - Prefer alternative option when 2 choices exist
+ *
+ * Examples: "not that", "the other one", "no the other", "wrong one"
+ */
+export function isRepairPhrase(input: string): boolean {
+  const normalized = input.toLowerCase().trim()
+
+  const repairPhrases = [
+    'not that', 'not that one', 'not this one',
+    'the other one', 'the other', 'other one',
+    'no the other', 'no, the other', 'no the other one',
+    'wrong one', 'wrong', 'different one',
+    'no not that', 'no, not that',
+    'nope the other', 'nah the other',
+  ]
+
+  return repairPhrases.some(phrase => normalized.includes(phrase) || normalized === phrase)
+}
+
+/**
+ * Get soft prompt for hesitation (gentler than escalation).
+ * Per plan: "respond with a softer narrowing prompt"
+ */
+export function getHesitationPrompt(): string {
+  const prompts = [
+    'Take your time. Which one sounds closer to what you need?',
+    'No rush — which one fits better?',
+    "That's okay. Here are your options again:",
+  ]
+  return prompts[Math.floor(Math.random() * prompts.length)]
 }

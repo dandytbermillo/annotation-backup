@@ -39,6 +39,9 @@ import {
   getEscalationMessage,
   getExitOptions,
   isExitPhrase,
+  isHesitationPhrase,
+  isRepairPhrase,
+  getHesitationPrompt,
   MAX_ATTEMPT_COUNT,
   type OffMenuMappingResult,
   type ClarificationType,
@@ -1547,6 +1550,35 @@ export async function handleClarificationIntercept(
       return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
     }
 
+    // Tier A0: Hesitation/Pause Detection (per clarification-offmenu-handling-plan.md)
+    // "hmm", "i don't know", "not sure" → DO NOT increment attemptCount, show softer prompt
+    if (isHesitationPhrase(trimmedInput)) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'clarification_tier_a0_hesitation',
+        metadata: { userInput: trimmedInput, attemptCount: lastClarification?.attemptCount ?? 0 },
+      })
+
+      // Re-show pills with softer prompt (NO attemptCount increment)
+      const hesitationMessage: ChatMessage = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: getHesitationPrompt(),
+        timestamp: new Date(),
+        isError: false,
+        options: lastClarification!.options?.map(opt => ({
+          type: opt.type as SelectionOption['type'],
+          id: opt.id,
+          label: opt.label,
+          sublabel: opt.sublabel,
+          data: {} as SelectionOption['data'],
+        })),
+      }
+      addMessage(hesitationMessage)
+      setIsLoading(false)
+      return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+    }
+
     // Tier 1b: Local affirmation check
     const hasMultipleOptions = lastClarification!.options && lastClarification!.options.length > 0
     if (isAffirmationPhrase(trimmedInput) && !hasMultipleOptions) {
@@ -1560,11 +1592,73 @@ export async function handleClarificationIntercept(
       return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
     }
 
-    // Tier 1c: Local rejection check (simple "no")
+    // Tier 1c: Local rejection / repair phrase handling
+    // Per clarification-offmenu-handling-plan.md (E): Repair phrases stay in context
+    const hasExactlyTwoOptions = lastClarification?.options && lastClarification.options.length === 2
+
+    // E1: Repair phrases ("not that", "the other one") → stay in context, offer alternative
+    if (isRepairPhrase(trimmedInput) && hasExactlyTwoOptions) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'clarification_tier1c_repair_phrase',
+        metadata: { userInput: trimmedInput, action: 'offer_alternative' },
+      })
+
+      // Prefer the alternative option (the one NOT most recently discussed)
+      // For now, just re-show with emphasis on the other option
+      const repairMessage: ChatMessage = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: 'Got it, not that one. Here are your options:',
+        timestamp: new Date(),
+        isError: false,
+        options: lastClarification!.options?.map(opt => ({
+          type: opt.type as SelectionOption['type'],
+          id: opt.id,
+          label: opt.label,
+          sublabel: opt.sublabel,
+          data: {} as SelectionOption['data'],
+        })),
+      }
+      addMessage(repairMessage)
+      setIsLoading(false)
+      return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+    }
+
+    // E2: Simple "no" with 2 options → treat as repair, stay in context
+    const isSimpleNo = /^(no|nope|nah)$/i.test(trimmedInput.trim())
+    if (isSimpleNo && hasExactlyTwoOptions) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'clarification_tier1c_no_as_repair',
+        metadata: { userInput: trimmedInput, action: 'stay_in_context' },
+      })
+
+      // Stay in context, re-show options
+      const noRepairMessage: ChatMessage = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: 'Which one would you like?',
+        timestamp: new Date(),
+        isError: false,
+        options: lastClarification!.options?.map(opt => ({
+          type: opt.type as SelectionOption['type'],
+          id: opt.id,
+          label: opt.label,
+          sublabel: opt.sublabel,
+          data: {} as SelectionOption['data'],
+        })),
+      }
+      addMessage(noRepairMessage)
+      setIsLoading(false)
+      return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+    }
+
+    // E3: Other rejection phrases (not repair, not simple "no" with 2 options) → exit
     if (isRejectionPhrase(trimmedInput)) {
       void debugLog({
         component: 'ChatNavigation',
-        action: 'clarification_tier1b2_rejection',
+        action: 'clarification_tier1c_rejection_exit',
         metadata: { userInput: trimmedInput },
       })
       handleRejection()

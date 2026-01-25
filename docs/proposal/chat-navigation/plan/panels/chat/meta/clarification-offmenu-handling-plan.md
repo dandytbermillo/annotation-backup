@@ -12,7 +12,8 @@ When pills are shown and the user types something not in the list, the system sh
 ## Scope
 ### In scope
 - Off-menu input handling while option pills are active.
-- Deterministic mapping (no LLM dependency).
+- Deterministic mapping first (**LLM is optional, constrained, and last-resort**).
+- Optional **constrained LLM fallback** (feature-flagged) that only selects among the currently shown options (strict JSON with `choiceId` + optional `choiceIndex`, or abstain with `choiceId=null` and `choiceIndex=-1`).
 - Exit / cancel handling.
 - Retry limit and escalation messaging.
 
@@ -55,6 +56,7 @@ During a pill prompt, maintain:
 - `clarificationType`
 - `options` (A/B)
 - `attemptCount` (per clarification session)
+- `hesitationCount` (per clarification session; counts A0 only)
 - `lastUserIntentGuess` (optional; telemetry only)
 
 ### Single Shared Clarification Session (NEW)
@@ -65,6 +67,11 @@ All pill-based clarification flows must use the **same shared session state**:
 
 This prevents fragmented behavior across different pill types and keeps the UX aligned with ChatGPT/Cursor pacing.
 
+### Sticky List Window (NEW)
+After a selection, keep the **same option list** available for **1 more turn** (or 30–60s):
+- enables “the other one / first / second” immediately after opening something
+- expires automatically after the window or on new intent
+
 ### AttemptCount lifecycle
 - Increment on off-menu input that is **not** mapped and **not** a hard exit.
 - Reset when:
@@ -72,14 +79,20 @@ This prevents fragmented behavior across different pill types and keeps the UX a
   - exit is invoked, or
   - routing changes topic (clarification cleared / new intent).
 - Do **not** increment on hesitation/pause phrases (see below).
+- Do **not** increment on repair phrases (e.g., “no”, “not that”).
+- **Ambiguity rule (explicit):**
+  - First ambiguous re-ask **does not** increment `attemptCount`.
+  - If the user keeps responding with inputs that remain ambiguous, increment on subsequent attempts.
 
 ---
 
 ## Decision Policy (Order of Evaluation)
 
 ### A0) Hesitation / Pause (NEW)
-If the input is a hesitation (e.g., “hmm”, “not sure”, “i don’t know”):
+If the input is a hesitation (e.g., “hmm”, “not sure”, “i don’t know”, “idk”):
 - do **not** increment `attemptCount`
+- increment `hesitationCount`
+- if `hesitationCount >= 2`, add a short guidance hint
 - respond with a softer narrowing prompt
 - re-show the same pills
 
@@ -89,7 +102,7 @@ This prevents the system from feeling impatient and repetitive.
 Accept:
 - exact label match
 - ordinal (first/second/1/2)
-- label contains input
+- label contains input (**only if unique across options**; otherwise treat as ambiguous)
 
 If matched: select and proceed.
 
@@ -132,13 +145,30 @@ Only treat as new topic **if**:
 - No direct selection, and
 - No off-menu mapping match, and
 - Input is a **clear command/question**, and
-- Input contains **at least one token not overlapping** any option label tokens or alias tokens
+- Input contains **at least two tokens** that do **not** overlap any option label tokens or alias tokens
+  **or** contains a strong imperative (open/show/search/go/create/rename/delete/add/remove)
 
 Then:
 - clear clarification
 - route normally
 
 This prevents “show me settings” from being misclassified as a topic switch.
+
+#### Zero‑Overlap Escape (Addendum, integrated)
+After running direct selection, off‑menu mapping, and **optional** constrained LLM fallback (if enabled), apply this last‑resort escape:
+
+- If the input has **zero canonical token overlap** with all option labels/aliases, then **escape clarification** and route normally — even without an action verb.
+
+**Guards:** do **not** escape if the input is:
+- an ordinal (first/second/1/2/option 1)
+- a hesitation phrase (hmm / idk / not sure)
+- a repair/rejection phrase (not that / no / none of those)
+- a short hint (≤ 2 tokens)
+- noisy / garbage input (random strings, emoji spam)
+
+This keeps “sdk / settings / profile” as clarification hints while still allowing clean topic switches like “export notes pdf” to escape.
+
+**Note:** Zero‑overlap escape is an **exception** to the clear‑command requirement, and should be treated as a **last‑resort** reroute only after direct selection, deterministic mapping, and (if enabled) constrained LLM fallback.
 
 #### Definition: “clear command/question” (explicit)
 Treat input as a clear command/question if **any** are true:
@@ -147,39 +177,66 @@ Treat input as a clear command/question if **any** are true:
 - contains an imperative action verb: `open / show / go / create / rename / delete / add / remove`
 
 ### D) Noisy / unclear input
-Examples: “idk”, emoji, random strings.
+Examples: emoji, random strings.
 - re-show pills with short prompt
 - increment `attemptCount`
 
-### E) Repair phrases (NEW)
-If the user rejects the current selection **but stays in context** (e.g., “not that”, “no, the other one”):
-- keep clarification active
-- prefer the alternative option if two choices exist
-- otherwise re-show options with a short clarifier
+### E) Repair phrases with scoped rejection (NEW)
+Treat repair/rejection phrases based on **scope**:
+- **“not that”** → reject the last suggestion, stay in the same option list, re‑show options
+- **“no”** → ambiguous refusal, stay in context, re‑show options
+- **list rejection phrases** (user may say “none of these / none of those / neither”) → reject the entire list, switch to **refine prompt** (ask for one detail)
 
-**Note:** “not that” should **not** fully exit clarification unless the user explicitly exits (“cancel / never mind”).
+**Note:** only explicit exits (“cancel / never mind / stop”) should fully clear clarification.
 
 ### F) Loop control
-If `attemptCount >= 2` (or after multiple hesitations):
-- show explicit exits (`None of these` / `Start over`)
-- invite a short free-form request
+Escalation is used for **guidance**, not access.
+If `attemptCount >= 2` **or** `hesitationCount >= 2`:
+- add a short guidance hint (e.g., “You can say ‘first’ or ‘second’.”)
+- invite a short free-form request if still unclear (e.g., “Tell me one detail: where it is or what it’s called.”)
 
 ---
 
 ## Escalation Messaging Policy (copy guidance)
 Attempt 1: gentle redirect (re-show pills)  
 Attempt 2: short clarifying question (“Which one is closer?”)  
-Attempt 3: exits + ask for **3–6 word description**
+Attempt 3: add guidance + ask for **3–6 word description**
 
 Suggested copy (Attempt 3):
 - “Which one is closer, or tell me the feature in 3–6 words (e.g., ‘change workspace theme’).”
 
 ---
 
+## Prompt Template (Consistent Base + Adaptive Tail)  ✅
+Use the same base structure everywhere, but adjust the **tail** based on what just happened:
+
+**Base:**  
+“Which one do you mean — or if neither looks right, say **‘none of these’** (or **‘none of those’**) or tell me one detail (where it is / what it’s called).”
+
+**First time showing options (neutral):**  
+“Which one do you mean — or if neither looks right, say **‘none of these’** (or **‘none of those’**) or tell me one detail (where it is / what it’s called).”
+
+**After “not that” (rejects last choice):**  
+“Okay — not that one. Which one do you mean instead — or say **‘none of these’** or tell me what it’s called.”
+
+**After “no” (ambiguous refusal):**  
+“No problem. Which one do you mean — or say **‘none of these’** or tell me where it is (Docs or Notes).”
+
+**After list rejection (reject list):**  
+“Got it. Tell me one detail (exact name or where it lives) — or I can show more results.”
+
+**After 2+ unparseable replies:**  
+“I didn’t catch that. Reply **first** or **second**, or say **‘none of these’** (or **‘none of those’**), or tell me one detail.”
+
+---
+
 ## Exit Handling
-On explicit exit (“cancel / never mind / none / stop”):
+On explicit exit (“cancel / never mind / stop”):
 - clear clarification
 - ask open-ended question (“No problem — what would you like to do instead?”)
+
+On list‑rejection (user rejects the list):
+- keep the same intent, but **ask for one detail** (where it is / exact name)
 
 ---
 
@@ -195,7 +252,8 @@ Apply the same logic across types, with minor differences:
 ## Optional Refinements (Recommended)
 
 ### 1) Soft-confirm for broad mappings (one safe case)
-If mapping is confident **but the user input is very broad** (e.g., only “settings”), you may auto-select **and** add a small confirmation line:
+If mapping is confident **but the user input is very broad**, you may auto-select **and** add a small confirmation line:
+- **Threshold (explicit):** if input is **≤ 1 token** or in `{settings, help, profile}`, prefer soft‑confirm over silent auto‑select.
 - “Got it — I’ll use **Workspace Settings**. If you meant the other one, pick it below.”
 
 This improves “human feel” without adding guessy behavior.
@@ -205,6 +263,26 @@ If the user keeps typing variations that overlap multiple options, keep it simpl
 - re-ask A/B
 - increment `attemptCount`
 - escalate on attempt 3
+
+### 3) Noisy Input Definition (Explicit)
+Define **noisy input** so the zero‑overlap guard is consistent:
+- **Noisy** if **alphabetic ratio < 50%**, **or**
+- token count == 1 **and** token length < 3, **or**
+- input contains **no vowel** (a,e,i,o,u)
+
+Noisy input should **not** trigger zero‑overlap escape and should stay in clarification.
+
+---
+
+## Constrained LLM Contract (Optional, If Enabled)
+If LLM fallback is enabled, it **must** be strictly bounded to the current pills only:
+- **Input:** user text + currently shown options (labels + stable ids)
+- **Output:** strict JSON
+  - `{ "choiceId": "<stable id>", "choiceIndex": <0..N-1>, "decision": "select", "confidence": 0..1 }`
+  - or `{ "choiceId": null, "choiceIndex": -1, "decision": "abstain", "confidence": 0..1 }`
+- **No routing / no new actions / no extra text**
+
+This keeps the fallback deterministic and safe while still allowing natural phrasing to resolve a choice.
 
 ---
 
@@ -224,8 +302,8 @@ To keep the UX aligned with the plan as the code evolves:
 ### 1) Behavior Checks (must stay true)
 - Hesitation inputs **do not** increment `attemptCount`.
 - “not that” keeps clarification **active** and does **not** exit.
-- Exit pills appear by attempt **2** or after repeated hesitation.
 - New-topic detection only fires when **non-overlapping tokens** exist.
+  - Must be **two** non-overlapping tokens, or a strong imperative (open/show/search/go/create/rename/delete/add/remove).
 
 ### 2) Telemetry Spot-Checks (after refactors)
 Verify recent logs show:
@@ -235,7 +313,8 @@ Verify recent logs show:
 
 ### 3) UI Regression Checklist
 - “hmm / i don’t know” → same pills, softer prompt (no escalation).
-- “not that” → stays in context and offers the alternative.
+- “not that” → stays in context and re‑shows options.
+- list rejection → refine prompt (ask for one detail).
 - “the first option” → selects without looping.
 
 ---
@@ -244,16 +323,18 @@ Verify recent logs show:
 1. Options shown; input “settings please” → maps if only one option matches canonical tokens.  
 2. Input “preferences” → re-ask A/B (no global synonym map).  
 3. Input “show me my profile” → exit clarification and route normally.  
-4. Input “idk” → re-show options.  
-5. After 2+ off-menu attempts → show exit options + 3–6 word prompt.  
-6. Input “none of these” → exit clarification.  
-7. Input “first” → selects first option.  
-8. Input “link notesx” → re-show options (typo recovery).  
-9. Input “Can you show me the settings?” → maps to Workspace Settings (not exit).  
-10. Input “settings” when both options include a settings token → re-ask A/B (ambiguous).  
-11. Input “manage settings” (overlaps both) → re-ask A/B; increment `attemptCount`.  
-12. Input “hmm” / “i don’t know” → re-show options without incrementing attempt count.  
-13. Input “not that” → stays in clarification and offers the alternative (not a full exit).  
+4. Input “idk” → soft prompt + re-show options (**no attemptCount increment**; increment `hesitationCount`).  
+5. After 2+ attempts, add guidance + 3–6 word prompt.  
+6. Input “cancel / never mind” → exit clarification.  
+7. List rejection (user says “none of these / none of those / neither”) → refine prompt (ask for one detail).  
+8. Input “first” → selects first option.  
+9. Input “link notesx” → re-show options (typo recovery).  
+10. Input “Can you show me the settings?” → maps to Workspace Settings (not exit).  
+11. Input “settings” when both options include a settings token → re-ask A/B (ambiguous).  
+12. Input “manage settings” (overlaps both) → re-ask A/B; increment `attemptCount`.  
+13. Input “hmm” / “i don’t know” → re-show options without incrementing attempt count.  
+14. Input “not that” → stays in clarification and re‑shows options (repair).  
+15. List rejection phrase → refine prompt (ask for one detail).  
 
 ---
 
@@ -267,6 +348,9 @@ Verify recent logs show:
 ## UX Examples (Before → After)
 These are intended to guide implementation and testing.
 
+For full, concrete conversation scripts that follow the template exactly, see:  
+`clarification-offmenu-handling-examples.md`
+
 ### Example 1: Hesitation / Pause
 **Before**
 - User: “hmm” → escalation prompt
@@ -276,12 +360,14 @@ These are intended to guide implementation and testing.
 - User: “hmm” → *gentle narrowing prompt, no attemptCount increment*
 - User: “i don’t know” → *same options + short clarifier, still no escalation*
 
-### Example 2: Repair phrase
+### Example 2: Repair vs list rejection
 **Before**
 - User: “not that” → exits clarification
+- User: “none of those” → exits clarification
 
 **After (desired)**
-- User: “not that” → stays in context, prefers the alternative option
+- User: “not that” → stays in context and re‑shows options
+- User: “none of those” → refine prompt (ask for one detail)
 
 ### Example 3: Natural ordinal phrasing
 **Before**
@@ -294,6 +380,13 @@ These are intended to guide implementation and testing.
 
 ## Implementation Checklist (Step‑by‑Step)
 Use this as a practical guide when implementing the plan.
+
+## Implementation Notes (Ordering Pitfalls)
+Keep these in mind to avoid regressions:
+- **Ordinal selection before off‑menu mapping** (so “the first option” doesn’t get treated as noise).
+- **Hesitation handling before attemptCount increments** (don’t punish “hmm / idk”).
+- **Repair phrases before exit** (“not that / no” should stay in context).
+- **Ambiguous off‑menu → optional LLM fallback** only if enabled; otherwise re‑ask deterministically.
 
 ### 1) Feature Flags + Server/Client Gating
 - [ ] Server flag exists: `CLARIFICATION_LLM_FALLBACK=true`
@@ -320,22 +413,23 @@ Use this as a practical guide when implementing the plan.
 - [ ] Include numeric variants: “2nd”, “number two”, “the last one”
 - [ ] Resolve to a single option before off‑menu mapping runs
 
-### 6) Off‑Menu Mapping → Ambiguous should still call LLM
-- [ ] If off‑menu returns **ambiguous**, allow LLM fallback (if enabled)
-- [ ] Do not short‑circuit to escalation immediately
+### 6) Off‑Menu Mapping → Ambiguous may use constrained LLM (optional)
+- [ ] If off‑menu returns **ambiguous**, allow **optional** constrained LLM fallback (if enabled)
+- [ ] If LLM fallback is disabled, re‑ask deterministically (no LLM call)
 
-### 7) Earlier Exit Pills
-- [ ] Show exit pills at attempt ≥ 2 OR after repeated hesitation
-- [ ] Exit pills: “None of these” / “Start over”
+### 7) List Rejection → Refine Prompt
+- [ ] Detect “none of these / none of those / neither”
+- [ ] Ask for one detail (where it is / exact name)
 
 ### 8) Telemetry Checks
 - [ ] `clarification_offmenu_attempts` increments only on true failures
 - [ ] `clarification_llm_called` logged on fallback
-- [ ] `clarification_llm_decision` + `choiceIndex` present
-- [ ] `clarification_exit_pill_selected` logged on exit pill use
+- [ ] `clarification_llm_decision` + `choiceId` (and `choiceIndex` if present) logged
+- [ ] `clarification_offmenu_exit` only on explicit exits
 
 ### 9) UX Regression Tests
 - [ ] “hmm / i don’t know” → soft prompt, no escalation
 - [ ] “not that” → stays in context
+- [ ] “none of those” → refine prompt (ask for one detail)
 - [ ] “the first option” → selects immediately
 - [ ] “the one about panel d” → LLM selects (if enabled)
