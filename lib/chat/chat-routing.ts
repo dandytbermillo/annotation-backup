@@ -36,20 +36,30 @@ import { matchVisiblePanelCommand, type VisibleWidget } from '@/lib/chat/panel-c
 import {
   mapOffMenuInput,
   detectNewTopic,
+  classifyResponseFit,
   getEscalationMessage,
   getExitOptions,
   isExitPhrase,
   isHesitationPhrase,
   isRepairPhrase,
   isListRejectionPhrase,
+  isNoise,
   getHesitationPrompt,
   getBasePrompt,
   getRepairPrompt,
   getNoRefusalPrompt,
   getRefinePrompt,
+  getNoisePrompt,
+  getAskClarifyPrompt,
+  getSoftRejectPrompt,
+  getConfirmPrompt,
+  toCanonicalTokens,
   MAX_ATTEMPT_COUNT,
+  CONFIDENCE_THRESHOLD_EXECUTE,
+  CONFIDENCE_THRESHOLD_CONFIRM,
   type OffMenuMappingResult,
   type ClarificationType,
+  type ResponseFitResult,
 } from '@/lib/chat/clarification-offmenu'
 import {
   shouldCallLLMFallback,
@@ -1532,6 +1542,36 @@ export async function handleClarificationIntercept(
       })
     }
 
+    // Tier -1: Noise pre-check (FIRST check per clarification-response-fit-plan.md)
+    // Noise should never trigger selection or zero-overlap escape.
+    // Treat input as noise if: alphabetic ratio < 50%, short token, no vowels, emoji-only
+    if (isNoise(trimmedInput)) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'clarification_tier_noise_detected',
+        metadata: { userInput: trimmedInput, response_fit_intent: 'noise' },
+      })
+
+      // Re-prompt without incrementing attemptCount (noise doesn't count as an attempt)
+      const noiseMessage: ChatMessage = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: getNoisePrompt(),
+        timestamp: new Date(),
+        isError: false,
+        options: lastClarification!.options?.map(opt => ({
+          type: opt.type as SelectionOption['type'],
+          id: opt.id,
+          label: opt.label,
+          sublabel: opt.sublabel,
+          data: {} as SelectionOption['data'],
+        })),
+      }
+      addMessage(noiseMessage)
+      setIsLoading(false)
+      return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+    }
+
     // Tier 0: List rejection detection (BEFORE exit phrase check)
     // Per clarification-offmenu-handling-plan.md (E):
     // "none of these", "none of those", "neither" → Refine Mode (NOT exit)
@@ -1540,7 +1580,7 @@ export async function handleClarificationIntercept(
       void debugLog({
         component: 'ChatNavigation',
         action: 'clarification_tier0_list_rejection',
-        metadata: { userInput: trimmedInput, previousOptions: lastClarification?.options?.length },
+        metadata: { userInput: trimmedInput, previousOptions: lastClarification?.options?.length, response_fit_intent: 'reject_list' },
       })
 
       // Enter Refine Mode: clear options but keep intent context
@@ -1575,7 +1615,7 @@ export async function handleClarificationIntercept(
       void debugLog({
         component: 'ChatNavigation',
         action: 'clarification_tier1a_exit_phrase',
-        metadata: { userInput: trimmedInput },
+        metadata: { userInput: trimmedInput, response_fit_intent: 'exit_cancel' },
       })
       setLastClarification(null)
       setPendingOptions([])
@@ -1599,7 +1639,7 @@ export async function handleClarificationIntercept(
       void debugLog({
         component: 'ChatNavigation',
         action: 'clarification_tier_a0_hesitation',
-        metadata: { userInput: trimmedInput, attemptCount: lastClarification?.attemptCount ?? 0 },
+        metadata: { userInput: trimmedInput, attemptCount: lastClarification?.attemptCount ?? 0, response_fit_intent: 'hesitate' },
       })
 
       // Re-show pills with softer prompt (NO attemptCount increment)
@@ -1645,7 +1685,7 @@ export async function handleClarificationIntercept(
       void debugLog({
         component: 'ChatNavigation',
         action: 'clarification_tier1c_repair_phrase',
-        metadata: { userInput: trimmedInput, action: 'offer_alternative', optionCount: lastClarification!.options!.length },
+        metadata: { userInput: trimmedInput, action: 'offer_alternative', optionCount: lastClarification!.options!.length, response_fit_intent: 'repair' },
       })
 
       // Re-show options with repair prompt

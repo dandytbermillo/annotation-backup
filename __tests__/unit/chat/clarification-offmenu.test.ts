@@ -8,13 +8,157 @@ import {
   isRepairPhrase,
   isExitPhrase,
   isListRejectionPhrase,
+  isNoise,
   getEscalationMessage,
   getHesitationPrompt,
   getBasePrompt,
   getRepairPrompt,
   getNoRefusalPrompt,
   getRefinePrompt,
+  getNoisePrompt,
 } from '@/lib/chat/clarification-offmenu'
+
+// =============================================================================
+// isNoise tests (per clarification-response-fit-plan.md)
+// =============================================================================
+
+describe('isNoise', () => {
+  describe('detects empty or whitespace input as noise', () => {
+    test('empty string is noise', () => {
+      expect(isNoise('')).toBe(true)
+      expect(isNoise('   ')).toBe(true)
+    })
+  })
+
+  describe('detects low alphabetic ratio as noise', () => {
+    test('pure numbers are noise (alphabetic ratio 0%)', () => {
+      expect(isNoise('12345')).toBe(true)
+      expect(isNoise('123 456')).toBe(true)
+    })
+
+    test('symbols with few letters are noise', () => {
+      expect(isNoise('!!!')).toBe(true)
+      expect(isNoise('???')).toBe(true)
+      expect(isNoise('@#$%')).toBe(true)
+    })
+
+    test('mixed but mostly non-alpha is noise', () => {
+      expect(isNoise('123abc!!')).toBe(true) // 3 alpha out of 8 = 37.5% < 50%
+    })
+  })
+
+  describe('detects single short token as noise', () => {
+    test('single char is noise', () => {
+      expect(isNoise('a')).toBe(true)
+      expect(isNoise('x')).toBe(true)
+    })
+
+    test('two chars is noise', () => {
+      expect(isNoise('ab')).toBe(true)
+      expect(isNoise('ok')).toBe(true) // 2 chars, single token
+    })
+  })
+
+  describe('detects keyboard smash patterns as noise', () => {
+    test('5+ consonants only is noise', () => {
+      expect(isNoise('bcdfg')).toBe(true)
+      expect(isNoise('qwrty')).toBe(true)
+      expect(isNoise('bcdfgh')).toBe(true)
+    })
+
+    test('keyboard smash patterns are noise', () => {
+      expect(isNoise('asdfg')).toBe(true)
+      expect(isNoise('asdfgh')).toBe(true)
+      expect(isNoise('zxcvb')).toBe(true)
+    })
+
+    test('keyboard row patterns are noise regardless of length', () => {
+      // These match keyboard row patterns
+      expect(isNoise('jkl')).toBe(true)   // Home row pattern
+      expect(isNoise('asd')).toBe(true)   // Home row pattern
+      expect(isNoise('zxc')).toBe(true)   // Bottom row pattern
+    })
+
+    test('short non-keyboard-row consonants may be valid abbreviations', () => {
+      // These don't match keyboard row patterns
+      expect(isNoise('xyz')).toBe(false)  // Not a keyboard row, could be abbreviation
+      expect(isNoise('rgb')).toBe(false)  // Not a keyboard row, valid abbreviation
+    })
+  })
+
+  describe('detects emoji-only as noise', () => {
+    test('single emoji is noise', () => {
+      expect(isNoise('😀')).toBe(true)
+      expect(isNoise('👍')).toBe(true)
+    })
+
+    test('multiple emojis are noise', () => {
+      expect(isNoise('😀😀😀')).toBe(true)
+      expect(isNoise('🎉🎊🎈')).toBe(true)
+    })
+  })
+
+  describe('detects repeated characters as noise', () => {
+    test('same char repeated 4+ times is noise', () => {
+      expect(isNoise('aaaa')).toBe(true)
+      expect(isNoise('xxxxx')).toBe(true)
+    })
+  })
+
+  describe('does NOT classify valid input as noise', () => {
+    test('normal words are not noise', () => {
+      expect(isNoise('hello')).toBe(false)
+      expect(isNoise('first')).toBe(false)
+      expect(isNoise('second')).toBe(false)
+    })
+
+    test('option labels are not noise', () => {
+      expect(isNoise('Links Panel D')).toBe(false)
+      expect(isNoise('Notes')).toBe(false)
+      expect(isNoise('Docs')).toBe(false)
+    })
+
+    test('short valid words (3+ chars with vowels) are not noise', () => {
+      expect(isNoise('sdk')).toBe(false) // Known abbreviation, whitelisted
+      expect(isNoise('the')).toBe(false)
+      expect(isNoise('yes')).toBe(false)
+      expect(isNoise('one')).toBe(false)
+      expect(isNoise('api')).toBe(false) // Known abbreviation
+    })
+
+    test('hesitation phrases are not noise', () => {
+      expect(isNoise('hmm')).toBe(false) // Whitelisted hesitation pattern
+      expect(isNoise('hmmm')).toBe(false)
+      expect(isNoise('umm')).toBe(false)
+      expect(isNoise('idk')).toBe(false) // Whitelisted
+      expect(isNoise('not sure')).toBe(false)
+    })
+
+    test('numbers mixed with valid text are not noise', () => {
+      expect(isNoise('option 1')).toBe(false)
+      expect(isNoise('workspace 2')).toBe(false)
+    })
+
+    test('commands with proper structure are not noise', () => {
+      expect(isNoise('open settings')).toBe(false)
+      expect(isNoise('show profile')).toBe(false)
+    })
+  })
+})
+
+// =============================================================================
+// getNoisePrompt tests
+// =============================================================================
+
+describe('getNoisePrompt', () => {
+  test('returns the unparseable prompt', () => {
+    const prompt = getNoisePrompt()
+    expect(prompt).toContain("I didn't catch that")
+    expect(prompt).toContain('first')
+    expect(prompt).toContain('second')
+    expect(prompt).toContain('none of these')
+  })
+})
 
 // =============================================================================
 // isHesitationPhrase tests

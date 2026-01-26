@@ -569,6 +569,288 @@ export function getRefinePrompt(): string {
 // List Rejection Detection (separate from exit)
 // =============================================================================
 
+// =============================================================================
+// Noise Detection (per clarification-response-fit-plan.md)
+// =============================================================================
+
+/**
+ * Check if input is noise/gibberish that should trigger re-prompt.
+ * Per clarification-response-fit-plan.md Section 3) Noise Definition:
+ * - alphabetic ratio < 50%
+ * - token count == 1 and token length < 3
+ * - contains no vowel (a/e/i/o/u) AND is keyboard smash pattern
+ * - emoji-only / keyboard smash
+ *
+ * Noise should never trigger selection or zero-overlap escape.
+ *
+ * IMPORTANT: This function should NOT classify valid hesitation phrases
+ * or short hints as noise - those are handled by other tiers.
+ */
+export function isNoise(input: string): boolean {
+  const trimmed = input.trim()
+  if (!trimmed) return true
+
+  const normalized = trimmed.toLowerCase()
+
+  // Known valid patterns that should NOT be noise (hesitations, short hints)
+  // These are handled by other tiers
+  const validPatterns = [
+    // Hesitation sounds (handled by isHesitationPhrase)
+    /^h+m+$/i,
+    /^u+[hm]+$/i,
+    /^idk$/i,
+    /^hmm+$/i,
+    /^umm+$/i,
+    /^hm+$/i,
+    // Short valid words/abbreviations (handled as hints)
+    /^sdk$/i,
+    /^api$/i,
+    /^css$/i,
+    /^dns$/i,
+  ]
+
+  for (const pattern of validPatterns) {
+    if (pattern.test(normalized)) {
+      return false
+    }
+  }
+
+  // Check for emoji-only (common emoji patterns)
+  const emojiOnlyPattern = /^[\p{Emoji}\p{Emoji_Presentation}\p{Emoji_Modifier}\p{Emoji_Modifier_Base}\p{Emoji_Component}\s]+$/u
+  if (emojiOnlyPattern.test(trimmed)) {
+    return true
+  }
+
+  // Calculate alphabetic ratio
+  const alphaChars = (trimmed.match(/[a-zA-Z]/g) || []).length
+  const totalChars = trimmed.replace(/\s/g, '').length
+  const alphabeticRatio = totalChars > 0 ? alphaChars / totalChars : 0
+
+  // alphabetic ratio < 50%
+  if (alphabeticRatio < 0.5) {
+    return true
+  }
+
+  // Get tokens for further checks
+  const tokens = trimmed.toLowerCase().split(/\s+/).filter(Boolean)
+
+  // token count == 1 and token length < 3
+  if (tokens.length === 1 && tokens[0].length < 3) {
+    return true
+  }
+
+  // Keyboard smash patterns (random consonants, common smash sequences)
+  // Only flag as noise if it's clearly keyboard mashing, not valid words
+  const keyboardSmashPatterns = [
+    /^[asdfghjkl]+$/i,           // Home row smash (only consonants)
+    /^[zxcvbnm]+$/i,             // Bottom row smash (only consonants)
+    /^(.)\1{3,}$/i,              // Same char repeated 4+ times
+    /^[bcdfghjklmnpqrstvwxyz]{5,}$/i,  // 5+ consonants in a row
+  ]
+
+  const strippedInput = trimmed.replace(/\s/g, '')
+  for (const pattern of keyboardSmashPatterns) {
+    if (pattern.test(strippedInput)) {
+      return true
+    }
+  }
+
+  return false
+}
+
+/**
+ * Get the unparseable prompt for noise input.
+ * Per clarification-response-fit-plan.md: re-prompt with standard clarification template.
+ */
+export function getNoisePrompt(): string {
+  return 'I didn\'t catch that. Reply **first** or **second**, or say **"none of these"** (or **"none of those"**), or tell me one detail.'
+}
+
+// =============================================================================
+// Response-Fit Classifier (per clarification-response-fit-plan.md)
+// =============================================================================
+
+/**
+ * Response-Fit classification result.
+ * Per plan: intent + optional choiceId + confidence.
+ */
+export interface ResponseFitResult {
+  intent: 'select' | 'repair' | 'reject_list' | 'hesitate' | 'new_topic' | 'noise' | 'ask_clarify' | 'soft_reject'
+  /** Choice ID when intent is 'select' or 'repair' */
+  choiceId?: string
+  /** Confidence score 0.0-1.0 */
+  confidence: number
+  /** Reason for the classification */
+  reason: string
+  /** Matched option (if any) */
+  matchedOption?: ClarificationOption
+}
+
+/**
+ * Confidence thresholds per clarification-response-fit-plan.md §4.
+ */
+export const CONFIDENCE_THRESHOLD_EXECUTE = 0.75
+export const CONFIDENCE_THRESHOLD_CONFIRM = 0.55
+
+/**
+ * Get ask-clarify prompt for short hints.
+ * Per plan: "Are you looking for X? If yes, choose A; if not, choose B."
+ */
+export function getAskClarifyPrompt(hintTokens: string[]): string {
+  const hint = hintTokens.join(' ')
+  return `I'm not sure which one you mean by "${hint}". Could you pick one of the options, or tell me more?`
+}
+
+/**
+ * Get soft-reject prompt for ambiguous near-matches.
+ * Per plan: "Did you mean {Option A}, or would you like to try again?"
+ */
+export function getSoftRejectPrompt(candidateLabels: string[]): string {
+  if (candidateLabels.length === 1) {
+    return `Did you mean **${candidateLabels[0]}**? Pick it below, or say "none of these" if that's not it.`
+  }
+  if (candidateLabels.length === 2) {
+    return `Do you mean **${candidateLabels[0]}** or **${candidateLabels[1]}**? Pick one below.`
+  }
+  return `Which one did you mean? Pick from the options below, or say "none of these".`
+}
+
+/**
+ * Get confirm prompt for medium-confidence matches.
+ * Per plan: "Do you mean X?" (confidence 0.55-0.75)
+ */
+export function getConfirmPrompt(label: string): string {
+  return `Do you mean **${label}**? Pick it below to confirm, or choose a different option.`
+}
+
+/**
+ * Classify user input using Response-Fit logic.
+ * Per clarification-response-fit-plan.md:
+ * - Short hint (≤2 tokens) → ask_clarify
+ * - Near-match but ambiguous → soft_reject
+ * - Clear command + non-overlapping tokens → new_topic
+ * - Mapped with confidence → apply ladder
+ *
+ * @param input - User input
+ * @param options - Current clarification options
+ * @param clarificationType - Type of clarification context
+ * @returns Classification result with intent, confidence, and optional choiceId
+ */
+export function classifyResponseFit(
+  input: string,
+  options: ClarificationOption[],
+  clarificationType: ClarificationType
+): ResponseFitResult {
+  if (!options || options.length === 0) {
+    return { intent: 'ask_clarify', confidence: 0, reason: 'no_options' }
+  }
+
+  const inputTokens = toCanonicalTokens(input)
+
+  // Short hint (≤2 meaningful tokens) → ask_clarify
+  // Per plan §3.1: "If input is short hint (≤2 tokens) → ask_clarify"
+  // Skip this check if we have an exact label match
+  const normalizedInput = input.toLowerCase().trim()
+  const hasExactMatch = options.some(opt => opt.label.toLowerCase() === normalizedInput)
+
+  if (!hasExactMatch && inputTokens.size <= 2 && inputTokens.size > 0) {
+    // Check if it's a partial match (could relate to options but not specific enough)
+    const allOptionTokens = new Set<string>()
+    for (const opt of options) {
+      for (const t of getLabelAliasTokens(opt.label)) {
+        allOptionTokens.add(t)
+      }
+    }
+
+    // If some tokens overlap but not all → could be a hint
+    let overlappingCount = 0
+    for (const t of inputTokens) {
+      if (allOptionTokens.has(t)) overlappingCount++
+    }
+
+    if (overlappingCount > 0 && overlappingCount < inputTokens.size) {
+      // Partial overlap - ambiguous hint
+      return {
+        intent: 'ask_clarify',
+        confidence: 0.3,
+        reason: 'short_hint_partial_overlap',
+      }
+    }
+
+    if (overlappingCount === 0) {
+      // No overlap at all - might be a new topic or just unclear
+      return {
+        intent: 'ask_clarify',
+        confidence: 0.2,
+        reason: 'short_hint_no_overlap',
+      }
+    }
+  }
+
+  // Call mapOffMenuInput for token-based matching
+  const offMenuResult = mapOffMenuInput(input, options, clarificationType)
+
+  // Handle mapped result with confidence ladder
+  if (offMenuResult.type === 'mapped' && offMenuResult.matchedOption) {
+    // Convert off-menu confidence to numeric score
+    const confidenceScore = offMenuResult.confidence === 'high' ? 0.85
+      : offMenuResult.confidence === 'medium' ? 0.65
+      : 0.45
+
+    return {
+      intent: 'select',
+      choiceId: offMenuResult.matchedOption.id,
+      confidence: confidenceScore,
+      reason: `mapped_${offMenuResult.reason}`,
+      matchedOption: offMenuResult.matchedOption,
+    }
+  }
+
+  // Handle ambiguous result → soft_reject
+  if (offMenuResult.type === 'ambiguous') {
+    // Find candidate options that partially match
+    const candidates: ClarificationOption[] = []
+    for (const opt of options) {
+      const labelTokens = getLabelAliasTokens(opt.label)
+      let matchCount = 0
+      for (const t of inputTokens) {
+        if (labelTokens.has(t)) matchCount++
+      }
+      if (matchCount > 0) {
+        candidates.push(opt)
+      }
+    }
+
+    return {
+      intent: 'soft_reject',
+      confidence: 0.4,
+      reason: 'ambiguous_multiple_matches',
+      matchedOption: candidates.length > 0 ? candidates[0] : undefined,
+    }
+  }
+
+  // No match - check for new topic
+  const newTopicResult = detectNewTopic(input, options, offMenuResult)
+  if (newTopicResult.isNewTopic) {
+    return {
+      intent: 'new_topic',
+      confidence: 0.8,
+      reason: `new_topic_${newTopicResult.reason}`,
+    }
+  }
+
+  // No match and not a new topic → ask_clarify
+  return {
+    intent: 'ask_clarify',
+    confidence: 0.2,
+    reason: 'no_match_no_new_topic',
+  }
+}
+
+// =============================================================================
+// List Rejection Detection (separate from exit)
+// =============================================================================
+
 /**
  * Check if input is a list rejection phrase (rejects the whole list, not just one item).
  * Per clarification-offmenu-handling-plan.md (E):

@@ -118,6 +118,24 @@ export interface LastClarificationState {
 }
 
 /**
+ * Repair memory state for response-fit classifier (per clarification-response-fit-plan.md).
+ * Supports "the other one" style repairs by tracking previous selections.
+ */
+export interface RepairMemoryState {
+  /** ID of the last choice selected/rejected */
+  lastChoiceId: string | null
+  /** Options shown in the last clarification (for repair context) */
+  lastOptionsShown: ClarificationOption[]
+  /** Turn counter for expiry (expires after 2 turns) */
+  turnsSinceSet: number
+  /** Timestamp when set */
+  timestamp: number
+}
+
+/** Default repair memory window in turns (configurable) */
+export const REPAIR_MEMORY_TURN_LIMIT = 2
+
+/**
  * Doc retrieval conversation state for follow-ups and corrections.
  * Per general-doc-retrieval-routing-plan.md (v4)
  * Updated for v5 Hybrid Response Selection (lastChunkIdsShown for HS2)
@@ -243,6 +261,11 @@ interface ChatNavigationContextValue {
   docRetrievalState: DocRetrievalState | null
   setDocRetrievalState: (state: DocRetrievalState | null) => void
   updateDocRetrievalState: (update: Partial<DocRetrievalState>) => void
+  // Repair memory for response-fit (per clarification-response-fit-plan.md)
+  repairMemory: RepairMemoryState | null
+  setRepairMemory: (lastChoiceId: string | null, options: ClarificationOption[]) => void
+  incrementRepairMemoryTurn: () => void
+  clearRepairMemory: () => void
 }
 
 // =============================================================================
@@ -453,6 +476,9 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
 
   // Doc retrieval conversation state (v4 plan)
   const [docRetrievalState, setDocRetrievalStateInternal] = useState<DocRetrievalState | null>(null)
+
+  // Repair memory for response-fit (per clarification-response-fit-plan.md)
+  const [repairMemory, setRepairMemoryInternal] = useState<RepairMemoryState | null>(null)
 
   // Debounce refs for session state persistence
   const DEBOUNCE_MS = 1000
@@ -935,6 +961,35 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     }))
   }, [])
 
+  // Repair memory handlers (per clarification-response-fit-plan.md)
+  const setRepairMemory = useCallback((lastChoiceId: string | null, options: ClarificationOption[]) => {
+    setRepairMemoryInternal({
+      lastChoiceId,
+      lastOptionsShown: options,
+      turnsSinceSet: 0,
+      timestamp: Date.now(),
+    })
+  }, [])
+
+  const incrementRepairMemoryTurn = useCallback(() => {
+    setRepairMemoryInternal((prev) => {
+      if (!prev) return null
+      const newTurns = prev.turnsSinceSet + 1
+      // Expire after REPAIR_MEMORY_TURN_LIMIT turns
+      if (newTurns >= REPAIR_MEMORY_TURN_LIMIT) {
+        return null
+      }
+      return {
+        ...prev,
+        turnsSinceSet: newTurns,
+      }
+    })
+  }, [])
+
+  const clearRepairMemory = useCallback(() => {
+    setRepairMemoryInternal(null)
+  }, [])
+
   return (
     <ChatNavigationContext.Provider
       value={{
@@ -983,6 +1038,11 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         docRetrievalState,
         setDocRetrievalState,
         updateDocRetrievalState,
+        // Repair memory for response-fit (per clarification-response-fit-plan.md)
+        repairMemory,
+        setRepairMemory,
+        incrementRepairMemoryTurn,
+        clearRepairMemory,
       }}
     >
       {children}
