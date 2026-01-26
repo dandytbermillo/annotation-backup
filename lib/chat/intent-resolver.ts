@@ -2803,7 +2803,7 @@ async function resolvePanelIntent(
           type: 'panel_drawer' as const,
           id: drawerResult.panelId,
           label: drawerResult.panelTitle,
-          sublabel: drawerResult.panelType,
+          // Removed panel_type sublabel - not helpful for users
           data: { panelId: drawerResult.panelId, panelTitle: drawerResult.panelTitle, panelType: drawerResult.panelType },
         }],
         message: `Did you mean "${drawerResult.panelTitle}"?`,
@@ -2821,7 +2821,7 @@ async function resolvePanelIntent(
           type: 'panel_drawer' as const, // Panel drawer type for proper handling
           id: p.id,
           label: p.title,
-          sublabel: p.panel_type,
+          // Removed panel_type sublabel - not helpful for users
           data: { panelId: p.id, panelTitle: p.title, panelType: p.panel_type },
         })),
         message: `Multiple ${friendlyName} panels found. Which one would you like to open?`,
@@ -2899,7 +2899,7 @@ async function resolvePanelIntent(
             type: 'panel_drawer' as const,
             id: p.id,
             label: p.title,
-            sublabel: p.panel_type,
+            // Removed panel_type sublabel - not helpful for users
             data: { panelId: p.id, panelTitle: p.title, panelType: p.panel_type },
           })),
           message: `Multiple Links Panel panels found. Which one would you like to open?`,

@@ -2634,7 +2634,7 @@ export function handlePanelDisambiguation(
       type: 'panel_drawer' as const,
       id: widget.id,
       label: widget.title,
-      sublabel: widget.type,
+      // Removed widget.type sublabel - not helpful for users (shows internal type like "links_note_tiptap")
       data: { panelId: widget.id, panelTitle: widget.title, panelType: widget.type },
     }))
 

@@ -351,6 +351,9 @@ These are intended to guide implementation and testing.
 For full, concrete conversation scripts that follow the template exactly, see:  
 `clarification-offmenu-handling-examples.md`
 
+For a draft plan that adds a response‑fit classifier step (deterministic first, constrained LLM last‑resort), see:  
+`clarification-response-fit-plan.md`
+
 ### Example 1: Hesitation / Pause
 **Before**
 - User: “hmm” → escalation prompt
