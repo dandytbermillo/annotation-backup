@@ -31,7 +31,8 @@ import {
 import { isBareNounQuery, maybeFormatSnippetWithHs3, dedupeHeaderPath, stripMarkdownHeadersForUI } from '@/lib/chat/doc-routing'
 import type { UIContext } from '@/lib/chat/intent-prompt'
 import type { ChatMessage, DocRetrievalState, SelectionOption, LastClarificationState } from '@/lib/chat'
-import type { ClarificationOption } from '@/lib/chat/chat-navigation-context'
+import type { ClarificationOption, RepairMemoryState } from '@/lib/chat/chat-navigation-context'
+import { REPAIR_MEMORY_TURN_LIMIT } from '@/lib/chat/chat-navigation-context'
 import { matchVisiblePanelCommand, type VisibleWidget } from '@/lib/chat/panel-command-matcher'
 import {
   mapOffMenuInput,
@@ -1096,6 +1097,12 @@ export interface ClarificationInterceptContext {
   setPendingOptionsGraceCount: (count: number) => void
   setNotesScopeFollowUpActive: (active: boolean) => void
   handleSelectOption: (option: SelectionOption) => void
+
+  // Repair memory (per clarification-response-fit-plan.md §5)
+  repairMemory: RepairMemoryState | null
+  setRepairMemory: (lastChoiceId: string | null, options: ClarificationOption[]) => void
+  incrementRepairMemoryTurn: () => void
+  clearRepairMemory: () => void
 }
 
 /**
@@ -1288,6 +1295,11 @@ export async function handleClarificationIntercept(
     setPendingOptionsGraceCount,
     setNotesScopeFollowUpActive,
     handleSelectOption,
+    // Repair memory (per clarification-response-fit-plan.md §5)
+    repairMemory,
+    setRepairMemory,
+    incrementRepairMemoryTurn,
+    clearRepairMemory,
   } = ctx
 
   // TD-3: Check for bare noun new intent
@@ -1678,18 +1690,67 @@ export async function handleClarificationIntercept(
     // Tier 1c: Local rejection / repair phrase handling
     // Per clarification-offmenu-handling-plan.md (E): Repair phrases stay in context
     // E1: Repair phrases ("not that", "the other one") → stay in context, offer alternative
-    // Per clarification-offmenu-handling-plan.md: Use consistent prompt template
-    // Works with ANY number of options (not just 2) - see Example 8 with 7 workspaces
+    // Per clarification-response-fit-plan.md §5: Use repairMemory to resolve "the other one"
     const hasOptions = lastClarification?.options && lastClarification.options.length > 0
     if (isRepairPhrase(trimmedInput) && hasOptions) {
+      // Per plan §5: If repairMemory exists and is within turn limit, use it to resolve "the other one"
+      const canUseRepairMemory = repairMemory &&
+        repairMemory.lastChoiceId &&
+        repairMemory.turnsSinceSet < REPAIR_MEMORY_TURN_LIMIT &&
+        repairMemory.lastOptionsShown.length > 0
+
+      // For 2-option clarifications with valid repair memory, auto-select the other option
+      if (canUseRepairMemory && lastClarification!.options!.length === 2) {
+        const otherOption = lastClarification!.options!.find(opt => opt.id !== repairMemory!.lastChoiceId)
+
+        if (otherOption) {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'clarification_tier1c_repair_phrase_auto_select',
+            metadata: {
+              userInput: trimmedInput,
+              lastChoiceId: repairMemory!.lastChoiceId,
+              selectedOtherId: otherOption.id,
+              response_fit_intent: 'repair',
+            },
+          })
+
+          const fullOption = pendingOptions.find(opt => opt.id === otherOption.id)
+
+          // Update repair memory with the new selection
+          setRepairMemory(otherOption.id, lastClarification!.options!)
+          setLastClarification(null)
+
+          const optionToSelect: SelectionOption = {
+            type: (fullOption?.type ?? otherOption.type) as SelectionOption['type'],
+            id: otherOption.id,
+            label: otherOption.label,
+            sublabel: otherOption.sublabel,
+            data: fullOption?.data as SelectionOption['data'] ??
+              (otherOption.type === 'doc'
+                ? { docSlug: otherOption.id }
+                : { term: otherOption.id, action: 'doc' as const }),
+          }
+          setIsLoading(false)
+          handleSelectOption(optionToSelect)
+          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+        }
+      }
+
+      // For >2 options or no repair memory, re-show options with repair prompt
       void debugLog({
         component: 'ChatNavigation',
         action: 'clarification_tier1c_repair_phrase',
-        metadata: { userInput: trimmedInput, action: 'offer_alternative', optionCount: lastClarification!.options!.length, response_fit_intent: 'repair' },
+        metadata: {
+          userInput: trimmedInput,
+          action: 'offer_alternative',
+          optionCount: lastClarification!.options!.length,
+          hasRepairMemory: !!canUseRepairMemory,
+          response_fit_intent: 'repair',
+        },
       })
 
       // Re-show options with repair prompt
-      // Use consistent prompt template per plan
       const repairMessage: ChatMessage = {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
@@ -1946,10 +2007,18 @@ export async function handleClarificationIntercept(
       }
     }
 
-    // Tier 1b.3b: Off-menu mapping (per clarification-offmenu-handling-plan.md Section B)
-    // Uses micro-alias tokens for broader matching when direct label match fails
+    // ==========================================================================
+    // Response-Fit Classifier (per clarification-response-fit-plan.md)
+    // Unified classification layer that handles:
+    // - Short hints → ask_clarify
+    // - Mapped with confidence → execute/confirm/ask (ladder)
+    // - Ambiguous → soft_reject
+    // - New topic → escape
+    // - Optional LLM fallback
+    // - Escalation as last resort
+    // ==========================================================================
     if (lastClarification?.options && lastClarification.options.length > 0) {
-      // Map clarification type to ClarificationType for off-menu mapping
+      // Map clarification type to ClarificationType
       const clarificationType: ClarificationType = lastClarification.type === 'cross_corpus'
         ? 'cross_corpus'
         : lastClarification.type === 'workspace_list'
@@ -1958,411 +2027,364 @@ export async function handleClarificationIntercept(
             ? 'panel_disambiguation'
             : 'option_selection'
 
-      // Convert ClarificationOption[] to the format expected by mapOffMenuInput
-      const clarificationOptionsForMapping = lastClarification.options.map(opt => ({
-        id: opt.id,
-        label: opt.label,
-        sublabel: opt.sublabel,
-        type: opt.type,
-      }))
-
-      const offMenuResult = mapOffMenuInput(trimmedInput, clarificationOptionsForMapping, clarificationType)
+      // Run Response-Fit classification
+      const responseFit = classifyResponseFit(trimmedInput, lastClarification.options, clarificationType)
 
       void debugLog({
         component: 'ChatNavigation',
-        action: 'clarification_tier1b3b_offmenu_mapping',
+        action: 'clarification_response_fit',
         metadata: {
           input: trimmedInput,
-          clarificationType,
-          resultType: offMenuResult.type,
-          confidence: offMenuResult.confidence,
-          reason: offMenuResult.reason,
-          matchedLabel: offMenuResult.matchedOption?.label,
+          intent: responseFit.intent,
+          confidence: responseFit.confidence,
+          reason: responseFit.reason,
+          choiceId: responseFit.choiceId,
+          matchedLabel: responseFit.matchedOption?.label,
+          response_fit_intent: responseFit.intent,
         },
       })
 
-      if (offMenuResult.type === 'mapped' && offMenuResult.matchedOption) {
-        // Confident mapping - select the option
-        const matchedOption = offMenuResult.matchedOption
-        const fullOption = pendingOptions.find(opt => opt.id === matchedOption.id)
-
-        void debugLog({
-          component: 'ChatNavigation',
-          action: 'clarification_offmenu_mapped',
-          metadata: {
-            input: trimmedInput,
-            matchedLabel: matchedOption.label,
-            confidence: offMenuResult.confidence,
-            hasFullOption: !!fullOption,
-          },
-          metrics: {
-            event: 'clarification_offmenu_mapped',
-            timestamp: Date.now(),
-          },
-        })
-
-        setLastClarification(null)
-
-        if (fullOption) {
-          const optionToSelect: SelectionOption = {
-            type: fullOption.type as SelectionOption['type'],
-            id: fullOption.id,
-            label: fullOption.label,
-            sublabel: fullOption.sublabel,
-            data: fullOption.data as SelectionOption['data'],
-          }
-          setIsLoading(false)
-          handleSelectOption(optionToSelect)
-          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
-        } else {
-          const optionToSelect: SelectionOption = {
-            type: matchedOption.type as SelectionOption['type'],
-            id: matchedOption.id,
-            label: matchedOption.label,
-            sublabel: matchedOption.sublabel,
-            data: matchedOption.type === 'doc'
-              ? { docSlug: matchedOption.id }
-              : { term: matchedOption.id, action: 'doc' as const },
-          }
-          setIsLoading(false)
-          handleSelectOption(optionToSelect)
-          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
-        }
-      }
-
-      if (offMenuResult.type === 'ambiguous') {
-        // Ambiguous - try LLM fallback before escalation
-        const currentAttemptCount = lastClarification.attemptCount ?? 0
-
-        // Tier 1b.3c: LLM fallback for ambiguous cases (per clarification-llm-last-resort-plan.md)
-        if (shouldCallLLMFallback(currentAttemptCount, trimmedInput)) {
-          void debugLog({
-            component: 'ChatNavigation',
-            action: 'clarification_llm_fallback_ambiguous_triggered',
-            metadata: {
-              input: trimmedInput,
-              attemptCount: currentAttemptCount,
-              optionCount: lastClarification.options.length,
-            },
-          })
-
-          const llmResult = await callClarificationLLMClient({
-            userInput: trimmedInput,
-            options: lastClarification.options.map(opt => ({
-              label: opt.label,
-              sublabel: opt.sublabel,
-            })),
-            context: lastClarification.type === 'cross_corpus' ? 'cross-corpus search' : undefined,
-          })
-
-          if (llmResult.success && llmResult.response) {
-            const { choiceIndex, decision, confidence, reason } = llmResult.response
+      // Handle based on intent
+      switch (responseFit.intent) {
+        case 'select': {
+          // Apply confidence ladder per plan §4
+          if (responseFit.confidence >= CONFIDENCE_THRESHOLD_EXECUTE && responseFit.matchedOption) {
+            // High confidence → execute selection
+            const matchedOption = responseFit.matchedOption
+            const fullOption = pendingOptions.find(opt => opt.id === matchedOption.id)
 
             void debugLog({
               component: 'ChatNavigation',
-              action: 'clarification_llm_fallback_ambiguous_result',
-              metadata: { decision, choiceIndex, confidence, reason, latencyMs: llmResult.latencyMs },
-            })
-
-            if (decision === 'select' && choiceIndex >= 0 && choiceIndex < lastClarification.options.length) {
-              // LLM resolved the ambiguity - select the option
-              const selectedOpt = lastClarification.options[choiceIndex]
-              const fullOption = pendingOptions.find(opt => opt.id === selectedOpt.id)
-
-              setLastClarification(null)
-
-              if (fullOption) {
-                const optionToSelect: SelectionOption = {
-                  type: fullOption.type as SelectionOption['type'],
-                  id: fullOption.id,
-                  label: fullOption.label,
-                  sublabel: fullOption.sublabel,
-                  data: fullOption.data as SelectionOption['data'],
-                }
-                setIsLoading(false)
-                handleSelectOption(optionToSelect)
-                return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
-              }
-            } else if (decision === 'reroute') {
-              // User wants something completely different
-              setLastClarification(null)
-              clarificationCleared = true
-              // Don't return - fall through to normal routing
-            }
-            // 'none' or 'ask_clarify' - fall through to escalation
-          }
-        }
-
-        // Escalation: re-show options with escalation message
-        const newAttemptCount = currentAttemptCount + 1
-        const escalation = getEscalationMessage(newAttemptCount)
-
-        void debugLog({
-          component: 'ChatNavigation',
-          action: 'clarification_offmenu_ambiguous',
-          metadata: {
-            input: trimmedInput,
-            attemptCount: newAttemptCount,
-            showExits: escalation.showExits,
-          },
-          metrics: {
-            event: 'clarification_offmenu_ambiguous',
-            timestamp: Date.now(),
-          },
-        })
-
-        const messageId = `assistant-${Date.now()}`
-
-        // Build options array, appending exit pills if showExits is true
-        const baseOptions: SelectionOption[] = lastClarification.options.map(opt => {
-          const fullOpt = pendingOptions.find(p => p.id === opt.id)
-          return {
-            type: opt.type as SelectionOption['type'],
-            id: opt.id,
-            label: opt.label,
-            sublabel: opt.sublabel,
-            data: fullOpt?.data as SelectionOption['data'] ?? {} as SelectionOption['data'],
-          }
-        })
-
-        // Append exit pills when escalation threshold reached (per clarification-exit-pills-plan.md)
-        const exitPills: SelectionOption[] = escalation.showExits
-          ? getExitOptions().map(exit => ({
-              type: 'exit' as const,
-              id: exit.id,
-              label: exit.label,
-              data: { exitType: exit.id === 'exit_none' ? 'none' : 'start_over' } as const,
-            }))
-          : []
-
-        if (escalation.showExits) {
-          void debugLog({
-            component: 'ChatNavigation',
-            action: 'clarification_exit_pill_shown',
-            metadata: { attemptCount: newAttemptCount },
-            metrics: { event: 'clarification_exit_pill_shown', timestamp: Date.now() },
-          })
-        }
-
-        const reaskMessage: ChatMessage = {
-          id: messageId,
-          role: 'assistant',
-          content: escalation.content,
-          timestamp: new Date(),
-          isError: false,
-          options: [...baseOptions, ...exitPills],
-        }
-        addMessage(reaskMessage)
-        setPendingOptionsMessageId(messageId)
-
-        // Update attemptCount in clarification state
-        setLastClarification({
-          ...lastClarification,
-          attemptCount: newAttemptCount,
-        })
-
-        setIsLoading(false)
-        return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
-      }
-
-      // offMenuResult.type === 'no_match' - check for new topic before falling through
-      const newTopicResult = detectNewTopic(trimmedInput, clarificationOptionsForMapping, offMenuResult)
-
-      void debugLog({
-        component: 'ChatNavigation',
-        action: 'clarification_offmenu_new_topic_check',
-        metadata: {
-          input: trimmedInput,
-          isNewTopic: newTopicResult.isNewTopic,
-          reason: newTopicResult.reason,
-          nonOverlappingTokens: newTopicResult.nonOverlappingTokens,
-        },
-      })
-
-      if (newTopicResult.isNewTopic) {
-        // Bounded new topic detection - exit clarification and route normally
-        void debugLog({
-          component: 'ChatNavigation',
-          action: 'clarification_offmenu_new_topic_exit',
-          metadata: {
-            input: trimmedInput,
-            nonOverlappingTokens: newTopicResult.nonOverlappingTokens,
-          },
-          metrics: {
-            event: 'clarification_offmenu_reroute',
-            timestamp: Date.now(),
-          },
-        })
-        setLastClarification(null)
-        clarificationCleared = true
-        // Don't return - fall through to normal routing
-      } else {
-        // No match and not a new topic - try LLM fallback before escalation
-        const currentAttemptCount = lastClarification.attemptCount ?? 0
-
-        // Tier 1b.3c: LLM Last-Resort Fallback (per clarification-llm-last-resort-plan.md)
-        // Only called after deterministic tiers fail
-        if (shouldCallLLMFallback(currentAttemptCount, trimmedInput)) {
-          void debugLog({
-            component: 'ChatNavigation',
-            action: 'clarification_llm_fallback_triggered',
-            metadata: {
-              input: trimmedInput,
-              attemptCount: currentAttemptCount,
-              optionCount: lastClarification.options.length,
-            },
-          })
-
-          const llmResult = await callClarificationLLMClient({
-            userInput: trimmedInput,
-            options: lastClarification.options.map(opt => ({
-              label: opt.label,
-              sublabel: opt.sublabel,
-            })),
-            context: lastClarification.type === 'cross_corpus' ? 'cross-corpus search' : undefined,
-          })
-
-          if (llmResult.success && llmResult.response) {
-            const { choiceIndex, decision, confidence, reason } = llmResult.response
-
-            void debugLog({
-              component: 'ChatNavigation',
-              action: 'clarification_llm_fallback_result',
+              action: 'clarification_response_fit_execute',
               metadata: {
-                decision,
-                choiceIndex,
-                confidence,
-                reason,
-                latencyMs: llmResult.latencyMs,
+                input: trimmedInput,
+                matchedLabel: matchedOption.label,
+                confidence: responseFit.confidence,
               },
               metrics: {
-                event: 'clarification_llm_decision',
+                event: 'clarification_response_fit_select',
                 timestamp: Date.now(),
               },
             })
 
-            if (decision === 'select' && choiceIndex >= 0 && choiceIndex < lastClarification.options.length) {
-              // LLM confidently selected an option
-              const selectedOpt = lastClarification.options[choiceIndex]
-              const fullOption = pendingOptions.find(opt => opt.id === selectedOpt.id)
+            // Wire repair memory: store selection for "the other one" support
+            setRepairMemory(matchedOption.id, lastClarification.options)
 
-              setLastClarification(null)
+            setLastClarification(null)
 
-              if (fullOption) {
-                const optionToSelect: SelectionOption = {
-                  type: fullOption.type as SelectionOption['type'],
-                  id: fullOption.id,
-                  label: fullOption.label,
-                  sublabel: fullOption.sublabel,
-                  data: fullOption.data as SelectionOption['data'],
-                }
-                setIsLoading(false)
-                handleSelectOption(optionToSelect)
-                return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
-              }
-            } else if (decision === 'reroute') {
-              // LLM detected user wants something completely different
-              void debugLog({
-                component: 'ChatNavigation',
-                action: 'clarification_llm_reroute',
-                metadata: { reason },
-              })
-              setLastClarification(null)
-              clarificationCleared = true
-              // Fall through to normal routing
-            } else if (decision === 'ask_clarify') {
-              // LLM uncertain - could add confirmation UX here in future
-              // For now, fall through to escalation
-              void debugLog({
-                component: 'ChatNavigation',
-                action: 'clarification_llm_ask_clarify',
-                metadata: { confidence, reason },
-              })
+            const optionToSelect: SelectionOption = {
+              type: (fullOption?.type ?? matchedOption.type) as SelectionOption['type'],
+              id: matchedOption.id,
+              label: matchedOption.label,
+              sublabel: matchedOption.sublabel,
+              data: fullOption?.data as SelectionOption['data'] ??
+                (matchedOption.type === 'doc'
+                  ? { docSlug: matchedOption.id }
+                  : { term: matchedOption.id, action: 'doc' as const }),
             }
-            // decision === 'none' or other - fall through to escalation
-          } else {
-            // LLM failed (timeout, error, etc.) - fall through to escalation
+            setIsLoading(false)
+            handleSelectOption(optionToSelect)
+            return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+
+          } else if (responseFit.confidence >= CONFIDENCE_THRESHOLD_CONFIRM && responseFit.matchedOption) {
+            // Medium confidence → ask confirmation
+            const matchedOption = responseFit.matchedOption
+
             void debugLog({
               component: 'ChatNavigation',
-              action: 'clarification_llm_fallback_failed',
+              action: 'clarification_response_fit_confirm',
               metadata: {
-                error: llmResult.error,
-                latencyMs: llmResult.latencyMs,
+                input: trimmedInput,
+                matchedLabel: matchedOption.label,
+                confidence: responseFit.confidence,
+                response_fit_intent: 'asked_confirm_instead_of_execute',
               },
             })
+
+            // Don't increment attemptCount for confirmation
+            const confirmMessage: ChatMessage = {
+              id: `assistant-${Date.now()}`,
+              role: 'assistant',
+              content: getConfirmPrompt(matchedOption.label),
+              timestamp: new Date(),
+              isError: false,
+              options: lastClarification.options.map(opt => ({
+                type: opt.type as SelectionOption['type'],
+                id: opt.id,
+                label: opt.label,
+                sublabel: opt.sublabel,
+                data: {} as SelectionOption['data'],
+              })),
+            }
+            addMessage(confirmMessage)
+            setIsLoading(false)
+            return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+
+          } else {
+            // Low confidence → ask clarify (don't execute)
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'clarification_response_fit_low_confidence',
+              metadata: {
+                input: trimmedInput,
+                confidence: responseFit.confidence,
+                response_fit_intent: 'prevented_low_confidence_execute',
+              },
+            })
+
+            // Fall through to ask_clarify handling below
           }
+          break
         }
 
-        // Escalation: re-show options with escalation message
-        const newAttemptCount = currentAttemptCount + 1
-        const escalation = getEscalationMessage(newAttemptCount)
+        case 'soft_reject': {
+          // Near-match but ambiguous → ask explicit clarification
+          // Use actual best-matching candidates from Response-Fit, not arbitrary first 2
+          const candidateLabels = (responseFit.candidateOptions && responseFit.candidateOptions.length > 0)
+            ? responseFit.candidateOptions.map(opt => opt.label)
+            : lastClarification.options.slice(0, 2).map(opt => opt.label)
 
-        void debugLog({
-          component: 'ChatNavigation',
-          action: 'clarification_offmenu_no_match_reshow',
-          metadata: {
-            input: trimmedInput,
-            attemptCount: newAttemptCount,
-            showExits: escalation.showExits,
-          },
-          metrics: {
-            event: 'clarification_offmenu_attempts',
-            timestamp: Date.now(),
-          },
-        })
-
-        const messageId = `assistant-${Date.now()}`
-
-        // Build options array, appending exit pills if showExits is true
-        const baseOptionsNoMatch: SelectionOption[] = lastClarification.options.map(opt => {
-          const fullOpt = pendingOptions.find(p => p.id === opt.id)
-          return {
-            type: opt.type as SelectionOption['type'],
-            id: opt.id,
-            label: opt.label,
-            sublabel: opt.sublabel,
-            data: fullOpt?.data as SelectionOption['data'] ?? {} as SelectionOption['data'],
-          }
-        })
-
-        // Append exit pills when escalation threshold reached (per clarification-exit-pills-plan.md)
-        const exitPillsNoMatch: SelectionOption[] = escalation.showExits
-          ? getExitOptions().map(exit => ({
-              type: 'exit' as const,
-              id: exit.id,
-              label: exit.label,
-              data: { exitType: exit.id === 'exit_none' ? 'none' : 'start_over' } as const,
-            }))
-          : []
-
-        if (escalation.showExits) {
           void debugLog({
             component: 'ChatNavigation',
-            action: 'clarification_exit_pill_shown',
-            metadata: { attemptCount: newAttemptCount },
-            metrics: { event: 'clarification_exit_pill_shown', timestamp: Date.now() },
+            action: 'clarification_response_fit_soft_reject',
+            metadata: {
+              input: trimmedInput,
+              candidateLabels,
+              response_fit_intent: 'soft_reject',
+            },
           })
+
+          // Don't increment attemptCount for soft reject
+          const softRejectMessage: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: getSoftRejectPrompt(candidateLabels),
+            timestamp: new Date(),
+            isError: false,
+            options: lastClarification.options.map(opt => ({
+              type: opt.type as SelectionOption['type'],
+              id: opt.id,
+              label: opt.label,
+              sublabel: opt.sublabel,
+              data: {} as SelectionOption['data'],
+            })),
+          }
+          addMessage(softRejectMessage)
+          setIsLoading(false)
+          return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
         }
 
-        const reaskMessage: ChatMessage = {
-          id: messageId,
-          role: 'assistant',
-          content: escalation.content,
-          timestamp: new Date(),
-          isError: false,
-          options: [...baseOptionsNoMatch, ...exitPillsNoMatch],
+        case 'new_topic': {
+          // Clear command / new topic → escape clarification
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'clarification_response_fit_new_topic',
+            metadata: {
+              input: trimmedInput,
+              reason: responseFit.reason,
+              response_fit_intent: 'new_topic',
+            },
+            metrics: {
+              event: 'clarification_response_fit_reroute',
+              timestamp: Date.now(),
+            },
+          })
+
+          // Clear repair memory on new topic
+          clearRepairMemory()
+          setLastClarification(null)
+          clarificationCleared = true
+          // Fall through to normal routing
+          break
         }
-        addMessage(reaskMessage)
-        setPendingOptionsMessageId(messageId)
 
-        // Update attemptCount in clarification state
-        setLastClarification({
-          ...lastClarification,
-          attemptCount: newAttemptCount,
-        })
+        case 'ask_clarify':
+        default: {
+          // Short hint or unclear → try LLM fallback, then escalate
+          const currentAttemptCount = lastClarification.attemptCount ?? 0
 
-        setIsLoading(false)
-        return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+          // Try LLM fallback for uncertain cases
+          if (shouldCallLLMFallback(currentAttemptCount, trimmedInput)) {
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'clarification_llm_fallback_triggered',
+              metadata: {
+                input: trimmedInput,
+                attemptCount: currentAttemptCount,
+                optionCount: lastClarification.options.length,
+                triggerReason: responseFit.reason,
+              },
+            })
+
+            const llmResult = await callClarificationLLMClient({
+              userInput: trimmedInput,
+              // Per plan: pass stable IDs to LLM for choiceId contract
+              options: lastClarification.options.map(opt => ({
+                id: opt.id,
+                label: opt.label,
+                sublabel: opt.sublabel,
+              })),
+              context: lastClarification.type === 'cross_corpus' ? 'cross-corpus search' : undefined,
+            })
+
+            if (llmResult.success && llmResult.response) {
+              const { choiceId, choiceIndex, decision, confidence, reason } = llmResult.response
+
+              void debugLog({
+                component: 'ChatNavigation',
+                action: 'clarification_llm_fallback_result',
+                metadata: {
+                  decision,
+                  choiceId,
+                  choiceIndex,
+                  confidence,
+                  reason,
+                  latencyMs: llmResult.latencyMs,
+                },
+                metrics: {
+                  event: 'clarification_llm_decision',
+                  timestamp: Date.now(),
+                },
+              })
+
+              // Apply confidence ladder to LLM result
+              // Per plan: use choiceId (stable ID) for selection, not choiceIndex
+              if (decision === 'select' && choiceId) {
+                // Find option by stable ID (preferred per plan contract)
+                const selectedOpt = lastClarification.options.find(opt => opt.id === choiceId)
+                if (selectedOpt && confidence >= CONFIDENCE_THRESHOLD_EXECUTE) {
+                  // LLM high confidence → execute
+                  const fullOption = pendingOptions.find(opt => opt.id === selectedOpt.id)
+
+                  setRepairMemory(selectedOpt.id, lastClarification.options)
+                  setLastClarification(null)
+
+                  if (fullOption) {
+                    const optionToSelect: SelectionOption = {
+                      type: fullOption.type as SelectionOption['type'],
+                      id: fullOption.id,
+                      label: fullOption.label,
+                      sublabel: fullOption.sublabel,
+                      data: fullOption.data as SelectionOption['data'],
+                    }
+                    setIsLoading(false)
+                    handleSelectOption(optionToSelect)
+                    return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+                  }
+                } else if (selectedOpt && confidence >= CONFIDENCE_THRESHOLD_CONFIRM) {
+                  // LLM medium confidence → confirm
+                  const confirmMsg: ChatMessage = {
+                    id: `assistant-${Date.now()}`,
+                    role: 'assistant',
+                    content: getConfirmPrompt(selectedOpt.label),
+                    timestamp: new Date(),
+                    isError: false,
+                    options: lastClarification.options.map(opt => ({
+                      type: opt.type as SelectionOption['type'],
+                      id: opt.id,
+                      label: opt.label,
+                      sublabel: opt.sublabel,
+                      data: {} as SelectionOption['data'],
+                    })),
+                  }
+                  addMessage(confirmMsg)
+                  setIsLoading(false)
+                  return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+                }
+                // Low confidence or invalid choiceId → fall through to escalation
+              } else if (decision === 'reroute') {
+                clearRepairMemory()
+                setLastClarification(null)
+                clarificationCleared = true
+                // Fall through to normal routing
+                break
+              }
+              // 'none', 'ask_clarify', or low confidence → fall through to escalation
+            }
+          }
+
+          // Escalation: re-show options with escalation/ask-clarify message
+          const newAttemptCount = currentAttemptCount + 1
+
+          // Use ask-clarify prompt for short hints, escalation for repeated attempts
+          const inputTokens = toCanonicalTokens(trimmedInput)
+          const useAskClarifyPrompt = responseFit.reason.includes('short_hint') && newAttemptCount === 1
+          const escalation = getEscalationMessage(newAttemptCount)
+
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'clarification_response_fit_escalate',
+            metadata: {
+              input: trimmedInput,
+              attemptCount: newAttemptCount,
+              showExits: escalation.showExits,
+              useAskClarifyPrompt,
+              reason: responseFit.reason,
+            },
+            metrics: {
+              event: 'clarification_response_fit_escalate',
+              timestamp: Date.now(),
+            },
+          })
+
+          const messageId = `assistant-${Date.now()}`
+
+          // Build options array
+          const baseOptions: SelectionOption[] = lastClarification.options.map(opt => {
+            const fullOpt = pendingOptions.find(p => p.id === opt.id)
+            return {
+              type: opt.type as SelectionOption['type'],
+              id: opt.id,
+              label: opt.label,
+              sublabel: opt.sublabel,
+              data: fullOpt?.data as SelectionOption['data'] ?? {} as SelectionOption['data'],
+            }
+          })
+
+          // Append exit pills when escalation threshold reached
+          const exitPills: SelectionOption[] = escalation.showExits
+            ? getExitOptions().map(exit => ({
+                type: 'exit' as const,
+                id: exit.id,
+                label: exit.label,
+                data: { exitType: exit.id === 'exit_none' ? 'none' : 'start_over' } as const,
+              }))
+            : []
+
+          if (escalation.showExits) {
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'clarification_exit_pill_shown',
+              metadata: { attemptCount: newAttemptCount },
+              metrics: { event: 'clarification_exit_pill_shown', timestamp: Date.now() },
+            })
+          }
+
+          const reaskMessage: ChatMessage = {
+            id: messageId,
+            role: 'assistant',
+            content: useAskClarifyPrompt
+              ? getAskClarifyPrompt(Array.from(inputTokens), lastClarification.options.map(o => o.label))
+              : escalation.content,
+            timestamp: new Date(),
+            isError: false,
+            options: [...baseOptions, ...exitPills],
+          }
+          addMessage(reaskMessage)
+          setPendingOptionsMessageId(messageId)
+
+          // Update attemptCount
+          setLastClarification({
+            ...lastClarification,
+            attemptCount: newAttemptCount,
+          })
+
+          // Increment repair memory turn counter
+          incrementRepairMemoryTurn()
+
+          setIsLoading(false)
+          return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+        }
       }
     }
 

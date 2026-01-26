@@ -9,6 +9,7 @@ import {
   isExitPhrase,
   isListRejectionPhrase,
   isNoise,
+  classifyResponseFit,
   getEscalationMessage,
   getHesitationPrompt,
   getBasePrompt,
@@ -16,7 +17,13 @@ import {
   getNoRefusalPrompt,
   getRefinePrompt,
   getNoisePrompt,
+  getAskClarifyPrompt,
+  getSoftRejectPrompt,
+  getConfirmPrompt,
+  CONFIDENCE_THRESHOLD_EXECUTE,
+  CONFIDENCE_THRESHOLD_CONFIRM,
 } from '@/lib/chat/clarification-offmenu'
+import type { ClarificationOption } from '@/lib/chat/chat-navigation-context'
 
 // =============================================================================
 // isNoise tests (per clarification-response-fit-plan.md)
@@ -472,5 +479,133 @@ describe('Consistent Prompt Templates', () => {
     expect(prompt).toContain('Got it')
     expect(prompt).toContain('one detail')
     expect(prompt).toContain('show more results')
+  })
+})
+
+// =============================================================================
+// Response-Fit Classifier tests (per clarification-response-fit-plan.md)
+// =============================================================================
+
+describe('classifyResponseFit', () => {
+  // Sample options for testing
+  const mockOptions: ClarificationOption[] = [
+    { id: 'doc1', label: 'Links Panel D', type: 'doc' },
+    { id: 'doc2', label: 'Links Panel E', type: 'doc' },
+    { id: 'note1', label: 'SDK Documentation', type: 'note' },
+  ]
+
+  describe('short hint classification', () => {
+    test('short hint matching an option token → ask_clarify (per plan: no auto-select on short hints)', () => {
+      // Per plan line 138: "input 'sdk' → ask_clarify (not auto-select)"
+      // Per plan line 175: "Short hint words (≤2 tokens) should stay in ask_clarify"
+      const result = classifyResponseFit('sdk', mockOptions, 'option_selection')
+      expect(result.intent).toBe('ask_clarify')
+      expect(result.reason).toBe('short_hint_full_overlap')
+    })
+
+    test('short hint with no overlap → ask_clarify', () => {
+      const result = classifyResponseFit('api', mockOptions, 'option_selection')
+      expect(result.intent).toBe('ask_clarify')
+      expect(result.confidence).toBeLessThan(CONFIDENCE_THRESHOLD_CONFIRM)
+    })
+
+    test('ambiguous short hint → ask_clarify', () => {
+      // "panel" alone is too vague (matches both Panel D and Panel E)
+      const result = classifyResponseFit('panel', mockOptions, 'option_selection')
+      expect(['ask_clarify', 'soft_reject']).toContain(result.intent)
+    })
+  })
+
+  describe('mapped selection classification', () => {
+    test('exact label match → select with high confidence', () => {
+      const result = classifyResponseFit('Links Panel D', mockOptions, 'option_selection')
+      expect(result.intent).toBe('select')
+      expect(result.confidence).toBeGreaterThanOrEqual(CONFIDENCE_THRESHOLD_EXECUTE)
+      expect(result.choiceId).toBe('doc1')
+    })
+
+    test('partial match → select with medium confidence', () => {
+      const result = classifyResponseFit('panel d', mockOptions, 'option_selection')
+      // May be select or ask_clarify depending on mapping confidence
+      expect(['select', 'ask_clarify']).toContain(result.intent)
+    })
+  })
+
+  describe('ambiguous classification', () => {
+    test('ambiguous partial match → soft_reject', () => {
+      // "links panel" matches both D and E
+      const result = classifyResponseFit('links panel', mockOptions, 'option_selection')
+      expect(['soft_reject', 'ask_clarify']).toContain(result.intent)
+    })
+  })
+
+  describe('new topic classification', () => {
+    test('clear command (3+ tokens) with non-overlapping content → new_topic', () => {
+      // "show me profile" is 3 tokens (no stopwords) and clearly a different command
+      const result = classifyResponseFit('show me profile', mockOptions, 'option_selection')
+      expect(result.intent).toBe('new_topic')
+    })
+
+    test('clear command with action verb and enough tokens → new_topic', () => {
+      // "open user settings" is 3 tokens and clearly a different command
+      const result = classifyResponseFit('open user settings', mockOptions, 'option_selection')
+      expect(result.intent).toBe('new_topic')
+    })
+
+    test('short command (2 effective tokens after stopwords) may be ask_clarify', () => {
+      // "open my settings" becomes ["open", "settings"] after filtering "my" (stopword)
+      // Short commands may be ask_clarify for safety to avoid accidental exits
+      const result = classifyResponseFit('open my settings', mockOptions, 'option_selection')
+      expect(['new_topic', 'ask_clarify']).toContain(result.intent)
+    })
+  })
+
+  describe('confidence thresholds', () => {
+    test('CONFIDENCE_THRESHOLD_EXECUTE is 0.75', () => {
+      expect(CONFIDENCE_THRESHOLD_EXECUTE).toBe(0.75)
+    })
+
+    test('CONFIDENCE_THRESHOLD_CONFIRM is 0.55', () => {
+      expect(CONFIDENCE_THRESHOLD_CONFIRM).toBe(0.55)
+    })
+  })
+})
+
+// =============================================================================
+// Response-Fit Prompt Template tests
+// =============================================================================
+
+describe('Response-Fit Prompt Templates', () => {
+  test('getAskClarifyPrompt includes hint tokens (per plan template)', () => {
+    // Per plan line 106: "Are you looking for X? If yes, choose A; if not, choose B."
+    const prompt = getAskClarifyPrompt(['sdk', 'docs'])
+    expect(prompt).toContain('sdk docs')
+    expect(prompt).toContain('Are you looking for')
+  })
+
+  test('getAskClarifyPrompt with 2 options uses structured template', () => {
+    // Per plan: for 2 options, use "If yes, choose A; if not, choose B."
+    const prompt = getAskClarifyPrompt(['sdk'], ['Option A', 'Option B'])
+    expect(prompt).toContain('sdk')
+    expect(prompt).toContain('Option A')
+    expect(prompt).toContain('Option B')
+  })
+
+  test('getSoftRejectPrompt with single candidate', () => {
+    const prompt = getSoftRejectPrompt(['Links Panel D'])
+    expect(prompt).toContain('Links Panel D')
+    expect(prompt).toContain('none of these')
+  })
+
+  test('getSoftRejectPrompt with two candidates', () => {
+    const prompt = getSoftRejectPrompt(['Links Panel D', 'Links Panel E'])
+    expect(prompt).toContain('Links Panel D')
+    expect(prompt).toContain('Links Panel E')
+  })
+
+  test('getConfirmPrompt includes option label', () => {
+    const prompt = getConfirmPrompt('SDK Documentation')
+    expect(prompt).toContain('SDK Documentation')
+    expect(prompt).toContain('confirm')
   })
 })

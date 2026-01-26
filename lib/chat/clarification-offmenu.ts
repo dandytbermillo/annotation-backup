@@ -684,6 +684,8 @@ export interface ResponseFitResult {
   reason: string
   /** Matched option (if any) */
   matchedOption?: ClarificationOption
+  /** Candidate options for soft_reject (best matches based on overlap) */
+  candidateOptions?: ClarificationOption[]
 }
 
 /**
@@ -694,11 +696,23 @@ export const CONFIDENCE_THRESHOLD_CONFIRM = 0.55
 
 /**
  * Get ask-clarify prompt for short hints.
- * Per plan: "Are you looking for X? If yes, choose A; if not, choose B."
+ * Per plan line 106: "Are you looking for X? If yes, choose A; if not, choose B."
  */
-export function getAskClarifyPrompt(hintTokens: string[]): string {
+export function getAskClarifyPrompt(hintTokens: string[], optionLabels?: string[]): string {
   const hint = hintTokens.join(' ')
-  return `I'm not sure which one you mean by "${hint}". Could you pick one of the options, or tell me more?`
+
+  // Per plan: use structured template when we have exactly 2 options
+  if (optionLabels && optionLabels.length === 2) {
+    return `Are you looking for "${hint}"? If yes, choose **${optionLabels[0]}**; if not, choose **${optionLabels[1]}**.`
+  }
+
+  // For >2 options, use a simpler template
+  if (optionLabels && optionLabels.length > 2) {
+    return `Are you looking for "${hint}"? Pick the right option below, or say "none of these".`
+  }
+
+  // Fallback for no options provided
+  return `Are you looking for "${hint}"? Pick one of the options below, or tell me more.`
 }
 
 /**
@@ -785,6 +799,17 @@ export function classifyResponseFit(
         reason: 'short_hint_no_overlap',
       }
     }
+
+    // Full overlap but still short hint (≤2 tokens) → ask_clarify, don't auto-select
+    // Per plan line 138: "input 'sdk' → ask_clarify (not auto-select)"
+    // Per plan line 175: "Short hint words (≤2 tokens) should stay in ask_clarify"
+    if (overlappingCount === inputTokens.size) {
+      return {
+        intent: 'ask_clarify',
+        confidence: 0.5,
+        reason: 'short_hint_full_overlap',
+      }
+    }
   }
 
   // Call mapOffMenuInput for token-based matching
@@ -808,8 +833,8 @@ export function classifyResponseFit(
 
   // Handle ambiguous result → soft_reject
   if (offMenuResult.type === 'ambiguous') {
-    // Find candidate options that partially match
-    const candidates: ClarificationOption[] = []
+    // Find candidate options that partially match, sorted by match count (best first)
+    const candidatesWithScore: Array<{ option: ClarificationOption; matchCount: number }> = []
     for (const opt of options) {
       const labelTokens = getLabelAliasTokens(opt.label)
       let matchCount = 0
@@ -817,15 +842,20 @@ export function classifyResponseFit(
         if (labelTokens.has(t)) matchCount++
       }
       if (matchCount > 0) {
-        candidates.push(opt)
+        candidatesWithScore.push({ option: opt, matchCount })
       }
     }
+
+    // Sort by match count descending (best matches first)
+    candidatesWithScore.sort((a, b) => b.matchCount - a.matchCount)
+    const candidates = candidatesWithScore.map(c => c.option)
 
     return {
       intent: 'soft_reject',
       confidence: 0.4,
       reason: 'ambiguous_multiple_matches',
       matchedOption: candidates.length > 0 ? candidates[0] : undefined,
+      candidateOptions: candidates.slice(0, 2), // Top 2 best matches per plan
     }
   }
 

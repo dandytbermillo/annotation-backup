@@ -699,6 +699,11 @@ function ChatNavigationPanelContent({
     // Doc retrieval conversation state (v4 plan)
     docRetrievalState,
     updateDocRetrievalState,
+    // Repair memory (per clarification-response-fit-plan.md §5)
+    repairMemory,
+    setRepairMemory,
+    incrementRepairMemoryTurn,
+    clearRepairMemory,
   } = useChatNavigationContext()
 
   const { executeAction, selectOption, openPanelDrawer: openPanelDrawerBase } = useChatNavigation({
@@ -1756,6 +1761,11 @@ function ChatNavigationPanelContent({
         setPendingOptionsGraceCount,
         setNotesScopeFollowUpActive,
         handleSelectOption,
+        // Repair memory (per clarification-response-fit-plan.md §5)
+        repairMemory,
+        setRepairMemory,
+        incrementRepairMemoryTurn,
+        clearRepairMemory,
       })
       const { clarificationCleared, isNewQuestionOrCommandDetected } = clarificationResult
       if (clarificationResult.handled) {
