@@ -115,6 +115,8 @@ export interface LastClarificationState {
   options?: ClarificationOption[]
   /** Off-menu attempt count for escalation (per clarification-offmenu-handling-plan.md) */
   attemptCount?: number
+  /** "No" count for repeated-no escalation (per clarification-response-fit-plan.md §122-130) */
+  noCount?: number
 }
 
 /**
@@ -134,6 +136,26 @@ export interface RepairMemoryState {
 
 /** Default repair memory window in turns (configurable) */
 export const REPAIR_MEMORY_TURN_LIMIT = 2
+
+/**
+ * Clarification snapshot for post-action repair window (per clarification-response-fit-plan.md §153-161).
+ * Stores the last clarification options so "not that" after an action can restore them.
+ */
+export interface ClarificationSnapshot {
+  /** Options from the last clarification */
+  options: ClarificationOption[]
+  /** Original intent/query that created the clarification */
+  originalIntent: string
+  /** Type of clarification */
+  type: LastClarificationState['type']
+  /** Turn counter for expiry (expires after 2 turns) */
+  turnsSinceSet: number
+  /** Timestamp when set */
+  timestamp: number
+}
+
+/** Default snapshot window in turns (configurable) */
+export const SNAPSHOT_TURN_LIMIT = 2
 
 /**
  * Doc retrieval conversation state for follow-ups and corrections.
@@ -266,6 +288,11 @@ interface ChatNavigationContextValue {
   setRepairMemory: (lastChoiceId: string | null, options: ClarificationOption[]) => void
   incrementRepairMemoryTurn: () => void
   clearRepairMemory: () => void
+  // Clarification snapshot for post-action repair window (per plan §153-161)
+  clarificationSnapshot: ClarificationSnapshot | null
+  saveClarificationSnapshot: (clarification: LastClarificationState) => void
+  incrementSnapshotTurn: () => void
+  clearClarificationSnapshot: () => void
 }
 
 // =============================================================================
@@ -479,6 +506,9 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
 
   // Repair memory for response-fit (per clarification-response-fit-plan.md)
   const [repairMemory, setRepairMemoryInternal] = useState<RepairMemoryState | null>(null)
+
+  // Clarification snapshot for post-action repair window (per plan §153-161)
+  const [clarificationSnapshot, setClarificationSnapshotInternal] = useState<ClarificationSnapshot | null>(null)
 
   // Debounce refs for session state persistence
   const DEBOUNCE_MS = 1000
@@ -990,6 +1020,38 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     setRepairMemoryInternal(null)
   }, [])
 
+  // Clarification snapshot functions (per plan §153-161)
+  const saveClarificationSnapshot = useCallback((clarification: LastClarificationState) => {
+    if (clarification.options && clarification.options.length > 0) {
+      setClarificationSnapshotInternal({
+        options: clarification.options,
+        originalIntent: clarification.originalIntent,
+        type: clarification.type,
+        turnsSinceSet: 0,
+        timestamp: Date.now(),
+      })
+    }
+  }, [])
+
+  const incrementSnapshotTurn = useCallback(() => {
+    setClarificationSnapshotInternal((prev) => {
+      if (!prev) return null
+      const newTurns = prev.turnsSinceSet + 1
+      // Expire after SNAPSHOT_TURN_LIMIT turns
+      if (newTurns >= SNAPSHOT_TURN_LIMIT) {
+        return null
+      }
+      return {
+        ...prev,
+        turnsSinceSet: newTurns,
+      }
+    })
+  }, [])
+
+  const clearClarificationSnapshot = useCallback(() => {
+    setClarificationSnapshotInternal(null)
+  }, [])
+
   return (
     <ChatNavigationContext.Provider
       value={{
@@ -1043,6 +1105,11 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         setRepairMemory,
         incrementRepairMemoryTurn,
         clearRepairMemory,
+        // Clarification snapshot for post-action repair window (per plan §153-161)
+        clarificationSnapshot,
+        saveClarificationSnapshot,
+        incrementSnapshotTurn,
+        clearClarificationSnapshot,
       }}
     >
       {children}

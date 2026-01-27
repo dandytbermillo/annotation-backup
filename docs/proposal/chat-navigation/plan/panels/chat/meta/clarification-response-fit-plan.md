@@ -119,6 +119,15 @@ Suggested policy:
 
 This is purely UX pacing; it does **not** change routing or selection rules.
 
+### 5) Repeated “No” Escalation (NEW)
+If the user replies **“no”** repeatedly to the same option set, treat the second “no” as a **list rejection** and
+switch to the refine prompt.
+
+Suggested rule:
+- Track `noCount` per clarification session.
+- If `noCount == 1`: stay in context, re‑show options.
+- If `noCount >= 2`: treat as `reject_list` → refine prompt (“Tell me one detail…”).
+
 ---
 
 ## Typo‑Assist (LLM Last‑Resort) for Ordinal/Repair
@@ -140,6 +149,15 @@ To support “the other one” style repairs:
 - store `lastChoiceId` and `lastOptionsShown`
 - keep sticky list for **2 turns** (configurable)
 - clear on new clarification session **or** when the 2‑turn window expires
+
+### Post‑Action Repair Window (NEW)
+If a user executes a non‑clarification action (e.g., **open recent**, **open panel**) and then says a repair phrase
+within 1–2 turns, restore the most recent clarification options (if any) instead of routing to unrelated
+doc/notes pills. This preserves the user’s intent (“not that”) and avoids jumping to cross‑corpus mode.
+
+Suggested rule:
+- Track `lastClarificationSnapshot` for 1–2 turns after an action.
+- If repair phrase arrives with no active clarification but snapshot exists → restore options + repair prompt.
 
 ---
 
@@ -183,6 +201,8 @@ Add the following to measure impact:
 4) Pills active, input “not that” → **repair**
 5) Pills active, input “show me profile” → **new_topic** (escape)
 6) Pills active, input “settings” (ambiguous) → **soft_reject** → ask explicit clarification
+7) After action (no active clarification), input “not that” within 1–2 turns → **restore last clarification options** + repair prompt
+8) Same option set, user replies “no” twice → second “no” → **reject_list** → refine prompt
 
 ---
 
@@ -190,6 +210,23 @@ Add the following to measure impact:
 - **Response‑Fit is a wrapper, not a replacement.** It augments existing tiers.
 - **Insert after deterministic tiers and before escalation/zero‑overlap escape** in `clarification-offmenu-handling-plan.md`.
 - Clarify in implementation that response‑fit only runs when **no deterministic tier fired**.
+
+---
+
+## Global Routing Typo Normalization (Non‑Clarification)
+When **no pills are active**, do **not** run Response‑Fit. Instead, apply a small deterministic
+typo‑normalization step **only for command‑like inputs** to prevent doc‑routing fall‑through.
+
+Suggested approach:
+- Normalize repeated letters (e.g., `llink` → `link`, `opwn` → `open`).
+- Lowercase + strip punctuation.
+- If input is command‑like (`open/show/go`) or contains panel keywords (`panel/links`), attempt a
+  **fuzzy match** against visible panel titles.
+- If match confidence is high → treat as **open_panel** (stay in action routing).
+- If not → fall through to normal routing (docs/notes).
+
+Rationale: keeps behavior consistent with the “deterministic‑first” policy without applying
+Response‑Fit outside clarification.
 
 ## Files to Touch (Implementation Targets)
 - `lib/chat/chat-routing.ts` — integrate response‑fit classification in the clarification flow

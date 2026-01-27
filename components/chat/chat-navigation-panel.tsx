@@ -704,6 +704,11 @@ function ChatNavigationPanelContent({
     setRepairMemory,
     incrementRepairMemoryTurn,
     clearRepairMemory,
+    // Clarification snapshot for post-action repair window (per plan §153-161)
+    clarificationSnapshot,
+    saveClarificationSnapshot,
+    incrementSnapshotTurn,
+    clearClarificationSnapshot,
   } = useChatNavigationContext()
 
   const { executeAction, selectOption, openPanelDrawer: openPanelDrawerBase } = useChatNavigation({
@@ -1766,6 +1771,11 @@ function ChatNavigationPanelContent({
         setRepairMemory,
         incrementRepairMemoryTurn,
         clearRepairMemory,
+        // Clarification snapshot for post-action repair window (per plan §153-161)
+        clarificationSnapshot,
+        saveClarificationSnapshot,
+        incrementSnapshotTurn,
+        clearClarificationSnapshot,
       })
       const { clarificationCleared, isNewQuestionOrCommandDetected } = clarificationResult
       if (clarificationResult.handled) {

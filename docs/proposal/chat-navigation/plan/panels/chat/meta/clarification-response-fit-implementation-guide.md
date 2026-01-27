@@ -11,6 +11,7 @@
 - **Never route outside current options.**
 - Response‑Fit **augments** existing tiers; it does not replace them.
 - **Noise check runs first** (before any matching).
+- **Classifier vs Answering:** Gemini Flash is the constrained classifier; OpenAI is used only after selection for final answers.
 
 ---
 
@@ -28,14 +29,15 @@
 
 When clarification is active:
 
+0. **Post‑action repair window** (if no clarification but snapshot exists) → restore list + repair prompt
 1. **Noise pre‑check** (alphabetic ratio / short token / no vowel / emoji smash) → re‑prompt
-2. **Exit / cancel**
-3. **Reject list** (“none of these/none of those/neither”) → refine prompt
+2. **Reject list** (“none of these/none of those/neither”) → refine prompt
+3. **Exit / cancel**
 4. **Repair phrases** (“not that”, “other one”) → stay in list
 5. **Ordinal selection** (“first/second/1/2/last”) → select
 6. **Label / alias match** → select
 7. **Hesitation** (“hmm”, “idk”) → soft prompt, no attempt increment
-8. **Clear command / new topic** → escape (per existing rules)
+8. **Clear command / new topic** → escape (per existing rules; verbs bypass short‑hint guard)
 9. **Response‑Fit classifier** (deterministic → optional LLM)
 10. **Escalation / zero‑overlap escape** (as last resort)
 
@@ -73,6 +75,14 @@ Apply only when intent = `select` or `repair`:
 - Keep for **2 turns** (configurable)
 - Clear on new clarification session or when window expires
 
+### 5b) Post‑Action Repair Window (Snapshot)
+
+- Track `lastClarificationSnapshot` for **1–2 turns** after an action escape.
+- Save snapshot **before clearing clarification** on:
+  - new‑topic escape
+  - LLM reroute decision
+- If repair phrase arrives with no active clarification but snapshot exists → restore options + repair prompt.
+
 ---
 
 ## 6) Prompt Templates (Use Plan Wording)
@@ -82,6 +92,11 @@ Apply only when intent = `select` or `repair`:
 - No: “No problem. Which one do you mean — or say ‘none of these’ (or ‘none of those’) or tell me where it is (Docs or Notes).”
 - Refine (list rejection): “Got it. Tell me one detail (exact name or where it lives) — or I can show more results.”
 - Unparseable: “I didn’t catch that. Reply **first** or **second**, or say ‘none of these’ (or ‘none of those’), or tell me one detail.”
+- Noise escalation (optional): after 2 noisy inputs, append “Reply **first** or **second**, or tell me one detail.”
+
+### 6b) Repeated “No” Escalation
+- Track `noCount` per clarification session.
+- Second “no” → treat as `reject_list` → refine prompt.
 
 ---
 
@@ -106,6 +121,8 @@ Add unit cases in `__tests__/unit/chat/clarification-offmenu.test.ts`:
 - `not that` → `repair`
 - `show me profile` → `new_topic`
 - `settings` → `soft_reject`
+- **Post‑action repair window:** “open recent” then “not that” → restore last options
+- **Repeated no escalation:** “no” twice → refine prompt
 
 ---
 
@@ -117,6 +134,8 @@ Add unit cases in `__tests__/unit/chat/clarification-offmenu.test.ts`:
 - **Noise**: “asdf” → unparseable prompt
 - **Short hint**: “sdk” → ask clarify, not auto‑select
 - **Clear command**: “open recent” escapes clarification
+- **Post‑action repair window**: “open recent” then “not that” restores last options
+- **Repeated no escalation**: “no” twice → refine prompt
 
 ---
 
@@ -134,4 +153,3 @@ Add unit cases in `__tests__/unit/chat/clarification-offmenu.test.ts`:
 - No accidental selection on low‑confidence inputs
 - Clarification flows remain bounded to current options
 - Telemetry shows reduced “wrong open” events
-

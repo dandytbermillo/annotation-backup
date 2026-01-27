@@ -31,8 +31,8 @@ import {
 import { isBareNounQuery, maybeFormatSnippetWithHs3, dedupeHeaderPath, stripMarkdownHeadersForUI } from '@/lib/chat/doc-routing'
 import type { UIContext } from '@/lib/chat/intent-prompt'
 import type { ChatMessage, DocRetrievalState, SelectionOption, LastClarificationState } from '@/lib/chat'
-import type { ClarificationOption, RepairMemoryState } from '@/lib/chat/chat-navigation-context'
-import { REPAIR_MEMORY_TURN_LIMIT } from '@/lib/chat/chat-navigation-context'
+import type { ClarificationOption, RepairMemoryState, ClarificationSnapshot } from '@/lib/chat/chat-navigation-context'
+import { REPAIR_MEMORY_TURN_LIMIT, SNAPSHOT_TURN_LIMIT } from '@/lib/chat/chat-navigation-context'
 import { matchVisiblePanelCommand, type VisibleWidget } from '@/lib/chat/panel-command-matcher'
 import {
   mapOffMenuInput,
@@ -1103,6 +1103,12 @@ export interface ClarificationInterceptContext {
   setRepairMemory: (lastChoiceId: string | null, options: ClarificationOption[]) => void
   incrementRepairMemoryTurn: () => void
   clearRepairMemory: () => void
+
+  // Clarification snapshot for post-action repair window (per plan §153-161)
+  clarificationSnapshot: ClarificationSnapshot | null
+  saveClarificationSnapshot: (clarification: LastClarificationState) => void
+  incrementSnapshotTurn: () => void
+  clearClarificationSnapshot: () => void
 }
 
 /**
@@ -1300,6 +1306,11 @@ export async function handleClarificationIntercept(
     setRepairMemory,
     incrementRepairMemoryTurn,
     clearRepairMemory,
+    // Clarification snapshot for post-action repair window (per plan §153-161)
+    clarificationSnapshot,
+    saveClarificationSnapshot,
+    incrementSnapshotTurn,
+    clearClarificationSnapshot,
   } = ctx
 
   // TD-3: Check for bare noun new intent
@@ -1423,6 +1434,80 @@ export async function handleClarificationIntercept(
     return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
   }
 
+  // ==========================================================================
+  // POST-ACTION REPAIR WINDOW (per plan §153-161)
+  // If user sends repair phrase after an action (no active clarification) but we
+  // have a recent snapshot, restore the clarification options instead of routing
+  // to cross-corpus or treating as new intent.
+  // ==========================================================================
+  if (isRepairPhrase(trimmedInput) &&
+      clarificationSnapshot &&
+      clarificationSnapshot.turnsSinceSet < SNAPSHOT_TURN_LIMIT &&
+      clarificationSnapshot.options.length > 0) {
+
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'post_action_repair_window',
+      metadata: {
+        userInput: trimmedInput,
+        snapshotTurnsSince: clarificationSnapshot.turnsSinceSet,
+        optionCount: clarificationSnapshot.options.length,
+        originalIntent: clarificationSnapshot.originalIntent,
+        response_fit_intent: 'repair',
+      },
+    })
+
+    // For 2-option snapshot, auto-select the other option (mirroring repair memory logic)
+    if (clarificationSnapshot.options.length === 2) {
+      // Find the "other" option - since we don't know which was selected last,
+      // show the options again with repair prompt instead of auto-selecting
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'post_action_repair_reshow_options',
+        metadata: {
+          optionCount: 2,
+          response_fit_intent: 'repair',
+        },
+      })
+    }
+
+    // Restore clarification options with repair prompt
+    const repairMessage: ChatMessage = {
+      id: `assistant-${Date.now()}`,
+      role: 'assistant',
+      content: getRepairPrompt(),
+      timestamp: new Date(),
+      isError: false,
+      options: clarificationSnapshot.options.map(opt => ({
+        type: opt.type as SelectionOption['type'],
+        id: opt.id,
+        label: opt.label,
+        sublabel: opt.sublabel,
+        data: {} as SelectionOption['data'],
+      })),
+    }
+    addMessage(repairMessage)
+
+    // Restore clarification state
+    setLastClarification({
+      type: clarificationSnapshot.type,
+      originalIntent: clarificationSnapshot.originalIntent,
+      messageId: repairMessage.id,
+      timestamp: Date.now(),
+      clarificationQuestion: getRepairPrompt(),
+      options: clarificationSnapshot.options,
+      metaCount: 0,
+    })
+
+    // Clear snapshot after use
+    clearClarificationSnapshot()
+    setIsLoading(false)
+    return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+  }
+
+  // Increment snapshot turn counter for every message (so it expires after limit)
+  incrementSnapshotTurn()
+
   // Check if we should enter clarification mode
   const hasClarificationContext = lastClarification?.nextAction ||
     (lastClarification?.options && lastClarification.options.length > 0)
@@ -1545,6 +1630,10 @@ export async function handleClarificationIntercept(
           action: 'clarification_exit_unclear_new_intent',
           metadata: { userInput: trimmedInput },
         })
+        // Save clarification snapshot for post-action repair window (per plan §153-161)
+        if (lastClarification?.options && lastClarification.options.length > 0) {
+          saveClarificationSnapshot(lastClarification)
+        }
         setLastClarification(null)
         return true
       }
@@ -1816,6 +1905,8 @@ export async function handleClarificationIntercept(
 
           const fullOption = pendingOptions.find(opt => opt.id === otherOption.id)
 
+          // Save clarification snapshot for post-action repair window (per plan §153-161)
+          saveClarificationSnapshot(lastClarification!)
           // Update repair memory with the new selection
           setRepairMemory(otherOption.id, lastClarification!.options!)
           setLastClarification(null)
@@ -1871,14 +1962,49 @@ export async function handleClarificationIntercept(
 
     // E2: Simple "no" → treat as ambiguous refusal, stay in context
     // Per clarification-offmenu-handling-plan.md: Use consistent prompt template
+    // Per clarification-response-fit-plan.md §122-130: Repeated "no" escalation
     // Works with ANY number of options (not just 2) - see Example 8 with 7 workspaces
     const isSimpleNo = /^(no|nope|nah)$/i.test(trimmedInput.trim())
     if (isSimpleNo && hasOptions) {
+      const currentNoCount = lastClarification!.noCount ?? 0
+      const newNoCount = currentNoCount + 1
+
       void debugLog({
         component: 'ChatNavigation',
         action: 'clarification_tier1c_no_as_repair',
-        metadata: { userInput: trimmedInput, action: 'stay_in_context', optionCount: lastClarification!.options!.length },
+        metadata: { userInput: trimmedInput, action: newNoCount >= 2 ? 'reject_list' : 'stay_in_context', noCount: newNoCount, optionCount: lastClarification!.options!.length },
       })
+
+      // Per plan §122-130: If noCount >= 2, treat as reject_list → refine prompt
+      if (newNoCount >= 2) {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'clarification_repeated_no_escalation',
+          metadata: { noCount: newNoCount },
+        })
+
+        const refineMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: getRefinePrompt(),
+          timestamp: new Date(),
+          isError: false,
+        }
+        addMessage(refineMessage)
+
+        // Clear options but keep clarification active for refinement (same as reject_list)
+        setLastClarification({
+          ...lastClarification!,
+          options: undefined,
+          attemptCount: 0,
+          noCount: 0, // Reset noCount
+        })
+        setPendingOptions([])
+        setPendingOptionsMessageId(null)
+        setPendingOptionsGraceCount(0)
+        setIsLoading(false)
+        return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+      }
 
       // Stay in context, re-show options with consistent prompt
       const noRepairMessage: ChatMessage = {
@@ -1896,6 +2022,12 @@ export async function handleClarificationIntercept(
         })),
       }
       addMessage(noRepairMessage)
+
+      // Increment noCount for next time
+      setLastClarification({
+        ...lastClarification!,
+        noCount: newNoCount,
+      })
       setIsLoading(false)
       return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
     }
@@ -1986,6 +2118,8 @@ export async function handleClarificationIntercept(
           },
         })
 
+        // Save clarification snapshot for post-action repair window (per plan §153-161)
+        saveClarificationSnapshot(lastClarification)
         // Set repair memory for label selection (enables "the other one" after label match)
         setRepairMemory(matchedOption.id, lastClarification.options)
         setLastClarification(null)
@@ -2088,6 +2222,8 @@ export async function handleClarificationIntercept(
           },
         })
 
+        // Save clarification snapshot for post-action repair window (per plan §153-161)
+        saveClarificationSnapshot(lastClarification)
         // Set repair memory for ordinal selection (enables "the other one" after ordinal)
         setRepairMemory(selectedOption.id, lastClarification.options)
         setLastClarification(null)
@@ -2170,6 +2306,8 @@ export async function handleClarificationIntercept(
               },
             })
 
+            // Save clarification snapshot for post-action repair window (per plan §153-161)
+            saveClarificationSnapshot(lastClarification)
             // Wire repair memory: store selection for "the other one" support
             setRepairMemory(matchedOption.id, lastClarification.options)
 
@@ -2293,6 +2431,9 @@ export async function handleClarificationIntercept(
             },
           })
 
+          // Save clarification snapshot for post-action repair window (per plan §153-161)
+          // User is escaping to new topic but may say "not that" after
+          saveClarificationSnapshot(lastClarification)
           // Clear repair memory on new topic
           clearRepairMemory()
           setLastClarification(null)
@@ -2372,6 +2513,8 @@ export async function handleClarificationIntercept(
                   // LLM high confidence → execute
                   const fullOption = pendingOptions.find(opt => opt.id === selectedOpt.id)
 
+                  // Save clarification snapshot for post-action repair window (per plan §153-161)
+                  saveClarificationSnapshot(lastClarification)
                   setRepairMemory(selectedOpt.id, lastClarification.options)
                   setLastClarification(null)
 
@@ -2409,6 +2552,8 @@ export async function handleClarificationIntercept(
                 }
                 // Low confidence or invalid choiceId → fall through to escalation
               } else if (decision === 'reroute') {
+                // Save clarification snapshot for post-action repair window (per plan §153-161)
+                saveClarificationSnapshot(lastClarification)
                 clearRepairMemory()
                 setLastClarification(null)
                 clarificationCleared = true
@@ -2444,6 +2589,8 @@ export async function handleClarificationIntercept(
                         },
                       })
 
+                      // Save clarification snapshot for post-action repair window (per plan §153-161)
+                      saveClarificationSnapshot(lastClarification)
                       setRepairMemory(otherOption.id, repairMemory.lastOptionsShown)
                       setLastClarification(null)
 
@@ -2742,6 +2889,11 @@ export async function handleClarificationIntercept(
         action: 'clarification_exit_new_intent',
         metadata: { userInput: trimmedInput, isBareNounNewIntent },
       })
+      // Save clarification snapshot for post-action repair window (per plan §153-161)
+      // User is escaping to new intent but may say "not that" after
+      if (lastClarification?.options && lastClarification.options.length > 0) {
+        saveClarificationSnapshot(lastClarification)
+      }
       setLastClarification(null)
       clarificationCleared = true
       // Don't return - continue to check if other handlers should process
