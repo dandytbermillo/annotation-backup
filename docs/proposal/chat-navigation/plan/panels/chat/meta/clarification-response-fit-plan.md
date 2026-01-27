@@ -100,7 +100,25 @@ If the message contains a **negation/rejection** signal (e.g., “not that”, �
 **Precedence order:**
 `exit/cancel → reject_list → repair → ordinal → label_match → LLM`
 
-### 3) Noise / Nonsense Definition (Deterministic)
+### 3) Visible Options = Active (Exit Confirmation)
+When options are still visible, **do not hard‑exit** on a single ambiguous exit word
+(e.g., “stop”, “cancel”, “never mind”). Treat these as **potential_exit** and confirm.
+
+Rule:
+- If options are visible **and** exit phrase is ambiguous → **ask confirm**, keep options visible.
+- Only hard‑exit when exit phrasing is explicit (e.g., “cancel this”, “stop the selection”)
+  or when the user repeats the exit intent twice.
+
+Rationale: “visible = active” is the human rule; don’t invalidate shared context on a single word.
+
+**Explicit‑exit detector (recommended):**
+Hard‑exit only if any are true:
+- Exit word + direct object (e.g., “cancel this”, “stop the selection”)
+- Exit word + reset keyword (“start over”, “restart”, “begin again”)
+- Exit word repeated twice in the same session
+All other single‑word exits become **potential_exit** → confirm.
+
+### 4) Noise / Nonsense Definition (Deterministic)
 Treat input as **noise** if any are true:
 - alphabetic ratio < 50%
 - token count == 1 and token length < 3
@@ -109,7 +127,7 @@ Treat input as **noise** if any are true:
 
 Noise should never trigger selection or zero‑overlap escape.
 
-### 4) Noise Escalation (Human‑Feel, Optional)
+### 5) Noise Escalation (Human‑Feel, Optional)
 If the user sends **multiple noise inputs in a row**, reuse the same clarification template but add a gentle escalation after the second noisy attempt.
 
 Suggested policy:
@@ -119,7 +137,7 @@ Suggested policy:
 
 This is purely UX pacing; it does **not** change routing or selection rules.
 
-### 5) Repeated “No” Escalation (NEW)
+### 6) Repeated “No” Escalation (NEW)
 If the user replies **“no”** repeatedly to the same option set, treat the second “no” as a **list rejection** and
 switch to the refine prompt.
 
@@ -175,6 +193,11 @@ If the input is a near‑match but ambiguous (soft_reject), ask directly:
 ### Short Hint Words vs New Topic (Clarified)
 Single or two‑token hints (e.g., “settings”, “profile”) should **not** be treated as `new_topic` unless they include a verb/command form (e.g., “open settings”, “show profile”).
 
+### Exit Confirmation Prompt (NEW)
+When options are visible and exit intent is ambiguous:
+“Do you want to cancel and start over, or keep choosing from these options?”
+Keep the options visible while asking this.
+
 ---
 
 ## Telemetry (Additions)
@@ -203,6 +226,8 @@ Add the following to measure impact:
 6) Pills active, input “settings” (ambiguous) → **soft_reject** → ask explicit clarification
 7) After action (no active clarification), input “not that” within 1–2 turns → **restore last clarification options** + repair prompt
 8) Same option set, user replies “no” twice → second “no” → **reject_list** → refine prompt
+9) Options visible, user says “stop” → **confirm exit**, keep options visible
+10) Options visible, user says “cancel this” → **hard exit**, clear options
 
 ---
 
