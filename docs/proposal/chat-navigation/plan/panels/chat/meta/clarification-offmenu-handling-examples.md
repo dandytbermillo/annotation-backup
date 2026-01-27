@@ -190,6 +190,17 @@ These examples align with `clarification-response-fit-plan.md` and show how resp
 **User:** the one about panel d
 **Bot:** Opening **Links Panel D**.
 
+### 9.6 Clarification‑Mode Command Normalization (NEW)
+
+**Bot:** Multiple Links Panel panels found. Which one would you like to open?
+**[Links Panel D] [Links Panel E] [Links Panels]**
+
+**User:** open link panel d
+**Bot:** Opening **Links Panel D**.
+
+**User:** opn recent
+**Bot:** Opening Recent…
+
 ### 9.6 Post‑Action Repair Window (NEW)
 
 **Bot:** Multiple Links Panel panels found. Which one would you like to open?

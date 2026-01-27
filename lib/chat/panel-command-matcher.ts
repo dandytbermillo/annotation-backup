@@ -7,10 +7,14 @@
  *
  * Matching rules:
  * - Normalize: lowercase → strip punctuation → remove stopwords → token set
+ * - Fuzzy correction: typos within edit distance 2 are corrected (e.g., "limk" → "links")
+ * - Repeated letter normalization: "llink" → "link", "opwn" → "open"
  * - Exact match: all title tokens present in input
  * - Partial match: all input tokens present in title (for disambiguation)
  * - Trailing politeness words (pls, please, thanks) are ignored
  */
+
+import { levenshteinDistance } from './typo-suggestions'
 
 // =============================================================================
 // Types
@@ -48,14 +52,64 @@ const STOPWORDS = new Set([
   'pls', 'please', 'plz', 'now', 'thanks', 'thank', 'thx',
 ])
 
+/**
+ * Known panel-related terms for fuzzy matching.
+ * These are the canonical forms that typos should be corrected to.
+ */
+const KNOWN_PANEL_TERMS = new Set([
+  // Panel/widget keywords
+  'panel', 'panels', 'widget', 'widgets',
+  'link', 'links', 'recent', 'demo',
+  // Action verbs
+  'open', 'show', 'close', 'go', 'view',
+])
+
+/**
+ * Maximum edit distance for fuzzy matching.
+ * Distance 1-2 are acceptable for typo correction.
+ */
+const MAX_FUZZY_DISTANCE = 2
+
 // =============================================================================
 // Normalization
 // =============================================================================
 
 /**
+ * Normalize repeated letters in a token.
+ * E.g., "llink" → "link", "opwn" → "opwn" (no repeated letters)
+ * Per plan §216-229: handles common typos like "llink", "ppanel"
+ */
+function normalizeRepeatedLetters(token: string): string {
+  return token.replace(/(.)\1+/g, '$1')
+}
+
+/**
+ * Find the best fuzzy match for a token against known panel terms.
+ * Returns the matched term if within edit distance threshold, null otherwise.
+ */
+function findFuzzyPanelMatch(token: string): string | null {
+  if (token.length < 3) return null // Too short for fuzzy matching
+
+  let bestMatch: string | null = null
+  let bestDistance = MAX_FUZZY_DISTANCE + 1
+
+  for (const term of KNOWN_PANEL_TERMS) {
+    const distance = levenshteinDistance(token, term)
+    if (distance <= MAX_FUZZY_DISTANCE && distance < bestDistance) {
+      bestDistance = distance
+      bestMatch = term
+    }
+  }
+
+  return bestMatch
+}
+
+/**
  * Normalize a string to a set of tokens for matching.
  * - Lowercase
  * - Strip punctuation
+ * - Normalize repeated letters (e.g., "llink" → "link")
+ * - Fuzzy match against known panel terms (e.g., "limk" → "links")
  * - Remove stopwords
  * - Return as Set (order-independent matching)
  */
@@ -73,7 +127,25 @@ function normalizeToTokenSet(s: string): Set<string> {
     .replace(/[^a-z0-9\s]/g, '')
     .split(/\s+/)
     .filter(t => t && !STOPWORDS.has(t))
-    .map(t => canonicalTokens[t] ?? t)
+    .map(t => {
+      // Step 1: Normalize repeated letters (e.g., "llink" → "link")
+      const deduped = normalizeRepeatedLetters(t)
+
+      // Step 2: Check canonical tokens first (exact match after dedup)
+      if (canonicalTokens[deduped]) {
+        return canonicalTokens[deduped]
+      }
+
+      // Step 3: Try fuzzy matching against known panel terms
+      const fuzzyMatch = findFuzzyPanelMatch(deduped)
+      if (fuzzyMatch) {
+        // Apply canonical mapping to fuzzy match result
+        return canonicalTokens[fuzzyMatch] ?? fuzzyMatch
+      }
+
+      // Step 4: Return original (possibly deduped) token
+      return canonicalTokens[t] ?? deduped
+    })
   return new Set(tokens)
 }
 

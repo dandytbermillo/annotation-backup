@@ -211,6 +211,20 @@ Add the following to measure impact:
 - **Insert after deterministic tiers and before escalation/zero‑overlap escape** in `clarification-offmenu-handling-plan.md`.
 - Clarify in implementation that response‑fit only runs when **no deterministic tier fired**.
 
+### Clarification‑Mode Command Normalization (NEW)
+When **pills are active**, reuse the same normalization rules as global routing **before** label/alias matching:
+- Strip command verbs (`open`, `show`, `go`, `view`) from the input.
+- Normalize repeated letters and apply fuzzy correction for command verbs (e.g., `opn` → `open`).
+- Normalize panel tokens (`link/links`, `panel/panels`) before matching.
+
+**Badge‑aware selection:**  
+If the remaining tokens include an explicit badge (e.g., `d`, `e`, `panel d`) and match a visible option label,
+auto‑select that option (no LLM needed).
+
+**Command typo escape:**  
+If the normalized input forms a clear command (after fixing verb typos), allow **new‑topic escape** even in
+clarification mode (e.g., `opn recent` → `open recent` → escape).
+
 ---
 
 ## Global Routing Typo Normalization (Non‑Clarification)
