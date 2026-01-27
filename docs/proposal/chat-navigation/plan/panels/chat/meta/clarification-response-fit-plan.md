@@ -115,8 +115,18 @@ Rationale: “visible = active” is the human rule; don’t invalidate shared c
 Hard‑exit only if any are true:
 - Exit word + direct object (e.g., “cancel this”, “stop the selection”)
 - Exit word + reset keyword (“start over”, “restart”, “begin again”)
-- Exit word repeated twice in the same session
 All other single‑word exits become **potential_exit** → confirm.
+
+**Exit confirmation routing (stateful):**
+- Track `exitCount` per clarification session.
+- On ambiguous exit word with visible options:
+  - If `exitCount == 0`: show confirm prompt, set `exitCount = 1`, keep options visible.
+  - If `exitCount >= 1`: treat as hard‑exit (user repeated exit intent).
+- Handle the next user reply to the confirm prompt:
+  - **Affirmation** (“yes”, “cancel”, “do it”) → hard‑exit.
+  - **Negation / keep choosing** (“no”, “keep choosing”) → dismiss confirm, re‑show options, reset `exitCount`.
+  - **Ordinal / label** → normal selection path (do not hard‑exit).
+  - **Another exit phrase** → hard‑exit.
 
 ### 4) Noise / Nonsense Definition (Deterministic)
 Treat input as **noise** if any are true:

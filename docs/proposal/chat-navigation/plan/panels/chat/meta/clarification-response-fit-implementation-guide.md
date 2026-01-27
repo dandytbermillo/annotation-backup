@@ -32,7 +32,7 @@ When clarification is active:
 0. **Post‑action repair window** (if no clarification but snapshot exists) → restore list + repair prompt
 1. **Noise pre‑check** (alphabetic ratio / short token / no vowel / emoji smash) → re‑prompt
 2. **Reject list** (“none of these/none of those/neither”) → refine prompt
-3. **Exit / cancel**
+3. **Exit / cancel** (with confirmation when options are visible)
 4. **Repair phrases** (“not that”, “other one”) → stay in list
 5. **Ordinal selection** (“first/second/1/2/last”) → select
 6. **Label / alias match** → select
@@ -68,6 +68,27 @@ Apply only when intent = `select` or `repair`:
 - **< 0.55** → ask clarify (no execute)
 
 ---
+
+## 4.5) Exit Confirmation Handling (Visible = Active)
+
+**Detector (pure, text‑only):**
+Use `isExplicitExitPhrase()` to classify input as *explicit* exit **only** when:
+- Exit word + direct object (e.g., “cancel this”, “stop the selection”)
+- Exit word + reset keyword (“start over”, “restart”, “begin again”)
+
+**Stateful routing (in chat‑routing.ts):**
+- Track `exitCount` per clarification session.
+- If options are visible **and** exit phrase is ambiguous:
+  - `exitCount == 0` → show confirm prompt, set `exitCount = 1`, keep options visible.
+  - `exitCount >= 1` → hard‑exit (user repeated exit intent).
+
+**Handling the next user reply to the confirm prompt:**
+- Affirmation (“yes”, “cancel”, “do it”) → hard‑exit.
+- Negation / keep choosing (“no”, “keep choosing”) → dismiss confirm, re‑show options, reset `exitCount`.
+- Ordinal / label → normal selection (do **not** hard‑exit).
+- Another exit phrase → hard‑exit.
+
+This keeps the detector pure while routing handles repeat intent and confirm flow.
 
 ## 5) Repair Memory (Sticky Context)
 
