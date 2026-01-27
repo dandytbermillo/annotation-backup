@@ -206,14 +206,22 @@ export function matchVisiblePanelCommand(
     }
   }
 
-  // Prefer exact matches
-  if (exactMatches.length > 0) {
-    return { type: 'exact', matches: exactMatches }
+  // ==========================================================================
+  // Disambiguation Logic Fix:
+  // If we have BOTH exact matches AND partial matches, the input is ambiguous.
+  // Example: "links panel" matches "Links Panels" (exact) but also matches
+  // "Links Panel D" and "Links Panel E" (partial). User should disambiguate.
+  // ==========================================================================
+
+  // If there are partial matches, include exact matches in disambiguation
+  if (partialMatches.length > 0) {
+    const allMatches = [...exactMatches, ...partialMatches]
+    return { type: 'partial', matches: allMatches }
   }
 
-  // Fall back to partial matches (disambiguation case)
-  if (partialMatches.length > 0) {
-    return { type: 'partial', matches: partialMatches }
+  // Only return exact if there are NO partial matches (unambiguous)
+  if (exactMatches.length > 0) {
+    return { type: 'exact', matches: exactMatches }
   }
 
   return { type: 'none', matches: [] }

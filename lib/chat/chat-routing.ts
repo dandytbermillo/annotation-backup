@@ -2050,7 +2050,132 @@ export async function handleClarificationIntercept(
     // IMPORTANT: If input matches MULTIPLE options (e.g., "links panel" matches both D and E),
     // do NOT auto-select - fall through to re-show options instead.
     if (lastClarification?.options && lastClarification.options.length > 0) {
+      // ==========================================================================
+      // Clarification-Mode Command Normalization (per plan §215-227)
+      // Strip command verbs, normalize typos, enable badge-aware selection
+      // ==========================================================================
+
+      // Command verbs to strip from input before matching
+      const COMMAND_VERBS = new Set(['open', 'show', 'go', 'view', 'close'])
+
+      // Common command verb typos and their corrections
+      const COMMAND_VERB_TYPOS: Record<string, string> = {
+        opn: 'open', opne: 'open', ope: 'open', oepn: 'open',
+        shw: 'show', sho: 'show', shwo: 'show',
+        clse: 'close', clos: 'close', colse: 'close',
+        viw: 'view', veiw: 'view',
+      }
+
+      // Normalize command verb typos in input
+      const normalizeCommandVerbs = (input: string): { normalized: string, hadVerb: boolean, originalVerb: string | null } => {
+        const tokens = input.toLowerCase().split(/\s+/)
+        let hadVerb = false
+        let originalVerb: string | null = null
+
+        const normalizedTokens = tokens.map((token, index) => {
+          // Only check first token for verb
+          if (index === 0) {
+            // Check for exact verb match
+            if (COMMAND_VERBS.has(token)) {
+              hadVerb = true
+              originalVerb = token
+              return token
+            }
+            // Check for typo correction
+            if (COMMAND_VERB_TYPOS[token]) {
+              hadVerb = true
+              originalVerb = COMMAND_VERB_TYPOS[token]
+              return COMMAND_VERB_TYPOS[token]
+            }
+          }
+          return token
+        })
+
+        return {
+          normalized: normalizedTokens.join(' '),
+          hadVerb,
+          originalVerb,
+        }
+      }
+
+      // Strip command verb from input for label matching
+      const stripCommandVerb = (input: string): string => {
+        const tokens = input.toLowerCase().split(/\s+/)
+        if (tokens.length > 1 && COMMAND_VERBS.has(tokens[0])) {
+          return tokens.slice(1).join(' ')
+        }
+        // Also strip corrected typos
+        if (tokens.length > 1 && COMMAND_VERB_TYPOS[tokens[0]]) {
+          return tokens.slice(1).join(' ')
+        }
+        return input
+      }
+
+      // Extract badge from input (single letter or number at the end)
+      // e.g., "link panel d" → badge: "d", "panel 2" → badge: "2"
+      const extractBadge = (input: string): { badge: string | null, inputWithoutBadge: string } => {
+        const tokens = input.toLowerCase().split(/\s+/).filter(Boolean)
+        if (tokens.length === 0) return { badge: null, inputWithoutBadge: input }
+
+        const lastToken = tokens[tokens.length - 1]
+        // Badge is a single letter (a-z) or single digit (1-9)
+        if (/^[a-z]$/.test(lastToken) || /^[1-9]$/.test(lastToken)) {
+          return {
+            badge: lastToken,
+            inputWithoutBadge: tokens.slice(0, -1).join(' '),
+          }
+        }
+        return { badge: null, inputWithoutBadge: input }
+      }
+
+      // Apply clarification-mode normalization
+      const verbNormResult = normalizeCommandVerbs(trimmedInput)
+      const inputAfterVerbNorm = verbNormResult.normalized
+      const inputWithoutVerb = stripCommandVerb(inputAfterVerbNorm)
+      const { badge: extractedBadge, inputWithoutBadge } = extractBadge(inputWithoutVerb)
+
+      // ==========================================================================
+      // Command Typo Escape (per plan §224-226)
+      // If normalized input forms a clear command, allow new-topic escape
+      // e.g., "opn recent" → "open recent" → escape to new topic
+      // ==========================================================================
+      if (verbNormResult.hadVerb && verbNormResult.originalVerb) {
+        // Check if the rest of the input (after verb) does NOT match any current option
+        const restOfInput = inputWithoutVerb.toLowerCase().trim()
+        const matchesCurrentOption = lastClarification.options.some(opt => {
+          const normalizedLabel = opt.label.toLowerCase()
+          return normalizedLabel.includes(restOfInput) || restOfInput.includes(normalizedLabel)
+        })
+
+        // If it doesn't match current options, it might be a new-topic command
+        // Check if it looks like a valid command target (e.g., "recent", "panel", known term)
+        const knownCommandTargets = ['recent', 'panel', 'widget', 'demo', 'note', 'notes', 'doc', 'docs']
+        const isKnownTarget = knownCommandTargets.some(target => restOfInput.includes(target))
+
+        if (!matchesCurrentOption && isKnownTarget) {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'clarification_command_typo_escape',
+            metadata: {
+              originalInput: trimmedInput,
+              normalizedInput: inputAfterVerbNorm,
+              verb: verbNormResult.originalVerb,
+              target: restOfInput,
+            },
+          })
+
+          // Save clarification snapshot before escaping (per plan §153-161)
+          saveClarificationSnapshot(lastClarification)
+          setLastClarification(null)
+          clarificationCleared = true
+          // Fall through to normal routing with the normalized input
+          // The normalized input will be handled by other handlers
+        }
+      }
+
       const normalizedInput = trimmedInput.toLowerCase().trim()
+      // Also prepare verb-stripped version for matching (per plan §215-218)
+      const inputForMatching = inputWithoutVerb.toLowerCase().trim()
 
       // Helper: Check if label matches in input with word boundary
       // e.g., "workspace 2" in "workspace 2 please" → true (followed by space)
@@ -2086,19 +2211,80 @@ export async function handleClarificationIntercept(
         return true
       }
 
+      // ==========================================================================
+      // Badge-aware Selection (per plan §220-222)
+      // If input has a badge suffix (d, e, 1, 2), match against option labels
+      // e.g., "open link panel d" → badge "d" → match "Links Panel D"
+      // ==========================================================================
+      if (extractedBadge && inputWithoutBadge) {
+        const badgeMatchingOptions = lastClarification.options.filter(opt => {
+          const normalizedLabel = opt.label.toLowerCase()
+          // Check if label ends with the badge (case-insensitive)
+          // e.g., "Links Panel D" ends with "d"
+          const labelTokens = normalizedLabel.split(/\s+/)
+          const lastLabelToken = labelTokens[labelTokens.length - 1]
+          return lastLabelToken === extractedBadge
+        })
+
+        if (badgeMatchingOptions.length === 1) {
+          const matchedOption = badgeMatchingOptions[0]
+          const fullOption = pendingOptions.find(opt => opt.id === matchedOption.id)
+
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'clarification_badge_aware_selection',
+            metadata: {
+              input: trimmedInput,
+              badge: extractedBadge,
+              matchedLabel: matchedOption.label,
+            },
+          })
+
+          // Save clarification snapshot for post-action repair window
+          saveClarificationSnapshot(lastClarification)
+          setRepairMemory(matchedOption.id, lastClarification.options)
+          setLastClarification(null)
+
+          const optionToSelect: SelectionOption = {
+            type: (fullOption?.type ?? matchedOption.type) as SelectionOption['type'],
+            id: matchedOption.id,
+            label: matchedOption.label,
+            sublabel: matchedOption.sublabel,
+            data: fullOption?.data as SelectionOption['data'] ??
+              (matchedOption.type === 'doc'
+                ? { docSlug: matchedOption.id }
+                : { term: matchedOption.id, action: 'doc' as const }),
+          }
+          setIsLoading(false)
+          handleSelectOption(optionToSelect)
+          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+        }
+      }
+
       // Find ALL matching options, not just the first one
+      // Use both original input AND verb-stripped input for matching
       const matchingOptions = lastClarification.options.filter(opt => {
         const normalizedLabel = opt.label.toLowerCase()
         // 1. Exact string match, or input is contained in label, or label is contained in input WITH word boundary
+        // Try both normalizedInput (original) and inputForMatching (verb-stripped)
         if (normalizedLabel === normalizedInput ||
+            normalizedLabel === inputForMatching ||
             normalizedLabel.includes(normalizedInput) ||
-            matchesWithWordBoundary(normalizedInput, normalizedLabel)) {
+            normalizedLabel.includes(inputForMatching) ||
+            matchesWithWordBoundary(normalizedInput, normalizedLabel) ||
+            matchesWithWordBoundary(inputForMatching, normalizedLabel)) {
           return true
         }
         // 2. Canonical token matching (handles "links panels d" → "Links Panel D")
-        const inputTokens = toCanonicalTokens(normalizedInput)
+        // Try with verb-stripped input first
+        const inputTokens = toCanonicalTokens(inputForMatching)
         const labelTokens = toCanonicalTokens(normalizedLabel)
-        return tokensMatch(inputTokens, labelTokens)
+        if (tokensMatch(inputTokens, labelTokens)) {
+          return true
+        }
+        // Also try with original input
+        const originalInputTokens = toCanonicalTokens(normalizedInput)
+        return tokensMatch(originalInputTokens, labelTokens)
       })
 
       // Only auto-select if EXACTLY ONE option matches

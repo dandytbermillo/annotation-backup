@@ -242,6 +242,13 @@ Suggested approach:
 Rationale: keeps behavior consistent with the “deterministic‑first” policy without applying
 Response‑Fit outside clarification.
 
+### Disambiguation Guard for Panel Command Matching (NEW)
+If the user input matches **multiple visible panels** (even when one is an “exact” token match),
+do **not** auto‑open. Return **partial** and show disambiguation instead.
+
+Rationale: inputs like **“links panel”** are ambiguous when panels exist for D/E/overview. The matcher
+must prefer disambiguation over auto‑opening an overview panel.
+
 ## Files to Touch (Implementation Targets)
 - `lib/chat/chat-routing.ts` — integrate response‑fit classification in the clarification flow
 - `lib/chat/clarification-offmenu.ts` — add any shared helpers (noise checks, templates reuse)
