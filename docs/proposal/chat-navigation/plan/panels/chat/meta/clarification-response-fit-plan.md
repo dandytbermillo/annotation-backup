@@ -70,6 +70,24 @@ Rules:
 
 ---
 
+## Model Routing (Classifier vs Answer)
+**Classifier (Gemini Flash):**
+- Used only inside clarification/response‑fit when deterministic rules cannot classify intent.
+- Must return strict JSON per the contract above.
+- Never generates user‑facing answers.
+
+**Answering (OpenAI):**
+- Used only after an option is selected and the system is no longer in clarification.
+- Produces the actual response content (explanations, summaries, etc.).
+
+**Principle:** Gemini is a bounded selector; OpenAI is the responder.
+
+**Env/config reference (example):**
+- `CLARIFICATION_CLASSIFIER_MODEL=gemini-flash`
+- `ANSWER_MODEL=openai-4o-mini`
+
+---
+
 ## Execution Safety Rules (NEW)
 ### 1) Don’t Execute Unless Confident
 If intent is `select` or `repair` and confidence is below threshold:
@@ -90,6 +108,30 @@ Treat input as **noise** if any are true:
 - emoji‑only / keyboard smash
 
 Noise should never trigger selection or zero‑overlap escape.
+
+### 4) Noise Escalation (Human‑Feel, Optional)
+If the user sends **multiple noise inputs in a row**, reuse the same clarification template but add a gentle escalation after the second noisy attempt.
+
+Suggested policy:
+- Track `noiseCount` per clarification session (separate from attemptCount).
+- If `noiseCount == 1`: standard unparseable prompt.
+- If `noiseCount >= 2`: add a short hint (e.g., “Reply **first** or **second**, or tell me one detail.”).
+
+This is purely UX pacing; it does **not** change routing or selection rules.
+
+---
+
+## Typo‑Assist (LLM Last‑Resort) for Ordinal/Repair
+When the user input *resembles* an ordinal or repair phrase but fails deterministic matching
+(e.g., “fifirst”, “secnd”, “nto that”), allow **constrained LLM fallback** even on the first attempt.
+
+Rules:
+- Only when clarification pills are active.
+- Only when deterministic ordinal/repair matching fails.
+- LLM must still select **only** from current options (choiceId contract).
+- If LLM confidence < 0.55 → ask_clarify (no execute).
+
+Rationale: These are high‑intent typos where users clearly meant a selection/repair, not a topic switch.
 
 ---
 

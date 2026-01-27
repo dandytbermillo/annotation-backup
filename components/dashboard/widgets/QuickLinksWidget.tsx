@@ -143,7 +143,7 @@ export function QuickLinksWidget({
       onMouseDown={onMouseDown}
     >
       <WidgetLabel>
-        {(panel.title || 'QUICK LINKS').toUpperCase()}
+        {(badge ? `LINKS PANEL ${badge}` : (panel.title || 'LINKS PANEL')).toUpperCase()}
       </WidgetLabel>
 
       {links.length === 0 ? (

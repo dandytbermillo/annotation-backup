@@ -60,9 +60,15 @@ describe('isNoise', () => {
       expect(isNoise('x')).toBe(true)
     })
 
-    test('two chars is noise', () => {
+    test('two chars random is noise', () => {
       expect(isNoise('ab')).toBe(true)
-      expect(isNoise('ok')).toBe(true) // 2 chars, single token
+      expect(isNoise('xy')).toBe(true) // 2 chars, single token
+    })
+
+    test('two char valid words are NOT noise', () => {
+      expect(isNoise('ok')).toBe(false) // valid response word
+      expect(isNoise('no')).toBe(false) // valid response word
+      expect(isNoise('ya')).toBe(false) // valid response word
     })
   })
 
@@ -583,12 +589,21 @@ describe('Response-Fit Prompt Templates', () => {
     expect(prompt).toContain('Are you looking for')
   })
 
-  test('getAskClarifyPrompt with 2 options uses structured template', () => {
-    // Per plan: for 2 options, use "If yes, choose A; if not, choose B."
-    const prompt = getAskClarifyPrompt(['sdk'], ['Option A', 'Option B'])
+  test('getAskClarifyPrompt with 2 options - hint overlaps first option uses structured template', () => {
+    // Per plan: for 2 options, use "If yes, choose A; if not, choose B." when hint overlaps
+    const prompt = getAskClarifyPrompt(['sdk'], ['SDK Documentation', 'API Reference'])
     expect(prompt).toContain('sdk')
+    expect(prompt).toContain('SDK Documentation')
+    expect(prompt).toContain('API Reference')
+  })
+
+  test('getAskClarifyPrompt with 2 options - no overlap uses neutral template', () => {
+    // Per fix: when hint doesn't overlap either option, use neutral prompt
+    const prompt = getAskClarifyPrompt(['sdk'], ['Option A', 'Option B'])
     expect(prompt).toContain('Option A')
     expect(prompt).toContain('Option B')
+    expect(prompt).toContain("I'm not sure which one you mean")
+    expect(prompt).not.toContain('sdk') // No misleading hint reference
   })
 
   test('getSoftRejectPrompt with single candidate', () => {

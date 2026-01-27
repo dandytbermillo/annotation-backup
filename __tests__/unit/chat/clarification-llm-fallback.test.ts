@@ -184,27 +184,28 @@ describe('shouldCallLLMFallback', () => {
       process.env.NEXT_PUBLIC_CLARIFICATION_LLM_FALLBACK = 'true'
     })
 
-    test('returns false when attemptCount is 0', () => {
+    test('returns false when attemptCount is 0 without clear cue', () => {
       expect(shouldCallLLMFallback(0, 'anything')).toBe(false)
-      expect(shouldCallLLMFallback(0, 'the one about settings')).toBe(false)
+      expect(shouldCallLLMFallback(0, 'links panel')).toBe(false)
     })
 
-    test('returns false when attemptCount is 1 without clear cue', () => {
-      expect(shouldCallLLMFallback(1, 'something random')).toBe(false)
-      expect(shouldCallLLMFallback(1, 'links panel')).toBe(false)
+    test('returns true when attemptCount is 0 WITH clear natural choice cue', () => {
+      // Clear cue allows LLM even on first attempt
+      expect(shouldCallLLMFallback(0, 'the one about settings')).toBe(true)
+      expect(shouldCallLLMFallback(0, 'pick the workspace option')).toBe(true)
     })
 
-    test('returns true when attemptCount is 1 WITH clear natural choice cue', () => {
-      expect(shouldCallLLMFallback(1, 'the one about settings')).toBe(true)
-      expect(shouldCallLLMFallback(1, 'go with the first')).toBe(true)
-      expect(shouldCallLLMFallback(1, 'pick the workspace option')).toBe(true)
+    test('returns true when attemptCount >= 1 (any non-empty input)', () => {
+      // After first response, LLM handles any unclear input
+      expect(shouldCallLLMFallback(1, 'something random')).toBe(true)
+      expect(shouldCallLLMFallback(1, 'links panel')).toBe(true)
+      expect(shouldCallLLMFallback(1, 'hey nto those')).toBe(true)
+      expect(shouldCallLLMFallback(2, 'whatever')).toBe(true)
     })
 
-    test('returns true when attemptCount >= 2 (regardless of input)', () => {
-      expect(shouldCallLLMFallback(2, 'anything')).toBe(true)
-      expect(shouldCallLLMFallback(2, 'random gibberish')).toBe(true)
-      expect(shouldCallLLMFallback(3, 'whatever')).toBe(true)
-      expect(shouldCallLLMFallback(5, 'still triggers')).toBe(true)
+    test('returns false for empty input', () => {
+      expect(shouldCallLLMFallback(1, '')).toBe(false)
+      expect(shouldCallLLMFallback(1, '   ')).toBe(false)
     })
   })
 })

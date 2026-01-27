@@ -1324,6 +1324,105 @@ export async function handleClarificationIntercept(
   // Track if clarification was cleared within this execution cycle
   let clarificationCleared = false
 
+  // ==========================================================================
+  // EARLY REPAIR MEMORY HANDLER (before clarification block)
+  // Per clarification-response-fit-plan.md §5: Support "the other one" even after
+  // clarification is cleared. This runs BEFORE the hasClarificationContext check.
+  // ==========================================================================
+  if (isRepairPhrase(trimmedInput) && repairMemory &&
+      repairMemory.lastChoiceId &&
+      repairMemory.turnsSinceSet < REPAIR_MEMORY_TURN_LIMIT &&
+      repairMemory.lastOptionsShown.length > 0) {
+
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'early_repair_memory_handler',
+      metadata: {
+        userInput: trimmedInput,
+        lastChoiceId: repairMemory.lastChoiceId,
+        optionCount: repairMemory.lastOptionsShown.length,
+        turnsSinceSet: repairMemory.turnsSinceSet,
+      },
+    })
+
+    // For 2-option repair memory, auto-select the other option
+    if (repairMemory.lastOptionsShown.length === 2) {
+      const otherOption = repairMemory.lastOptionsShown.find(
+        opt => opt.id !== repairMemory.lastChoiceId
+      )
+
+      if (otherOption) {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'early_repair_auto_select',
+          metadata: {
+            userInput: trimmedInput,
+            lastChoiceId: repairMemory.lastChoiceId,
+            selectedOtherId: otherOption.id,
+            response_fit_intent: 'repair',
+          },
+        })
+
+        // Update repair memory with the new selection
+        setRepairMemory(otherOption.id, repairMemory.lastOptionsShown)
+
+        const optionToSelect: SelectionOption = {
+          type: otherOption.type as SelectionOption['type'],
+          id: otherOption.id,
+          label: otherOption.label,
+          sublabel: otherOption.sublabel,
+          data: otherOption.type === 'doc'
+            ? { docSlug: otherOption.id }
+            : { term: otherOption.id, action: 'doc' as const },
+        }
+        setIsLoading(false)
+        handleSelectOption(optionToSelect)
+        return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+      }
+    }
+
+    // For >2 options, re-show options from repair memory with repair prompt
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'early_repair_reshow_options',
+      metadata: {
+        userInput: trimmedInput,
+        optionCount: repairMemory.lastOptionsShown.length,
+        response_fit_intent: 'repair',
+      },
+    })
+
+    const repairMessage: ChatMessage = {
+      id: `assistant-${Date.now()}`,
+      role: 'assistant',
+      content: getRepairPrompt(),
+      timestamp: new Date(),
+      isError: false,
+      options: repairMemory.lastOptionsShown.map(opt => ({
+        type: opt.type as SelectionOption['type'],
+        id: opt.id,
+        label: opt.label,
+        sublabel: opt.sublabel,
+        data: {} as SelectionOption['data'],
+      })),
+    }
+    addMessage(repairMessage)
+
+    // Restore clarification state so subsequent responses work
+    setLastClarification({
+      type: 'option_selection',
+      originalIntent: 'repair_memory_restore',
+      messageId: repairMessage.id,
+      timestamp: Date.now(),
+      clarificationQuestion: getRepairPrompt(),
+      options: repairMemory.lastOptionsShown,
+      metaCount: 0,
+    })
+
+    setIsLoading(false)
+    return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+  }
+
   // Check if we should enter clarification mode
   const hasClarificationContext = lastClarification?.nextAction ||
     (lastClarification?.options && lastClarification.options.length > 0)
@@ -1887,6 +1986,8 @@ export async function handleClarificationIntercept(
           },
         })
 
+        // Set repair memory for label selection (enables "the other one" after label match)
+        setRepairMemory(matchedOption.id, lastClarification.options)
         setLastClarification(null)
 
         if (fullOption) {
@@ -1987,6 +2088,8 @@ export async function handleClarificationIntercept(
           },
         })
 
+        // Set repair memory for ordinal selection (enables "the other one" after ordinal)
+        setRepairMemory(selectedOption.id, lastClarification.options)
         setLastClarification(null)
 
         const optionToSelect: SelectionOption = {
@@ -2216,6 +2319,19 @@ export async function handleClarificationIntercept(
               },
             })
 
+            // Build context for LLM including repair memory status
+            const hasValidRepairMemory = repairMemory &&
+              repairMemory.lastChoiceId &&
+              repairMemory.turnsSinceSet < REPAIR_MEMORY_TURN_LIMIT &&
+              repairMemory.lastOptionsShown.length > 0
+            const contextParts: string[] = []
+            if (lastClarification.type === 'cross_corpus') {
+              contextParts.push('cross-corpus search')
+            }
+            if (!hasValidRepairMemory) {
+              contextParts.push('No prior selection made - "repair" intent is invalid, use "reject_list" instead if user rejects')
+            }
+
             const llmResult = await callClarificationLLMClient({
               userInput: trimmedInput,
               // Per plan: pass stable IDs to LLM for choiceId contract
@@ -2224,7 +2340,7 @@ export async function handleClarificationIntercept(
                 label: opt.label,
                 sublabel: opt.sublabel,
               })),
-              context: lastClarification.type === 'cross_corpus' ? 'cross-corpus search' : undefined,
+              context: contextParts.length > 0 ? contextParts.join('. ') : undefined,
             })
 
             if (llmResult.success && llmResult.response) {
@@ -2298,6 +2414,141 @@ export async function handleClarificationIntercept(
                 clarificationCleared = true
                 // Fall through to normal routing
                 break
+              } else if (decision === 'repair') {
+                // LLM detected repair intent (e.g., "nto that" = "not that")
+                // Use repair memory to resolve, similar to deterministic repair handler
+                void debugLog({
+                  component: 'ChatNavigation',
+                  action: 'clarification_llm_repair',
+                  metadata: { userInput: trimmedInput, confidence, reason },
+                })
+
+                // Check if we have valid repair memory
+                if (repairMemory && repairMemory.lastChoiceId &&
+                    repairMemory.turnsSinceSet < REPAIR_MEMORY_TURN_LIMIT &&
+                    repairMemory.lastOptionsShown.length > 0) {
+
+                  // For 2-option repair memory, auto-select the other option
+                  if (repairMemory.lastOptionsShown.length === 2) {
+                    const otherOption = repairMemory.lastOptionsShown.find(
+                      opt => opt.id !== repairMemory.lastChoiceId
+                    )
+
+                    if (otherOption) {
+                      void debugLog({
+                        component: 'ChatNavigation',
+                        action: 'clarification_llm_repair_auto_select',
+                        metadata: {
+                          lastChoiceId: repairMemory.lastChoiceId,
+                          selectedOtherId: otherOption.id,
+                        },
+                      })
+
+                      setRepairMemory(otherOption.id, repairMemory.lastOptionsShown)
+                      setLastClarification(null)
+
+                      const optionToSelect: SelectionOption = {
+                        type: otherOption.type as SelectionOption['type'],
+                        id: otherOption.id,
+                        label: otherOption.label,
+                        sublabel: otherOption.sublabel,
+                        data: otherOption.type === 'doc'
+                          ? { docSlug: otherOption.id }
+                          : { term: otherOption.id, action: 'doc' as const },
+                      }
+                      setIsLoading(false)
+                      handleSelectOption(optionToSelect)
+                      return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+                    }
+                  }
+
+                  // For >2 options, re-show options with repair prompt
+                  const repairMessage: ChatMessage = {
+                    id: `assistant-${Date.now()}`,
+                    role: 'assistant',
+                    content: getRepairPrompt(),
+                    timestamp: new Date(),
+                    isError: false,
+                    options: repairMemory.lastOptionsShown.map(opt => ({
+                      type: opt.type as SelectionOption['type'],
+                      id: opt.id,
+                      label: opt.label,
+                      sublabel: opt.sublabel,
+                      data: {} as SelectionOption['data'],
+                    })),
+                  }
+                  addMessage(repairMessage)
+
+                  setLastClarification({
+                    type: 'option_selection',
+                    originalIntent: 'llm_repair_restore',
+                    messageId: repairMessage.id,
+                    timestamp: Date.now(),
+                    clarificationQuestion: getRepairPrompt(),
+                    options: repairMemory.lastOptionsShown,
+                    metaCount: 0,
+                  })
+
+                  setIsLoading(false)
+                  return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+                }
+                // No valid repair memory - user said "not that" but hasn't selected anything
+                // Treat as list rejection ("none of that") and enter Refine Mode
+                void debugLog({
+                  component: 'ChatNavigation',
+                  action: 'clarification_llm_repair_no_memory_as_reject',
+                  metadata: { userInput: trimmedInput, confidence, reason },
+                })
+
+                const refineMessage: ChatMessage = {
+                  id: `assistant-${Date.now()}`,
+                  role: 'assistant',
+                  content: getRefinePrompt(),
+                  timestamp: new Date(),
+                  isError: false,
+                }
+                addMessage(refineMessage)
+
+                // Clear options but keep clarification active for refinement (same as reject_list)
+                setLastClarification({
+                  ...lastClarification!,
+                  options: undefined,
+                  attemptCount: 0,
+                })
+                setPendingOptions([])
+                setPendingOptionsMessageId(null)
+                setPendingOptionsGraceCount(0)
+                setIsLoading(false)
+                return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+              } else if (decision === 'reject_list') {
+                // LLM detected list rejection (e.g., "nto those" = "none of those")
+                // Enter Refine Mode, similar to deterministic list rejection handler
+                void debugLog({
+                  component: 'ChatNavigation',
+                  action: 'clarification_llm_reject_list',
+                  metadata: { userInput: trimmedInput, confidence, reason },
+                })
+
+                const refineMessage: ChatMessage = {
+                  id: `assistant-${Date.now()}`,
+                  role: 'assistant',
+                  content: getRefinePrompt(),
+                  timestamp: new Date(),
+                  isError: false,
+                }
+                addMessage(refineMessage)
+
+                // Clear options but keep clarification active for refinement
+                setLastClarification({
+                  ...lastClarification!,
+                  options: undefined,
+                  attemptCount: 0,
+                })
+                setPendingOptions([])
+                setPendingOptionsMessageId(null)
+                setPendingOptionsGraceCount(0)
+                setIsLoading(false)
+                return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
               }
               // 'none', 'ask_clarify', or low confidence → fall through to escalation
             }
@@ -2306,9 +2557,11 @@ export async function handleClarificationIntercept(
           // Escalation: re-show options with escalation/ask-clarify message
           const newAttemptCount = currentAttemptCount + 1
 
-          // Use ask-clarify prompt for short hints, escalation for repeated attempts
+          // Use ask-clarify prompt for short hints WITH overlap, escalation for no-overlap or repeated attempts
+          // Don't use "Are you looking for X?" when X has no overlap with options (e.g., "nto that")
           const inputTokens = toCanonicalTokens(trimmedInput)
-          const useAskClarifyPrompt = responseFit.reason.includes('short_hint') && newAttemptCount === 1
+          const hasOverlap = responseFit.reason.includes('partial_overlap') || responseFit.reason.includes('full_overlap')
+          const useAskClarifyPrompt = hasOverlap && newAttemptCount === 1
           const escalation = getEscalationMessage(newAttemptCount)
 
           void debugLog({

@@ -607,6 +607,16 @@ export function isNoise(input: string): boolean {
     /^api$/i,
     /^css$/i,
     /^dns$/i,
+    // Valid short response words (handled by isSimpleNo, rejection, etc.)
+    /^no$/i,
+    /^yes$/i,
+    /^ok$/i,
+    /^nope$/i,
+    /^nah$/i,
+    /^yep$/i,
+    /^yeah$/i,
+    /^ya$/i,
+    /^yea$/i,
   ]
 
   for (const pattern of validPatterns) {
@@ -697,13 +707,31 @@ export const CONFIDENCE_THRESHOLD_CONFIRM = 0.55
 /**
  * Get ask-clarify prompt for short hints.
  * Per plan line 106: "Are you looking for X? If yes, choose A; if not, choose B."
+ * Only uses structured template when hint clearly relates to one option.
  */
 export function getAskClarifyPrompt(hintTokens: string[], optionLabels?: string[]): string {
   const hint = hintTokens.join(' ')
 
   // Per plan: use structured template when we have exactly 2 options
+  // BUT only if hint overlaps with exactly one option (not both, not neither)
   if (optionLabels && optionLabels.length === 2) {
-    return `Are you looking for "${hint}"? If yes, choose **${optionLabels[0]}**; if not, choose **${optionLabels[1]}**.`
+    // Check which option(s) the hint overlaps with
+    const hintSet = new Set(hintTokens.map(t => t.toLowerCase()))
+    const overlaps = optionLabels.map(label => {
+      const labelTokens = label.toLowerCase().split(/\s+/)
+      return labelTokens.some(t => hintSet.has(t))
+    })
+
+    // Only use structured template if hint overlaps with exactly ONE option
+    if (overlaps[0] && !overlaps[1]) {
+      return `Are you looking for "${hint}"? If yes, choose **${optionLabels[0]}**; if not, choose **${optionLabels[1]}**.`
+    }
+    if (overlaps[1] && !overlaps[0]) {
+      return `Are you looking for "${hint}"? If yes, choose **${optionLabels[1]}**; if not, choose **${optionLabels[0]}**.`
+    }
+
+    // No clear overlap or overlaps both - use neutral prompt
+    return `I'm not sure which one you mean. Pick **${optionLabels[0]}** or **${optionLabels[1]}** below.`
   }
 
   // For >2 options, use a simpler template
@@ -763,11 +791,13 @@ export function classifyResponseFit(
 
   // Short hint (≤2 meaningful tokens) → ask_clarify
   // Per plan §3.1: "If input is short hint (≤2 tokens) → ask_clarify"
-  // Skip this check if we have an exact label match
+  // Skip this check if we have an exact label match OR if it's a clear command/question
+  // Per plan §147-148 & §202-207: Commands like "open recent" should escape to new_topic, not be treated as hints
   const normalizedInput = input.toLowerCase().trim()
   const hasExactMatch = options.some(opt => opt.label.toLowerCase() === normalizedInput)
+  const isClearCommand = isClearCommandOrQuestion(input)
 
-  if (!hasExactMatch && inputTokens.size <= 2 && inputTokens.size > 0) {
+  if (!hasExactMatch && !isClearCommand && inputTokens.size <= 2 && inputTokens.size > 0) {
     // Check if it's a partial match (could relate to options but not specific enough)
     const allOptionTokens = new Set<string>()
     for (const opt of options) {
@@ -856,6 +886,38 @@ export function classifyResponseFit(
       reason: 'ambiguous_multiple_matches',
       matchedOption: candidates.length > 0 ? candidates[0] : undefined,
       candidateOptions: candidates.slice(0, 2), // Top 2 best matches per plan
+    }
+  }
+
+  // Check for partial overlap + extra tokens → soft_reject (not no_match)
+  // e.g., "links panel list" has overlap (links, panel) but extra token (list)
+  // This should trigger soft_reject, not fall through to new_topic/ask_clarify
+  if (offMenuResult.type === 'no_match' && inputTokens.size > 2) {
+    const candidatesWithScore: Array<{ option: ClarificationOption; matchCount: number }> = []
+    for (const opt of options) {
+      const labelTokens = getLabelAliasTokens(opt.label)
+      let matchCount = 0
+      for (const t of inputTokens) {
+        if (labelTokens.has(t)) matchCount++
+      }
+      if (matchCount > 0) {
+        candidatesWithScore.push({ option: opt, matchCount })
+      }
+    }
+
+    // If we have partial overlap (some tokens match some options), it's ambiguous
+    const totalOverlap = candidatesWithScore.reduce((sum, c) => sum + c.matchCount, 0)
+    if (totalOverlap > 0 && candidatesWithScore.length >= 1) {
+      candidatesWithScore.sort((a, b) => b.matchCount - a.matchCount)
+      const candidates = candidatesWithScore.map(c => c.option)
+
+      return {
+        intent: 'soft_reject',
+        confidence: 0.35,
+        reason: 'partial_overlap_extra_tokens',
+        matchedOption: candidates.length > 0 ? candidates[0] : undefined,
+        candidateOptions: candidates.slice(0, 2),
+      }
     }
   }
 

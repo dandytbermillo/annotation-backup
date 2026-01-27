@@ -25,7 +25,7 @@ export interface ClarificationLLMResponse {
   choiceIndex: number
   confidence: number
   reason: string
-  decision: 'select' | 'none' | 'ask_clarify' | 'reroute'
+  decision: 'select' | 'none' | 'ask_clarify' | 'reroute' | 'repair' | 'reject_list'
 }
 
 export interface ClarificationLLMResult {
@@ -343,7 +343,12 @@ export function hasClearNaturalChoiceCue(input: string): boolean {
 
 /**
  * Determine if LLM fallback should be called.
- * Per plan trigger conditions.
+ *
+ * Per plan: When deterministic rules fail, use LLM as last-resort.
+ * Don't try to enumerate every possible typo - that's the LLM's job.
+ *
+ * Simple rule: If feature flag is enabled and we're past the first attempt,
+ * let the LLM try to understand what the user meant.
  */
 export function shouldCallLLMFallback(
   attemptCount: number,
@@ -354,13 +359,20 @@ export function shouldCallLLMFallback(
     return false
   }
 
-  // Trigger: attemptCount >= 2 (default)
-  if (attemptCount >= 2) {
+  // Skip empty/whitespace-only input
+  if (!userInput || !userInput.trim()) {
+    return false
+  }
+
+  // Trigger: attemptCount >= 1 (first response to pills)
+  // Let LLM try to understand any non-trivial input after seeing options
+  if (attemptCount >= 1) {
     return true
   }
 
-  // Trigger: attemptCount >= 1 AND clear natural choice cue
-  if (attemptCount >= 1 && hasClearNaturalChoiceCue(userInput)) {
+  // Trigger: attemptCount == 0 AND clear natural choice cue
+  // Allow early LLM for obvious selection attempts like "the one about..."
+  if (hasClearNaturalChoiceCue(userInput)) {
     return true
   }
 
