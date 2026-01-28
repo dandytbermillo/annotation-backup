@@ -56,6 +56,7 @@ import {
   getAskClarifyPrompt,
   getSoftRejectPrompt,
   getConfirmPrompt,
+  detectReturnSignal,
   toCanonicalTokens,
   MAX_ATTEMPT_COUNT,
   CONFIDENCE_THRESHOLD_EXECUTE,
@@ -1486,6 +1487,7 @@ export async function handleClarificationIntercept(
   // ==========================================================================
   if (isRepairPhrase(trimmedInput) &&
       clarificationSnapshot &&
+      !clarificationSnapshot.paused &&
       clarificationSnapshot.turnsSinceSet < SNAPSHOT_TURN_LIMIT &&
       clarificationSnapshot.options.length > 0) {
 
@@ -1550,13 +1552,102 @@ export async function handleClarificationIntercept(
   }
 
   // ==========================================================================
-  // POST-ACTION ORDINAL WINDOW (Selection Persistence, per plan §131-147)
-  // "Visible = active": if options are still visible (snapshot exists and hasn't
-  // been invalidated by exit/topic/new list), ordinals resolve against them.
-  // No turn-limit while options remain visible (per plan §144).
+  // RETURN SIGNAL: Resume Paused List (per interrupt-resume-plan §21-38)
+  // If the snapshot is paused (from an interrupt), the user can resume it
+  // with an explicit return signal ("back to the panels", "continue that list").
+  // Compound inputs ("back to panels — second option") are supported.
   // ==========================================================================
   if (!lastClarification &&
       clarificationSnapshot &&
+      clarificationSnapshot.paused &&
+      clarificationSnapshot.options.length > 0) {
+    const returnResult = detectReturnSignal(trimmedInput)
+
+    if (returnResult.isReturn) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'paused_list_return_signal',
+        metadata: {
+          userInput: trimmedInput,
+          remainder: returnResult.remainder,
+          optionCount: clarificationSnapshot.options.length,
+        },
+      })
+
+      // Check if the remainder contains an ordinal (compound: "back to panels — second option")
+      if (returnResult.remainder) {
+        const compoundSelection = isSelectionOnly(
+          returnResult.remainder,
+          clarificationSnapshot.options.length,
+          clarificationSnapshot.options.map(o => o.label)
+        )
+
+        if (compoundSelection.isSelection && compoundSelection.index !== undefined) {
+          // Compound return + ordinal: select directly from paused list
+          const selectedOption = clarificationSnapshot.options[compoundSelection.index]
+          const reconstructedData = reconstructSnapshotData(selectedOption)
+
+          const optionToSelect: SelectionOption = {
+            type: selectedOption.type as SelectionOption['type'],
+            id: selectedOption.id,
+            label: selectedOption.label,
+            sublabel: selectedOption.sublabel,
+            data: reconstructedData,
+          }
+
+          setRepairMemory(selectedOption.id, clarificationSnapshot.options)
+          clearClarificationSnapshot()
+          setIsLoading(false)
+          handleSelectOption(optionToSelect)
+          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+        }
+      }
+
+      // Simple return signal (no ordinal): restore the paused list as active clarification
+      const restoreMessage: ChatMessage = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: clarificationSnapshot.originalIntent
+          ? `Here are the options for "${clarificationSnapshot.originalIntent}":`
+          : 'Here are the previous options:',
+        timestamp: new Date(),
+        isError: false,
+        options: clarificationSnapshot.options.map(opt => ({
+          type: opt.type as SelectionOption['type'],
+          id: opt.id,
+          label: opt.label,
+          sublabel: opt.sublabel,
+          data: {} as SelectionOption['data'],
+        })),
+      }
+      addMessage(restoreMessage)
+
+      // Restore as active clarification
+      setLastClarification({
+        type: clarificationSnapshot.type,
+        originalIntent: clarificationSnapshot.originalIntent,
+        messageId: restoreMessage.id,
+        timestamp: Date.now(),
+        clarificationQuestion: restoreMessage.content,
+        options: clarificationSnapshot.options,
+        metaCount: 0,
+      })
+
+      clearClarificationSnapshot()
+      setIsLoading(false)
+      return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+    }
+  }
+
+  // ==========================================================================
+  // POST-ACTION ORDINAL WINDOW (Selection Persistence, per plan §131-147)
+  // "Visible = active": if options are still visible (snapshot exists, not paused,
+  // not invalidated by exit/topic/new list), ordinals resolve against them.
+  // Paused snapshots (from interrupts) require explicit return signal — see above.
+  // ==========================================================================
+  if (!lastClarification &&
+      clarificationSnapshot &&
+      !clarificationSnapshot.paused &&
       clarificationSnapshot.options.length > 0) {
     const snapshotSelection = isSelectionOnly(
       trimmedInput,
@@ -1602,7 +1693,10 @@ export async function handleClarificationIntercept(
     }
   }
 
-  // Increment snapshot turn counter for every message (so it expires after limit)
+  // Increment snapshot turn counter for every message.
+  // incrementSnapshotTurn() handles expiry internally:
+  //   - Active snapshots expire after SNAPSHOT_TURN_LIMIT (2 turns)
+  //   - Paused snapshots expire after PAUSED_SNAPSHOT_TURN_LIMIT (3 turns)
   incrementSnapshotTurn()
 
   // Check if we should enter clarification mode
@@ -1730,9 +1824,9 @@ export async function handleClarificationIntercept(
           action: 'clarification_exit_unclear_new_intent',
           metadata: { userInput: trimmedInput },
         })
-        // Save clarification snapshot for post-action repair window (per plan §153-161)
+        // Save clarification snapshot as paused (per interrupt-resume-plan §8-18)
         if (lastClarification?.options && lastClarification.options.length > 0) {
-          saveClarificationSnapshot(lastClarification)
+          saveClarificationSnapshot(lastClarification, true)
         }
         setLastClarification(null)
         setPendingOptions([])
@@ -1937,6 +2031,7 @@ export async function handleClarificationIntercept(
         setPendingOptions([])
         setPendingOptionsMessageId(null)
         setPendingOptionsGraceCount(0)
+        clearClarificationSnapshot() // Hard exit destroys snapshot (per interrupt-resume-plan §139)
         const exitMessage: ChatMessage = {
           id: `assistant-${Date.now()}`,
           role: 'assistant',
@@ -2003,6 +2098,7 @@ export async function handleClarificationIntercept(
         setPendingOptions([])
         setPendingOptionsMessageId(null)
         setPendingOptionsGraceCount(0)
+        clearClarificationSnapshot() // Hard exit destroys snapshot (per interrupt-resume-plan §139)
         const exitMessage: ChatMessage = {
           id: `assistant-${Date.now()}`,
           role: 'assistant',
@@ -2066,6 +2162,7 @@ export async function handleClarificationIntercept(
       setPendingOptions([])
       setPendingOptionsMessageId(null)
       setPendingOptionsGraceCount(0)
+      clearClarificationSnapshot() // Hard exit destroys snapshot (per interrupt-resume-plan §139)
       const exitMessage: ChatMessage = {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
@@ -2410,8 +2507,8 @@ export async function handleClarificationIntercept(
             },
           })
 
-          // Save clarification snapshot before escaping (per plan §153-161)
-          saveClarificationSnapshot(lastClarification)
+          // Save clarification snapshot as paused — command typo escape (per interrupt-resume-plan §8-18)
+          saveClarificationSnapshot(lastClarification, true)
           setLastClarification(null)
           setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
           clarificationCleared = true
@@ -2868,9 +2965,8 @@ export async function handleClarificationIntercept(
             },
           })
 
-          // Save clarification snapshot for post-action repair window (per plan §153-161)
-          // User is escaping to new topic but may say "not that" after
-          saveClarificationSnapshot(lastClarification)
+          // Save clarification snapshot as paused — new topic escape (per interrupt-resume-plan §8-18)
+          saveClarificationSnapshot(lastClarification, true)
           // Clear repair memory on new topic
           clearRepairMemory()
           setLastClarification(null)
@@ -2991,8 +3087,8 @@ export async function handleClarificationIntercept(
                 }
                 // Low confidence or invalid choiceId → fall through to escalation
               } else if (decision === 'reroute') {
-                // Save clarification snapshot for post-action repair window (per plan §153-161)
-                saveClarificationSnapshot(lastClarification)
+                // Save clarification snapshot as paused — LLM reroute (per interrupt-resume-plan §8-18)
+                saveClarificationSnapshot(lastClarification, true)
                 clearRepairMemory()
                 setLastClarification(null)
                 setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
@@ -3330,10 +3426,9 @@ export async function handleClarificationIntercept(
         action: 'clarification_exit_new_intent',
         metadata: { userInput: trimmedInput, isBareNounNewIntent },
       })
-      // Save clarification snapshot for post-action repair window (per plan §153-161)
-      // User is escaping to new intent but may say "not that" after
+      // Save clarification snapshot as paused — new intent escape (per interrupt-resume-plan §8-18)
       if (lastClarification?.options && lastClarification.options.length > 0) {
-        saveClarificationSnapshot(lastClarification)
+        saveClarificationSnapshot(lastClarification, true)
       }
       setLastClarification(null)
       setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)

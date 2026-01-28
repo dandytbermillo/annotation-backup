@@ -154,10 +154,17 @@ export interface ClarificationSnapshot {
   turnsSinceSet: number
   /** Timestamp when set */
   timestamp: number
+  /** Whether the snapshot is paused (interrupt) vs active (post-selection).
+   *  Paused snapshots don't resolve ordinals; require explicit return signal.
+   *  Per clarification-interrupt-resume-plan.md §8-18. */
+  paused?: boolean
 }
 
 /** Default snapshot window in turns (configurable) */
 export const SNAPSHOT_TURN_LIMIT = 2
+
+/** Paused snapshot expiry in turns (per interrupt-resume plan §42-46) */
+export const PAUSED_SNAPSHOT_TURN_LIMIT = 3
 
 /**
  * Doc retrieval conversation state for follow-ups and corrections.
@@ -292,7 +299,7 @@ interface ChatNavigationContextValue {
   clearRepairMemory: () => void
   // Clarification snapshot for post-action repair window (per plan §153-161)
   clarificationSnapshot: ClarificationSnapshot | null
-  saveClarificationSnapshot: (clarification: LastClarificationState) => void
+  saveClarificationSnapshot: (clarification: LastClarificationState, paused?: boolean) => void
   incrementSnapshotTurn: () => void
   clearClarificationSnapshot: () => void
 }
@@ -1022,8 +1029,8 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     setRepairMemoryInternal(null)
   }, [])
 
-  // Clarification snapshot functions (per plan §153-161)
-  const saveClarificationSnapshot = useCallback((clarification: LastClarificationState) => {
+  // Clarification snapshot functions (per plan §153-161, interrupt-resume-plan)
+  const saveClarificationSnapshot = useCallback((clarification: LastClarificationState, paused?: boolean) => {
     if (clarification.options && clarification.options.length > 0) {
       setClarificationSnapshotInternal({
         options: clarification.options,
@@ -1031,6 +1038,7 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         type: clarification.type,
         turnsSinceSet: 0,
         timestamp: Date.now(),
+        paused: paused ?? false,
       })
     }
   }, [])
@@ -1039,8 +1047,10 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     setClarificationSnapshotInternal((prev) => {
       if (!prev) return null
       const newTurns = prev.turnsSinceSet + 1
-      // Expire after SNAPSHOT_TURN_LIMIT turns
-      if (newTurns >= SNAPSHOT_TURN_LIMIT) {
+      // Active snapshots: no turn-based expiry ("visible = active", per plan §144).
+      // Only invalidated by explicit exit, topic change, or new list.
+      // Paused snapshots: expire after PAUSED_SNAPSHOT_TURN_LIMIT turns (per interrupt-resume-plan §42-46).
+      if (prev.paused && newTurns >= PAUSED_SNAPSHOT_TURN_LIMIT) {
         return null
       }
       return {

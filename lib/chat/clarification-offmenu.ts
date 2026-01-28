@@ -488,6 +488,62 @@ export function classifyExitIntent(input: string): ExitClassification {
   return 'none'
 }
 
+// =============================================================================
+// Return Signal Detection (per clarification-interrupt-resume-plan.md §21-38)
+// =============================================================================
+
+export interface ReturnSignalResult {
+  isReturn: boolean
+  /** Remaining input after stripping the return cue (for compound "back to panels — second option") */
+  remainder: string
+}
+
+/**
+ * Detect if the user is signalling a return to a paused option list.
+ * Per clarification-interrupt-resume-plan.md §26-31:
+ * - "back to the panels"
+ * - "continue that list"
+ * - "the other one from before"
+ * - "go back to the options"
+ * - "back to links panels"
+ *
+ * Returns the remainder after stripping the return cue so compound inputs
+ * like "continue that list — second option" can be resolved.
+ */
+export function detectReturnSignal(input: string): ReturnSignalResult {
+  const normalized = input.toLowerCase().trim()
+
+  // Return cue patterns — ordered longest-first to strip the most specific cue
+  const returnPatterns: Array<{ pattern: RegExp }> = [
+    // "back to the panels/options/list"
+    { pattern: /\b(go\s+)?back\s+to\s+(the\s+)?(panels?|options?|list|choices?|selection)\b/i },
+    // "back to <specific label>" e.g. "back to links panels"
+    { pattern: /\b(go\s+)?back\s+to\s+/i },
+    // "continue/resume that/the list/options"
+    { pattern: /\b(continue|resume)\s+(that|the|those)\s+(list|options?|choices?|selection)\b/i },
+    // "continue/resume choosing/selecting"
+    { pattern: /\b(continue|resume)\s+(choosing|selecting)\b/i },
+    // "the other one from before"
+    { pattern: /\bthe\s+other\s+one\s+from\s+before\b/i },
+    // "from before" / "from earlier"
+    { pattern: /\bfrom\s+(before|earlier)\b/i },
+    // "show those options again" / "show the list again"
+    { pattern: /\bshow\s+(those|the|my)\s+(options?|list|choices?)\s+(again|back)\b/i },
+    // "previous options/list"
+    { pattern: /\b(previous|earlier|last)\s+(options?|list|choices?|selection)\b/i },
+  ]
+
+  for (const { pattern } of returnPatterns) {
+    if (pattern.test(normalized)) {
+      // Strip the return cue to get the remainder
+      const remainder = normalized.replace(pattern, '').replace(/^[\s,—–-]+|[\s,—–-]+$/g, '').trim()
+      return { isReturn: true, remainder }
+    }
+  }
+
+  return { isReturn: false, remainder: normalized }
+}
+
 /**
  * Check if input is a hesitation/pause phrase.
  * Per clarification-offmenu-handling-plan.md (A0):
