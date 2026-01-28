@@ -41,6 +41,7 @@ import {
   getEscalationMessage,
   getExitOptions,
   isExitPhrase,
+  classifyExitIntent,
   isHesitationPhrase,
   isRepairPhrase,
   isListRejectionPhrase,
@@ -1808,14 +1809,156 @@ export async function handleClarificationIntercept(
       return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
     }
 
-    // Tier 1a: Exit phrase detection (BEFORE ALL ELSE per clarification-llm-last-resort-plan.md)
-    // "cancel / never mind / stop / forget it" → clear and ask open-ended
+    // Tier 1a: Exit phrase detection (per clarification-response-fit-plan.md §103-130)
+    // "visible = active" rule: ambiguous exits confirm, explicit exits hard-exit.
     // NOTE: "none of these/those" is NOT an exit - it's handled above as list rejection
-    if (isExitPhrase(trimmedInput)) {
+    //
+    // Confirm-prompt reply handling (§125-129):
+    // If exitCount >= 1, user already saw a confirm prompt. Check their reply:
+    //   - Affirmation → hard-exit
+    //   - Negation / "keep choosing" → dismiss confirm, reset exitCount
+    //   - Ordinal / label → falls through to normal selection (not handled here)
+    //   - Another exit phrase → hard-exit (repeated)
+    const currentExitCount = lastClarification?.exitCount ?? 0
+    const optionsAreVisible = lastClarification?.options && lastClarification.options.length > 0
+
+    // Check if user is responding to an exit confirmation prompt (exitCount >= 1)
+    if (currentExitCount >= 1 && optionsAreVisible) {
+      // Affirmation after confirm prompt → hard-exit (§126)
+      if (isAffirmationPhrase(trimmedInput)) {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'clarification_tier1a_exit_confirmed',
+          metadata: { userInput: trimmedInput, exitCount: currentExitCount, response_fit_intent: 'exit_cancel' },
+        })
+        setLastClarification(null)
+        setPendingOptions([])
+        setPendingOptionsMessageId(null)
+        setPendingOptionsGraceCount(0)
+        const exitMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: 'No problem — what would you like to do instead?',
+          timestamp: new Date(),
+          isError: false,
+        }
+        addMessage(exitMessage)
+        setIsLoading(false)
+        return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+      }
+
+      // Negation / "keep choosing" after confirm prompt → dismiss confirm, reset exitCount (§127)
+      const isKeepChoosing = /^(no|nope|nah|keep\s+(choosing|going)|stay|continue)$/i.test(trimmedInput.trim())
+      if (isKeepChoosing) {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'clarification_tier1a_exit_dismissed',
+          metadata: { userInput: trimmedInput, exitCount: currentExitCount, response_fit_intent: 'keep_choosing' },
+        })
+        // Reset exitCount, keep options visible
+        setLastClarification({
+          ...lastClarification!,
+          exitCount: 0,
+        })
+        const keepMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: lastClarification!.clarificationQuestion || 'Which one would you like?',
+          timestamp: new Date(),
+          isError: false,
+          options: lastClarification!.options!.map(opt => ({
+            type: opt.type as SelectionOption['type'],
+            id: opt.id,
+            label: opt.label,
+            sublabel: opt.sublabel,
+            data: {} as SelectionOption['data'],
+          })),
+        }
+        addMessage(keepMessage)
+        setIsLoading(false)
+        return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+      }
+      // Ordinal / label / other input after confirm → falls through to normal selection tiers
+    }
+
+    // Classify exit intent (pure text check, no state)
+    const exitClassification = classifyExitIntent(trimmedInput)
+
+    if (exitClassification !== 'none') {
+      // Explicit exit OR repeated ambiguous exit → hard-exit (§114-118, §124)
+      if (exitClassification === 'explicit' || currentExitCount >= 1) {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'clarification_tier1a_exit_phrase',
+          metadata: {
+            userInput: trimmedInput,
+            exitClassification,
+            exitCount: currentExitCount,
+            response_fit_intent: 'exit_cancel',
+          },
+        })
+        setLastClarification(null)
+        setPendingOptions([])
+        setPendingOptionsMessageId(null)
+        setPendingOptionsGraceCount(0)
+        const exitMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: 'No problem — what would you like to do instead?',
+          timestamp: new Date(),
+          isError: false,
+        }
+        addMessage(exitMessage)
+        setIsLoading(false)
+        return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+      }
+
+      // Ambiguous exit, first time, options visible → ask confirm (§122-123)
+      if (exitClassification === 'ambiguous' && optionsAreVisible) {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'clarification_tier1a_exit_confirm',
+          metadata: {
+            userInput: trimmedInput,
+            exitCount: currentExitCount,
+            response_fit_intent: 'potential_exit',
+          },
+        })
+        // Increment exitCount, keep options visible, show confirm prompt
+        setLastClarification({
+          ...lastClarification!,
+          exitCount: currentExitCount + 1,
+        })
+        const confirmMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: 'Do you want to cancel and start over, or keep choosing from these options?',
+          timestamp: new Date(),
+          isError: false,
+          options: lastClarification!.options!.map(opt => ({
+            type: opt.type as SelectionOption['type'],
+            id: opt.id,
+            label: opt.label,
+            sublabel: opt.sublabel,
+            data: {} as SelectionOption['data'],
+          })),
+        }
+        addMessage(confirmMessage)
+        setIsLoading(false)
+        return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+      }
+
+      // Ambiguous exit without visible options → hard-exit (no options to preserve)
       void debugLog({
         component: 'ChatNavigation',
         action: 'clarification_tier1a_exit_phrase',
-        metadata: { userInput: trimmedInput, response_fit_intent: 'exit_cancel' },
+        metadata: {
+          userInput: trimmedInput,
+          exitClassification,
+          exitCount: currentExitCount,
+          noVisibleOptions: true,
+          response_fit_intent: 'exit_cancel',
+        },
       })
       setLastClarification(null)
       setPendingOptions([])

@@ -117,6 +117,8 @@ export interface LastClarificationState {
   attemptCount?: number
   /** "No" count for repeated-no escalation (per clarification-response-fit-plan.md §122-130) */
   noCount?: number
+  /** Exit intent count for exit confirmation (per clarification-response-fit-plan.md §120-130) */
+  exitCount?: number
 }
 
 /**

@@ -425,28 +425,67 @@ export function getExitOptions(): ExitOption[] {
 }
 
 /**
- * Check if input is an explicit exit phrase.
- * Per plan: "cancel / never mind / stop / forget it"
+ * Check if input is any exit phrase (explicit or ambiguous).
+ * Kept for backward compatibility — callers that only need a boolean.
  *
  * NOTE: "no" by itself is NOT an exit - it's handled separately as rejection/repair.
  * NOTE: "none of these/those" is NOT an exit - it triggers Refine Mode (list rejection).
- *
- * Only explicit exits clear clarification completely.
  */
 export function isExitPhrase(input: string): boolean {
+  return classifyExitIntent(input) !== 'none'
+}
+
+/**
+ * Classify exit intent as explicit, ambiguous, or none.
+ * Per clarification-response-fit-plan.md §103-130 (Visible Options = Active):
+ *
+ * Pure text classifier — no state. Repeat-exit logic lives in the routing layer.
+ *
+ * - **explicit**: Exit word + direct object ("cancel this", "stop the selection"),
+ *   or exit word + reset keyword ("start over", "restart", "begin again").
+ *   → Hard-exit immediately.
+ * - **ambiguous**: Single exit word without qualifier ("stop", "cancel", "never mind").
+ *   → Ask confirmation, keep options visible.
+ * - **none**: Not an exit phrase.
+ */
+export type ExitClassification = 'explicit' | 'ambiguous' | 'none'
+
+export function classifyExitIntent(input: string): ExitClassification {
   const normalizedInput = input.toLowerCase().trim()
 
-  // First check if it's a list rejection (NOT an exit)
+  // List rejection is NOT an exit
   if (isListRejectionPhrase(normalizedInput)) {
-    return false
+    return 'none'
   }
 
-  const exitPhrases = [
+  // Explicit exit: exit word + direct object, or reset keyword
+  // Per plan §114-118
+  const explicitExitPatterns = [
+    /\bcancel\s+(this|that|it|the\s+selection|these|those|the\s+options)\b/,
+    /\bstop\s+(this|that|it|the\s+selection|these|those|choosing)\b/,
+    /\bforget\s+(this|that|about\s+(this|that|it))\b/,
+    /\bnever\s*mind\s+(this|that|it|the\s+selection)\b/,
+    /\bstart\s+over\b/,
+    /\brestart\b/,
+    /\bbegin\s+again\b/,
+  ]
+
+  if (explicitExitPatterns.some(pattern => pattern.test(normalizedInput))) {
+    return 'explicit'
+  }
+
+  // Ambiguous exit: single exit word without qualifier
+  const ambiguousExitPhrases = [
     'cancel', 'never mind', 'nevermind', 'stop',
-    'forget it', 'start over', 'exit',
+    'forget it', 'exit',
     'quit', 'no thanks', 'skip', 'something else',
   ]
-  return exitPhrases.some(phrase => normalizedInput.includes(phrase))
+
+  if (ambiguousExitPhrases.some(phrase => normalizedInput.includes(phrase))) {
+    return 'ambiguous'
+  }
+
+  return 'none'
 }
 
 /**
