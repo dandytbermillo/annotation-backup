@@ -128,7 +128,24 @@ All other single‑word exits become **potential_exit** → confirm.
   - **Ordinal / label** → normal selection path (do not hard‑exit).
   - **Another exit phrase** → hard‑exit.
 
-### 4) Noise / Nonsense Definition (Deterministic)
+### 4) Visible Options = Active (Selection Persistence)
+If options are still **visibly on screen**, the user should be able to keep selecting
+from that list even after one option has been executed — unless they hard‑cancel or
+clearly switch topics.
+
+Rule:
+- Keep a **soft‑active option window** after any selection.
+- During the window, allow **ordinal/label selection** to resolve against the last shown options,
+  even if `lastClarification` was cleared.
+- Invalidate the window only on:
+  - explicit exit (“cancel this”, “start over”),
+  - clear new topic command,
+  - options replaced by a new list.
+
+Recommended defaults:
+- `softActiveTurnLimit = 2` (no time‑based expiry if options are still visible).
+
+### 5) Noise / Nonsense Definition (Deterministic)
 Treat input as **noise** if any are true:
 - alphabetic ratio < 50%
 - token count == 1 and token length < 3
@@ -137,7 +154,7 @@ Treat input as **noise** if any are true:
 
 Noise should never trigger selection or zero‑overlap escape.
 
-### 5) Noise Escalation (Human‑Feel, Optional)
+### 6) Noise Escalation (Human‑Feel, Optional)
 If the user sends **multiple noise inputs in a row**, reuse the same clarification template but add a gentle escalation after the second noisy attempt.
 
 Suggested policy:
@@ -147,7 +164,7 @@ Suggested policy:
 
 This is purely UX pacing; it does **not** change routing or selection rules.
 
-### 6) Repeated “No” Escalation (NEW)
+### 7) Repeated “No” Escalation (NEW)
 If the user replies **“no”** repeatedly to the same option set, treat the second “no” as a **list rejection** and
 switch to the refine prompt.
 
@@ -238,6 +255,7 @@ Add the following to measure impact:
 8) Same option set, user replies “no” twice → second “no” → **reject_list** → refine prompt
 9) Options visible, user says “stop” → **confirm exit**, keep options visible
 10) Options visible, user says “cancel this” → **hard exit**, clear options
+11) After opening one option, options still visible → “second option” selects against **last shown options** (soft‑active window)
 
 ---
 

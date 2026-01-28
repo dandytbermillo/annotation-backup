@@ -30,6 +30,8 @@
 When clarification is active:
 
 0. **Post‑action repair window** (if no clarification but snapshot exists) → restore list + repair prompt
+0b. **Soft‑active selection window** (if no clarification but last options are still visible)
+    → allow ordinal/label selection against last shown options
 1. **Noise pre‑check** (alphabetic ratio / short token / no vowel / emoji smash) → re‑prompt
 2. **Reject list** (“none of these/none of those/neither”) → refine prompt
 3. **Exit / cancel** (with confirmation when options are visible)
@@ -103,6 +105,17 @@ This keeps the detector pure while routing handles repeat intent and confirm flo
   - new‑topic escape
   - LLM reroute decision
 - If repair phrase arrives with no active clarification but snapshot exists → restore options + repair prompt.
+
+### 5c) Soft‑Active Selection Window (Visible = Active)
+- Keep `lastOptionsShown` for **2 turns** after any selection (configurable).
+- If `lastClarification` is cleared **but options are still visible**, allow:
+  - ordinal selection (“first/second/2”)
+  - direct label match
+  against `lastOptionsShown`.
+- Clear the window on:
+  - explicit exit (“cancel this”, “start over”),
+  - clear new topic command,
+  - new options list replaces the old one.
 
 ---
 
