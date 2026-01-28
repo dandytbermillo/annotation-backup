@@ -218,6 +218,8 @@ If the input is a near‑match but ambiguous (soft_reject), ask directly:
 ### Short Hint Words vs New Topic (Clarified)
 Single or two‑token hints (e.g., “settings”, “profile”) should **not** be treated as `new_topic` unless they include a verb/command form (e.g., “open settings”, “show profile”).
 
+**Interrupt behavior:** See `clarification-interrupt-resume-plan.md` for how new‑topic commands pause the current list and require an explicit return signal to resume it.
+
 ### Exit Confirmation Prompt (NEW)
 When options are visible and exit intent is ambiguous:
 “Do you want to cancel and start over, or keep choosing from these options?”

@@ -40,6 +40,7 @@ When clarification is active:
 6. **Label / alias match** → select
 7. **Hesitation** (“hmm”, “idk”) → soft prompt, no attempt increment
 8. **Clear command / new topic** → escape (per existing rules; verbs bypass short‑hint guard)
+   - See `clarification-interrupt-resume-plan.md` for pause/return behavior.
 9. **Response‑Fit classifier** (deterministic → optional LLM)
 10. **Escalation / zero‑overlap escape** (as last resort)
 
