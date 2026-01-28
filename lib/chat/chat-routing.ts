@@ -1551,12 +1551,12 @@ export async function handleClarificationIntercept(
 
   // ==========================================================================
   // POST-ACTION ORDINAL WINDOW (Selection Persistence, per plan §131-147)
-  // If no active clarification but snapshot exists within turn limit,
-  // ordinals resolve against the last shown options (soft-active window).
+  // "Visible = active": if options are still visible (snapshot exists and hasn't
+  // been invalidated by exit/topic/new list), ordinals resolve against them.
+  // No turn-limit while options remain visible (per plan §144).
   // ==========================================================================
   if (!lastClarification &&
       clarificationSnapshot &&
-      clarificationSnapshot.turnsSinceSet < SNAPSHOT_TURN_LIMIT &&
       clarificationSnapshot.options.length > 0) {
     const snapshotSelection = isSelectionOnly(
       trimmedInput,
@@ -1592,8 +1592,10 @@ export async function handleClarificationIntercept(
       }
 
       // Update repair memory with this selection
+      // Do NOT clear snapshot on selection — per plan §138: "keep them available
+      // while they remain visible." Snapshot is only invalidated by explicit exit,
+      // topic change, or a new list replacing it.
       setRepairMemory(selectedOption.id, clarificationSnapshot.options)
-      clearClarificationSnapshot()
       setIsLoading(false)
       handleSelectOption(optionToSelect)
       return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
