@@ -134,16 +134,14 @@ from that list even after one option has been executed — unless they hard‑ca
 clearly switch topics.
 
 Rule:
-- Keep a **soft‑active option window** after any selection.
-- During the window, allow **ordinal/label selection** to resolve against the last shown options,
-  even if `lastClarification` was cleared.
-- Invalidate the window only on:
+- Treat **visible options as active** for selection (ordinal/label) even after a selection.
+- Do **not** clear the last options on selection; keep them available while they remain visible.
+- Invalidate only on:
   - explicit exit (“cancel this”, “start over”),
   - clear new topic command,
   - options replaced by a new list.
 
-Recommended defaults:
-- `softActiveTurnLimit = 2` (no time‑based expiry if options are still visible).
+No turn‑limit while options remain visible.
 
 ### 5) Noise / Nonsense Definition (Deterministic)
 Treat input as **noise** if any are true:

@@ -30,9 +30,10 @@ import {
 } from '@/lib/chat/query-patterns'
 import { isBareNounQuery, maybeFormatSnippetWithHs3, dedupeHeaderPath, stripMarkdownHeadersForUI } from '@/lib/chat/doc-routing'
 import type { UIContext } from '@/lib/chat/intent-prompt'
-import type { ChatMessage, DocRetrievalState, SelectionOption, LastClarificationState } from '@/lib/chat'
-import type { ClarificationOption, RepairMemoryState, ClarificationSnapshot } from '@/lib/chat/chat-navigation-context'
+import type { ChatMessage, DocRetrievalState, SelectionOption, LastClarificationState, WorkspaceMatch, NoteMatch } from '@/lib/chat'
+import type { ClarificationOption, RepairMemoryState, ClarificationSnapshot, PanelDrawerData, DocData } from '@/lib/chat/chat-navigation-context'
 import { REPAIR_MEMORY_TURN_LIMIT, SNAPSHOT_TURN_LIMIT } from '@/lib/chat/chat-navigation-context'
+import type { EntryMatch } from '@/lib/chat/resolution-types'
 import { matchVisiblePanelCommand, type VisibleWidget } from '@/lib/chat/panel-command-matcher'
 import {
   mapOffMenuInput,
@@ -1273,6 +1274,48 @@ function extractOrdinalFromPhrase(input: string, optionCount: number): number | 
 }
 
 /**
+ * Reconstruct the `data` payload for a ClarificationOption when selecting from
+ * a snapshot (post-action ordinal/repair window). ClarificationOption doesn't
+ * store data, so we build minimal-valid data from id/label/type.
+ * Per plan §131-147 (Selection Persistence).
+ */
+function reconstructSnapshotData(option: ClarificationOption): SelectionOption['data'] {
+  switch (option.type) {
+    case 'panel_drawer':
+      return {
+        panelId: option.id,
+        panelTitle: option.label,
+        panelType: 'default',
+      } as PanelDrawerData
+    case 'doc':
+      return { docSlug: option.id } as DocData
+    case 'note':
+      return {
+        id: option.id,
+        title: option.label,
+        noteId: option.id,
+      } as NoteMatch
+    case 'workspace':
+      return {
+        id: option.id,
+        name: option.label,
+        entryId: option.id,
+        entryName: option.label,
+        isDefault: false,
+      } as WorkspaceMatch
+    case 'entry':
+      return {
+        id: option.id,
+        name: option.label,
+        isSystem: false,
+      } as EntryMatch
+    default:
+      // Fallback: use id-based doc data
+      return { docSlug: option.id } as DocData
+  }
+}
+
+/**
  * Handle clarification mode intercept.
  * When clarification is active, ALL input goes through this handler first.
  * Clarification handling runs BEFORE new-intent detection to avoid premature exit.
@@ -1506,6 +1549,57 @@ export async function handleClarificationIntercept(
     return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
   }
 
+  // ==========================================================================
+  // POST-ACTION ORDINAL WINDOW (Selection Persistence, per plan §131-147)
+  // If no active clarification but snapshot exists within turn limit,
+  // ordinals resolve against the last shown options (soft-active window).
+  // ==========================================================================
+  if (!lastClarification &&
+      clarificationSnapshot &&
+      clarificationSnapshot.turnsSinceSet < SNAPSHOT_TURN_LIMIT &&
+      clarificationSnapshot.options.length > 0) {
+    const snapshotSelection = isSelectionOnly(
+      trimmedInput,
+      clarificationSnapshot.options.length,
+      clarificationSnapshot.options.map(o => o.label)
+    )
+
+    if (snapshotSelection.isSelection && snapshotSelection.index !== undefined) {
+      const selectedOption = clarificationSnapshot.options[snapshotSelection.index]
+
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'post_action_ordinal_window',
+        metadata: {
+          userInput: trimmedInput,
+          selectedIndex: snapshotSelection.index,
+          selectedLabel: selectedOption.label,
+          selectedType: selectedOption.type,
+          snapshotTurnsSince: clarificationSnapshot.turnsSinceSet,
+          response_fit_intent: 'select',
+        },
+      })
+
+      // Reconstruct data based on option type since ClarificationOption has no data field
+      const reconstructedData = reconstructSnapshotData(selectedOption)
+
+      const optionToSelect: SelectionOption = {
+        type: selectedOption.type as SelectionOption['type'],
+        id: selectedOption.id,
+        label: selectedOption.label,
+        sublabel: selectedOption.sublabel,
+        data: reconstructedData,
+      }
+
+      // Update repair memory with this selection
+      setRepairMemory(selectedOption.id, clarificationSnapshot.options)
+      clearClarificationSnapshot()
+      setIsLoading(false)
+      handleSelectOption(optionToSelect)
+      return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+    }
+  }
+
   // Increment snapshot turn counter for every message (so it expires after limit)
   incrementSnapshotTurn()
 
@@ -1528,6 +1622,9 @@ export async function handleClarificationIntercept(
     // Helper: Execute nextAction (show workspace picker for notes_scope)
     const executeNextAction = async () => {
       setLastClarification(null)
+      setPendingOptions([])
+      setPendingOptionsMessageId(null)
+      setPendingOptionsGraceCount(0)
 
       try {
         const workspacesUrl = currentEntryId
@@ -1636,6 +1733,9 @@ export async function handleClarificationIntercept(
           saveClarificationSnapshot(lastClarification)
         }
         setLastClarification(null)
+        setPendingOptions([])
+        setPendingOptionsMessageId(null)
+        setPendingOptionsGraceCount(0)
         return true
       }
 
@@ -2053,6 +2153,7 @@ export async function handleClarificationIntercept(
           // Update repair memory with the new selection
           setRepairMemory(otherOption.id, lastClarification!.options!)
           setLastClarification(null)
+          setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
 
           const optionToSelect: SelectionOption = {
             type: (fullOption?.type ?? otherOption.type) as SelectionOption['type'],
@@ -2310,6 +2411,7 @@ export async function handleClarificationIntercept(
           // Save clarification snapshot before escaping (per plan §153-161)
           saveClarificationSnapshot(lastClarification)
           setLastClarification(null)
+          setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
           clarificationCleared = true
           // Fall through to normal routing with the normalized input
           // The normalized input will be handled by other handlers
@@ -2387,6 +2489,7 @@ export async function handleClarificationIntercept(
           saveClarificationSnapshot(lastClarification)
           setRepairMemory(matchedOption.id, lastClarification.options)
           setLastClarification(null)
+          setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
 
           const optionToSelect: SelectionOption = {
             type: (fullOption?.type ?? matchedOption.type) as SelectionOption['type'],
@@ -2452,6 +2555,7 @@ export async function handleClarificationIntercept(
         // Set repair memory for label selection (enables "the other one" after label match)
         setRepairMemory(matchedOption.id, lastClarification.options)
         setLastClarification(null)
+        setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
 
         if (fullOption) {
           const optionToSelect: SelectionOption = {
@@ -2556,6 +2660,7 @@ export async function handleClarificationIntercept(
         // Set repair memory for ordinal selection (enables "the other one" after ordinal)
         setRepairMemory(selectedOption.id, lastClarification.options)
         setLastClarification(null)
+        setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
 
         const optionToSelect: SelectionOption = {
           type: (fullOption?.type ?? selectedOption.type) as SelectionOption['type'],
@@ -2641,6 +2746,7 @@ export async function handleClarificationIntercept(
             setRepairMemory(matchedOption.id, lastClarification.options)
 
             setLastClarification(null)
+            setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
 
             const optionToSelect: SelectionOption = {
               type: (fullOption?.type ?? matchedOption.type) as SelectionOption['type'],
@@ -2766,6 +2872,7 @@ export async function handleClarificationIntercept(
           // Clear repair memory on new topic
           clearRepairMemory()
           setLastClarification(null)
+          setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
           clarificationCleared = true
           // Fall through to normal routing
           break
@@ -2846,6 +2953,7 @@ export async function handleClarificationIntercept(
                   saveClarificationSnapshot(lastClarification)
                   setRepairMemory(selectedOpt.id, lastClarification.options)
                   setLastClarification(null)
+                  setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
 
                   if (fullOption) {
                     const optionToSelect: SelectionOption = {
@@ -2885,6 +2993,7 @@ export async function handleClarificationIntercept(
                 saveClarificationSnapshot(lastClarification)
                 clearRepairMemory()
                 setLastClarification(null)
+                setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
                 clarificationCleared = true
                 // Fall through to normal routing
                 break
@@ -2922,6 +3031,7 @@ export async function handleClarificationIntercept(
                       saveClarificationSnapshot(lastClarification)
                       setRepairMemory(otherOption.id, repairMemory.lastOptionsShown)
                       setLastClarification(null)
+                      setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
 
                       const optionToSelect: SelectionOption = {
                         type: otherOption.type as SelectionOption['type'],
@@ -3224,6 +3334,7 @@ export async function handleClarificationIntercept(
         saveClarificationSnapshot(lastClarification)
       }
       setLastClarification(null)
+      setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
       clarificationCleared = true
       // Don't return - continue to check if other handlers should process
     }
@@ -3267,6 +3378,7 @@ export async function handleClarificationIntercept(
         })
 
         setLastClarification(null)
+        setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
         clarificationCleared = true
 
         if (fullOption) {

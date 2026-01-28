@@ -2958,6 +2958,15 @@ function ChatNavigationPanelContent({
         openPanelWithTracking(resolution.viewPanelContent, resolution.panelId)
       }
     } catch (error) {
+      console.error('[ChatNavigation] sendMessage error:', error)
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'sendMessage_error',
+        metadata: {
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack?.split('\n').slice(0, 5).join('\n') : undefined,
+        },
+      })
       const errorMessage: ChatMessage = {
         id: `error-${Date.now()}`,
         role: 'assistant',
@@ -2969,7 +2978,7 @@ function ChatNavigationPanelContent({
     } finally {
       setIsLoading(false)
     }
-  }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction, messages, addMessage, setInput, sessionState, setLastAction, setLastQuickLinksBadge, appendRequestHistory, openPanelWithTracking, openPanelDrawer, conversationSummary, pendingOptions, pendingOptionsGraceCount, handleSelectOption, lastPreview, lastSuggestion, setLastSuggestion, addRejectedSuggestions, clearRejectedSuggestions, isRejectedSuggestion, uiContext, visiblePanels, focusedPanelId, lastClarification, setLastClarification, setNotesScopeFollowUpActive])
+  }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction, messages, addMessage, setInput, sessionState, setLastAction, setLastQuickLinksBadge, appendRequestHistory, openPanelWithTracking, openPanelDrawer, conversationSummary, pendingOptions, pendingOptionsGraceCount, handleSelectOption, lastPreview, lastSuggestion, setLastSuggestion, addRejectedSuggestions, clearRejectedSuggestions, isRejectedSuggestion, uiContext, visiblePanels, focusedPanelId, lastClarification, setLastClarification, setNotesScopeFollowUpActive, clarificationSnapshot, saveClarificationSnapshot, incrementSnapshotTurn, clearClarificationSnapshot, repairMemory, setRepairMemory, incrementRepairMemoryTurn, clearRepairMemory, docRetrievalState, updateDocRetrievalState, incrementOpenCount])
 
   // ---------------------------------------------------------------------------
   // Clear Chat
