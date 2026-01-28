@@ -220,6 +220,8 @@ Single or two‑token hints (e.g., “settings”, “profile”) should **not**
 
 **Interrupt behavior:** See `clarification-interrupt-resume-plan.md` for how new‑topic commands pause the current list and require an explicit return signal to resume it.
 
+**Stop/cancel scope:** See `clarification-stop-scope-plan.md` for scope‑aware stop handling and no‑auto‑resume rules.
+
 ### Exit Confirmation Prompt (NEW)
 When options are visible and exit intent is ambiguous:
 “Do you want to cancel and start over, or keep choosing from these options?”

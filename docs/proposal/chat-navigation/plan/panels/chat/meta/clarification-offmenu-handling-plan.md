@@ -187,7 +187,8 @@ Treat repair/rejection phrases based on **scope**:
 - **“no”** → ambiguous refusal, stay in context, re‑show options
 - **list rejection phrases** (user may say “none of these / none of those / neither”) → reject the entire list, switch to **refine prompt** (ask for one detail)
 
-**Note:** only explicit exits (“cancel / never mind / stop”) should fully clear clarification.
+**Note:** only **explicit** exits (e.g., “cancel this”, “stop this”, “start over”) should fully clear clarification.  
+Single‑word “stop/cancel” should be treated as **ambiguous** when options are visible (confirm first).
 
 ### F) Loop control
 Escalation is used for **guidance**, not access.
@@ -231,7 +232,7 @@ Use the same base structure everywhere, but adjust the **tail** based on what ju
 ---
 
 ## Exit Handling
-On explicit exit (“cancel / never mind / stop”):
+On explicit exit (e.g., “cancel this / stop this / start over”):
 - clear clarification
 - ask open-ended question (“No problem — what would you like to do instead?”)
 

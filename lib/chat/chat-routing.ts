@@ -32,7 +32,7 @@ import { isBareNounQuery, maybeFormatSnippetWithHs3, dedupeHeaderPath, stripMark
 import type { UIContext } from '@/lib/chat/intent-prompt'
 import type { ChatMessage, DocRetrievalState, SelectionOption, LastClarificationState, WorkspaceMatch, NoteMatch } from '@/lib/chat'
 import type { ClarificationOption, RepairMemoryState, ClarificationSnapshot, PanelDrawerData, DocData } from '@/lib/chat/chat-navigation-context'
-import { REPAIR_MEMORY_TURN_LIMIT, SNAPSHOT_TURN_LIMIT } from '@/lib/chat/chat-navigation-context'
+import { REPAIR_MEMORY_TURN_LIMIT } from '@/lib/chat/chat-navigation-context'
 import type { EntryMatch } from '@/lib/chat/resolution-types'
 import { matchVisiblePanelCommand, type VisibleWidget } from '@/lib/chat/panel-command-matcher'
 import {
@@ -1109,7 +1109,7 @@ export interface ClarificationInterceptContext {
 
   // Clarification snapshot for post-action repair window (per plan §153-161)
   clarificationSnapshot: ClarificationSnapshot | null
-  saveClarificationSnapshot: (clarification: LastClarificationState) => void
+  saveClarificationSnapshot: (clarification: LastClarificationState, paused?: boolean) => void
   incrementSnapshotTurn: () => void
   clearClarificationSnapshot: () => void
 }
@@ -1488,7 +1488,6 @@ export async function handleClarificationIntercept(
   if (isRepairPhrase(trimmedInput) &&
       clarificationSnapshot &&
       !clarificationSnapshot.paused &&
-      clarificationSnapshot.turnsSinceSet < SNAPSHOT_TURN_LIMIT &&
       clarificationSnapshot.options.length > 0) {
 
     void debugLog({
@@ -1695,8 +1694,8 @@ export async function handleClarificationIntercept(
 
   // Increment snapshot turn counter for every message.
   // incrementSnapshotTurn() handles expiry internally:
-  //   - Active snapshots expire after SNAPSHOT_TURN_LIMIT (2 turns)
-  //   - Paused snapshots expire after PAUSED_SNAPSHOT_TURN_LIMIT (3 turns)
+  //   - Active snapshots: no turn-based expiry ("visible = active", per plan §144)
+  //   - Paused snapshots: expire after PAUSED_SNAPSHOT_TURN_LIMIT (3 turns)
   incrementSnapshotTurn()
 
   // Check if we should enter clarification mode

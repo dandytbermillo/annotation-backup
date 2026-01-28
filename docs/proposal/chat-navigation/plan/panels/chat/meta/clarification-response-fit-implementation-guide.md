@@ -41,8 +41,9 @@ When clarification is active:
 7. **Hesitation** (“hmm”, “idk”) → soft prompt, no attempt increment
 8. **Clear command / new topic** → escape (per existing rules; verbs bypass short‑hint guard)
    - See `clarification-interrupt-resume-plan.md` for pause/return behavior.
-9. **Response‑Fit classifier** (deterministic → optional LLM)
-10. **Escalation / zero‑overlap escape** (as last resort)
+9. **Return signal detection** (if a paused list exists, handle explicit return before selection)
+10. **Response‑Fit classifier** (deterministic → optional LLM)
+11. **Escalation / zero‑overlap escape** (as last resort)
 
 ---
 
