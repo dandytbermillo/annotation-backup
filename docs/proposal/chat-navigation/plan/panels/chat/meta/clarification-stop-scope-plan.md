@@ -47,6 +47,11 @@ If the user repeats a stop‑like input within **N turns** after a confirmed sto
 
 Suggested default: `N = 2`.
 
+**Suppression reset rule (important):**  
+Reset the suppression counter on **any non‑exit input**, even if a new command
+executes. This prevents suppression from leaking across unrelated actions
+(e.g., “cancel this” → “open recent” → “stop” should **not** be suppressed).
+
 ---
 
 ## Explicit vs Ambiguous Stop (Clarified)
