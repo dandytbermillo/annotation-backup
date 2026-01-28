@@ -32,7 +32,7 @@ import { isBareNounQuery, maybeFormatSnippetWithHs3, dedupeHeaderPath, stripMark
 import type { UIContext } from '@/lib/chat/intent-prompt'
 import type { ChatMessage, DocRetrievalState, SelectionOption, LastClarificationState, WorkspaceMatch, NoteMatch } from '@/lib/chat'
 import type { ClarificationOption, RepairMemoryState, ClarificationSnapshot, PanelDrawerData, DocData } from '@/lib/chat/chat-navigation-context'
-import { REPAIR_MEMORY_TURN_LIMIT } from '@/lib/chat/chat-navigation-context'
+import { REPAIR_MEMORY_TURN_LIMIT, STOP_SUPPRESSION_TURN_LIMIT } from '@/lib/chat/chat-navigation-context'
 import type { EntryMatch } from '@/lib/chat/resolution-types'
 import { matchVisiblePanelCommand, type VisibleWidget } from '@/lib/chat/panel-command-matcher'
 import {
@@ -1112,6 +1112,11 @@ export interface ClarificationInterceptContext {
   saveClarificationSnapshot: (clarification: LastClarificationState, paused?: boolean) => void
   incrementSnapshotTurn: () => void
   clearClarificationSnapshot: () => void
+
+  // Stop suppression (per stop-scope-plan §40-48)
+  stopSuppressionCount: number
+  setStopSuppressionCount: (count: number) => void
+  decrementStopSuppression: () => void
 }
 
 /**
@@ -1356,6 +1361,9 @@ export async function handleClarificationIntercept(
     saveClarificationSnapshot,
     incrementSnapshotTurn,
     clearClarificationSnapshot,
+    // Stop suppression (per stop-scope-plan §40-48)
+    stopSuppressionCount,
+    setStopSuppressionCount,
   } = ctx
 
   // TD-3: Check for bare noun new intent
@@ -1379,6 +1387,14 @@ export async function handleClarificationIntercept(
 
   // Track if clarification was cleared within this execution cycle
   let clarificationCleared = false
+
+  // Reset stop suppression on any non-exit input (per stop-scope-plan §40-48).
+  // Must run before any early-return path so the counter doesn't leak across
+  // unrelated commands (e.g., "cancel this" → "open recent" → "stop" should
+  // NOT suppress the second stop).
+  if (stopSuppressionCount > 0 && !isExitPhrase(trimmedInput)) {
+    setStopSuppressionCount(0)
+  }
 
   // ==========================================================================
   // EARLY REPAIR MEMORY HANDLER (before clarification block)
@@ -1688,6 +1704,98 @@ export async function handleClarificationIntercept(
       setRepairMemory(selectedOption.id, clarificationSnapshot.options)
       setIsLoading(false)
       handleSelectOption(optionToSelect)
+      return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+    }
+  }
+
+  // ==========================================================================
+  // STOP SCOPE RESOLUTION — Priority 3: No Active Scope
+  // Per clarification-stop-scope-plan.md §8-24:
+  // When no active clarification exists, exit phrases are caught here to prevent
+  // them from falling through to doc/panel routing (which re-triggers old searches).
+  // ==========================================================================
+  if (!lastClarification && isExitPhrase(trimmedInput)) {
+    // Repeated stop suppression (per plan §40-48):
+    // If user already confirmed stop within the last N turns, suppress re-confirm.
+    if (stopSuppressionCount > 0) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'stop_scope_repeated_suppression',
+        metadata: {
+          userInput: trimmedInput,
+          stopSuppressionCount,
+        },
+      })
+      // Don't decrement here — decrementStopSuppression() runs below for every turn
+      const suppressMessage: ChatMessage = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: 'All set — what would you like to do?',
+        timestamp: new Date(),
+        isError: false,
+      }
+      addMessage(suppressMessage)
+      setIsLoading(false)
+      return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+    }
+
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'stop_scope_no_active_scope',
+      metadata: {
+        userInput: trimmedInput,
+        hadSnapshot: !!clarificationSnapshot,
+        snapshotPaused: clarificationSnapshot?.paused ?? null,
+      },
+    })
+
+    // Clear snapshot if exists (no auto-resume after stop, per plan §27-36)
+    if (clarificationSnapshot) {
+      clearClarificationSnapshot()
+    }
+
+    // Set suppression counter for next N=2 turns
+    setStopSuppressionCount(STOP_SUPPRESSION_TURN_LIMIT)
+
+    const exitMessage: ChatMessage = {
+      id: `assistant-${Date.now()}`,
+      role: 'assistant',
+      content: 'No problem — what would you like to do instead?',
+      timestamp: new Date(),
+      isError: false,
+    }
+    addMessage(exitMessage)
+    setIsLoading(false)
+    return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+  }
+
+  // ==========================================================================
+  // BARE ORDINAL DETECTION — No context available
+  // Per stop-scope-plan acceptance test 3 (§74-76):
+  // After stop clears the snapshot, ordinals like "second option" should not
+  // silently fall through to doc routing. Ask what list the user means.
+  // ==========================================================================
+  if (!lastClarification && !clarificationSnapshot) {
+    const bareOrdinalCheck = isSelectionOnly(trimmedInput, 10, [])
+    if (bareOrdinalCheck.isSelection) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'bare_ordinal_no_context',
+        metadata: {
+          userInput: trimmedInput,
+          detectedIndex: bareOrdinalCheck.index,
+        },
+      })
+
+      const askMessage: ChatMessage = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: 'Which options are you referring to?',
+        timestamp: new Date(),
+        isError: false,
+      }
+      addMessage(askMessage)
+      setIsLoading(false)
       return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
     }
   }
@@ -2031,10 +2139,11 @@ export async function handleClarificationIntercept(
         setPendingOptionsMessageId(null)
         setPendingOptionsGraceCount(0)
         clearClarificationSnapshot() // Hard exit destroys snapshot (per interrupt-resume-plan §139)
+        setStopSuppressionCount(STOP_SUPPRESSION_TURN_LIMIT) // Per stop-scope-plan §40-48
         const exitMessage: ChatMessage = {
           id: `assistant-${Date.now()}`,
           role: 'assistant',
-          content: 'No problem — what would you like to do instead?',
+          content: 'Okay — we\'ll drop that. What would you like to do instead?',
           timestamp: new Date(),
           isError: false,
         }
@@ -2098,10 +2207,11 @@ export async function handleClarificationIntercept(
         setPendingOptionsMessageId(null)
         setPendingOptionsGraceCount(0)
         clearClarificationSnapshot() // Hard exit destroys snapshot (per interrupt-resume-plan §139)
+        setStopSuppressionCount(STOP_SUPPRESSION_TURN_LIMIT) // Per stop-scope-plan §40-48
         const exitMessage: ChatMessage = {
           id: `assistant-${Date.now()}`,
           role: 'assistant',
-          content: 'No problem — what would you like to do instead?',
+          content: 'Okay — we\'ll drop that. What would you like to do instead?',
           timestamp: new Date(),
           isError: false,
         }
@@ -2162,10 +2272,11 @@ export async function handleClarificationIntercept(
       setPendingOptionsMessageId(null)
       setPendingOptionsGraceCount(0)
       clearClarificationSnapshot() // Hard exit destroys snapshot (per interrupt-resume-plan §139)
+      setStopSuppressionCount(STOP_SUPPRESSION_TURN_LIMIT) // Per stop-scope-plan §40-48
       const exitMessage: ChatMessage = {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
-        content: 'No problem — what would you like to do instead?',
+        content: 'Okay — we\'ll drop that. What would you like to do instead?',
         timestamp: new Date(),
         isError: false,
       }

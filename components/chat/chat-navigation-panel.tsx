@@ -709,6 +709,10 @@ function ChatNavigationPanelContent({
     saveClarificationSnapshot,
     incrementSnapshotTurn,
     clearClarificationSnapshot,
+    // Stop suppression (per stop-scope-plan §40-48)
+    stopSuppressionCount,
+    setStopSuppressionCount,
+    decrementStopSuppression,
   } = useChatNavigationContext()
 
   const { executeAction, selectOption, openPanelDrawer: openPanelDrawerBase } = useChatNavigation({
@@ -1776,6 +1780,10 @@ function ChatNavigationPanelContent({
         saveClarificationSnapshot,
         incrementSnapshotTurn,
         clearClarificationSnapshot,
+        // Stop suppression (per stop-scope-plan §40-48)
+        stopSuppressionCount,
+        setStopSuppressionCount,
+        decrementStopSuppression,
       })
       const { clarificationCleared, isNewQuestionOrCommandDetected } = clarificationResult
       if (clarificationResult.handled) {

@@ -166,6 +166,9 @@ export const SNAPSHOT_TURN_LIMIT = 2
 /** Paused snapshot expiry in turns (per interrupt-resume plan §42-46) */
 export const PAUSED_SNAPSHOT_TURN_LIMIT = 3
 
+/** Repeated stop suppression window in turns (per stop-scope-plan §40-48) */
+export const STOP_SUPPRESSION_TURN_LIMIT = 2
+
 /**
  * Doc retrieval conversation state for follow-ups and corrections.
  * Per general-doc-retrieval-routing-plan.md (v4)
@@ -302,6 +305,10 @@ interface ChatNavigationContextValue {
   saveClarificationSnapshot: (clarification: LastClarificationState, paused?: boolean) => void
   incrementSnapshotTurn: () => void
   clearClarificationSnapshot: () => void
+  // Stop suppression counter (per stop-scope-plan §40-48)
+  stopSuppressionCount: number
+  setStopSuppressionCount: (count: number) => void
+  decrementStopSuppression: () => void
 }
 
 // =============================================================================
@@ -518,6 +525,9 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
 
   // Clarification snapshot for post-action repair window (per plan §153-161)
   const [clarificationSnapshot, setClarificationSnapshotInternal] = useState<ClarificationSnapshot | null>(null)
+
+  // Stop suppression counter (per stop-scope-plan §40-48)
+  const [stopSuppressionCount, setStopSuppressionCountInternal] = useState<number>(0)
 
   // Debounce refs for session state persistence
   const DEBOUNCE_MS = 1000
@@ -1064,6 +1074,15 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     setClarificationSnapshotInternal(null)
   }, [])
 
+  // Stop suppression functions (per stop-scope-plan §40-48)
+  const setStopSuppressionCount = useCallback((count: number) => {
+    setStopSuppressionCountInternal(count)
+  }, [])
+
+  const decrementStopSuppression = useCallback(() => {
+    setStopSuppressionCountInternal((prev) => (prev > 0 ? prev - 1 : 0))
+  }, [])
+
   return (
     <ChatNavigationContext.Provider
       value={{
@@ -1122,6 +1141,10 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         saveClarificationSnapshot,
         incrementSnapshotTurn,
         clearClarificationSnapshot,
+        // Stop suppression (per stop-scope-plan §40-48)
+        stopSuppressionCount,
+        setStopSuppressionCount,
+        decrementStopSuppression,
       }}
     >
       {children}

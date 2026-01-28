@@ -11,8 +11,9 @@ Treat stop/cancel as a **control utterance**, not a destination. Resolve it to t
 **closest active scope** in priority order:
 
 1) **Active execution** (e.g., “Opening Recent…”)  
-   → Stop that execution only.  
-   **Response:** “Okay — stopped.”
+   → **Deferred until cancellable execution exists.**  
+   Rationale: `executeAction`/`selectOption` are fire‑and‑forget today; saying “Okay — stopped”
+   would be misleading without real cancellation support.
 
 2) **Active clarification UI** (pills visible / active selection)  
    → Drop the clarification (do not resume it automatically).  
