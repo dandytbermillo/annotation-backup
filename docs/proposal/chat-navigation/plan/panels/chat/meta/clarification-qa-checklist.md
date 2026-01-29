@@ -86,6 +86,10 @@ Use this quick table to track pass/fail:
    - Expect: paused list restored (deterministic return cue)
    - After interrupt, input: `pls take them back again`
    - Expect: paused list restored (deterministic return cue)
+   - After interrupt, input: `put it back`
+   - Expect: paused list restored (deterministic return cue)
+   - After interrupt, input: `show me what I had before`
+   - Expect: paused list restored (deterministic return cue)
 
 9c) **Return‑cue LLM fallback (paused list)**
    - After interrupt, input: `can you bring those back`

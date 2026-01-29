@@ -60,6 +60,11 @@ paused list exists.
 Examples that should resolve:  
 “back”, “go back”, “pls take them back again”, “return to the options”, “continue that list”
 
+Additional deterministic cues now supported (Tier 1):
+- “put it back” / “put them back” / “put those back”
+- “bring those back”
+- “show me what I had before”
+
 2) **If no return cue matched → constrained LLM fallback (Gemini Flash)**  
 Call the classifier **only when a paused list exists**, with a strict contract:
 ```
