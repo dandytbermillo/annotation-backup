@@ -707,6 +707,7 @@ function ChatNavigationPanelContent({
     // Clarification snapshot for post-action repair window (per plan §153-161)
     clarificationSnapshot,
     saveClarificationSnapshot,
+    pauseSnapshotWithReason,
     incrementSnapshotTurn,
     clearClarificationSnapshot,
     // Stop suppression (per stop-scope-plan §40-48)
@@ -1778,6 +1779,7 @@ function ChatNavigationPanelContent({
         // Clarification snapshot for post-action repair window (per plan §153-161)
         clarificationSnapshot,
         saveClarificationSnapshot,
+        pauseSnapshotWithReason,
         incrementSnapshotTurn,
         clearClarificationSnapshot,
         // Stop suppression (per stop-scope-plan §40-48)

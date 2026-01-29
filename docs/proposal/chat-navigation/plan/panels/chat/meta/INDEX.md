@@ -1,8 +1,8 @@
-# Doc Retrieval Plans — Index
+# Chat Navigation Plans — Index
 
-**Last Updated:** 2026-01-20
+**Last Updated:** 2026-01-29
 
-This index documents the plan timeline for the doc retrieval feature in chat navigation.
+This index documents plan timelines for chat navigation: doc retrieval and clarification/disambiguation.
 
 ---
 
@@ -102,6 +102,56 @@ This index documents the plan timeline for the doc retrieval feature in chat nav
 
 ---
 
+## Clarification & Disambiguation Plans
+
+### 5. Off-Menu Handling Plan (Core)
+**File:** `clarification-offmenu-handling-plan.md`
+**Purpose:** Deterministic clarification tiers, hesitation/repair handling, bounded new-topic detection
+
+**Status:** ✅ Implemented / Iterating
+
+**Related:**
+- `clarification-offmenu-handling-examples.md` — Behavioral examples
+- `clarification-offmenu-handling-implementation-report.md` — Initial implementation report
+
+---
+
+### 6. LLM Last-Resort Fallback Plan
+**File:** `clarification-llm-last-resort-plan.md`
+**Purpose:** Constrained LLM selection among shown options (feature-flagged)
+
+**Status:** ✅ Implemented / Iterating
+
+---
+
+### 7. Response-Fit Classifier Plan (Primary)
+**File:** `clarification-response-fit-plan.md`
+**Purpose:** Intent classification before selection; confidence ladder; noise handling
+
+**Status:** 🔄 Active (current source of truth for clarification flow)
+
+**Related:**
+- `clarification-response-fit-implementation-guide.md` — Checklist-style implementation guide
+- `clarification-qa-checklist.md` — Manual QA checklist
+
+---
+
+### 8. Interrupt / Resume Addendum
+**File:** `clarification-interrupt-resume-plan.md`
+**Purpose:** Pause list on new-topic interruption; resume only on explicit return cue
+
+**Status:** 🔄 Active addendum (overrides Response-Fit where specified)
+
+---
+
+### 9. Stop / Cancel Scope Addendum
+**File:** `clarification-stop-scope-plan.md`
+**Purpose:** Scope-aware stop handling; confirmation for ambiguous stop; no auto-resume
+
+**Status:** 🔄 Active addendum (overrides Response-Fit where specified)
+
+---
+
 ## Implementation Reports
 
 | Date | Report | Plan |
@@ -121,6 +171,7 @@ This index documents the plan timeline for the doc retrieval feature in chat nav
 | 2026-01-20 | `reports/2026-01-20-unified-retrieval-prereq-indexing-implementation-report.md` | Unified Retrieval Prereq 1 |
 | 2026-01-20 | `reports/2026-01-20-prereq4-cross-corpus-ambiguity-implementation-report.md` | Unified Retrieval Prereq 4 |
 | 2026-01-20 | `reports/2026-01-20-prereq5-safety-fallback-implementation-report.md` | Unified Retrieval Prereq 5 |
+| 2026-01-25 | `clarification-offmenu-handling-implementation-report.md` | Clarification off-menu |
 
 ---
 
@@ -148,6 +199,14 @@ This index documents the plan timeline for the doc retrieval feature in chat nav
 ```
 docs/proposal/chat-navigation/plan/panels/chat/meta/
 ├── INDEX.md                                          ← You are here
+├── clarification-offmenu-handling-plan.md            ← Clarification core
+├── clarification-offmenu-handling-examples.md        ← Clarification examples
+├── clarification-llm-last-resort-plan.md             ← Constrained LLM fallback
+├── clarification-response-fit-plan.md                ← Response-fit classifier (primary)
+├── clarification-response-fit-implementation-guide.md← Implementation guide
+├── clarification-qa-checklist.md                     ← Manual QA checklist
+├── clarification-interrupt-resume-plan.md            ← Addendum: interrupt/resume
+├── clarification-stop-scope-plan.md                  ← Addendum: stop/cancel scope
 ├── cursor-style-doc-retrieval-plan.md               ← Plan 1 (Foundation)
 ├── general-doc-retrieval-routing-plan.md            ← Plan 2 (Routing v5)
 ├── 2026-01-14-doc-retrieval-routing-debt-paydown-plan.md  ← Plan 3 (Debt)

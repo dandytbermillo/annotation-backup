@@ -1,4 +1,4 @@
-# Clarification QA Checklist (Single‑Pass)
+=# Clarification QA Checklist (Single‑Pass)
 
 Run these tests in one session to validate the combined behavior from:
 - `clarification-stop-scope-plan.md`
@@ -80,6 +80,18 @@ Use this quick table to track pass/fail:
    - After interrupt, input: `not that`
    - Expect: neutral cancel/clarify prompt  
      (must NOT restore old list or show doc/notes disambiguation)
+
+9b) **Return cue variants (paused list)**
+   - After interrupt, input: `back`
+   - Expect: paused list restored (deterministic return cue)
+   - After interrupt, input: `pls take them back again`
+   - Expect: paused list restored (deterministic return cue)
+
+9c) **Return‑cue LLM fallback (paused list)**
+   - After interrupt, input: `can you bring those back`
+   - If deterministic cue doesn’t match → LLM decides:
+     - `return` → restore list
+     - `not_return` → normal routing
 
 ---
 

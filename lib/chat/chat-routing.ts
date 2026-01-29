@@ -68,6 +68,8 @@ import {
 import {
   shouldCallLLMFallback,
   callClarificationLLMClient,
+  callReturnCueLLM,
+  isLLMFallbackEnabledClient,
 } from '@/lib/chat/clarification-llm-fallback'
 
 // =============================================================================
@@ -1109,7 +1111,8 @@ export interface ClarificationInterceptContext {
 
   // Clarification snapshot for post-action repair window (per plan §153-161)
   clarificationSnapshot: ClarificationSnapshot | null
-  saveClarificationSnapshot: (clarification: LastClarificationState, paused?: boolean) => void
+  saveClarificationSnapshot: (clarification: LastClarificationState, paused?: boolean, pausedReason?: 'interrupt' | 'stop') => void
+  pauseSnapshotWithReason: (reason: 'interrupt' | 'stop') => void
   incrementSnapshotTurn: () => void
   clearClarificationSnapshot: () => void
 
@@ -1359,6 +1362,7 @@ export async function handleClarificationIntercept(
     // Clarification snapshot for post-action repair window (per plan §153-161)
     clarificationSnapshot,
     saveClarificationSnapshot,
+    pauseSnapshotWithReason,
     incrementSnapshotTurn,
     clearClarificationSnapshot,
     // Stop suppression (per stop-scope-plan §40-48)
@@ -1544,7 +1548,7 @@ export async function handleClarificationIntercept(
         id: opt.id,
         label: opt.label,
         sublabel: opt.sublabel,
-        data: {} as SelectionOption['data'],
+        data: reconstructSnapshotData(opt),
       })),
     }
     addMessage(repairMessage)
@@ -1619,12 +1623,18 @@ export async function handleClarificationIntercept(
       }
 
       // Simple return signal (no ordinal): restore the paused list as active clarification
+      // Filter internal intent labels (repair_, _restore, panel_disambiguation, etc.)
+      const rawIntent = clarificationSnapshot.originalIntent
+      const isInternalIntent = !rawIntent || /repair_|_restore|panel_disambiguation|cross_corpus/i.test(rawIntent)
+      const restoreContent = clarificationSnapshot.pausedReason === 'stop'
+        ? 'Here are the options you closed earlier:'
+        : isInternalIntent
+          ? 'Here are the previous options:'
+          : `Here are the options for "${rawIntent}":`
       const restoreMessage: ChatMessage = {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
-        content: clarificationSnapshot.originalIntent
-          ? `Here are the options for "${clarificationSnapshot.originalIntent}":`
-          : 'Here are the previous options:',
+        content: restoreContent,
         timestamp: new Date(),
         isError: false,
         options: clarificationSnapshot.options.map(opt => ({
@@ -1632,7 +1642,7 @@ export async function handleClarificationIntercept(
           id: opt.id,
           label: opt.label,
           sublabel: opt.sublabel,
-          data: {} as SelectionOption['data'],
+          data: reconstructSnapshotData(opt),
         })),
       }
       addMessage(restoreMessage)
@@ -1651,6 +1661,113 @@ export async function handleClarificationIntercept(
       clearClarificationSnapshot()
       setIsLoading(false)
       return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+    }
+
+    // ------------------------------------------------------------------
+    // Tier 2: LLM fallback for return-cue detection (per interrupt-resume-plan §58-64)
+    // Deterministic cue didn't match — ask LLM if the user wants to return.
+    // Only if feature flag is enabled. On failure → hint-style fallback (Tier 3).
+    // ------------------------------------------------------------------
+    if (isLLMFallbackEnabledClient() && !isRepairPhrase(trimmedInput)) {
+      try {
+        const llmResult = await callReturnCueLLM(trimmedInput)
+
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'paused_return_llm_called',
+          metadata: {
+            userInput: trimmedInput,
+            success: llmResult.success,
+            decision: llmResult.response?.decision,
+            confidence: llmResult.response?.confidence,
+            latencyMs: llmResult.latencyMs,
+          },
+        })
+
+        if (llmResult.success && llmResult.response) {
+          if (llmResult.response.decision === 'return') {
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'paused_return_llm_return',
+              metadata: {
+                userInput: trimmedInput,
+                confidence: llmResult.response.confidence,
+                reason: llmResult.response.reason,
+              },
+            })
+
+            // LLM says return → restore the paused list (same logic as deterministic restore)
+            const rawIntent = clarificationSnapshot.originalIntent
+            const isInternalIntent = !rawIntent || /repair_|_restore|panel_disambiguation|cross_corpus/i.test(rawIntent)
+            const restoreContent = clarificationSnapshot.pausedReason === 'stop'
+              ? 'Here are the options you closed earlier:'
+              : isInternalIntent
+                ? 'Here are the previous options:'
+                : `Here are the options for "${rawIntent}":`
+            const restoreMessage: ChatMessage = {
+              id: `assistant-${Date.now()}`,
+              role: 'assistant',
+              content: restoreContent,
+              timestamp: new Date(),
+              isError: false,
+              options: clarificationSnapshot.options.map(opt => ({
+                type: opt.type as SelectionOption['type'],
+                id: opt.id,
+                label: opt.label,
+                sublabel: opt.sublabel,
+                data: reconstructSnapshotData(opt),
+              })),
+            }
+            addMessage(restoreMessage)
+
+            setLastClarification({
+              type: clarificationSnapshot.type,
+              originalIntent: clarificationSnapshot.originalIntent,
+              messageId: restoreMessage.id,
+              timestamp: Date.now(),
+              clarificationQuestion: restoreMessage.content,
+              options: clarificationSnapshot.options,
+              metaCount: 0,
+            })
+
+            clearClarificationSnapshot()
+            setIsLoading(false)
+            return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+          }
+
+          // LLM says not_return → fall through to normal routing
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'paused_return_llm_not_return',
+            metadata: {
+              userInput: trimmedInput,
+              confidence: llmResult.response.confidence,
+              reason: llmResult.response.reason,
+            },
+          })
+        } else {
+          // LLM failed → Tier 3: hint-style fallback (per interrupt-resume-plan §66-68)
+          // Show a hint message but don't block routing — let normal flow continue.
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'paused_return_llm_failed',
+            metadata: {
+              userInput: trimmedInput,
+              error: llmResult.error,
+            },
+          })
+        }
+      } catch (error) {
+        // LLM call threw — treat as failure, fall through
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'paused_return_llm_error',
+          metadata: {
+            userInput: trimmedInput,
+            error: error instanceof Error ? error.message : 'Unknown error',
+          },
+        })
+      }
     }
   }
 
@@ -1709,6 +1826,33 @@ export async function handleClarificationIntercept(
     )
 
     if (snapshotSelection.isSelection && snapshotSelection.index !== undefined) {
+      // STOP-PAUSED ORDINAL GUARD: If snapshot was paused by stop, do NOT auto-resume.
+      // Per stop-scope-plan §39-44: ordinals should not resolve when pausedReason === 'stop'.
+      // Guide user to use explicit return cue instead.
+      if (clarificationSnapshot.pausedReason === 'stop') {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'stop_paused_ordinal_blocked',
+          metadata: {
+            userInput: trimmedInput,
+            detectedIndex: snapshotSelection.index,
+            snapshotTurnsSince: clarificationSnapshot.turnsSinceSet,
+            response_fit_intent: 'ordinal_after_stop',
+          },
+        })
+
+        const guidanceMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: "That list was closed. Say 'back to the options' to reopen it, or tell me what you want instead.",
+          timestamp: new Date(),
+          isError: false,
+        }
+        addMessage(guidanceMessage)
+        setIsLoading(false)
+        return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+      }
+
       const selectedOption = clarificationSnapshot.options[snapshotSelection.index]
 
       void debugLog({
@@ -1787,9 +1931,10 @@ export async function handleClarificationIntercept(
       },
     })
 
-    // Clear snapshot if exists (no auto-resume after stop, per plan §27-36)
+    // Pause snapshot with reason 'stop' (no auto-resume, but explicit return cues can restore).
+    // Per stop-scope-plan §39-44: pausedReason 'stop' blocks ordinals, allows return signal.
     if (clarificationSnapshot) {
-      clearClarificationSnapshot()
+      pauseSnapshotWithReason('stop')
     }
 
     // Set suppression counter for next N=2 turns
@@ -2175,7 +2320,13 @@ export async function handleClarificationIntercept(
         setPendingOptions([])
         setPendingOptionsMessageId(null)
         setPendingOptionsGraceCount(0)
-        clearClarificationSnapshot() // Hard exit destroys snapshot (per interrupt-resume-plan §139)
+        // Pause snapshot with reason 'stop' so explicit return cues can restore it.
+        // Per stop-scope-plan §39-44: pausedReason 'stop' blocks ordinals, allows return signal.
+        if (lastClarification?.options && lastClarification.options.length > 0) {
+          saveClarificationSnapshot(lastClarification, true, 'stop')
+        } else if (clarificationSnapshot) {
+          pauseSnapshotWithReason('stop')
+        }
         setStopSuppressionCount(STOP_SUPPRESSION_TURN_LIMIT) // Per stop-scope-plan §40-48
         const exitMessage: ChatMessage = {
           id: `assistant-${Date.now()}`,
@@ -2243,7 +2394,13 @@ export async function handleClarificationIntercept(
         setPendingOptions([])
         setPendingOptionsMessageId(null)
         setPendingOptionsGraceCount(0)
-        clearClarificationSnapshot() // Hard exit destroys snapshot (per interrupt-resume-plan §139)
+        // Pause snapshot with reason 'stop' so explicit return cues can restore it.
+        // Per stop-scope-plan §39-44: pausedReason 'stop' blocks ordinals, allows return signal.
+        if (lastClarification?.options && lastClarification.options.length > 0) {
+          saveClarificationSnapshot(lastClarification, true, 'stop')
+        } else if (clarificationSnapshot) {
+          pauseSnapshotWithReason('stop')
+        }
         setStopSuppressionCount(STOP_SUPPRESSION_TURN_LIMIT) // Per stop-scope-plan §40-48
         const exitMessage: ChatMessage = {
           id: `assistant-${Date.now()}`,
@@ -2308,7 +2465,13 @@ export async function handleClarificationIntercept(
       setPendingOptions([])
       setPendingOptionsMessageId(null)
       setPendingOptionsGraceCount(0)
-      clearClarificationSnapshot() // Hard exit destroys snapshot (per interrupt-resume-plan §139)
+      // Pause snapshot with reason 'stop' so explicit return cues can restore it.
+      // Per stop-scope-plan §39-44: pausedReason 'stop' blocks ordinals, allows return signal.
+      if (lastClarification?.options && lastClarification.options.length > 0) {
+        saveClarificationSnapshot(lastClarification, true, 'stop')
+      } else if (clarificationSnapshot) {
+        pauseSnapshotWithReason('stop')
+      }
       setStopSuppressionCount(STOP_SUPPRESSION_TURN_LIMIT) // Per stop-scope-plan §40-48
       const exitMessage: ChatMessage = {
         id: `assistant-${Date.now()}`,
@@ -2407,9 +2570,7 @@ export async function handleClarificationIntercept(
             label: otherOption.label,
             sublabel: otherOption.sublabel,
             data: fullOption?.data as SelectionOption['data'] ??
-              (otherOption.type === 'doc'
-                ? { docSlug: otherOption.id }
-                : { term: otherOption.id, action: 'doc' as const }),
+              reconstructSnapshotData(otherOption),
           }
           setIsLoading(false)
           handleSelectOption(optionToSelect)
@@ -2743,9 +2904,7 @@ export async function handleClarificationIntercept(
             label: matchedOption.label,
             sublabel: matchedOption.sublabel,
             data: fullOption?.data as SelectionOption['data'] ??
-              (matchedOption.type === 'doc'
-                ? { docSlug: matchedOption.id }
-                : { term: matchedOption.id, action: 'doc' as const }),
+              reconstructSnapshotData(matchedOption),
           }
           setIsLoading(false)
           handleSelectOption(optionToSelect)
@@ -2914,11 +3073,7 @@ export async function handleClarificationIntercept(
           label: selectedOption.label,
           sublabel: selectedOption.sublabel,
           data: fullOption?.data as SelectionOption['data'] ??
-            (selectedOption.type === 'doc'
-              ? { docSlug: selectedOption.id }
-              : selectedOption.type === 'note'
-                ? { noteId: selectedOption.id, noteName: selectedOption.label }
-                : { term: selectedOption.id, action: 'doc' as const }),
+            reconstructSnapshotData(selectedOption),
         }
         setIsLoading(false)
         handleSelectOption(optionToSelect)
@@ -3000,9 +3155,7 @@ export async function handleClarificationIntercept(
               label: matchedOption.label,
               sublabel: matchedOption.sublabel,
               data: fullOption?.data as SelectionOption['data'] ??
-                (matchedOption.type === 'doc'
-                  ? { docSlug: matchedOption.id }
-                  : { term: matchedOption.id, action: 'doc' as const }),
+                reconstructSnapshotData(matchedOption),
             }
             setIsLoading(false)
             handleSelectOption(optionToSelect)

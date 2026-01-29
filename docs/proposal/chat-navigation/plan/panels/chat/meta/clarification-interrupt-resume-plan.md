@@ -43,6 +43,37 @@ Without a return signal, treat ordinals/labels as new input in the current conte
 
 ---
 
+## Return‑Cue Detection + LLM Fallback (Paused List Only)
+
+When a **paused list exists**, handle “return to list” intent in this order:
+
+1) **Deterministic return cues**  
+Match phrases that mean “go back to the options,” including:
+- Core cues: `back`, `go back`, `return`, `resume`, `continue`, `take me back`, `take them back`
+- Optional targets: `options`, `list`, `panels`, `choices`, `those`, `them`, `that`, `again`, `before`
+
+**Standalone `back` rule (important):**  
+If a **paused list exists**, a single-word input `back` (or `go back`) is a valid return cue and
+**must** restore the paused list (do not route to new search). This rule is only active when a
+paused list exists.
+
+Examples that should resolve:  
+“back”, “go back”, “pls take them back again”, “return to the options”, “continue that list”
+
+2) **If no return cue matched → constrained LLM fallback (Gemini Flash)**  
+Call the classifier **only when a paused list exists**, with a strict contract:
+```
+{ decision: "return" | "not_return", confidence: 0..1 }
+```
+- `return` → restore paused list  
+- `not_return` → continue normal routing
+
+3) **If LLM fails / times out**  
+Ask a single confirm question:
+“Do you want to go back to the previous options?”
+
+---
+
 ## No Automatic Expiry on Unrelated Commands
 
 Do **not** clear a paused list just because the user issued unrelated commands.

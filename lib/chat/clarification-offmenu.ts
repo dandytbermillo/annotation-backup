@@ -513,12 +513,17 @@ export interface ReturnSignalResult {
 export function detectReturnSignal(input: string): ReturnSignalResult {
   const normalized = input.toLowerCase().trim()
 
-  // Return cue patterns — ordered longest-first to strip the most specific cue
+  // Return cue patterns — ordered longest-first to strip the most specific cue.
+  // Per interrupt-resume-plan §50-53: core cues + optional targets.
+  // Core cues: back, go back, return, resume, continue, take me back, take them back
+  // Optional targets: options, list, panels, choices, those, them, that, again, before
   const returnPatterns: Array<{ pattern: RegExp }> = [
     // "back to the panels/options/list"
     { pattern: /\b(go\s+)?back\s+to\s+(the\s+)?(panels?|options?|list|choices?|selection)\b/i },
     // "back to <specific label>" e.g. "back to links panels"
     { pattern: /\b(go\s+)?back\s+to\s+/i },
+    // "take me/them back (again)" — compound cue
+    { pattern: /\btake\s+(me|them|those|it)\s+back(\s+again)?\b/i },
     // "continue/resume that/the list/options"
     { pattern: /\b(continue|resume)\s+(that|the|those)\s+(list|options?|choices?|selection)\b/i },
     // "continue/resume choosing/selecting"
@@ -527,10 +532,18 @@ export function detectReturnSignal(input: string): ReturnSignalResult {
     { pattern: /\bthe\s+other\s+one\s+from\s+before\b/i },
     // "from before" / "from earlier"
     { pattern: /\bfrom\s+(before|earlier)\b/i },
-    // "show those options again" / "show the list again"
+    // "show those options again" / "show the list again" / "bring those back"
     { pattern: /\bshow\s+(those|the|my)\s+(options?|list|choices?)\s+(again|back)\b/i },
+    { pattern: /\bbring\s+(those|the|them|it)\s+back\b/i },
     // "previous options/list"
     { pattern: /\b(previous|earlier|last)\s+(options?|list|choices?|selection)\b/i },
+    // --- Standalone cues (shorter, checked last) ---
+    // "back" / "go back" (standalone — entire input is the cue)
+    { pattern: /^(pls\s+|please\s+)?(go\s+)?back$/i },
+    // "return" (standalone)
+    { pattern: /^(pls\s+|please\s+)?return$/i },
+    // "resume" / "continue" (standalone)
+    { pattern: /^(pls\s+|please\s+)?(resume|continue)$/i },
   ]
 
   for (const { pattern } of returnPatterns) {

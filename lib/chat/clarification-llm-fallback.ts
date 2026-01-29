@@ -380,6 +380,97 @@ export function shouldCallLLMFallback(
 }
 
 // =============================================================================
+// Return-Cue LLM Types & Client Wrapper
+// =============================================================================
+
+/**
+ * Return-cue LLM response contract (per interrupt-resume-plan §58-64).
+ * Simpler than the full clarification LLM — just return vs not_return.
+ */
+export interface ReturnCueLLMResponse {
+  decision: 'return' | 'not_return'
+  confidence: number
+  reason: string
+}
+
+export interface ReturnCueLLMResult {
+  success: boolean
+  response?: ReturnCueLLMResponse
+  error?: string
+  latencyMs: number
+}
+
+/**
+ * Call the return-cue LLM via server API route.
+ * Per interrupt-resume-plan §58-64: when deterministic return-cue detection
+ * fails and a paused list exists, use LLM to classify "return" vs "not_return".
+ *
+ * Uses the same feature flag and Gemini infrastructure as the clarification LLM.
+ */
+export async function callReturnCueLLM(
+  userInput: string
+): Promise<ReturnCueLLMResult> {
+  const startTime = Date.now()
+
+  // Client-side feature flag check
+  if (!isLLMFallbackEnabledClient()) {
+    return {
+      success: false,
+      error: 'LLM fallback disabled',
+      latencyMs: Date.now() - startTime,
+    }
+  }
+
+  try {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS)
+
+    const response = await fetch('/api/chat/clarification-llm/return-cue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userInput }),
+      signal: controller.signal,
+    })
+
+    clearTimeout(timeoutId)
+
+    const result = await response.json() as ReturnCueLLMResult
+
+    return {
+      ...result,
+      latencyMs: Date.now() - startTime,
+    }
+  } catch (error) {
+    const latencyMs = Date.now() - startTime
+
+    if (error instanceof Error && error.name === 'AbortError') {
+      void debugLog({
+        component: 'ClarificationLLM',
+        action: 'return_cue_llm_timeout',
+        metadata: { timeoutMs: LLM_TIMEOUT_MS, latencyMs },
+      })
+      return {
+        success: false,
+        error: 'Timeout',
+        latencyMs,
+      }
+    }
+
+    void debugLog({
+      component: 'ClarificationLLM',
+      action: 'return_cue_llm_client_error',
+      metadata: { error: error instanceof Error ? error.message : 'Unknown error' },
+    })
+
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Network error',
+      latencyMs,
+    }
+  }
+}
+
+// =============================================================================
 // Client-Side API Wrapper
 // =============================================================================
 

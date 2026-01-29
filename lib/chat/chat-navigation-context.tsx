@@ -154,10 +154,13 @@ export interface ClarificationSnapshot {
   turnsSinceSet: number
   /** Timestamp when set */
   timestamp: number
-  /** Whether the snapshot is paused (interrupt) vs active (post-selection).
-   *  Paused snapshots don't resolve ordinals; require explicit return signal.
-   *  Per clarification-interrupt-resume-plan.md §8-18. */
+  /** Whether the snapshot is paused (interrupt/stop) vs active (post-selection).
+   *  Paused snapshots with pausedReason 'stop' don't resolve ordinals; require explicit return signal.
+   *  Paused snapshots with pausedReason 'interrupt' allow ordinal selection.
+   *  Per clarification-interrupt-resume-plan.md §8-18, stop-scope-plan §39-44. */
   paused?: boolean
+  /** Why the snapshot was paused. 'interrupt' allows ordinals; 'stop' blocks them. */
+  pausedReason?: 'interrupt' | 'stop'
 }
 
 /** Default snapshot window in turns (configurable) */
@@ -302,7 +305,8 @@ interface ChatNavigationContextValue {
   clearRepairMemory: () => void
   // Clarification snapshot for post-action repair window (per plan §153-161)
   clarificationSnapshot: ClarificationSnapshot | null
-  saveClarificationSnapshot: (clarification: LastClarificationState, paused?: boolean) => void
+  saveClarificationSnapshot: (clarification: LastClarificationState, paused?: boolean, pausedReason?: 'interrupt' | 'stop') => void
+  pauseSnapshotWithReason: (reason: 'interrupt' | 'stop') => void
   incrementSnapshotTurn: () => void
   clearClarificationSnapshot: () => void
   // Stop suppression counter (per stop-scope-plan §40-48)
@@ -1040,7 +1044,7 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
   }, [])
 
   // Clarification snapshot functions (per plan §153-161, interrupt-resume-plan)
-  const saveClarificationSnapshot = useCallback((clarification: LastClarificationState, paused?: boolean) => {
+  const saveClarificationSnapshot = useCallback((clarification: LastClarificationState, paused?: boolean, pausedReason?: 'interrupt' | 'stop') => {
     if (clarification.options && clarification.options.length > 0) {
       setClarificationSnapshotInternal({
         options: clarification.options,
@@ -1049,6 +1053,7 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         turnsSinceSet: 0,
         timestamp: Date.now(),
         paused: paused ?? false,
+        pausedReason: paused ? (pausedReason ?? 'interrupt') : undefined,
       })
     }
   }, [])
@@ -1065,6 +1070,13 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         ...prev,
         turnsSinceSet: newTurns,
       }
+    })
+  }, [])
+
+  const pauseSnapshotWithReason = useCallback((reason: 'interrupt' | 'stop') => {
+    setClarificationSnapshotInternal((prev) => {
+      if (!prev) return null
+      return { ...prev, paused: true, pausedReason: reason }
     })
   }, [])
 
@@ -1137,6 +1149,7 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         // Clarification snapshot for post-action repair window (per plan §153-161)
         clarificationSnapshot,
         saveClarificationSnapshot,
+        pauseSnapshotWithReason,
         incrementSnapshotTurn,
         clearClarificationSnapshot,
         // Stop suppression (per stop-scope-plan §40-48)
