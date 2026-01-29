@@ -68,9 +68,9 @@ Use this quick table to track pass/fail:
    - Input: `open recent`
    - Expect: “Opening Recent…” (list paused)
 
-7) **No auto‑resume after interrupt**
+7) **Ordinal after interrupt (implicit return allowed)**
    - After interrupt, input: `second option`
-   - Expect: “Which options are you referring to? You can say ‘back to the options’ to continue choosing.” (no old list resume)
+   - Expect: selection from the paused list (ordinals resolve)
 
 8) **Explicit return resumes**
    - After interrupt, input: `back to the panels — second option`

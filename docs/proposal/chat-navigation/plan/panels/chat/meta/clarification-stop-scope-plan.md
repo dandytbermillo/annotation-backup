@@ -36,6 +36,12 @@ even if a previous intent is cached. Resumption must require **explicit return c
 
 Ordinals/labels without return cues should **not** resolve to the old list.
 
+**Implementation note (recommended):**  
+Represent a stopped list as a **paused snapshot** with `pausedReason: "stop"` (instead of clearing it),
+so explicit return cues can restore it later. Ordinals should **not** auto‑resume when
+`pausedReason === "stop"`. For interrupts, use `pausedReason: "interrupt"` and allow ordinal selection
+per the interrupt‑resume addendum.
+
 ---
 
 ## Repeated Stop Suppression
