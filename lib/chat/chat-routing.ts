@@ -1580,6 +1580,60 @@ export async function handleClarificationIntercept(
       clarificationSnapshot &&
       clarificationSnapshot.paused &&
       clarificationSnapshot.options.length > 0) {
+
+    // Affirmation with paused snapshot = confirm return (Tier 3 recovery).
+    // When the Tier 3 confirm prompt ("Do you want to go back to the previous
+    // options?") is shown and the user replies "yes", treat it as a return signal.
+    // Safe: affirmation with a paused list always means "restore it".
+    if (isAffirmationPhrase(trimmedInput)) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'paused_list_affirmation_return',
+        metadata: {
+          userInput: trimmedInput,
+          optionCount: clarificationSnapshot.options.length,
+          pausedReason: clarificationSnapshot.pausedReason,
+        },
+      })
+
+      const rawIntent = clarificationSnapshot.originalIntent
+      const isInternalIntent = !rawIntent || /repair_|_restore|panel_disambiguation|cross_corpus/i.test(rawIntent)
+      const restoreContent = clarificationSnapshot.pausedReason === 'stop'
+        ? 'Here are the options you closed earlier:'
+        : isInternalIntent
+          ? 'Here are the previous options:'
+          : `Here are the options for "${rawIntent}":`
+      const restoreMessage: ChatMessage = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: restoreContent,
+        timestamp: new Date(),
+        isError: false,
+        options: clarificationSnapshot.options.map(opt => ({
+          type: opt.type as SelectionOption['type'],
+          id: opt.id,
+          label: opt.label,
+          sublabel: opt.sublabel,
+          data: reconstructSnapshotData(opt),
+        })),
+      }
+      addMessage(restoreMessage)
+
+      setLastClarification({
+        type: clarificationSnapshot.type,
+        originalIntent: clarificationSnapshot.originalIntent,
+        messageId: restoreMessage.id,
+        timestamp: Date.now(),
+        clarificationQuestion: restoreMessage.content,
+        options: clarificationSnapshot.options,
+        metaCount: 0,
+      })
+
+      clearClarificationSnapshot()
+      setIsLoading(false)
+      return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+    }
+
     const returnResult = detectReturnSignal(trimmedInput)
 
     if (returnResult.isReturn) {
@@ -1666,9 +1720,18 @@ export async function handleClarificationIntercept(
     // ------------------------------------------------------------------
     // Tier 2: LLM fallback for return-cue detection (per interrupt-resume-plan §58-64)
     // Deterministic cue didn't match — ask LLM if the user wants to return.
-    // Only if feature flag is enabled. On failure → hint-style fallback (Tier 3).
+    // Only if feature flag is enabled. On failure → Tier 3 confirm prompt.
+    // Guard: skip LLM for ordinals — they belong in the ordinal window below,
+    // not in return-cue classification. This prevents unnecessary LLM calls
+    // and avoids Gemini rate-limiting (429).
     // ------------------------------------------------------------------
-    if (isLLMFallbackEnabledClient() && !isRepairPhrase(trimmedInput)) {
+    const isOrdinalInput = isSelectionOnly(
+      trimmedInput,
+      clarificationSnapshot.options.length,
+      clarificationSnapshot.options.map(o => o.label)
+    ).isSelection
+
+    if (isLLMFallbackEnabledClient() && !isRepairPhrase(trimmedInput) && !isOrdinalInput) {
       try {
         const llmResult = await callReturnCueLLM(trimmedInput)
 
@@ -1746,8 +1809,9 @@ export async function handleClarificationIntercept(
             },
           })
         } else {
-          // LLM failed → Tier 3: hint-style fallback (per interrupt-resume-plan §66-68)
-          // Show a hint message but don't block routing — let normal flow continue.
+          // LLM failed → Tier 3: confirm prompt (per interrupt-resume-plan §66-68)
+          // Instead of falling through to normal routing (which causes doc routing
+          // for return-like inputs), show a confirm prompt so the user can recover.
           void debugLog({
             component: 'ChatNavigation',
             action: 'paused_return_llm_failed',
@@ -1756,9 +1820,20 @@ export async function handleClarificationIntercept(
               error: llmResult.error,
             },
           })
+
+          const confirmMessage: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: 'Do you want to go back to the previous options?',
+            timestamp: new Date(),
+            isError: false,
+          }
+          addMessage(confirmMessage)
+          setIsLoading(false)
+          return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
         }
       } catch (error) {
-        // LLM call threw — treat as failure, fall through
+        // LLM call threw → Tier 3: confirm prompt (same recovery as above)
         void debugLog({
           component: 'ChatNavigation',
           action: 'paused_return_llm_error',
@@ -1767,6 +1842,17 @@ export async function handleClarificationIntercept(
             error: error instanceof Error ? error.message : 'Unknown error',
           },
         })
+
+        const confirmMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: 'Do you want to go back to the previous options?',
+          timestamp: new Date(),
+          isError: false,
+        }
+        addMessage(confirmMessage)
+        setIsLoading(false)
+        return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
       }
     }
   }

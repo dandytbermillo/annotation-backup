@@ -513,6 +513,11 @@ export interface ReturnSignalResult {
 export function detectReturnSignal(input: string): ReturnSignalResult {
   const normalized = input.toLowerCase().trim()
 
+  // Strip trailing politeness tokens (pls, please, thanks, thx, ty) before
+  // matching return cues. This avoids enumerating suffix variants in every regex.
+  // "back pls" → "back", "return please" → "return", "go back thanks" → "go back"
+  const stripped = normalized.replace(/\s+(pls|please|thanks|thx|ty)$/i, '').trim()
+
   // Return cue patterns — ordered longest-first to strip the most specific cue.
   // Per interrupt-resume-plan §50-53: core cues + optional targets.
   // Core cues: back, go back, return, resume, continue, take me back, take them back
@@ -535,6 +540,8 @@ export function detectReturnSignal(input: string): ReturnSignalResult {
     // "show those options again" / "show the list again" / "bring those back"
     { pattern: /\bshow\s+(those|the|my)\s+(options?|list|choices?)\s+(again|back)\b/i },
     { pattern: /\bbring\s+(those|the|them|it)\s+back\b/i },
+    // "put it/them/those back"
+    { pattern: /\bput\s+(it|them|those)\s+back\b/i },
     // "previous options/list"
     { pattern: /\b(previous|earlier|last)\s+(options?|list|choices?|selection)\b/i },
     // --- Standalone cues (shorter, checked last) ---
@@ -546,11 +553,16 @@ export function detectReturnSignal(input: string): ReturnSignalResult {
     { pattern: /^(pls\s+|please\s+)?(resume|continue)$/i },
   ]
 
-  for (const { pattern } of returnPatterns) {
-    if (pattern.test(normalized)) {
-      // Strip the return cue to get the remainder
-      const remainder = normalized.replace(pattern, '').replace(/^[\s,—–-]+|[\s,—–-]+$/g, '').trim()
-      return { isReturn: true, remainder }
+  // Try matching against the politeness-stripped input first (handles "back pls",
+  // "return please", etc.), then fall back to the original normalized input for
+  // compound phrases where politeness might not be trailing.
+  for (const candidate of [stripped, normalized]) {
+    for (const { pattern } of returnPatterns) {
+      if (pattern.test(candidate)) {
+        // Strip the return cue to get the remainder
+        const remainder = candidate.replace(pattern, '').replace(/^[\s,—–-]+|[\s,—–-]+$/g, '').trim()
+        return { isReturn: true, remainder }
+      }
     }
   }
 
