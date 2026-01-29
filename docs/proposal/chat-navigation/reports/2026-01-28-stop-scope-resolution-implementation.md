@@ -166,13 +166,12 @@ The full routing order with stop-scope and repair-guard additions:
 3. **Post-action repair window** — "not that" with active snapshot (`!paused`)
 4. **Return signal handler** — "back to the panels" for paused snapshots
 5. **Paused-snapshot repair guard** — "not that" with paused snapshot (no return cue)
-6. **Paused-snapshot ordinal guard** — ordinals with paused snapshot: grace turn (turnsSinceSet=0) selects; after grace, shows hint
-7. **Post-action ordinal window** — selection persistence for active snapshots
-8. **Stop scope guard (Priority 3)** — exit phrases with no active clarification
-9. **Bare ordinal detection** — ordinals with no context at all
-10. **incrementSnapshotTurn()** — paused snapshot expiry
-11. **hasClarificationContext block** — all Priority 2 handling (exit, hesitation, selection, etc.)
-12. **Normal routing** — doc search, panel disambiguation, LLM fallback
+6. **Post-action ordinal window** — selection persistence for active AND paused snapshots
+7. **Stop scope guard (Priority 3)** — exit phrases with no active clarification
+8. **Bare ordinal detection** — ordinals with no context at all
+9. **incrementSnapshotTurn()** — turn counter (no expiry for active or paused)
+10. **hasClarificationContext block** — all Priority 2 handling (exit, hesitation, selection, etc.)
+11. **Normal routing** — doc search, panel disambiguation, LLM fallback
 
 ---
 
@@ -211,38 +210,32 @@ if (!lastClarification &&
 
 **Root cause:** The bare ordinal detection (step 9) required `!clarificationSnapshot` — after an interrupt the paused snapshot still exists, so the guard was skipped. The post-action ordinal window (step 7) required `!clarificationSnapshot.paused`, so paused snapshots were also excluded. Ordinals fell through to routing.
 
-**Initial fix:** Added a **paused-snapshot ordinal guard** (step 6) that blocked all ordinals against paused snapshots with "Which options are you referring to?" This prevented routing leaks but was frustrating — the user clearly wanted to select from the list they just saw.
+**Initial fix (v1):** Added a separate paused-snapshot ordinal guard that blocked all ordinals against paused snapshots with "Which options are you referring to?" Prevented routing leaks but frustrated users who clearly wanted to select from the list they just saw.
 
-**Refined fix (one-turn grace):** Updated per `clarification-interrupt-resume-plan.md` §26-28. The guard now checks `clarificationSnapshot.turnsSinceSet`:
+**Refined fix (v2 — one-turn grace):** Allowed ordinals on the very next turn after interrupt (grace turn), blocked after that with a hint message. Still frustrating — users expected repeated ordinal selection to keep working.
 
-- **Grace turn (`turnsSinceSet === 0`):** The very next turn after interrupt — treat the ordinal as an implicit return and select from the paused list. This matches the natural pattern: user sees list → interrupts → immediately comes back with an ordinal.
-- **After grace (`turnsSinceSet > 0`):** Block with hint message: "Which options are you referring to? You can say 'back to the options' to continue choosing."
+**Final fix (v3 — unified ordinal window):** Per updated `clarification-interrupt-resume-plan.md` §46-51 ("No Automatic Expiry on Unrelated Commands"): removed the separate paused-snapshot ordinal guard entirely and removed `!clarificationSnapshot.paused` from the post-action ordinal window. Both active and paused snapshots are now handled identically by the ordinal window.
+
+Additionally removed paused snapshot turn-based expiry from `incrementSnapshotTurn` — paused snapshots now persist until:
+- explicit exit (stop/cancel confirmed)
+- a new list replaces it
 
 ```typescript
-if (pausedOrdinalCheck.isSelection) {
-  // One-turn grace: very next turn after interrupt
-  if (clarificationSnapshot.turnsSinceSet === 0 &&
-      pausedOrdinalCheck.index !== undefined) {
-    // Select from paused list (implicit return)
-    const selectedOption = clarificationSnapshot.options[pausedOrdinalCheck.index]
-    const reconstructedData = reconstructSnapshotData(selectedOption)
-    setRepairMemory(selectedOption.id, clarificationSnapshot.options)
-    clearClarificationSnapshot()
-    handleSelectOption(optionToSelect)
-    return { handled: true, clarificationCleared: true, ... }
-  }
-  // Past grace turn: show hint
-  addMessage({ content: 'Which options are you referring to? You can say \'back to the options\' to continue choosing.' })
-  return { handled: true, clarificationCleared: false, ... }
+// Post-action ordinal window now handles both active and paused:
+if (!lastClarification &&
+    clarificationSnapshot &&
+    clarificationSnapshot.options.length > 0) {
+  // ... ordinal resolution (same for active and paused)
 }
 ```
 
 **Design decisions:**
-- Placed as a separate guard (step 6) rather than modifying the bare ordinal check (step 9) to keep all paused-snapshot logic grouped together (steps 5-6) and maintain distinct telemetry actions.
-- Grace selection clears the snapshot (`clearClarificationSnapshot()`) since the implicit return consumes the paused list.
-- Sets repair memory so "not that" after a grace selection triggers the post-action repair window.
+- Unified ordinal window eliminates the paused/active distinction for ordinal selection, matching user expectations.
+- Paused snapshots persist indefinitely (no turn-based expiry), only cleared by explicit exit or list replacement.
+- Repair phrases with paused snapshots still caught by the paused-snapshot repair guard (step 5).
+- `PAUSED_SNAPSHOT_TURN_LIMIT` constant is now unused; can be removed in cleanup.
 
-**Reference:** `clarification-interrupt-resume-plan.md` §26-28 (one-turn grace), §72-80 (Acceptance Tests 2-3)
+**Reference:** `clarification-interrupt-resume-plan.md` §46-51 (No Automatic Expiry)
 
 ---
 
@@ -328,8 +321,8 @@ Per `clarification-interrupt-resume-plan.md`:
 | # | Test | Status | Notes |
 |---|------|--------|-------|
 | 1 | Interrupt | ✅ Verified | "open recent" during pills → execute immediately, list paused |
-| 2 | Implicit return (one-turn grace) | Pending verification | Ordinal on very next turn after interrupt → select from paused list |
-| 3 | No return signal (after grace) | Pending verification | Second ordinal without return cue → hint message |
+| 2 | Ordinal after interrupt | Pending verification | Ordinals resolve against paused list (no turn limit) |
+| 3 | Repeated ordinals | Pending verification | Multiple ordinals keep selecting from paused list |
 | 4 | Explicit return | ✅ Verified | "back to the panels" restores paused list |
 | 5 | Return + ordinal | ✅ Verified | "back to panels — second option" selects from restored list |
 | 6 | Repair after interrupt | ✅ Verified | "not that" → neutral prompt, no routing leak |
@@ -345,8 +338,7 @@ Per `clarification-interrupt-resume-plan.md`:
 | Repeated stop suppression | "All set — what would you like to do?" |
 | Bare ordinal (no context) | "Which options are you referring to?" |
 | Repair after interrupt (paused snapshot) | "Okay — what would you like to do instead?" |
-| Ordinal after interrupt — grace turn | (no message — selects from paused list as implicit return) |
-| Ordinal after interrupt — past grace | "Which options are you referring to? You can say 'back to the options' to continue choosing." |
+| Ordinal after interrupt (paused snapshot) | (no message — selects from paused list via unified ordinal window) |
 
 ---
 
@@ -354,7 +346,9 @@ Per `clarification-interrupt-resume-plan.md`:
 
 1. **Priority 1 (active execution stop)** is deferred. `executeAction`/`selectOption` are fire-and-forget; adding "Okay — stopped." without actual cancellation would be misleading. Requires future `currentExecution` state + abort controller infrastructure.
 
-2. **`decrementStopSuppression`** is still exposed on the context interface but unused in `chat-routing.ts` after the fix changed from decrement to full reset. It remains available for future use (e.g., if a turn-based decay is preferred over immediate reset). Could be removed in a cleanup pass.
+2. **`decrementStopSuppression`** is still exposed on the context interface but unused in `chat-routing.ts` after the fix changed from decrement to full reset. Could be removed in a cleanup pass.
+
+3. **`PAUSED_SNAPSHOT_TURN_LIMIT`** constant is still defined in `chat-navigation-context.tsx` but no longer used after removing paused snapshot turn-based expiry. Could be removed in a cleanup pass.
 
 ---
 
@@ -363,7 +357,8 @@ Per `clarification-interrupt-resume-plan.md`:
 | File | Lines | Change |
 |------|-------|--------|
 | `lib/chat/chat-navigation-context.tsx` | +23 | New constant, state, callbacks, provider value |
-| `lib/chat/chat-routing.ts` | +193, -6 | Interface, handler logic, wording updates, repair guard, ordinal guard |
+| `lib/chat/chat-routing.ts` | +130, -6 | Interface, handler logic, wording updates, repair guard, unified ordinal window |
+| `lib/chat/chat-navigation-context.tsx` | +4, -4 | Removed paused snapshot turn-based expiry |
 | `components/chat/chat-navigation-panel.tsx` | +8 | Wire new state to intercept call |
 | `clarification-stop-scope-plan.md` | +5, -5 | Priority 1 deferred rationale |
 | `clarification-interrupt-resume-plan.md` | +6, -2 | Test 5 updated: repair after interrupt spec |
@@ -372,8 +367,8 @@ Per `clarification-interrupt-resume-plan.md`:
 
 ## Next Steps
 
-- Test one-turn grace: interrupt → ordinal on next turn → should select from paused list (QA #2)
-- Test grace expiry: interrupt → ordinal → ordinal again → should show hint (QA #3)
+- Test unified ordinal window: interrupt → ordinal → repeated ordinal → should keep selecting (QA #2-3)
+- Test ordinals survive unrelated commands: interrupt → command → ordinal → should still select
 - Run remaining QA checklist tests: #11 (bare label), #12 (noise), #13 (hesitation)
-- Consider removing unused `decrementStopSuppression` from context interface
+- Cleanup: remove unused `decrementStopSuppression` and `PAUSED_SNAPSHOT_TURN_LIMIT`
 - Priority 1 implementation when cancellable execution exists

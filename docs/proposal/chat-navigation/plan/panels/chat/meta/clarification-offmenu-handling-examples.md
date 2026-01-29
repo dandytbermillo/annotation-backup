@@ -230,7 +230,25 @@ These examples align with `clarification-response-fit-plan.md` and show how resp
 **User:** back to the options — second option
 **Bot:** Opening **Links Panel D**.
 
-### 9.8 Repeated “No” Escalation (NEW)
+### 9.8 Stop → Explicit Return Required (NEW)
+
+**Bot:** Multiple Links Panel panels found. Which one would you like to open?
+**[Links Panel D] [Links Panel E] [Links Panels]**
+
+**User:** stop  
+**Bot:** Do you want to cancel and start over, or keep choosing from these options?  
+**[Links Panel D] [Links Panel E] [Links Panels]**
+
+**User:** yes  
+**Bot:** Okay — we’ll drop that. What would you like to do instead?  
+
+**User:** second option  
+**Bot:** That list was closed. Say **“back to the options”** to reopen it, or tell me what you want instead.
+
+**User:** back to the options — second option  
+**Bot:** Opening **Links Panel D**.
+
+### 9.9 Repeated “No” Escalation (NEW)
 
 **Bot:** I found results in both documentation and your notes. Which one do you mean?
 **[Docs: Navigation Actions] [Notes: Test Note (11)]**

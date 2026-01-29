@@ -1691,92 +1691,16 @@ export async function handleClarificationIntercept(
   }
 
   // ==========================================================================
-  // PAUSED-SNAPSHOT ORDINAL GUARD (per interrupt-resume-plan §21-28, §72-80)
-  // After an interrupt, ordinals/labels resolve against the paused list only
-  // on the VERY NEXT turn (one-turn grace). After that, require an explicit
-  // return cue. This prevents the frustrating pattern where the user clearly
-  // wants to select from the list they just saw but is blocked.
-  // ==========================================================================
-  if (!lastClarification &&
-      clarificationSnapshot &&
-      clarificationSnapshot.paused &&
-      clarificationSnapshot.options.length > 0) {
-    const pausedOrdinalCheck = isSelectionOnly(
-      trimmedInput,
-      clarificationSnapshot.options.length,
-      clarificationSnapshot.options.map(o => o.label)
-    )
-
-    if (pausedOrdinalCheck.isSelection) {
-      // One-turn grace: if this is the very next turn after the interrupt,
-      // treat the ordinal as an implicit return and select from the paused list.
-      if (clarificationSnapshot.turnsSinceSet === 0 &&
-          pausedOrdinalCheck.index !== undefined) {
-        const selectedOption = clarificationSnapshot.options[pausedOrdinalCheck.index]
-
-        void debugLog({
-          component: 'ChatNavigation',
-          action: 'paused_snapshot_grace_select',
-          metadata: {
-            userInput: trimmedInput,
-            selectedIndex: pausedOrdinalCheck.index,
-            selectedLabel: selectedOption.label,
-            selectedType: selectedOption.type,
-            snapshotTurnsSince: clarificationSnapshot.turnsSinceSet,
-            response_fit_intent: 'implicit_return_grace',
-          },
-        })
-
-        const reconstructedData = reconstructSnapshotData(selectedOption)
-
-        const optionToSelect: SelectionOption = {
-          type: selectedOption.type as SelectionOption['type'],
-          id: selectedOption.id,
-          label: selectedOption.label,
-          sublabel: selectedOption.sublabel,
-          data: reconstructedData,
-        }
-
-        setRepairMemory(selectedOption.id, clarificationSnapshot.options)
-        clearClarificationSnapshot()
-        setIsLoading(false)
-        handleSelectOption(optionToSelect)
-        return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
-      }
-
-      // Past grace turn: absorb with hint message
-      void debugLog({
-        component: 'ChatNavigation',
-        action: 'paused_snapshot_ordinal_absorbed',
-        metadata: {
-          userInput: trimmedInput,
-          snapshotTurnsSince: clarificationSnapshot.turnsSinceSet,
-          optionCount: clarificationSnapshot.options.length,
-          response_fit_intent: 'ordinal_after_interrupt',
-        },
-      })
-
-      addMessage({
-        id: `assistant-${Date.now()}`,
-        role: 'assistant',
-        content: 'Which options are you referring to? You can say \'back to the options\' to continue choosing.',
-        timestamp: new Date(),
-        isError: false,
-      })
-      setIsLoading(false)
-      return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
-    }
-  }
-
-  // ==========================================================================
   // POST-ACTION ORDINAL WINDOW (Selection Persistence, per plan §131-147)
-  // "Visible = active": if options are still visible (snapshot exists, not paused,
-  // not invalidated by exit/topic/new list), ordinals resolve against them.
-  // Paused snapshots (from interrupts) require explicit return signal — see above.
+  // Ordinals resolve against snapshots — both active and paused. After an
+  // interrupt, the paused list stays ordinal-selectable until invalidated by:
+  //   - explicit exit (stop/cancel confirmed)
+  //   - a new list replacing it
+  // Per interrupt-resume-plan §46-51: no automatic expiry on unrelated commands.
+  // Repair phrases with paused snapshots are caught by step 5 above.
   // ==========================================================================
   if (!lastClarification &&
       clarificationSnapshot &&
-      !clarificationSnapshot.paused &&
       clarificationSnapshot.options.length > 0) {
     const snapshotSelection = isSelectionOnly(
       trimmedInput,
@@ -1914,10 +1838,9 @@ export async function handleClarificationIntercept(
     }
   }
 
-  // Increment snapshot turn counter for every message.
-  // incrementSnapshotTurn() handles expiry internally:
-  //   - Active snapshots: no turn-based expiry ("visible = active", per plan §144)
-  //   - Paused snapshots: expire after PAUSED_SNAPSHOT_TURN_LIMIT (3 turns)
+  // Increment snapshot turn counter for every non-intercepted message.
+  // No turn-based expiry for either active or paused snapshots.
+  // Paused snapshots persist until explicit exit or new list (per interrupt-resume-plan §46-51).
   incrementSnapshotTurn()
 
   // Check if we should enter clarification mode

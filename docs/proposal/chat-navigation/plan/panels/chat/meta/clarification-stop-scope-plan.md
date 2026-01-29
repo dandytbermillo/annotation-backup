@@ -60,6 +60,10 @@ executes. This prevents suppression from leaking across unrelated actions
 
 This keeps accidental cancels safe while allowing fast exits.
 
+**No typo‑tolerant exit matching (important):**  
+Do **not** treat misspellings or variants like “stop0”, “stpp”, “cancell” as exits.  
+If the input is not an exact exit phrase, handle it via **noise / ask_clarify** instead.
+
 ---
 
 ## Acceptance Tests
@@ -79,7 +83,7 @@ This keeps accidental cancels safe while allowing fast exits.
 
 3) **No auto‑resume**
    - After stop, user says “second option”  
-   - Expected: ask what list they mean (do not select old list)
+   - Expected: “That list was closed. Say ‘back to the options’ to reopen it, or tell me what you want instead.”
 
 4) **Explicit return**
    - After stop, user: “go back to the panels — second option”  
@@ -89,6 +93,11 @@ This keeps accidental cancels safe while allowing fast exits.
    - User: “stop” → confirm → “yes”
    - User: “stop” again within 2 turns  
    - Expected: “All set — what would you like to do?”
+
+6) **Exit typo is not an exit**
+   - Pills visible  
+   - User: “stop0” (or “cancell”)  
+   - Expected: treat as **noise/ask_clarify**, keep options visible (no exit confirmation).
 
 ---
 
@@ -130,7 +139,7 @@ Bot: Do you want to cancel and start over, or keep choosing from these options?
 User: yes  
 Bot: Okay — we’ll drop that. What would you like to do instead?  
 User: second option  
-Bot: Which options are you referring to?
+Bot: That list was closed. Say ‘back to the options’ to reopen it, or tell me what you want instead.
 
 ### 5) Explicit return signal
 User: links panel  

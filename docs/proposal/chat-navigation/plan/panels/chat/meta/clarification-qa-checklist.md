@@ -57,7 +57,7 @@ Use this quick table to track pass/fail:
 5) **Bare ordinal after stop**
    - `stop` → confirm → `yes`
    - Input: `second option`
-   - Expect: “Which options are you referring to?”
+   - Expect: “That list was closed. Say ‘back to the options’ to reopen it, or tell me what you want instead.”
 
 ---
 
@@ -70,7 +70,7 @@ Use this quick table to track pass/fail:
 
 7) **No auto‑resume after interrupt**
    - After interrupt, input: `second option`
-   - Expect: “Which options are you referring to?” (no old list resume)
+   - Expect: “Which options are you referring to? You can say ‘back to the options’ to continue choosing.” (no old list resume)
 
 8) **Explicit return resumes**
    - After interrupt, input: `back to the panels — second option`

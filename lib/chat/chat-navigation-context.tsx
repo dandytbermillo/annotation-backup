@@ -1057,12 +1057,10 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     setClarificationSnapshotInternal((prev) => {
       if (!prev) return null
       const newTurns = prev.turnsSinceSet + 1
-      // Active snapshots: no turn-based expiry ("visible = active", per plan §144).
-      // Only invalidated by explicit exit, topic change, or new list.
-      // Paused snapshots: expire after PAUSED_SNAPSHOT_TURN_LIMIT turns (per interrupt-resume-plan §42-46).
-      if (prev.paused && newTurns >= PAUSED_SNAPSHOT_TURN_LIMIT) {
-        return null
-      }
+      // No turn-based expiry for either active or paused snapshots.
+      // Active snapshots: "visible = active" (per plan §144).
+      // Paused snapshots: persist until explicit exit or new list replaces them
+      // (per interrupt-resume-plan §46-51).
       return {
         ...prev,
         turnsSinceSet: newTurns,

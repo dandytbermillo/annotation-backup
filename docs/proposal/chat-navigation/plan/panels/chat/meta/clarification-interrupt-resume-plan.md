@@ -43,10 +43,12 @@ Without a return signal, treat ordinals/labels as new input in the current conte
 
 ---
 
-## Expiry (Silent)
+## No Automatic Expiry on Unrelated Commands
 
-If the user continues the new topic for 2–3 turns, the paused list expires silently.
-No announcement is needed.
+Do **not** clear a paused list just because the user issued unrelated commands.
+The paused list should remain available until one of these happens:
+- the user explicitly exits (confirmed stop/cancel), or
+- a new list replaces it.
 
 ---
 
@@ -55,7 +57,7 @@ No announcement is needed.
 To keep implementations consistent (without changing behavior), consider explicit state fields:
 - `activeOptionSetId` (nullable) — id of the currently visible list
 - `pausedOptionSetId` + `pausedOptions[]` — last paused list after interrupt
-- `pausedTurnsRemaining` (2–3) — optional expiry counter if you use turn limits
+- `pausedTurnsRemaining` (optional) — only if you intentionally add a time/turn expiry
 - `pausedReason = "interrupt"` — why the list was paused
 
 These can be mapped to existing fields (e.g., `lastClarification.messageId`, `clarificationSnapshot`).
@@ -93,6 +95,11 @@ These can be mapped to existing fields (e.g., `lastClarification.messageId`, `cl
    - Respond with a neutral cancel/clarify prompt (e.g., “Okay — what would you like to do instead?” or
      “Which action are you referring to?”).
    - Only target the paused list if a return cue is present (e.g., “not that — back to the panels”).
+
+7) **Paused list persists across unrelated commands**
+   - After interrupt, user issues other unrelated commands (e.g., “open recent”, “open widget demo”).
+   - Later user says: “back to the options — second option”.
+   - Expected: Paused list is still available and selection resolves correctly.
 
 ---
 
