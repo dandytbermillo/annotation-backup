@@ -218,7 +218,7 @@ If the input is a near‑match but ambiguous (soft_reject), ask directly:
 ### Short Hint Words vs New Topic (Clarified)
 Single or two‑token hints (e.g., “settings”, “profile”) should **not** be treated as `new_topic` unless they include a verb/command form (e.g., “open settings”, “show profile”).
 
-**Interrupt behavior:** See `clarification-interrupt-resume-plan.md` for how new‑topic commands pause the current list and require an explicit return signal to resume it.
+**Interrupt behavior:** See `clarification-interrupt-resume-plan.md` for how new‑topic commands pause the current list. It allows a one‑turn implicit return for ordinals/labels; after that, an explicit return signal is required.
 
 **Stop/cancel scope:** See `clarification-stop-scope-plan.md` for scope‑aware stop handling and no‑auto‑resume rules.
 

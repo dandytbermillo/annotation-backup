@@ -1655,6 +1655,120 @@ export async function handleClarificationIntercept(
   }
 
   // ==========================================================================
+  // PAUSED-SNAPSHOT REPAIR GUARD (per interrupt-resume-plan §80-85)
+  // If user sends repair phrase ("not that") after an interrupt (paused snapshot),
+  // do NOT restore the paused list and do NOT fall into doc/notes routing.
+  // Absorb with a neutral cancel/clarify prompt.
+  // Compound inputs with return cues ("not that — back to the panels") are
+  // already handled by the return signal handler above.
+  // ==========================================================================
+  if (!lastClarification &&
+      clarificationSnapshot &&
+      clarificationSnapshot.paused &&
+      clarificationSnapshot.options.length > 0 &&
+      isRepairPhrase(trimmedInput)) {
+
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'paused_snapshot_repair_absorbed',
+      metadata: {
+        userInput: trimmedInput,
+        snapshotTurnsSince: clarificationSnapshot.turnsSinceSet,
+        optionCount: clarificationSnapshot.options.length,
+        response_fit_intent: 'repair_after_interrupt',
+      },
+    })
+
+    addMessage({
+      id: `assistant-${Date.now()}`,
+      role: 'assistant',
+      content: 'Okay — what would you like to do instead?',
+      timestamp: new Date(),
+      isError: false,
+    })
+    setIsLoading(false)
+    return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+  }
+
+  // ==========================================================================
+  // PAUSED-SNAPSHOT ORDINAL GUARD (per interrupt-resume-plan §21-28, §72-80)
+  // After an interrupt, ordinals/labels resolve against the paused list only
+  // on the VERY NEXT turn (one-turn grace). After that, require an explicit
+  // return cue. This prevents the frustrating pattern where the user clearly
+  // wants to select from the list they just saw but is blocked.
+  // ==========================================================================
+  if (!lastClarification &&
+      clarificationSnapshot &&
+      clarificationSnapshot.paused &&
+      clarificationSnapshot.options.length > 0) {
+    const pausedOrdinalCheck = isSelectionOnly(
+      trimmedInput,
+      clarificationSnapshot.options.length,
+      clarificationSnapshot.options.map(o => o.label)
+    )
+
+    if (pausedOrdinalCheck.isSelection) {
+      // One-turn grace: if this is the very next turn after the interrupt,
+      // treat the ordinal as an implicit return and select from the paused list.
+      if (clarificationSnapshot.turnsSinceSet === 0 &&
+          pausedOrdinalCheck.index !== undefined) {
+        const selectedOption = clarificationSnapshot.options[pausedOrdinalCheck.index]
+
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'paused_snapshot_grace_select',
+          metadata: {
+            userInput: trimmedInput,
+            selectedIndex: pausedOrdinalCheck.index,
+            selectedLabel: selectedOption.label,
+            selectedType: selectedOption.type,
+            snapshotTurnsSince: clarificationSnapshot.turnsSinceSet,
+            response_fit_intent: 'implicit_return_grace',
+          },
+        })
+
+        const reconstructedData = reconstructSnapshotData(selectedOption)
+
+        const optionToSelect: SelectionOption = {
+          type: selectedOption.type as SelectionOption['type'],
+          id: selectedOption.id,
+          label: selectedOption.label,
+          sublabel: selectedOption.sublabel,
+          data: reconstructedData,
+        }
+
+        setRepairMemory(selectedOption.id, clarificationSnapshot.options)
+        clearClarificationSnapshot()
+        setIsLoading(false)
+        handleSelectOption(optionToSelect)
+        return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+      }
+
+      // Past grace turn: absorb with hint message
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'paused_snapshot_ordinal_absorbed',
+        metadata: {
+          userInput: trimmedInput,
+          snapshotTurnsSince: clarificationSnapshot.turnsSinceSet,
+          optionCount: clarificationSnapshot.options.length,
+          response_fit_intent: 'ordinal_after_interrupt',
+        },
+      })
+
+      addMessage({
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: 'Which options are you referring to? You can say \'back to the options\' to continue choosing.',
+        timestamp: new Date(),
+        isError: false,
+      })
+      setIsLoading(false)
+      return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+    }
+  }
+
+  // ==========================================================================
   // POST-ACTION ORDINAL WINDOW (Selection Persistence, per plan §131-147)
   // "Visible = active": if options are still visible (snapshot exists, not paused,
   // not invalidated by exit/topic/new list), ordinals resolve against them.

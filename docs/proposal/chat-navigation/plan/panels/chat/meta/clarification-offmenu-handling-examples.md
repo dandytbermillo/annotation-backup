@@ -213,7 +213,24 @@ These examples align with `clarification-response-fit-plan.md` and show how resp
 **Bot:** Okay — not that one. **Which one do you mean instead — or** say **“none of these”** (or **“none of those”**) or tell me what it’s called.
 **[Links Panel D] [Links Panel E]**
 
-### 9.7 Repeated “No” Escalation (NEW)
+### 9.7 Interrupt → One‑Turn Implicit Return (NEW)
+
+**Bot:** Multiple Links Panel panels found. Which one would you like to open?
+**[Links Panel D] [Links Panel E] [Links Panels]**
+
+**User:** open recent widget
+**Bot:** Opening Recent…
+
+**User:** first option
+**Bot:** Opening **Links Panels**. *(implicit return on the very next turn)*
+
+**User:** second option
+**Bot:** Which options are you referring to? You can say **“back to the options”** to continue choosing.
+
+**User:** back to the options — second option
+**Bot:** Opening **Links Panel D**.
+
+### 9.8 Repeated “No” Escalation (NEW)
 
 **Bot:** I found results in both documentation and your notes. Which one do you mean?
 **[Docs: Navigation Actions] [Notes: Test Note (11)]**

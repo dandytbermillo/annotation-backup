@@ -18,10 +18,14 @@ This matches human/ChatGPT/Cursor behavior: interrupt → execute → wait for a
 
 ---
 
-## Guard: No Silent Return to Old List
+## Guard: No Silent Return to Old List (With One‑Turn Grace)
 
 After an interrupt/new‑topic command, **ordinals/labels should not resolve against the old list**
 unless the user **explicitly signals return**.
+
+**One‑turn grace (human‑friendly):** If the *very next* user message after the interrupt is an
+ordinal or an exact label reference, treat it as an implicit return and resolve against the paused
+list. After that single turn, require an explicit return cue.
 
 ### Valid return signals
 - “back to the panels”
@@ -65,22 +69,30 @@ These can be mapped to existing fields (e.g., `lastClarification.messageId`, `cl
    - User: “open recent”
    - Expected: Open Recent immediately; list is paused
 
-2) **No return signal**
+2) **Implicit return (one‑turn grace)**
    - After interrupt, user says: “second option”
-   - Expected: Do **not** select from old list; treat as new input
+   - Expected: Resume the paused list and select the second item.
 
-3) **Explicit return**
+3) **No return signal (after grace)**
+   - After interrupt, user says: “second option”
+   - Then user says: “second option” again (without a return cue)
+   - Expected: “Which options are you referring to? You can say *‘back to the options’* to continue choosing.”
+     Do **not** select from old list.
+
+4) **Explicit return**
    - After interrupt, user says: “back to the panels”
    - Expected: Restore the paused list and allow selection
 
-4) **Return + ordinal**
+5) **Return + ordinal**
    - After interrupt, user says: “continue that list — second option”
    - Expected: Select second item from the restored list
 
-5) **Repair after interrupt**
+6) **Repair after interrupt**
    - After interrupt, user says: “not that”
-   - Expected: Apply repair to the **current topic**, not the paused list.
-   - Only target paused list if a return cue is present (e.g., “not that — back to the panels”).
+   - Expected: **Do not** restore the paused list and **do not** route into unrelated doc/notes disambiguation.
+   - Respond with a neutral cancel/clarify prompt (e.g., “Okay — what would you like to do instead?” or
+     “Which action are you referring to?”).
+   - Only target the paused list if a return cue is present (e.g., “not that — back to the panels”).
 
 ---
 

@@ -159,18 +159,90 @@ const {
 
 ## Decision Order in `handleClarificationIntercept`
 
-The full routing order with stop-scope additions:
+The full routing order with stop-scope and repair-guard additions:
 
 1. **Stop suppression reset** — non-exit input resets counter to 0
 2. **Early repair memory handler** — "the other one" after clarification cleared
-3. **Post-action repair window** — "not that" with active snapshot
+3. **Post-action repair window** — "not that" with active snapshot (`!paused`)
 4. **Return signal handler** — "back to the panels" for paused snapshots
-5. **Post-action ordinal window** — selection persistence for active snapshots
-6. **Stop scope guard (Priority 3)** — exit phrases with no active clarification
-7. **Bare ordinal detection** — ordinals with no context
-8. **incrementSnapshotTurn()** — paused snapshot expiry
-9. **hasClarificationContext block** — all Priority 2 handling (exit, hesitation, selection, etc.)
-10. **Normal routing** — doc search, panel disambiguation, LLM fallback
+5. **Paused-snapshot repair guard** — "not that" with paused snapshot (no return cue)
+6. **Paused-snapshot ordinal guard** — ordinals with paused snapshot: grace turn (turnsSinceSet=0) selects; after grace, shows hint
+7. **Post-action ordinal window** — selection persistence for active snapshots
+8. **Stop scope guard (Priority 3)** — exit phrases with no active clarification
+9. **Bare ordinal detection** — ordinals with no context at all
+10. **incrementSnapshotTurn()** — paused snapshot expiry
+11. **hasClarificationContext block** — all Priority 2 handling (exit, hesitation, selection, etc.)
+12. **Normal routing** — doc search, panel disambiguation, LLM fallback
+
+---
+
+## Bug Fix: Paused-Snapshot Repair Routing Leak
+
+**Problem:** After an interrupt (paused snapshot), saying "not that" fell through to normal routing — triggering cross-corpus doc/notes disambiguation instead of being absorbed as a control utterance.
+
+**Root cause:** The post-action repair window (step 3) only handled active snapshots (`!clarificationSnapshot.paused`). Repair phrases with a paused snapshot had no guard, so they passed through the return signal handler (no return cue detected) and the ordinal window (`paused` excluded), landing in normal routing where "not that" was interpreted as navigation input.
+
+**Fix:** Added a **paused-snapshot repair guard** (step 5) between the return signal handler and the post-action ordinal window. When `isRepairPhrase(trimmedInput)` and the snapshot is paused, the guard absorbs the input with a neutral prompt.
+
+```typescript
+// After return signal handler, before post-action ordinal window
+if (!lastClarification &&
+    clarificationSnapshot &&
+    clarificationSnapshot.paused &&
+    clarificationSnapshot.options.length > 0 &&
+    isRepairPhrase(trimmedInput)) {
+  addMessage({ content: 'Okay — what would you like to do instead?' })
+  return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+}
+```
+
+**Design decisions:**
+- Placed *after* the return signal handler so compound inputs ("not that — back to the panels") are handled by the existing return signal detection — no duplicate `detectReturnSignal` call needed.
+- Does NOT clear the paused snapshot — preserves the ability for explicit return on a subsequent turn. Normal turn-based expiry via `incrementSnapshotTurn()` handles cleanup.
+- Uses `clarificationCleared: false` since no clarification was actually cleared.
+
+**Reference:** `clarification-interrupt-resume-plan.md` §80-85 (Acceptance Test 5: Repair after interrupt)
+
+---
+
+## Bug Fix: Paused-Snapshot Ordinal Routing Leak
+
+**Problem:** After an interrupt (paused snapshot), ordinals like "second option" fell through to normal routing — triggering cross-corpus doc/notes disambiguation instead of being absorbed.
+
+**Root cause:** The bare ordinal detection (step 9) required `!clarificationSnapshot` — after an interrupt the paused snapshot still exists, so the guard was skipped. The post-action ordinal window (step 7) required `!clarificationSnapshot.paused`, so paused snapshots were also excluded. Ordinals fell through to routing.
+
+**Initial fix:** Added a **paused-snapshot ordinal guard** (step 6) that blocked all ordinals against paused snapshots with "Which options are you referring to?" This prevented routing leaks but was frustrating — the user clearly wanted to select from the list they just saw.
+
+**Refined fix (one-turn grace):** Updated per `clarification-interrupt-resume-plan.md` §26-28. The guard now checks `clarificationSnapshot.turnsSinceSet`:
+
+- **Grace turn (`turnsSinceSet === 0`):** The very next turn after interrupt — treat the ordinal as an implicit return and select from the paused list. This matches the natural pattern: user sees list → interrupts → immediately comes back with an ordinal.
+- **After grace (`turnsSinceSet > 0`):** Block with hint message: "Which options are you referring to? You can say 'back to the options' to continue choosing."
+
+```typescript
+if (pausedOrdinalCheck.isSelection) {
+  // One-turn grace: very next turn after interrupt
+  if (clarificationSnapshot.turnsSinceSet === 0 &&
+      pausedOrdinalCheck.index !== undefined) {
+    // Select from paused list (implicit return)
+    const selectedOption = clarificationSnapshot.options[pausedOrdinalCheck.index]
+    const reconstructedData = reconstructSnapshotData(selectedOption)
+    setRepairMemory(selectedOption.id, clarificationSnapshot.options)
+    clearClarificationSnapshot()
+    handleSelectOption(optionToSelect)
+    return { handled: true, clarificationCleared: true, ... }
+  }
+  // Past grace turn: show hint
+  addMessage({ content: 'Which options are you referring to? You can say \'back to the options\' to continue choosing.' })
+  return { handled: true, clarificationCleared: false, ... }
+}
+```
+
+**Design decisions:**
+- Placed as a separate guard (step 6) rather than modifying the bare ordinal check (step 9) to keep all paused-snapshot logic grouped together (steps 5-6) and maintain distinct telemetry actions.
+- Grace selection clears the snapshot (`clearClarificationSnapshot()`) since the implicit return consumes the paused list.
+- Sets repair memory so "not that" after a grace selection triggers the post-action repair window.
+
+**Reference:** `clarification-interrupt-resume-plan.md` §26-28 (one-turn grace), §72-80 (Acceptance Tests 2-3)
 
 ---
 
@@ -206,6 +278,30 @@ The full routing order with stop-scope additions:
 | Fresh clarification | After stop → "links panel" | New clarification | Correct | ✅ |
 | Repeated stop cycle | Multiple stop→confirm→yes cycles | Each works independently | Correct | ✅ |
 
+**Round 3 (acceptance tests — stop-scope):**
+
+| Test | Input Sequence | Expected | Actual | Result |
+|------|---------------|----------|--------|--------|
+| Bare ordinal after stop | pills → stop → yes → "second option" | "Which options are you referring to?" | Correct | ✅ |
+| Repeated stop | pills → stop → yes → "stop" | "All set — what would you like to do?" | Correct | ✅ |
+| Repair after interrupt | pills → "open recent" → "not that" | Cross-corpus disambiguation (leak) | Routing leak | ❌ |
+
+**Round 4 (post repair-guard fix):**
+
+| Test | Input Sequence | Expected | Actual | Result |
+|------|---------------|----------|--------|--------|
+| Stop scope re-verify | pills → "stop" → "yes" → "the first one" | P2 wording + bare ordinal | Correct | ✅ |
+| Repair after interrupt | pills → "open recent widget" → "not that" | "Okay — what would you like to do instead?" | Correct | ✅ |
+
+**Round 5 (QA checklist — tests 6, 7, 10):**
+
+| Test | Input Sequence | Expected | Actual | Result |
+|------|---------------|----------|--------|--------|
+| QA #6: Interrupt | pills → "open widget manager" | "Opening Widget Manager..." | Correct | ✅ |
+| QA #7: No auto-resume | interrupt → "second option" | "Which options are you referring to?" | Cross-corpus disambiguation (leak) | ❌ |
+| QA #10: Selection persistence | pills → "second option" | "Opening Links Panel D..." | Correct | ✅ |
+| Stop on new clarification | new pills → "stop" → "yes" | P2 wording | Correct | ✅ |
+
 ### Type-check
 
 ```bash
@@ -223,9 +319,20 @@ Per `clarification-stop-scope-plan.md`:
 |---|------|--------|-------|
 | 1 | Stop during execution | Deferred | Priority 1 requires cancellation infrastructure |
 | 2 | Stop during clarification (ambiguous + explicit) | ✅ Verified | Both paths tested |
-| 3 | No auto-resume after stop | ✅ Implemented | Bare ordinal → "Which options are you referring to?" |
-| 4 | Explicit return after stop | ✅ Implemented | Return signal handler (from interrupt-resume plan) |
-| 5 | Repeated stop suppression | ✅ Implemented | Counter-based, resets on non-exit input |
+| 3 | No auto-resume after stop | ✅ Verified | Bare ordinal → "Which options are you referring to?" |
+| 4 | Explicit return after stop | ✅ Verified | Return signal handler (from interrupt-resume plan) |
+| 5 | Repeated stop suppression | ✅ Verified | Counter-based, resets on non-exit input |
+
+Per `clarification-interrupt-resume-plan.md`:
+
+| # | Test | Status | Notes |
+|---|------|--------|-------|
+| 1 | Interrupt | ✅ Verified | "open recent" during pills → execute immediately, list paused |
+| 2 | Implicit return (one-turn grace) | Pending verification | Ordinal on very next turn after interrupt → select from paused list |
+| 3 | No return signal (after grace) | Pending verification | Second ordinal without return cue → hint message |
+| 4 | Explicit return | ✅ Verified | "back to the panels" restores paused list |
+| 5 | Return + ordinal | ✅ Verified | "back to panels — second option" selects from restored list |
+| 6 | Repair after interrupt | ✅ Verified | "not that" → neutral prompt, no routing leak |
 
 ---
 
@@ -237,6 +344,9 @@ Per `clarification-stop-scope-plan.md`:
 | Priority 3 (general cancel) | "No problem — what would you like to do instead?" |
 | Repeated stop suppression | "All set — what would you like to do?" |
 | Bare ordinal (no context) | "Which options are you referring to?" |
+| Repair after interrupt (paused snapshot) | "Okay — what would you like to do instead?" |
+| Ordinal after interrupt — grace turn | (no message — selects from paused list as implicit return) |
+| Ordinal after interrupt — past grace | "Which options are you referring to? You can say 'back to the options' to continue choosing." |
 
 ---
 
@@ -253,15 +363,17 @@ Per `clarification-stop-scope-plan.md`:
 | File | Lines | Change |
 |------|-------|--------|
 | `lib/chat/chat-navigation-context.tsx` | +23 | New constant, state, callbacks, provider value |
-| `lib/chat/chat-routing.ts` | +119, -6 | Interface, handler logic, wording updates |
+| `lib/chat/chat-routing.ts` | +193, -6 | Interface, handler logic, wording updates, repair guard, ordinal guard |
 | `components/chat/chat-navigation-panel.tsx` | +8 | Wire new state to intercept call |
 | `clarification-stop-scope-plan.md` | +5, -5 | Priority 1 deferred rationale |
+| `clarification-interrupt-resume-plan.md` | +6, -2 | Test 5 updated: repair after interrupt spec |
 
 ---
 
 ## Next Steps
 
-- Test bare ordinal detection ("second option" with no context) in manual UI testing
-- Test pure repeated stop (no intervening commands) in manual UI testing
+- Test one-turn grace: interrupt → ordinal on next turn → should select from paused list (QA #2)
+- Test grace expiry: interrupt → ordinal → ordinal again → should show hint (QA #3)
+- Run remaining QA checklist tests: #11 (bare label), #12 (noise), #13 (hesitation)
 - Consider removing unused `decrementStopSuppression` from context interface
 - Priority 1 implementation when cancellable execution exists
