@@ -809,6 +809,63 @@ export function hasFuzzyMatch(
 }
 
 // =============================================================================
+// Preview / Grace-Skip Patterns
+// =============================================================================
+
+/**
+ * Check if input matches "show all" keyword heuristic.
+ * Returns true if message appears to be asking to expand a preview list.
+ */
+export function matchesShowAllHeuristic(input: string): boolean {
+  const normalized = input.toLowerCase().trim()
+
+  // Pattern 1: "all" + (items|list|results|entries|everything)
+  if (/\ball\b/.test(normalized) && /\b(items|list|results|entries)\b/.test(normalized)) {
+    return true
+  }
+
+  // Pattern 2: "full list" or "complete list"
+  if (/\b(full|complete)\s+list\b/.test(normalized)) {
+    return true
+  }
+
+  // Pattern 3: "all" + number (e.g., "all 14")
+  if (/\ball\s+\d+\b/.test(normalized)) {
+    return true
+  }
+
+  // Pattern 4: "everything" or "the rest"
+  if (/\b(everything|the\s+rest)\b/.test(normalized)) {
+    return true
+  }
+
+  // Pattern 5: "show more" / "see more"
+  if (/\b(show|see)\s+more\b/.test(normalized)) {
+    return true
+  }
+
+  return false
+}
+
+/**
+ * Check if input contains action verbs that should skip grace window.
+ * These are deliberate commands that shouldn't be intercepted.
+ * Note: This is separate from hasActionVerb() in v4 routing helpers.
+ */
+export function hasGraceSkipActionVerb(input: string): boolean {
+  const actionVerbs = [
+    // Destructive actions
+    'create', 'new', 'make', 'rename', 'delete', 'remove',
+    // Navigation actions
+    'go to', 'back', 'home', 'dashboard', 'list',
+    // Explicit workspace commands
+    'open workspace', 'show workspace', 'view workspace',
+  ]
+  const normalized = input.toLowerCase()
+  return actionVerbs.some(verb => normalized.includes(verb))
+}
+
+// =============================================================================
 // Prereq 4: Cross-Corpus Intent Detection
 // =============================================================================
 

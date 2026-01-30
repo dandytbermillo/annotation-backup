@@ -47,20 +47,21 @@ import {
 import { fetchKnownTerms, isKnownTermsCacheValid, getKnownTermsFetchStatus } from '@/lib/docs/known-terms-client'
 import type { RoutingTelemetryEvent } from '@/lib/chat/routing-telemetry'
 // Step 3 refactor: Routing handlers
-import { handleCorrection, handleMetaExplain, handleFollowUp, handleClarificationIntercept, handlePanelDisambiguation, type PendingOptionState } from '@/lib/chat/chat-routing'
+import { type PendingOptionState } from '@/lib/chat/chat-routing'
+// Unified routing dispatcher (per routing-order-priority-plan.md)
+import { dispatchRouting, isExplicitCommand, type LastPreviewState } from '@/lib/chat/routing-dispatcher'
 // TD-3: Import consolidated patterns from query-patterns module
 import {
   stripConversationalPrefix,
   isAffirmationPhrase,
   isRejectionPhrase,
-  matchesReshowPhrases,
 } from '@/lib/chat/query-patterns'
 // Step 1 refactor: Pure UI helpers
 import { normalizeUserMessage, extractQuickLinksBadge } from '@/lib/chat/ui-helpers'
-// Step 3 refactor: Doc routing helpers
-import { handleDocRetrieval, maybeFormatSnippetWithHs3, stripMarkdownHeadersForUI, dedupeHeaderPath } from '@/lib/chat/doc-routing'
-// Prereq 4: Cross-corpus handlers
-import { handleCrossCorpusRetrieval, handleCrossCorpusPillSelection } from '@/lib/chat/cross-corpus-handler'
+// Step 3 refactor: Doc routing helpers (format utilities still used locally)
+import { maybeFormatSnippetWithHs3, stripMarkdownHeadersForUI, dedupeHeaderPath } from '@/lib/chat/doc-routing'
+// Prereq 4: Cross-corpus handlers (pill selection still used locally)
+import { handleCrossCorpusPillSelection } from '@/lib/chat/cross-corpus-handler'
 
 export interface ChatNavigationPanelProps {
   /** Current entry ID for context */
@@ -102,53 +103,9 @@ const CONTEXT_DECAY = {
   openedPanel: 180_000,  // 3 minutes - panels persist longer
 } as const
 
-/**
- * Last preview state for "show all" shortcut
- */
-interface LastPreviewState {
-  source: string
-  viewPanelContent: ViewPanelContent
-  totalCount: number
-  messageId: string
-  createdAt: number
-  drawerPanelId?: string
-  drawerPanelTitle?: string
-}
+// LastPreviewState moved to lib/chat/routing-dispatcher.ts (Tier 2g)
 
-/**
- * Check if input matches "show all" keyword heuristic.
- * Returns true if message appears to be asking to expand a preview list.
- */
-function matchesShowAllHeuristic(input: string): boolean {
-  const normalized = input.toLowerCase().trim()
-
-  // Pattern 1: "all" + (items|list|results|entries|everything)
-  if (/\ball\b/.test(normalized) && /\b(items|list|results|entries)\b/.test(normalized)) {
-    return true
-  }
-
-  // Pattern 2: "full list" or "complete list"
-  if (/\b(full|complete)\s+list\b/.test(normalized)) {
-    return true
-  }
-
-  // Pattern 3: "all" + number (e.g., "all 14")
-  if (/\ball\s+\d+\b/.test(normalized)) {
-    return true
-  }
-
-  // Pattern 4: "everything" or "the rest"
-  if (/\b(everything|the\s+rest)\b/.test(normalized)) {
-    return true
-  }
-
-  // Pattern 5: "show more" / "see more"
-  if (/\b(show|see)\s+more\b/.test(normalized)) {
-    return true
-  }
-
-  return false
-}
+// matchesShowAllHeuristic moved to lib/chat/query-patterns.ts
 
 // TD-3: isAffirmationPhrase, isRejectionPhrase, isMetaPhrase now imported from query-patterns.ts
 // TD-3: matchesReshowPhrases, stripConversationalPrefix, isMetaExplainOutsideClarification,
@@ -375,183 +332,14 @@ function buildChatContext(messages: ChatMessage[], uiContext?: UIContext | null)
   return context
 }
 
-/**
- * Check if input contains action verbs that should skip grace window.
- * These are deliberate commands that shouldn't be intercepted.
- * Note: This is separate from hasActionVerb() in v4 routing helpers.
- */
-function hasGraceSkipActionVerb(input: string): boolean {
-  const actionVerbs = [
-    // Destructive actions
-    'create', 'new', 'make', 'rename', 'delete', 'remove',
-    // Navigation actions
-    'go to', 'back', 'home', 'dashboard', 'list',
-    // Explicit workspace commands
-    'open workspace', 'show workspace', 'view workspace',
-  ]
-  const normalized = input.toLowerCase()
-  return actionVerbs.some(verb => normalized.includes(verb))
-}
+// hasGraceSkipActionVerb moved to lib/chat/query-patterns.ts
 
-/**
- * Check if input is an explicit command that should bypass the pending options guard.
- * Per pending-options-explicit-command-bypass.md
- *
- * This is broader than hasActionVerb - it catches commands like "open demo widget"
- * that should not be blocked by the options guard.
- *
- * Phase 2b: verb+ordinal patterns ("open the second") are NOT explicit commands.
- * They're selection attempts that should go to LLM with pendingOptions context.
- */
-function isExplicitCommand(input: string): boolean {
-  const normalized = input.toLowerCase()
+// isExplicitCommand moved to lib/chat/routing-dispatcher.ts (Tier 2a)
+// Now imported from there.
 
-  // Phase 2b: If input contains ordinal/number language, treat as selection attempt
-  // "open the first one", "please open the second", "can you please open the first one for me"
-  // All should preserve pendingOptions even though they contain action verbs
-  // This simple check replaces complex prefix pattern matching
-  const hasOrdinal = /\b(first|second|third|fourth|fifth|last|[1-9])\b/i.test(normalized)
-  if (hasOrdinal) {
-    return false
-  }
+// isSelectionOnly moved to lib/chat/routing-dispatcher.ts (Tier 3a)
 
-  // Action verbs that indicate a new command
-  const actionVerbs = [
-    'open', 'show', 'list', 'view', 'go', 'back', 'home',
-    'create', 'rename', 'delete', 'remove',
-  ]
-
-  // Must have an action verb to be considered an explicit command
-  return actionVerbs.some(verb => normalized.includes(verb))
-}
-
-/**
- * Check if input is a selection-only pattern (ordinal or single letter).
- * Per llm-chat-context-first-plan.md: Only intercept pure selection patterns.
- *
- * Returns: { isSelection: true, index: number } if input is a selection
- *          { isSelection: false } if input should go to LLM
- *
- * Selection patterns (fully match, no extra words):
- * - Ordinals: "first", "second", "third", "last", "1", "2", "3"
- * - Option phrases: "option 2", "the first one", "the second one"
- * - Single letters: "a", "b", "c", "d", "e" (when options use letter badges)
- */
-function isSelectionOnly(
-  input: string,
-  optionCount: number,
-  optionLabels?: string[]
-): { isSelection: boolean; index?: number } {
-  const normalized = input.toLowerCase().trim()
-
-  // Selection-only regex pattern - must fully match (no extra words)
-  // Ordinals: first, second, third, fourth, fifth, last
-  // Numbers: 1, 2, 3, 4, 5
-  // Option phrases: option 1, option 2, the first one, the second one
-  // Single letters: a, b, c, d, e (only when options exist)
-  const selectionPattern = /^(first|second|third|fourth|fifth|last|[1-9]|option\s*[1-9]|the\s+(first|second|third|fourth|fifth|last)\s+one|[a-e])$/i
-
-  if (!selectionPattern.test(normalized)) {
-    return { isSelection: false }
-  }
-
-  // Map to 0-based index
-  const ordinalMap: Record<string, number> = {
-    'first': 0, '1': 0, 'option 1': 0, 'the first one': 0, 'a': 0,
-    'second': 1, '2': 1, 'option 2': 1, 'the second one': 1, 'b': 1,
-    'third': 2, '3': 2, 'option 3': 2, 'the third one': 2, 'c': 2,
-    'fourth': 3, '4': 3, 'option 4': 3, 'the fourth one': 3, 'd': 3,
-    'fifth': 4, '5': 4, 'option 5': 4, 'the fifth one': 4, 'e': 4,
-  }
-
-  // Handle "last"
-  if (normalized === 'last' || normalized === 'the last one') {
-    const index = optionCount - 1
-    if (index >= 0) {
-      return { isSelection: true, index }
-    }
-    return { isSelection: false }
-  }
-
-  // For single letters, check if option labels contain that letter badge
-  if (/^[a-e]$/.test(normalized) && optionLabels) {
-    const letterUpper = normalized.toUpperCase()
-    const matchIndex = optionLabels.findIndex(label =>
-      label.toUpperCase().includes(letterUpper) ||
-      label.toUpperCase().endsWith(` ${letterUpper}`)
-    )
-    if (matchIndex >= 0) {
-      return { isSelection: true, index: matchIndex }
-    }
-    // Letter doesn't match any option - not a selection
-    return { isSelection: false }
-  }
-
-  // Check ordinal map
-  const index = ordinalMap[normalized]
-  if (index !== undefined && index < optionCount) {
-    return { isSelection: true, index }
-  }
-
-  return { isSelection: false }
-}
-
-/**
- * Find exact match in pending options by label or sublabel.
- * Returns the matched option or undefined if no exact match.
- */
-function findExactOptionMatch(
-  input: string,
-  options: PendingOptionState[]
-): PendingOptionState | undefined {
-  const normalized = input.trim().toLowerCase()
-
-  // Try exact label match first
-  const labelMatch = options.find(opt => opt.label.toLowerCase() === normalized)
-  if (labelMatch) return labelMatch
-
-  // Try exact sublabel match
-  const sublabelMatch = options.find(
-    opt => opt.sublabel && opt.sublabel.toLowerCase() === normalized
-  )
-  if (sublabelMatch) return sublabelMatch
-
-  // Try "contains" match - input contains the option label
-  // e.g., "pls show the Links Panel D" contains "Links Panel D"
-  // Only match if exactly one option label is found (avoid ambiguity)
-  const containsMatches = options.filter(opt =>
-    normalized.includes(opt.label.toLowerCase())
-  )
-  if (containsMatches.length === 1) {
-    return containsMatches[0]
-  }
-
-  // Phase 2a.1: Label matching for visible options
-  // Try "starts with" match - label starts with input
-  // e.g., "workspace 6" matches "Workspace 6 (Home)"
-  // Only match if exactly one option starts with the input (avoid ambiguity)
-  const startsWithMatches = options.filter(opt =>
-    opt.label.toLowerCase().startsWith(normalized)
-  )
-  if (startsWithMatches.length === 1) {
-    return startsWithMatches[0]
-  }
-
-  // Phase 2a.1: Try "label contains input" match
-  // e.g., "workspace 6" is found within "Workspace 6 (Home)"
-  // Require minimum 3 chars to avoid false positives
-  // Only match if exactly one option contains the input (avoid ambiguity)
-  if (normalized.length >= 3) {
-    const labelContainsMatches = options.filter(opt =>
-      opt.label.toLowerCase().includes(normalized)
-    )
-    if (labelContainsMatches.length === 1) {
-      return labelContainsMatches[0]
-    }
-  }
-
-  return undefined
-}
+// findExactOptionMatch moved to lib/chat/routing-dispatcher.ts (Tier 3a)
 
 /**
  * Create a compact summary from older user messages.
@@ -1758,12 +1546,22 @@ function ChatNavigationPanelContent({
       }
 
 // ---------------------------------------------------------------------------
-      // Phase 2a.3: CLARIFICATION-MODE INTERCEPT
-      // Step 3 refactor: Extracted to lib/chat/chat-routing.ts
+      // UNIFIED ROUTING DISPATCHER (per routing-order-priority-plan.md)
+      //
+      // Canonical tier order:
+      //   Tier 0 — Stop / Cancel
+      //   Tier 1 — Return / Resume / Repair
+      //   Tier 2 — New Topic / Interrupt Commands
+      //   Tier 3 — Clarification (active list)
+      //   Tier 4 — Known-Noun Commands (placeholder)
+      //   Tier 5 — Docs / Informational Routing
+      //
+      // See lib/chat/routing-dispatcher.ts for the single source of truth.
       // ---------------------------------------------------------------------------
-      console.log('[ChatPanel] Checkpoint 3: Before clarificationIntercept', { lastClarification: !!lastClarification, pendingOptions: pendingOptions?.length })
-      const clarificationResult = await handleClarificationIntercept({
+      console.log('[ChatPanel] Checkpoint 3: Before dispatchRouting', { lastClarification: !!lastClarification, pendingOptions: pendingOptions?.length })
+      const routingResult = await dispatchRouting({
         trimmedInput,
+        // Clarification intercept (Tiers 0, 1, 3)
         lastClarification,
         lastSuggestion,
         pendingOptions,
@@ -1777,531 +1575,58 @@ function ChatNavigationPanelContent({
         setPendingOptionsGraceCount,
         setNotesScopeFollowUpActive,
         handleSelectOption,
-        // Repair memory (per clarification-response-fit-plan.md §5)
         repairMemory,
         setRepairMemory,
         incrementRepairMemoryTurn,
         clearRepairMemory,
-        // Clarification snapshot for post-action repair window (per plan §153-161)
         clarificationSnapshot,
         saveClarificationSnapshot,
         pauseSnapshotWithReason,
         incrementSnapshotTurn,
         clearClarificationSnapshot,
-        // Stop suppression (per stop-scope-plan §40-48)
         stopSuppressionCount,
         setStopSuppressionCount,
         decrementStopSuppression,
-      })
-      const { clarificationCleared, isNewQuestionOrCommandDetected } = clarificationResult
-      if (clarificationResult.handled) {
-        return
-      }
-
-      // ---------------------------------------------------------------------------
-      // Prereq 4: Cross-Corpus Retrieval Check (BEFORE metaExplain)
-      // Check for notes corpus intent or cross-corpus ambiguity before docs routing.
-      // Must run before metaExplain to allow "what is X" to check notes corpus.
-      // ---------------------------------------------------------------------------
-      const crossCorpusResult = await handleCrossCorpusRetrieval({
-        trimmedInput,
+        // Doc/Routing handlers (Tiers 2, 5)
         docRetrievalState,
-        // Per panel-aware-command-routing-plan.md: pass visible widgets for context-aware matching
-        visibleWidgets: uiContext?.dashboard?.visibleWidgets,
-        addMessage,
+        knownTermsFetchStatus,
+        usedCoreAppTermsFallback,
         updateDocRetrievalState,
-        setIsLoading,
-        setPendingOptions,
-        setPendingOptionsMessageId,
-        setLastClarification,
-      })
-      if (crossCorpusResult.handled) {
-        return
-      }
-
-      // ---------------------------------------------------------------------------
-      // Panel Disambiguation (Pre-LLM): Handle partial matches like "links panel"
-      // Per panel-aware-command-routing-plan.md: Show disambiguation deterministically
-      // before going to LLM to avoid non-deterministic LLM badge guessing.
-      // ---------------------------------------------------------------------------
-      const panelDisambiguationResult = handlePanelDisambiguation({
-        trimmedInput,
-        visibleWidgets: uiContext?.dashboard?.visibleWidgets,
-        addMessage,
-        setIsLoading,
-        setPendingOptions,
-        setPendingOptionsMessageId,
-        setLastClarification,
-      })
-      if (panelDisambiguationResult.handled) {
-        return
-      }
-
-      // ---------------------------------------------------------------------------
-      // Meta-Explain Outside Clarification: Handle "explain", "what do you mean?"
-      // Step 3 refactor: Extracted to lib/chat/chat-routing.ts
-      // ---------------------------------------------------------------------------
-      const metaExplainResult = await handleMetaExplain({
-        trimmedInput,
-        docRetrievalState,
         messages,
-        lastClarification,
-        clarificationCleared,
-        knownTermsFetchStatus,
-        usedCoreAppTermsFallback,
-        addMessage,
-        updateDocRetrievalState,
-        setIsLoading,
-        setPendingOptions,
-        setPendingOptionsMessageId,
-        setLastClarification,
+        // Explicit command bypass / Re-show (Tiers 2, 3)
+        findLastOptionsMessage,
+        reshowWindowMs: RESHOW_WINDOW_MS,
+        // Preview shortcut (Tier 2g)
+        lastPreview,
+        openPanelDrawer,
+        openPanelWithTracking,
       })
-      if (metaExplainResult.handled) {
-        return
-      }
-
-      // ---------------------------------------------------------------------------
-      // V4 Correction Handling: "no / not that" after doc retrieval
-      // Per general-doc-retrieval-routing-plan.md (v4)
-      // Step 3 refactor: Extracted to lib/chat/chat-routing.ts
-      // ---------------------------------------------------------------------------
-      const correctionResult = handleCorrection({
-        trimmedInput,
-        docRetrievalState,
-        knownTermsFetchStatus,
-        usedCoreAppTermsFallback,
-        addMessage,
-        updateDocRetrievalState,
-        setIsLoading,
-      })
-      if (correctionResult.handled) {
-        return
-      }
-
-      // ---------------------------------------------------------------------------
-      // V5 Pronoun Follow-up: "tell me more" with HS2 expansion
-      // Step 3 refactor: Extracted to lib/chat/chat-routing.ts
-      // ---------------------------------------------------------------------------
-      const followUpResult = await handleFollowUp({
-        trimmedInput,
-        docRetrievalState,
-        isNewQuestionOrCommandDetected,
-        knownTermsFetchStatus,
-        usedCoreAppTermsFallback,
-        addMessage,
-        updateDocRetrievalState,
-        setIsLoading,
-      })
-      // Extract classifier state for use in subsequent routing telemetry
+      const { clarificationCleared, isNewQuestionOrCommandDetected } = routingResult
+      // Extract classifier state for downstream telemetry
       const {
         classifierCalled,
         classifierResult,
         classifierTimeout,
         classifierLatencyMs,
         classifierError,
-      } = followUpResult
-      const isFollowUp = followUpResult.handled
-      console.log('[ChatPanel] followUpResult.handled:', followUpResult.handled, 'for input:', trimmedInput)
-      if (followUpResult.handled) {
+      } = routingResult
+      const isFollowUp = routingResult.isFollowUp
+      if (routingResult.handled) {
         return
       }
 
       // ---------------------------------------------------------------------------
-      // General Doc Retrieval Routing: Handle "what is X", "how do I X" queries
-      // AND bare nouns like "notes", "widgets" (not action nouns like "recent")
-      // Per general-doc-retrieval-routing-plan.md (v4)
-      // Routes doc-style questions through retrieval for grounded answers.
+      // NOTE: The following blocks have been moved to routing-dispatcher.ts:
+      //   - Affirmation Without Context → Tier 3b
+      //   - Re-show Options → Tier 3c
+      //   - Explicit Command Bypass → Tier 2a
+      //   - Preview Shortcut → Tier 2g
+      //   - Selection-Only Guard → Tier 3a
+      //   - Fallback Selection → Tier 3a (cont.)
+      //
+      // All routing is now handled by dispatchRouting() above.
+      // See lib/chat/routing-dispatcher.ts for the single source of truth.
       // ---------------------------------------------------------------------------
-      const docRetrievalResult = await handleDocRetrieval({
-        trimmedInput,
-        uiContext,
-        docRetrievalState,
-        lastClarification,
-        clarificationCleared,
-        knownTermsFetchStatus,
-        usedCoreAppTermsFallback,
-        classifierCalled,
-        classifierResult,
-        classifierTimeout,
-        classifierLatencyMs,
-        classifierError,
-        isNewQuestionOrCommandDetected,
-        isFollowUp,
-        addMessage,
-        updateDocRetrievalState,
-        setIsLoading,
-        setPendingOptions,
-        setPendingOptionsMessageId,
-        setLastClarification,
-      })
-      if (docRetrievalResult.handled) {
-        return
-      }
-
-      // ---------------------------------------------------------------------------
-      // Affirmation Without Context: Handle "yes" when no active suggestion
-      // Per suggestion-fallback-polish-plan.md
-      // ---------------------------------------------------------------------------
-      if (!lastSuggestion && isAffirmationPhrase(trimmedInput)) {
-        void debugLog({
-          component: 'ChatNavigation',
-          action: 'affirmation_without_context',
-          metadata: { userInput: trimmedInput },
-        })
-
-        const assistantMessage: ChatMessage = {
-          id: `assistant-${Date.now()}`,
-          role: 'assistant',
-          content: 'Yes to which option?',
-          timestamp: new Date(),
-          isError: false,
-        }
-        addMessage(assistantMessage)
-        setIsLoading(false)
-        return
-      }
-
-      // ---------------------------------------------------------------------------
-      // Re-show Options: Deterministic check for re-show phrases
-      // Per pending-options-message-source-plan.md - use chat messages as source of truth
-      // ---------------------------------------------------------------------------
-      if (matchesReshowPhrases(trimmedInput)) {
-        const now = Date.now()
-        // Find last options from chat messages (source of truth)
-        const lastOptionsMessage = findLastOptionsMessage(messages)
-        const messageAge = lastOptionsMessage ? now - lastOptionsMessage.timestamp.getTime() : null
-        const isWithinGraceWindow = lastOptionsMessage && messageAge !== null && messageAge <= RESHOW_WINDOW_MS
-
-        if (isWithinGraceWindow && lastOptionsMessage) {
-          void debugLog({
-            component: 'ChatNavigation',
-            action: 'reshow_options_deterministic',
-            metadata: { optionsCount: lastOptionsMessage.options.length, messageAgeMs: messageAge },
-          })
-
-          // Re-render options without calling LLM
-          const messageId = `assistant-${Date.now()}`
-          const assistantMessage: ChatMessage = {
-            id: messageId,
-            role: 'assistant',
-            content: 'Here are your options:',
-            timestamp: new Date(),
-            isError: false,
-            options: lastOptionsMessage.options.map((opt) => ({
-              type: opt.type as SelectionOption['type'],
-              id: opt.id,
-              label: opt.label,
-              sublabel: opt.sublabel,
-              data: opt.data as SelectionOption['data'],
-            })),
-          }
-          addMessage(assistantMessage)
-
-          // Restore pendingOptions for selection handling
-          setPendingOptions(lastOptionsMessage.options)
-          setPendingOptionsMessageId(messageId)
-          setPendingOptionsGraceCount(0)
-
-          // Per options-visible-clarification-sync-plan.md: sync lastClarification on re-show
-          setLastClarification({
-            type: 'option_selection',
-            originalIntent: 'reshow_options',
-            messageId,
-            timestamp: Date.now(),
-            clarificationQuestion: 'Here are your options:',
-            options: lastOptionsMessage.options.map(opt => ({
-              id: opt.id,
-              label: opt.label,
-              sublabel: opt.sublabel,
-              type: opt.type,
-            })),
-            metaCount: 0,
-          })
-
-          setIsLoading(false)
-          return
-        } else {
-          // Grace window expired or no prior options
-          void debugLog({
-            component: 'ChatNavigation',
-            action: 'reshow_options_expired',
-            metadata: { hasLastOptionsMessage: !!lastOptionsMessage, messageAgeMs: messageAge },
-          })
-
-          const assistantMessage: ChatMessage = {
-            id: `assistant-${Date.now()}`,
-            role: 'assistant',
-            content: "No options are open. Say 'show quick links' to see them again.",
-            timestamp: new Date(),
-            isError: false,
-          }
-          addMessage(assistantMessage)
-          setIsLoading(false)
-          return
-        }
-      }
-
-      // ---------------------------------------------------------------------------
-      // NOTE: Local clarification handler removed per llm-chat-context-first-plan.md
-      // Clarification questions now go to the LLM with ChatContext for better answers.
-      // The LLM can answer "what did you just open?", "is F in the list?", etc.
-      // using the chatContext passed in the API request.
-      // ---------------------------------------------------------------------------
-
-      // ---------------------------------------------------------------------------
-      // Explicit Command Bypass: Clear pending options if explicit command detected
-      // Per pending-options-explicit-command-bypass.md
-      // ---------------------------------------------------------------------------
-      if (isExplicitCommand(trimmedInput)) {
-        // Check if we have pending options (either in state or in recent messages)
-        const lastOptionsMessage = findLastOptionsMessage(messages)
-        const hasRecentOptions = lastOptionsMessage &&
-          (Date.now() - lastOptionsMessage.timestamp.getTime()) <= RESHOW_WINDOW_MS
-
-        if (pendingOptions.length > 0 || hasRecentOptions) {
-          void debugLog({
-            component: 'ChatNavigation',
-            action: 'explicit_command_bypass',
-            metadata: {
-              input: trimmedInput,
-              hadPendingOptions: pendingOptions.length > 0,
-              hadRecentOptions: hasRecentOptions,
-            },
-          })
-
-          // Clear pending options so the command proceeds to normal routing
-          setPendingOptions([])
-          setPendingOptionsMessageId(null)
-          setPendingOptionsGraceCount(0)
-        }
-        // Don't return - let the message fall through to LLM for normal processing
-      }
-
-      // ---------------------------------------------------------------------------
-      // Preview Shortcut: Check for "show all" when a preview exists
-      // ---------------------------------------------------------------------------
-      const PREVIEW_TIMEOUT_MS = 2 * 60 * 1000 // 2 minutes
-      const previewIsRecent = lastPreview && (Date.now() - lastPreview.createdAt) < PREVIEW_TIMEOUT_MS
-
-      if (previewIsRecent && matchesShowAllHeuristic(trimmedInput)) {
-        // Keyword heuristic matched - open view panel directly
-        void debugLog({
-          component: 'ChatNavigation',
-          action: 'show_all_shortcut',
-          metadata: { source: lastPreview.source, totalCount: lastPreview.totalCount, method: 'heuristic' },
-        })
-
-        if (lastPreview.drawerPanelId) {
-          openPanelDrawer(lastPreview.drawerPanelId, lastPreview.drawerPanelTitle)
-        } else {
-          openPanelWithTracking(lastPreview.viewPanelContent, lastPreview.drawerPanelId)
-        }
-
-        const assistantMessage: ChatMessage = {
-          id: `assistant-${Date.now()}`,
-          role: 'assistant',
-          content: `Opening full list for ${lastPreview.source}.`,
-          timestamp: new Date(),
-          isError: false,
-        }
-        addMessage(assistantMessage)
-        setIsLoading(false)
-        return
-      }
-
-      // Tiny LLM classifier fallback: if preview exists but heuristic didn't match,
-      // ask the LLM if user wants to expand the preview
-      if (previewIsRecent && !hasGraceSkipActionVerb(trimmedInput)) {
-        try {
-          const classifyResponse = await fetch('/api/chat/classify-expand', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              userMessage: trimmedInput,
-              previewSource: lastPreview.source,
-              previewCount: lastPreview.totalCount,
-            }),
-          })
-
-          if (classifyResponse.ok) {
-            const { expand } = await classifyResponse.json()
-            if (expand) {
-              void debugLog({
-                component: 'ChatNavigation',
-                action: 'show_all_shortcut',
-                metadata: { source: lastPreview.source, totalCount: lastPreview.totalCount, method: 'classifier' },
-              })
-
-              if (lastPreview.drawerPanelId) {
-                openPanelDrawer(lastPreview.drawerPanelId, lastPreview.drawerPanelTitle)
-              } else {
-                openPanelWithTracking(lastPreview.viewPanelContent, lastPreview.drawerPanelId)
-              }
-
-              const assistantMessage: ChatMessage = {
-                id: `assistant-${Date.now()}`,
-                role: 'assistant',
-                content: `Opening full list for ${lastPreview.source}.`,
-                timestamp: new Date(),
-                isError: false,
-              }
-              addMessage(assistantMessage)
-              setIsLoading(false)
-              return
-            }
-          }
-        } catch (classifyError) {
-          // Classifier failed - continue with normal intent parsing
-          void debugLog({
-            component: 'ChatNavigation',
-            action: 'classify_expand_error',
-            metadata: { error: String(classifyError) },
-          })
-        }
-      }
-
-      // ---------------------------------------------------------------------------
-      // Selection-Only Guard: Only intercept pure selection patterns
-      // Per llm-chat-context-first-plan.md - let everything else go to LLM
-      // ---------------------------------------------------------------------------
-      if (pendingOptions.length > 0) {
-        const optionLabels = pendingOptions.map(opt => opt.label)
-        const selectionResult = isSelectionOnly(trimmedInput, pendingOptions.length, optionLabels)
-
-        if (selectionResult.isSelection && selectionResult.index !== undefined) {
-          // Pure selection pattern - handle locally for speed
-          const selectedOption = pendingOptions[selectionResult.index]
-
-          void debugLog({
-            component: 'ChatNavigation',
-            action: 'selection_only_guard',
-            metadata: {
-              input: trimmedInput,
-              index: selectionResult.index,
-              selectedLabel: selectedOption.label,
-            },
-            // V5 Metrics: Track clarification resolved
-            metrics: {
-              event: 'clarification_resolved',
-              selectedLabel: selectedOption.label,
-              timestamp: Date.now(),
-            },
-          })
-
-          // Use grace window: keep options for one more turn
-          setPendingOptionsGraceCount(1)
-
-          // Execute the selection directly
-          const optionToSelect: SelectionOption = {
-            type: selectedOption.type as SelectionOption['type'],
-            id: selectedOption.id,
-            label: selectedOption.label,
-            sublabel: selectedOption.sublabel,
-            data: selectedOption.data as SelectionOption['data'],
-          }
-
-          setIsLoading(false)
-          handleSelectOption(optionToSelect)
-          return
-        }
-
-        // Phase 2a.1: Try label matching for visible options
-        // e.g., "workspace 6" matches "Workspace 6 (Home)"
-        const labelMatch = findExactOptionMatch(trimmedInput, pendingOptions)
-        if (labelMatch) {
-          void debugLog({
-            component: 'ChatNavigation',
-            action: 'label_match_selection',
-            metadata: {
-              input: trimmedInput,
-              matchedLabel: labelMatch.label,
-            },
-            // V5 Metrics: Track clarification resolved via label match
-            metrics: {
-              event: 'clarification_resolved',
-              selectedLabel: labelMatch.label,
-              timestamp: Date.now(),
-            },
-          })
-
-          // Use grace window: keep options for one more turn
-          setPendingOptionsGraceCount(1)
-
-          // Execute the selection directly
-          const optionToSelect: SelectionOption = {
-            type: labelMatch.type as SelectionOption['type'],
-            id: labelMatch.id,
-            label: labelMatch.label,
-            sublabel: labelMatch.sublabel,
-            data: labelMatch.data as SelectionOption['data'],
-          }
-
-          setIsLoading(false)
-          handleSelectOption(optionToSelect)
-          return
-        }
-
-        // Not a pure selection or label match - fall through to LLM with context
-        // The LLM can handle: "is D available?", "what are the options?", etc.
-        // Per Phase 2a.1: If no label match, fall back to LLM with pendingOptions context
-        void debugLog({
-          component: 'ChatNavigation',
-          action: 'selection_guard_passthrough_to_llm',
-          metadata: { input: trimmedInput, pendingCount: pendingOptions.length },
-        })
-      }
-
-      // ---------------------------------------------------------------------------
-      // Fallback Selection: Use message-derived options when pendingOptions is empty
-      // Per llm-chat-context-first-plan.md - only intercept pure selection patterns
-      // ---------------------------------------------------------------------------
-      if (pendingOptions.length === 0) {
-        const now = Date.now()
-        // Find last options from chat messages (source of truth)
-        const lastOptionsMessage = findLastOptionsMessage(messages)
-        const messageAge = lastOptionsMessage ? now - lastOptionsMessage.timestamp.getTime() : null
-        const isWithinGraceWindow = lastOptionsMessage && messageAge !== null && messageAge <= RESHOW_WINDOW_MS
-
-        if (isWithinGraceWindow && lastOptionsMessage) {
-          // Use selection-only guard for message-derived options too
-          const optionLabels = lastOptionsMessage.options.map(opt => opt.label)
-          const selectionResult = isSelectionOnly(trimmedInput, lastOptionsMessage.options.length, optionLabels)
-
-          if (selectionResult.isSelection && selectionResult.index !== undefined) {
-            const selectedOption = lastOptionsMessage.options[selectionResult.index]
-            void debugLog({
-              component: 'ChatNavigation',
-              action: 'selection_from_message',
-              metadata: {
-                input: trimmedInput,
-                index: selectionResult.index,
-                selectedLabel: selectedOption.label,
-              },
-            })
-
-            // Restore pendingOptions and execute selection
-            setPendingOptions(lastOptionsMessage.options)
-            const optionToSelect: SelectionOption = {
-              type: selectedOption.type as SelectionOption['type'],
-              id: selectedOption.id,
-              label: selectedOption.label,
-              sublabel: selectedOption.sublabel,
-              data: selectedOption.data as SelectionOption['data'],
-            }
-            setIsLoading(false)
-            handleSelectOption(optionToSelect)
-            return
-          }
-
-          // Not a pure selection - let it go to LLM with context
-          // LLM will see lastOptions in chatContext and can answer accordingly
-          void debugLog({
-            component: 'ChatNavigation',
-            action: 'message_options_passthrough_to_llm',
-            metadata: { input: trimmedInput, optionsCount: lastOptionsMessage.options.length },
-          })
-        }
-      }
 
       // ---------------------------------------------------------------------------
       // Normal flow: Call the LLM API
