@@ -1479,7 +1479,7 @@ export async function handleClarificationIntercept(
         id: opt.id,
         label: opt.label,
         sublabel: opt.sublabel,
-        data: {} as SelectionOption['data'],
+        data: reconstructSnapshotData(opt),
       })),
     }
     addMessage(repairMessage)
@@ -1721,9 +1721,15 @@ export async function handleClarificationIntercept(
     // Tier 2: LLM fallback for return-cue detection (per interrupt-resume-plan §58-64)
     // Deterministic cue didn't match — ask LLM if the user wants to return.
     // Only if feature flag is enabled. On failure → Tier 3 confirm prompt.
-    // Guard: skip LLM for ordinals — they belong in the ordinal window below,
-    // not in return-cue classification. This prevents unnecessary LLM calls
-    // and avoids Gemini rate-limiting (429).
+    //
+    // Guards (allowlist approach):
+    // 1. Skip ordinals — they belong in the ordinal window below.
+    // 2. Skip repair phrases — they belong in repair handling.
+    // 3. Return-cue candidate check — only enter LLM if input contains a
+    //    return-related token. Inputs like "links panel", "no", "stop",
+    //    "open recent" are clearly not return cues and must fall through
+    //    to normal routing. Without this guard, LLM timeouts cause a
+    //    Tier 3 confirm loop that traps the user.
     // ------------------------------------------------------------------
     const isOrdinalInput = isSelectionOnly(
       trimmedInput,
@@ -1731,7 +1737,12 @@ export async function handleClarificationIntercept(
       clarificationSnapshot.options.map(o => o.label)
     ).isSelection
 
-    if (isLLMFallbackEnabledClient() && !isRepairPhrase(trimmedInput) && !isOrdinalInput) {
+    // Allowlist: only inputs containing return-related tokens are candidates
+    // for the return-cue LLM. Everything else falls through to normal routing.
+    const RETURN_CUE_TOKENS = /\b(back|return|resume|continue|previous|old|earlier|before|again|options|list|choices)\b/i
+    const isReturnCandidate = RETURN_CUE_TOKENS.test(trimmedInput)
+
+    if (isLLMFallbackEnabledClient() && !isRepairPhrase(trimmedInput) && !isOrdinalInput && isReturnCandidate) {
       try {
         const llmResult = await callReturnCueLLM(trimmedInput)
 
@@ -2059,7 +2070,7 @@ export async function handleClarificationIntercept(
       const askMessage: ChatMessage = {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
-        content: 'Which options are you referring to?',
+        content: "Which options are you referring to? If you meant a previous list, say 'back to the options', or tell me what you want instead.",
         timestamp: new Date(),
         isError: false,
       }
@@ -2231,7 +2242,7 @@ export async function handleClarificationIntercept(
             id: opt.id,
             label: opt.label,
             sublabel: opt.sublabel,
-            data: {} as SelectionOption['data'],
+            data: reconstructSnapshotData(opt),
           })),
         }
         addMessage(reaskMessage)
@@ -2303,7 +2314,7 @@ export async function handleClarificationIntercept(
           id: opt.id,
           label: opt.label,
           sublabel: opt.sublabel,
-          data: {} as SelectionOption['data'],
+          data: reconstructSnapshotData(opt),
         })) : undefined,
       }
       addMessage(metaMessage)
@@ -2336,7 +2347,7 @@ export async function handleClarificationIntercept(
           id: opt.id,
           label: opt.label,
           sublabel: opt.sublabel,
-          data: {} as SelectionOption['data'],
+          data: reconstructSnapshotData(opt),
         })),
       }
       addMessage(noiseMessage)
@@ -2450,7 +2461,7 @@ export async function handleClarificationIntercept(
             id: opt.id,
             label: opt.label,
             sublabel: opt.sublabel,
-            data: {} as SelectionOption['data'],
+            data: reconstructSnapshotData(opt),
           })),
         }
         addMessage(keepMessage)
@@ -2527,7 +2538,7 @@ export async function handleClarificationIntercept(
             id: opt.id,
             label: opt.label,
             sublabel: opt.sublabel,
-            data: {} as SelectionOption['data'],
+            data: reconstructSnapshotData(opt),
           })),
         }
         addMessage(confirmMessage)
@@ -2592,7 +2603,7 @@ export async function handleClarificationIntercept(
           id: opt.id,
           label: opt.label,
           sublabel: opt.sublabel,
-          data: {} as SelectionOption['data'],
+          data: reconstructSnapshotData(opt),
         })),
       }
       addMessage(hesitationMessage)
@@ -2689,7 +2700,7 @@ export async function handleClarificationIntercept(
           id: opt.id,
           label: opt.label,
           sublabel: opt.sublabel,
-          data: {} as SelectionOption['data'],
+          data: reconstructSnapshotData(opt),
         })),
       }
       addMessage(repairMessage)
@@ -2755,7 +2766,7 @@ export async function handleClarificationIntercept(
           id: opt.id,
           label: opt.label,
           sublabel: opt.sublabel,
-          data: {} as SelectionOption['data'],
+          data: reconstructSnapshotData(opt),
         })),
       }
       addMessage(noRepairMessage)
@@ -3103,7 +3114,7 @@ export async function handleClarificationIntercept(
               id: opt.id,
               label: opt.label,
               sublabel: opt.sublabel,
-              data: fullOpt?.data as SelectionOption['data'] ?? {} as SelectionOption['data'],
+              data: fullOpt?.data as SelectionOption['data'] ?? reconstructSnapshotData(opt),
             }
           }),
         }
@@ -3274,7 +3285,7 @@ export async function handleClarificationIntercept(
                 id: opt.id,
                 label: opt.label,
                 sublabel: opt.sublabel,
-                data: {} as SelectionOption['data'],
+                data: reconstructSnapshotData(opt),
               })),
             }
             addMessage(confirmMessage)
@@ -3327,7 +3338,7 @@ export async function handleClarificationIntercept(
               id: opt.id,
               label: opt.label,
               sublabel: opt.sublabel,
-              data: {} as SelectionOption['data'],
+              data: reconstructSnapshotData(opt),
             })),
           }
           addMessage(softRejectMessage)
@@ -3464,7 +3475,7 @@ export async function handleClarificationIntercept(
                       id: opt.id,
                       label: opt.label,
                       sublabel: opt.sublabel,
-                      data: {} as SelectionOption['data'],
+                      data: reconstructSnapshotData(opt),
                     })),
                   }
                   addMessage(confirmMsg)
@@ -3544,7 +3555,7 @@ export async function handleClarificationIntercept(
                       id: opt.id,
                       label: opt.label,
                       sublabel: opt.sublabel,
-                      data: {} as SelectionOption['data'],
+                      data: reconstructSnapshotData(opt),
                     })),
                   }
                   addMessage(repairMessage)
@@ -3660,7 +3671,7 @@ export async function handleClarificationIntercept(
               id: opt.id,
               label: opt.label,
               sublabel: opt.sublabel,
-              data: fullOpt?.data as SelectionOption['data'] ?? {} as SelectionOption['data'],
+              data: fullOpt?.data as SelectionOption['data'] ?? reconstructSnapshotData(opt),
             }
           })
 
@@ -3794,7 +3805,7 @@ export async function handleClarificationIntercept(
               id: opt.id,
               label: opt.label,
               sublabel: opt.sublabel,
-              data: fullOpt?.data as SelectionOption['data'] ?? {} as SelectionOption['data'],
+              data: fullOpt?.data as SelectionOption['data'] ?? reconstructSnapshotData(opt),
             }
           }),
         }

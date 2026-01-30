@@ -1071,6 +1071,12 @@ function ChatNavigationPanelContent({
         })
       }
 
+      // Save snapshot before clearing so stop/return-cue system can restore after pill clicks.
+      // Only when there are options and it's not an exit pill (exit pills clear everything).
+      if (lastClarification?.options && lastClarification.options.length > 0 && option.type !== 'exit') {
+        saveClarificationSnapshot(lastClarification)
+      }
+
       // Per options-visible-clarification-sync-plan.md: clear lastClarification when option is selected
       // The clarification is resolved once user makes a selection
       setLastClarification(null)

@@ -57,7 +57,7 @@ Use this quick table to track pass/fail:
 5) **Bare ordinal after stop**
    - `stop` → confirm → `yes`
    - Input: `second option`
-   - Expect: “That list was closed. Say ‘back to the options’ to reopen it, or tell me what you want instead.”
+   - Expect: “Which options are you referring to? If you meant a previous list, say ‘back to the options’, or tell me what you want instead.”
 
 ---
 
