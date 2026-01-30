@@ -41,15 +41,12 @@ export const KNOWN_NOUN_MAP: Record<string, KnownNounEntry> = {
   'recent': { panelId: 'recent', title: 'Recent' },
   'recents': { panelId: 'recent', title: 'Recent' },
   'recent items': { panelId: 'recent', title: 'Recent' },
-  'recent widget': { panelId: 'recent', title: 'Recent' },
-  'recent panel': { panelId: 'recent', title: 'Recent' },
 
   // Quick Links family (default — no specific badge)
   'quick links': { panelId: 'quick-links', title: 'Quick Links' },
   'quicklinks': { panelId: 'quick-links', title: 'Quick Links' },
   'links': { panelId: 'quick-links', title: 'Quick Links' },
   'links panel': { panelId: 'quick-links', title: 'Quick Links' },
-  'links widget': { panelId: 'quick-links', title: 'Quick Links' },
 
   // Quick Links with specific badges
   'quick links a': { panelId: 'quick-links-a', title: 'Quick Links A' },
@@ -64,20 +61,14 @@ export const KNOWN_NOUN_MAP: Record<string, KnownNounEntry> = {
   'links panel e': { panelId: 'quick-links-e', title: 'Links Panel E' },
 
   // Other known panels
+  // NOTE: Structural suffixes ("widget", "panel") and prefix "widget" are
+  // stripped automatically by matchKnownNoun() — no need to enumerate
+  // variants like "recent widget", "demo panel", "widget demo" here.
   'navigator': { panelId: 'navigator', title: 'Navigator' },
-  'navigator widget': { panelId: 'navigator', title: 'Navigator' },
-  'navigator panel': { panelId: 'navigator', title: 'Navigator' },
   'demo': { panelId: 'demo', title: 'Demo' },
-  'demo widget': { panelId: 'demo', title: 'Demo' },
-  'demo panel': { panelId: 'demo', title: 'Demo' },
-  'widget demo': { panelId: 'demo', title: 'Demo' },
   'widget manager': { panelId: 'widget-manager', title: 'Widget Manager' },
   'quick capture': { panelId: 'quick-capture', title: 'Quick Capture' },
-  'quick capture widget': { panelId: 'quick-capture', title: 'Quick Capture' },
-  'quick capture panel': { panelId: 'quick-capture', title: 'Quick Capture' },
   'links overview': { panelId: 'links-overview', title: 'Links Overview' },
-  'links overview widget': { panelId: 'links-overview', title: 'Links Overview' },
-  'links overview panel': { panelId: 'links-overview', title: 'Links Overview' },
 }
 
 /**
