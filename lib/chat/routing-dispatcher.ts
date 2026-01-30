@@ -96,6 +96,10 @@ export interface RoutingDispatcherContext {
   lastClarification: LastClarificationState | null
   lastSuggestion: unknown | null
   pendingOptions: PendingOptionState[]
+  /** Active option set ID — when non-null, Tier 3 is allowed to bind selections.
+   *  Per routing-order-priority-plan.md line 81:
+   *  "Runs only when activeOptionSetId != null (don't bind to old visible pills in history)" */
+  activeOptionSetId: string | null
   uiContext?: UIContext | null
   currentEntryId?: string
   addMessage: (message: ChatMessage) => void
@@ -689,8 +693,10 @@ export async function dispatchRouting(
   // adjacent behaviors that don't need deep snapshot state.
   // =========================================================================
 
-  // Tier 3a: Selection-Only Guard — ordinals/labels on active or recent list
-  if (ctx.pendingOptions.length > 0) {
+  // Tier 3a: Selection-Only Guard — ordinals/labels on active option set
+  // Guard #1 (per routing-order-priority-plan.md line 81):
+  // "Runs only when activeOptionSetId != null (don't bind to old visible pills in history)"
+  if (ctx.pendingOptions.length > 0 && ctx.activeOptionSetId !== null) {
     const optionLabels = ctx.pendingOptions.map(opt => opt.label)
     const selectionResult = isSelectionOnly(ctx.trimmedInput, ctx.pendingOptions.length, optionLabels)
 
@@ -804,7 +810,8 @@ export async function dispatchRouting(
   }
 
   // Tier 3a (cont.): Fallback Selection — use message-derived options when pendingOptions is empty
-  if (ctx.pendingOptions.length === 0) {
+  // but activeOptionSetId is still set (options were presented recently and not yet cleared)
+  if (ctx.pendingOptions.length === 0 && ctx.activeOptionSetId !== null) {
     const now = Date.now()
     const lastOptionsMessage = ctx.findLastOptionsMessage(ctx.messages)
     const messageAge = lastOptionsMessage ? now - lastOptionsMessage.timestamp.getTime() : null

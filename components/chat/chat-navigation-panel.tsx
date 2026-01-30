@@ -435,9 +435,14 @@ function ChatNavigationPanelContent({
 
   // Pending options for hybrid selection follow-up
   const [pendingOptions, setPendingOptions] = useState<PendingOptionState[]>([])
-  // Note: pendingOptionsMessageId state removed - findLastOptionsMessage(messages) is now source of truth
-  // Keeping setter as no-op for backward compatibility with handlers
-  const setPendingOptionsMessageId = useCallback((_: string | null) => { /* no-op */ }, [])
+  // Active option set ID — tracks which message's options are currently "live"
+  // for Tier 3 selection. Per routing-order-priority-plan.md line 81:
+  // "Runs only when activeOptionSetId != null (don't bind to old visible pills in history)"
+  const [activeOptionSetId, setActiveOptionSetId] = useState<string | null>(null)
+  // Alias for backward compatibility — handlers call setPendingOptionsMessageId
+  const setPendingOptionsMessageId = useCallback((messageId: string | null) => {
+    setActiveOptionSetId(messageId)
+  }, [])
   // Grace window: allow one extra turn after selection to reuse options
   const [pendingOptionsGraceCount, setPendingOptionsGraceCount] = useState(0)
   // Phase 2a: Track when workspace picker is for notes-scope auto-answer
@@ -1565,6 +1570,7 @@ function ChatNavigationPanelContent({
         lastClarification,
         lastSuggestion,
         pendingOptions,
+        activeOptionSetId,
         uiContext,
         currentEntryId,
         addMessage,

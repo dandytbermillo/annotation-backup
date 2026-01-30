@@ -1950,40 +1950,121 @@ export async function handleClarificationIntercept(
         return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
       }
 
-      const selectedOption = clarificationSnapshot.options[snapshotSelection.index]
+      // INTERRUPT-PAUSED ORDINAL GUARD (Guard #2):
+      // Per routing-order-priority-plan.md lines 55-62:
+      // If pausedReason === 'interrupt', ordinals only bind if:
+      //   (a) An explicit return cue was given (handled earlier by return signal handler), OR
+      //   (b) The paused list is the ONLY plausible list (no other list context active).
+      //
+      // Since we reach here without a return cue (return handler runs first),
+      // we must check that no other list context is active.
+      // "Other list context active" per plan lines 59-62:
+      //   - Other visible option pills in chat (pendingOptions > 0)
+      //   - Widget/panel showing a selectable list (open drawer)
+      if (clarificationSnapshot.pausedReason === 'interrupt') {
+        const hasOtherActivePills = pendingOptions.length > 0
+        const hasOpenDrawerList = !!(uiContext?.dashboard?.openDrawer)
 
-      void debugLog({
-        component: 'ChatNavigation',
-        action: 'post_action_ordinal_window',
-        metadata: {
-          userInput: trimmedInput,
-          selectedIndex: snapshotSelection.index,
-          selectedLabel: selectedOption.label,
-          selectedType: selectedOption.type,
-          snapshotTurnsSince: clarificationSnapshot.turnsSinceSet,
-          response_fit_intent: 'select',
-        },
-      })
+        if (hasOtherActivePills || hasOpenDrawerList) {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'interrupt_paused_ordinal_blocked_other_context',
+            metadata: {
+              userInput: trimmedInput,
+              detectedIndex: snapshotSelection.index,
+              snapshotTurnsSince: clarificationSnapshot.turnsSinceSet,
+              hasOtherActivePills,
+              hasOpenDrawerList,
+              response_fit_intent: 'ordinal_after_interrupt_with_other_context',
+            },
+          })
 
-      // Reconstruct data based on option type since ClarificationOption has no data field
-      const reconstructedData = reconstructSnapshotData(selectedOption)
+          // Don't handle — let ordinal fall through to other handlers
+          // (it might be intended for the active pills or drawer list)
+        } else {
+          // No other list context — paused list is the only plausible list.
+          // Allow ordinal to bind (fall through to selection below).
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'interrupt_paused_ordinal_allowed_only_list',
+            metadata: {
+              userInput: trimmedInput,
+              detectedIndex: snapshotSelection.index,
+              snapshotTurnsSince: clarificationSnapshot.turnsSinceSet,
+              response_fit_intent: 'ordinal_after_interrupt_only_list',
+            },
+          })
+        }
 
-      const optionToSelect: SelectionOption = {
-        type: selectedOption.type as SelectionOption['type'],
-        id: selectedOption.id,
-        label: selectedOption.label,
-        sublabel: selectedOption.sublabel,
-        data: reconstructedData,
+        // If blocked (other context exists), skip selection from paused list
+        if (hasOtherActivePills || hasOpenDrawerList) {
+          // Fall through to downstream handlers — ordinal may match other context
+        } else {
+          // Only list — proceed with selection (code below)
+          const selectedOption = clarificationSnapshot.options[snapshotSelection.index]
+
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'post_action_ordinal_window',
+            metadata: {
+              userInput: trimmedInput,
+              selectedIndex: snapshotSelection.index,
+              selectedLabel: selectedOption.label,
+              selectedType: selectedOption.type,
+              snapshotTurnsSince: clarificationSnapshot.turnsSinceSet,
+              response_fit_intent: 'select',
+            },
+          })
+
+          const reconstructedData = reconstructSnapshotData(selectedOption)
+
+          const optionToSelect: SelectionOption = {
+            type: selectedOption.type as SelectionOption['type'],
+            id: selectedOption.id,
+            label: selectedOption.label,
+            sublabel: selectedOption.sublabel,
+            data: reconstructedData,
+          }
+
+          setRepairMemory(selectedOption.id, clarificationSnapshot.options)
+          setIsLoading(false)
+          handleSelectOption(optionToSelect)
+          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+        }
       }
 
-      // Update repair memory with this selection
-      // Do NOT clear snapshot on selection — per plan §138: "keep them available
-      // while they remain visible." Snapshot is only invalidated by explicit exit,
-      // topic change, or a new list replacing it.
-      setRepairMemory(selectedOption.id, clarificationSnapshot.options)
-      setIsLoading(false)
-      handleSelectOption(optionToSelect)
-      return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+      // Non-paused snapshot (active post-selection window) — allow ordinal binding
+      if (!clarificationSnapshot.pausedReason) {
+        const selectedOption = clarificationSnapshot.options[snapshotSelection.index]
+
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'post_action_ordinal_window',
+          metadata: {
+            userInput: trimmedInput,
+            selectedIndex: snapshotSelection.index,
+            selectedLabel: selectedOption.label,
+            selectedType: selectedOption.type,
+            snapshotTurnsSince: clarificationSnapshot.turnsSinceSet,
+            response_fit_intent: 'select',
+          },
+        })
+
+        const reconstructedData = reconstructSnapshotData(selectedOption)
+
+        const optionToSelect: SelectionOption = {
+          type: selectedOption.type as SelectionOption['type'],
+          id: selectedOption.id,
+          label: selectedOption.label,
+          sublabel: selectedOption.sublabel,
+          data: reconstructedData,
+        }
+
+        setRepairMemory(selectedOption.id, clarificationSnapshot.options)
+        setIsLoading(false)
+        handleSelectOption(optionToSelect)
+        return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+      }
     }
   }
 
