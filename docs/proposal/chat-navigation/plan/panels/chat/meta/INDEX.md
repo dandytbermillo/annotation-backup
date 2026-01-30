@@ -1,6 +1,6 @@
 # Chat Navigation Plans — Index
 
-**Last Updated:** 2026-01-29
+**Last Updated:** 2026-01-30
 
 This index documents plan timelines for chat navigation: doc retrieval and clarification/disambiguation.
 
@@ -164,7 +164,7 @@ This index documents plan timelines for chat navigation: doc retrieval and clari
 **File:** `known-noun-command-routing-plan.md`
 **Purpose:** Deterministic routing for noun‑only commands (allowlist, question guard, unknown‑noun fallback)
 
-**Status:** 📝 Draft
+**Status:** ✅ Implemented (routing dispatcher Tier 4)
 
 ---
 
@@ -172,7 +172,7 @@ This index documents plan timelines for chat navigation: doc retrieval and clari
 **File:** `routing-order-priority-plan.md`
 **Purpose:** Unified routing priority chain to resolve conflicts across stop/interrupt/clarification/known‑noun/docs
 
-**Status:** 📝 Draft
+**Status:** ✅ Implemented (routing dispatcher + guards)
 
 ---
 
