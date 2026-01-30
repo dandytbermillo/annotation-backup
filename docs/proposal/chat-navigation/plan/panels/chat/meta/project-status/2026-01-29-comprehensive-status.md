@@ -41,6 +41,9 @@ Supporting Documents
 ├── clarification-offmenu-handling-examples.md   ← Canonical bot/user response wording
 ├── clarification-response-fit-implementation-guide.md ← Checklist-style guide
 └── INDEX.md                                      ← Plan timeline and quick reference
+Panel Command Routing (Drafts)
+├── panel-command-matcher-stopword-plan.md        ← Action‑verb stopword gate (await red‑error debug log)
+└── known-noun-command-routing-plan.md            ← Noun‑only command routing (allowlist + unknown fallback)
 ```
 
 ---
@@ -84,6 +87,8 @@ Supporting Documents
 |------|--------|
 | Panel routing hardening | **Complete** |
 | Links Panel naming consolidation | **Complete** |
+| Action‑verb stopword fix | **Draft** (pending debug‑log confirmation) |
+| Known‑noun command routing | **Draft** (ready to implement) |
 
 ---
 
@@ -163,6 +168,26 @@ if (isLLMFallbackEnabledClient() && !isRepairPhrase(trimmedInput) && !isOrdinalI
   - “put it/them/those back”
 - **LLM guard:** Ordinals now skip return‑cue LLM calls to avoid rate limiting.
 - **Failure recovery:** On LLM timeout/error, the system shows a confirm prompt instead of routing away.
+
+### New Draft Plans Added (Awaiting Implementation)
+
+#### Panel Command Matcher — Action Verb Stopword Plan
+**File:** `panel-command-matcher-stopword-plan.md`  
+**Status:** Draft (gated on red‑error debug log)  
+**Purpose:** Prevent commands like “open links panel” from falling into LLM by stripping action verbs
+
+**Gate:** Implement only after a captured `api_response_not_ok` log confirms LLM path + error for verb commands.
+
+#### Known‑Noun Command Routing Plan
+**File:** `known-noun-command-routing-plan.md`  
+**Status:** Draft (ready to implement)  
+**Purpose:** Deterministic routing for noun‑only commands; avoid docs hijack
+
+Key rules:
+- Allowlist‑first execution (links panel, widget manager, recent, dashboard, workspaces)
+- Question guard (trailing `?` only; question phrase starts)
+- Unknown noun fallback prompt (Open / Docs / Try again)
+- Near‑match hint (e.g., “widget managr” → “Did you mean Widget Manager?”)
 
 ### Files Modified
 
@@ -329,8 +354,101 @@ From `clarification-qa-checklist.md` (13 tests, A1-E13):
 
 ---
 
-## 12. Next Steps
+## 12. Continued Session Fixes (2026-01-29 ~14:00–18:49 MST)
 
+### Fix 7: `data: {} as SelectionOption['data']` patch (16 spots)
+
+**Date/Time:** 2026-01-29 ~14:00 MST
+
+**Problem:** When re-displaying clarification options (noise, hesitation, soft-reject, exit-cancel, repair, etc.), `data` was set to `{} as SelectionOption['data']`. Since `ClarificationOption` lacks a `data` field, clicking a re-displayed pill could produce "Opening undefined..." errors.
+
+**Fix:** Replaced all 16 occurrences with `reconstructSnapshotData(opt)` (13 using `data: {} as SelectionOption['data']`, 3 using `fullOpt?.data ?? {} as SelectionOption['data']`).
+
+**File:** `lib/chat/chat-routing.ts` — used `replace_all` to patch all spots.
+
+### Fix 8: bare_ordinal_no_context message update
+
+**Date/Time:** 2026-01-29 ~14:30 MST
+
+**Problem:** After stop, ordinals like "first option" showed an unhelpful "Which options are you referring to?" message with no recovery guidance.
+
+**Fix:** Updated message to: `"Which options are you referring to? If you meant a previous list, say 'back to the options', or tell me what you want instead."`
+
+**File:** `lib/chat/chat-routing.ts` (line ~2062)
+
+### Fix 9: Save clarification snapshot on pill click (handleSelectOption)
+
+**Date/Time:** 2026-01-29 ~15:00 MST
+
+**Problem:** `handleSelectOption()` called `setLastClarification(null)` without saving a snapshot first. After a user clicked a pill → said "stop" → wanted to return, the snapshot was empty. The stop/return-cue system had nothing to restore.
+
+**Fix:** Added `saveClarificationSnapshot(lastClarification)` before clearing, guarded by `lastClarification?.options.length > 0 && option.type !== 'exit'`.
+
+**File:** `components/chat/chat-navigation-panel.tsx` (before line ~1076)
+
+### Fix 10: Return-cue candidate allowlist guard
+
+**Date/Time:** 2026-01-29 ~16:00 MST
+
+**Problem:** Fix 9 (saving snapshot on pill click) meant paused snapshots now existed after pill-click selections. Every non-ordinal/non-repair input with a paused snapshot entered the return-cue LLM, which always timed out (800ms), triggering the Tier 3 "Do you want to go back?" confirm prompt in a loop. Inputs like "links panel", "no", "stop" were all trapped.
+
+**Fix:** Added a return-cue candidate allowlist. Only inputs containing return-related tokens enter the LLM path:
+
+```typescript
+const RETURN_CUE_TOKENS = /\b(back|return|resume|continue|previous|old|earlier|before|again|options|list|choices)\b/i
+const isReturnCandidate = RETURN_CUE_TOKENS.test(trimmedInput)
+```
+
+**File:** `lib/chat/chat-routing.ts` (lines ~1740-1745)
+
+### Investigation: Red "Something went wrong" error on "open links panel"
+
+**Date/Time:** 2026-01-29 ~17:00–18:49 MST
+
+**Symptom:** After stop, typing "open links panel" consistently shows a red "Something went wrong. Please try again." error. Other commands like "open recent" work fine.
+
+**Investigation findings (verified via debug_logs):**
+
+1. **Panel disambiguation does NOT catch "open links panel"** — `normalizeToTokenSet()` in `panel-command-matcher.ts` does not strip action verbs like "open" from input. So "open links panel" → tokens `{"open", "links", "panel"}` → zero matches against panel titles like "Links Panel D" (tokens `{"links", "panel", "d"}`). The "open" token breaks the partial match.
+
+2. **"open recent" works** because the title "Recent" → token `{"recent"}` is a subset of `{"open", "recent"}` → exact match → LLM handles single-panel match fine.
+
+3. **The red error is an 8-second API timeout (504)** — confirmed by debug log timestamps:
+   - `01:07:29.549` — `route_decision` for "open links panel"
+   - `01:07:37.584` — `sendMessage_error` (exactly 8 seconds later)
+   - Second attempt: `01:07:45` → `01:07:53` (also exactly 8 seconds)
+
+4. **No `api_error` logged** — the navigate API route's catch block was not triggered, confirming it's a timeout via the race condition, not an unhandled exception.
+
+**Debug log added:** Enhanced the `!response.ok` path in `chat-navigation-panel.tsx` with a new `api_response_not_ok` debug log that captures:
+- `input`: the user message
+- `status`: HTTP status code (504, 500, etc.)
+- `statusText`: HTTP status text
+- `body`: first 500 chars of the response body
+
+Also added `input` to the existing `sendMessage_error` log.
+
+**Planned fix (pending red-error reproduction):** Add action verbs ("open", "show", "close", "go", "view", "see", "display") to `STOPWORDS` in `panel-command-matcher.ts` so "open links panel" → `{"links", "panel"}` → correct partial match → disambiguation shows. Plan documented in `panel-command-matcher-stopword-plan.md`.
+
+**Status:** Awaiting reproduction of the red error with the new debug logs to confirm the HTTP status and response body before implementing the stopword fix.
+
+---
+
+## 13. Files Modified (Continued Session 2026-01-29 ~14:00–18:49 MST)
+
+| File | Changes |
+|------|---------|
+| `lib/chat/chat-routing.ts` | Fix 7: `reconstructSnapshotData` patch (16 spots); Fix 8: bare_ordinal message update; Fix 10: return-cue candidate allowlist |
+| `components/chat/chat-navigation-panel.tsx` | Fix 9: `saveClarificationSnapshot` in `handleSelectOption`; `api_response_not_ok` debug log; enhanced `sendMessage_error` log |
+| `docs/proposal/chat-navigation/plan/panels/chat/meta/panel-command-matcher-stopword-plan.md` | New: action-verb stopword fix plan |
+| `docs/proposal/chat-navigation/plan/panels/chat/meta/INDEX.md` | Updated with stopword plan reference |
+
+---
+
+## 14. Next Steps
+
+- [ ] Reproduce the red error with new `api_response_not_ok` debug log to confirm HTTP 504
+- [ ] Implement action-verb stopword fix in `panel-command-matcher.ts` (per plan)
 - [ ] Investigate Gemini timeout issue (API key quota, model latency, or network)
 - [ ] Run remaining QA checklist tests (B7, B9, D11, E13)
 - [ ] Consider refactoring restore logic into shared helper

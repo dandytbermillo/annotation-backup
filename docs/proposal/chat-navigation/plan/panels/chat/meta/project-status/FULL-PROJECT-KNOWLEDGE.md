@@ -2,7 +2,7 @@
 
 **Purpose:** This document captures the complete understanding of the project so that any future session can immediately get up to speed without re-reading dozens of files. It covers architecture, the chat navigation system we are actively working on, the clarification/disambiguation subsystem in detail, every fix applied, and the current state of work.
 
-**Last Updated:** 2026-01-29
+**Last Updated:** 2026-01-29 18:49 MST
 
 ---
 
@@ -193,6 +193,12 @@ clarification-llm-last-resort-plan.md        ← Constrained LLM fallback (featu
 clarification-response-fit-plan.md           ← PRIMARY: Intent classifier, confidence ladder
   ├── clarification-interrupt-resume-plan.md ← ADDENDUM: Pause/resume on interruption
   └── clarification-stop-scope-plan.md       ← ADDENDUM: Scope-aware stop/cancel
+```
+
+### Layer 3: Command Routing Drafts (Pending)
+```
+panel-command-matcher-stopword-plan.md       ← Action‑verb stopword gate (await red‑error debug log)
+known-noun-command-routing-plan.md           ← Noun‑only commands allowlist + unknown fallback
 ```
 
 ### Supporting Documents
@@ -544,8 +550,47 @@ If LLM fails (timeout, error, or 429 rate limit):
 
 #### Fix 6: Expanded deterministic return cues (late 2026-01-29)
 **File:** `lib/chat/clarification-offmenu.ts` (detectReturnSignal)
-- Added “show me what I had before”.
+- Added "show me what I had before".
 - Clarified standalone `back` as a valid return cue when a paused list exists.
+
+### Continued Session: 2026-01-29 ~14:00–18:49 MST
+
+#### Fix 7: `data: {} as SelectionOption['data']` patch (16 spots)
+**File:** `lib/chat/chat-routing.ts`
+- When re-displaying clarification options (noise, hesitation, soft-reject, exit-cancel, repair, etc.), `data` was `{} as SelectionOption['data']` because `ClarificationOption` has no `data` field.
+- Replaced all 16 occurrences with `reconstructSnapshotData(opt)` which rebuilds `data` from `id/label/type` (handles panel_drawer, doc, note, workspace, entry types).
+- Prevents "Opening undefined..." errors on pill clicks.
+
+#### Fix 8: bare_ordinal_no_context message update
+**File:** `lib/chat/chat-routing.ts` (line ~2062)
+- Updated unhelpful "Which options are you referring to?" message to include recovery guidance: `"Which options are you referring to? If you meant a previous list, say 'back to the options', or tell me what you want instead."`
+
+#### Fix 9: Save clarification snapshot on pill click (handleSelectOption)
+**File:** `components/chat/chat-navigation-panel.tsx`
+- `handleSelectOption()` cleared `lastClarification` without saving a snapshot. The stop/return-cue system had nothing to restore after pill-click selections.
+- Added `saveClarificationSnapshot(lastClarification)` before clearing, guarded by `options.length > 0 && option.type !== 'exit'`.
+
+#### Fix 10: Return-cue candidate allowlist guard
+**File:** `lib/chat/chat-routing.ts` (lines ~1740-1745)
+- Fix 9 caused a regression: paused snapshots now existed after pill clicks, so every non-ordinal/non-repair input entered the return-cue LLM (which always timed out), creating a "Do you want to go back?" confirm-prompt loop.
+- Added allowlist: only inputs containing return-related tokens (`back|return|resume|continue|previous|old|earlier|before|again|options|list|choices`) enter the LLM path. All other inputs fall through to normal routing.
+
+#### Debug enhancement: `api_response_not_ok` log
+**File:** `components/chat/chat-navigation-panel.tsx`
+- Added `api_response_not_ok` debug log at the `!response.ok` throw point, capturing: input, HTTP status, statusText, response body (first 500 chars).
+- Enhanced existing `sendMessage_error` log to also include the input.
+- Purpose: diagnose the "Something went wrong" red error for "open links panel" after stop.
+
+### Open Investigation: "open links panel" red error after stop
+
+**Symptom:** After stop, "open links panel" shows red "Something went wrong. Please try again." error. Other commands like "open recent" work fine.
+
+**Confirmed findings (via debug_logs):**
+1. Panel disambiguation skipped — `normalizeToTokenSet()` doesn't strip action verbs ("open") → zero matches for multi-word panel titles.
+2. Falls through to `/api/chat/navigate` LLM API → 8-second timeout (504). Verified by exact 8s gap in debug log timestamps.
+3. "open recent" works because "Recent" is a single-word title → exact match succeeds even with "open" in tokens.
+
+**Planned fix:** Add action verbs to `STOPWORDS` in `panel-command-matcher.ts`. Plan documented in `panel-command-matcher-stopword-plan.md`. Awaiting reproduction with new debug logs to confirm before implementing.
 
 ---
 
@@ -647,6 +692,8 @@ The `clarification-qa-checklist.md` defines **13 manual tests** (A1-E13) that mu
 
 4. **4 QA tests not yet run**: B7 (ordinal after interrupt), B9 (repair after interrupt), D11 (bare label without return cue), E13 (hesitation).
 
+5. **"open links panel" red error after stop (under investigation).** Action verbs ("open", "show") are not stripped in `panel-command-matcher.ts` tokenization, causing panel disambiguation to miss multi-word panel commands. Falls through to LLM API which times out at 8 seconds (504). Fix planned: add action verbs to STOPWORDS. Awaiting debug log confirmation before implementing.
+
 ### Deferred/Pending Work
 
 5. **Response-fit classifier still iterating** — the primary classifier plan is active but ongoing.
@@ -738,14 +785,17 @@ npx tsc --noEmit
 ## 18. What to Do Next
 
 ### Immediate (This Feature)
-1. Investigate Gemini timeout issue — all Tier 2 calls time out at 800ms
-2. Run remaining QA tests: B7, B9, D11, E13
-3. Refactor restore logic into shared `restorePausedList()` helper
-4. Commit current changes
+1. **Reproduce red error with new debug logs** — trigger “open links panel” after stop, check `api_response_not_ok` for HTTP status/body confirmation
+2. **Gate action‑verb stopword fix on logs** — implement only if logs confirm verb commands fall into LLM path (`panel-command-matcher-stopword-plan.md`)
+3. **Implement known‑noun command routing** — allowlist + unknown‑noun fallback (`known-noun-command-routing-plan.md`)
+4. Investigate Gemini timeout issue — Tier 2 calls sometimes time out at 800ms
+5. Run remaining QA tests: B7, B9, D11, E13
+6. Refactor restore logic into shared `restorePausedList()` helper
+7. Commit current changes
 
 ### Short Term
-5. Continue response-fit classifier iteration
-6. Address any new edge cases discovered during QA
+7. Continue response-fit classifier iteration
+8. Address any new edge cases discovered during QA
 
 ### Medium Term
 7. Begin Unified Retrieval Phase 2 adoption after response-fit stabilizes

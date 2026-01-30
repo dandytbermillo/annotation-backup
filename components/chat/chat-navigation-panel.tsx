@@ -2387,7 +2387,20 @@ function ChatNavigationPanelContent({
       })
 
       if (!response.ok) {
-        throw new Error('Failed to process request')
+        // Capture HTTP details for debugging before throwing
+        let errorBody = ''
+        try { errorBody = await response.text() } catch { /* ignore */ }
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'api_response_not_ok',
+          metadata: {
+            input: trimmedInput,
+            status: response.status,
+            statusText: response.statusText,
+            body: errorBody.slice(0, 500),
+          },
+        })
+        throw new Error(`Failed to process request (HTTP ${response.status})`)
       }
 
       const { resolution, suggestions: rawSuggestions, clarification: apiClarification } = (await response.json()) as {
@@ -2979,6 +2992,7 @@ function ChatNavigationPanelContent({
         component: 'ChatNavigation',
         action: 'sendMessage_error',
         metadata: {
+          input: trimmedInput,
           error: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack?.split('\n').slice(0, 5).join('\n') : undefined,
         },

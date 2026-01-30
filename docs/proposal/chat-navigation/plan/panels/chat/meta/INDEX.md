@@ -152,6 +152,22 @@ This index documents plan timelines for chat navigation: doc retrieval and clari
 
 ---
 
+### 10. Panel Command Matcher — Action Verb Stopword Plan
+**File:** `panel-command-matcher-stopword-plan.md`
+**Purpose:** Prevent “open links panel” from falling into LLM path by stripping action verbs in matcher input
+
+**Status:** 📝 Draft (await debug log capture)
+
+---
+
+### 11. Known‑Noun Command Routing Plan
+**File:** `known-noun-command-routing-plan.md`
+**Purpose:** Deterministic routing for noun‑only commands (allowlist, question guard, unknown‑noun fallback)
+
+**Status:** 📝 Draft
+
+---
+
 ## Implementation Reports
 
 | Date | Report | Plan |

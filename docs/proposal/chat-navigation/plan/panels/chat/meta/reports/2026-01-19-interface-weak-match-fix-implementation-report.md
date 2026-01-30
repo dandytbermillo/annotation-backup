@@ -1,3 +1,4 @@
+wh
 # Interface Weak-Match Fix — Implementation Report
 
 **Date:** 2026-01-19  
