@@ -168,6 +168,14 @@ This index documents plan timelines for chat navigation: doc retrieval and clari
 
 ---
 
+### 12. Routing Order & Priority Plan
+**File:** `routing-order-priority-plan.md`
+**Purpose:** Unified routing priority chain to resolve conflicts across stop/interrupt/clarification/known‑noun/docs
+
+**Status:** 📝 Draft
+
+---
+
 ## Implementation Reports
 
 | Date | Report | Plan |

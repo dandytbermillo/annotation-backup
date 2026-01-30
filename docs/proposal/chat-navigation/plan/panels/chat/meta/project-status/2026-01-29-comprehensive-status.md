@@ -44,6 +44,8 @@ Supporting Documents
 Panel Command Routing (Drafts)
 ├── panel-command-matcher-stopword-plan.md        ← Action‑verb stopword gate (await red‑error debug log)
 └── known-noun-command-routing-plan.md            ← Noun‑only command routing (allowlist + unknown fallback)
+Routing Order (Draft)
+└── routing-order-priority-plan.md                ← Unified routing priority chain to resolve plan conflicts
 ```
 
 ---

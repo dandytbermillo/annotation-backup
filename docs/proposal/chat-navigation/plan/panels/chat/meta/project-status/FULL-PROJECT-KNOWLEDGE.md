@@ -199,6 +199,7 @@ clarification-response-fit-plan.md           ← PRIMARY: Intent classifier, con
 ```
 panel-command-matcher-stopword-plan.md       ← Action‑verb stopword gate (await red‑error debug log)
 known-noun-command-routing-plan.md           ← Noun‑only commands allowlist + unknown fallback
+routing-order-priority-plan.md               ← Unified routing priority chain (stop/interrupt/clarification/noun/docs)
 ```
 
 ### Supporting Documents
@@ -693,6 +694,7 @@ The `clarification-qa-checklist.md` defines **13 manual tests** (A1-E13) that mu
 4. **4 QA tests not yet run**: B7 (ordinal after interrupt), B9 (repair after interrupt), D11 (bare label without return cue), E13 (hesitation).
 
 5. **"open links panel" red error after stop (under investigation).** Action verbs ("open", "show") are not stripped in `panel-command-matcher.ts` tokenization, causing panel disambiguation to miss multi-word panel commands. Falls through to LLM API which times out at 8 seconds (504). Fix planned: add action verbs to STOPWORDS. Awaiting debug log confirmation before implementing.
+6. **Noun‑only command routing (draft).** Known‑noun allowlist + unknown‑noun fallback plan exists but not implemented yet. This is intended to prevent noun‑only inputs from being hijacked by docs routing.
 
 ### Deferred/Pending Work
 
