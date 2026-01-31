@@ -34,6 +34,7 @@
  */
 
 import { debugLog } from '@/lib/utils/debug-logger'
+import { levenshteinDistance } from '@/lib/chat/typo-suggestions'
 import type { ChatMessage, SelectionOption, ViewPanelContent } from '@/lib/chat'
 import type { UIContext } from '@/lib/chat/intent-prompt'
 import type { LastClarificationState } from '@/lib/chat/chat-navigation-context'
@@ -58,8 +59,9 @@ import type { DocRetrievalHandlerContext, DocRetrievalHandlerResult } from '@/li
 import { handleClarificationIntercept, handlePanelDisambiguation, handleCorrection, handleMetaExplain, handleFollowUp } from '@/lib/chat/chat-routing'
 import { handleCrossCorpusRetrieval } from '@/lib/chat/cross-corpus-handler'
 import { handleDocRetrieval } from '@/lib/chat/doc-routing'
-import { isAffirmationPhrase, matchesReshowPhrases, matchesShowAllHeuristic, hasGraceSkipActionVerb } from '@/lib/chat/query-patterns'
+import { isAffirmationPhrase, matchesReshowPhrases, matchesShowAllHeuristic, hasGraceSkipActionVerb, hasQuestionIntent } from '@/lib/chat/query-patterns'
 import { handleKnownNounRouting } from '@/lib/chat/known-noun-routing'
+import { callClarificationLLMClient, isLLMFallbackEnabledClient } from '@/lib/chat/clarification-llm-fallback'
 
 // =============================================================================
 // Types
@@ -195,6 +197,95 @@ export function isExplicitCommand(input: string): boolean {
 // =============================================================================
 
 /**
+ * Normalize ordinal typos before selection matching.
+ * Handles repeated letters, common misspellings, and concatenated ordinals.
+ *
+ * Examples:
+ * - "ffirst" → "first" (repeated letters)
+ * - "sedond" → "second" (common misspelling)
+ * - "secondoption" → "second option" (concatenation)
+ * - "firstoption" → "first option" (concatenation)
+ */
+/** Canonical ordinals for per-token fuzzy matching. */
+const ORDINAL_TARGETS = ['first', 'second', 'third', 'fourth', 'fifth', 'last']
+
+function normalizeOrdinalTypos(input: string): string {
+  let n = input.toLowerCase().trim()
+
+  // Strip polite suffixes
+  n = n.replace(/\s*(pls|plz|please|thx|thanks|ty)\.?$/i, '').trim()
+
+  // Deduplicate repeated letters: "ffirst" → "first", "seecond" → "second"
+  n = n.replace(/(.)\1+/g, '$1')
+
+  // Split concatenated ordinal+option: "secondoption" → "second option"
+  n = n.replace(/^(first|second|third|fourth|fifth|last)(option|one)$/i, '$1 $2')
+
+  // Per-token fuzzy match against canonical ordinals (distance ≤ 2, token length ≥ 4).
+  // Catches typos like "sesecond" → "second", "scond" → "second", "thrid" → "third".
+  const tokens = n.split(/\s+/)
+  const normalized = tokens.map(token => {
+    if (token.length < 4) return token // Guard: skip short tokens to avoid "for"→"fourth"
+    // Skip tokens that are already canonical ordinals
+    if (ORDINAL_TARGETS.includes(token)) return token
+
+    let bestOrdinal: string | null = null
+    let bestDist = Infinity
+    for (const ordinal of ORDINAL_TARGETS) {
+      const dist = levenshteinDistance(token, ordinal)
+      if (dist > 0 && dist <= 2 && dist < bestDist) {
+        bestDist = dist
+        bestOrdinal = ordinal
+      }
+    }
+    return bestOrdinal ?? token
+  }).join(' ')
+
+  return normalized
+}
+
+/**
+ * Check if input looks like a selection attempt even though deterministic
+ * normalization couldn't resolve it.
+ *
+ * Per clarification-response-fit-plan.md "Selection-Like Typos (NEW)":
+ * If input resembles an ordinal or option reference but fails deterministic
+ * parsing, it should go to the constrained LLM — NOT fall through to docs.
+ *
+ * Signals:
+ * - Short input (1–4 words)
+ * - Contains ordinal-like substrings (first/second/third/etc. even if misspelled)
+ * - Contains "option" or "one" keywords
+ * - Single digit or single letter
+ * - NOT a question, command, or known verb phrase
+ */
+function looksSelectionLike(input: string): boolean {
+  const n = input.toLowerCase().trim()
+  const wordCount = n.split(/\s+/).length
+
+  // Must be short — long inputs are unlikely selection attempts
+  if (wordCount > 4) return false
+
+  // Skip if it has question intent or command verbs
+  if (hasQuestionIntent(n)) return false
+  if (/^(open|show|go|search|find|help|stop|cancel|back|return)\b/i.test(n)) return false
+
+  // Contains ordinal-like fragments anywhere in token (not just at word start).
+  // Catches "sesecond" (contains "sec"), "thrid" (contains "thr"), etc.
+  if (/(fir|frs|fis|sec|sco|sed|thi|thr|tir|fou|fif|las)/i.test(n)) return true
+  // "option" / "one" at word boundary (these are structural, not ordinal fragments)
+  if (/\b(opt|one)\w*/i.test(n)) return true
+
+  // Pure digit or single letter (a–e)
+  if (/^[1-9]$/.test(n) || /^[a-e]$/i.test(n)) return true
+
+  // Contains "option" or "number" keyword
+  if (/\b(option|choice|number|pick|select)\b/i.test(n)) return true
+
+  return false
+}
+
+/**
  * Check if input is a selection-only pattern (ordinal or single letter).
  * Per llm-chat-context-first-plan.md: Only intercept pure selection patterns.
  *
@@ -205,15 +296,16 @@ export function isExplicitCommand(input: string): boolean {
  * - Ordinals: "first", "second", "third", "last", "1", "2", "3"
  * - Option phrases: "option 2", "the first one", "the second one"
  * - Single letters: "a", "b", "c", "d", "e" (when options use letter badges)
+ * - Common typos: "ffirst", "sedond", "secondoption" (normalized before matching)
  */
 function isSelectionOnly(
   input: string,
   optionCount: number,
   optionLabels?: string[]
 ): { isSelection: boolean; index?: number } {
-  const normalized = input.toLowerCase().trim()
+  const normalized = normalizeOrdinalTypos(input)
 
-  const selectionPattern = /^(first|second|third|fourth|fifth|last|[1-9]|option\s*[1-9]|the\s+(first|second|third|fourth|fifth|last)\s+one|[a-e])$/i
+  const selectionPattern = /^(first|second|third|fourth|fifth|last|[1-9]|option\s*[1-9]|the\s+(first|second|third|fourth|fifth|last)\s+(one|option)|first\s+option|second\s+option|third\s+option|fourth\s+option|fifth\s+option|[a-e])$/i
 
   if (!selectionPattern.test(normalized)) {
     return { isSelection: false }
@@ -221,15 +313,15 @@ function isSelectionOnly(
 
   // Map to 0-based index
   const ordinalMap: Record<string, number> = {
-    'first': 0, '1': 0, 'option 1': 0, 'the first one': 0, 'a': 0,
-    'second': 1, '2': 1, 'option 2': 1, 'the second one': 1, 'b': 1,
-    'third': 2, '3': 2, 'option 3': 2, 'the third one': 2, 'c': 2,
-    'fourth': 3, '4': 3, 'option 4': 3, 'the fourth one': 3, 'd': 3,
-    'fifth': 4, '5': 4, 'option 5': 4, 'the fifth one': 4, 'e': 4,
+    'first': 0, '1': 0, 'option 1': 0, 'the first one': 0, 'the first option': 0, 'first option': 0, 'a': 0,
+    'second': 1, '2': 1, 'option 2': 1, 'the second one': 1, 'the second option': 1, 'second option': 1, 'b': 1,
+    'third': 2, '3': 2, 'option 3': 2, 'the third one': 2, 'the third option': 2, 'third option': 2, 'c': 2,
+    'fourth': 3, '4': 3, 'option 4': 3, 'the fourth one': 3, 'the fourth option': 3, 'fourth option': 3, 'd': 3,
+    'fifth': 4, '5': 4, 'option 5': 4, 'the fifth one': 4, 'the fifth option': 4, 'fifth option': 4, 'e': 4,
   }
 
   // Handle "last"
-  if (normalized === 'last' || normalized === 'the last one') {
+  if (normalized === 'last' || normalized === 'the last one' || normalized === 'the last option') {
     const index = optionCount - 1
     if (index >= 0) {
       return { isSelection: true, index }
@@ -472,23 +564,34 @@ export async function dispatchRouting(
   }
 
   // Tier 2c: Panel Disambiguation (deterministic, pre-LLM)
-  const panelDisambiguationResult = handlePanelDisambiguation({
-    trimmedInput: ctx.trimmedInput,
-    visibleWidgets: ctx.uiContext?.dashboard?.visibleWidgets,
-    addMessage: ctx.addMessage,
-    setIsLoading: ctx.setIsLoading,
-    setPendingOptions: ctx.setPendingOptions,
-    setPendingOptionsMessageId: ctx.setPendingOptionsMessageId as (messageId: string) => void,
-    setLastClarification: ctx.setLastClarification,
-  })
-  if (panelDisambiguationResult.handled) {
-    return {
-      ...defaultResult,
-      handled: true,
-      handledByTier: 2,
-      tierLabel: 'panel_disambiguation',
-      clarificationCleared,
-      isNewQuestionOrCommandDetected,
+  // Question intent override: "what is links panel?" should route to docs (Tier 5),
+  // not get caught by token-subset matching in panel disambiguation.
+  if (hasQuestionIntent(ctx.trimmedInput)) {
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'skip_panel_disambiguation_question_intent',
+      metadata: { input: ctx.trimmedInput, reason: 'question_intent_detected', tier: '2c' },
+    })
+    // Skip Tier 2c — fall through to later tiers (Tier 4 isFullQuestionAboutNoun or Tier 5 docs)
+  } else {
+    const panelDisambiguationResult = handlePanelDisambiguation({
+      trimmedInput: ctx.trimmedInput,
+      visibleWidgets: ctx.uiContext?.dashboard?.visibleWidgets,
+      addMessage: ctx.addMessage,
+      setIsLoading: ctx.setIsLoading,
+      setPendingOptions: ctx.setPendingOptions,
+      setPendingOptionsMessageId: ctx.setPendingOptionsMessageId as (messageId: string) => void,
+      setLastClarification: ctx.setLastClarification,
+    })
+    if (panelDisambiguationResult.handled) {
+      return {
+        ...defaultResult,
+        handled: true,
+        handledByTier: 2,
+        tierLabel: 'panel_disambiguation',
+        clarificationCleared,
+        isNewQuestionOrCommandDetected,
+      }
     }
   }
 
@@ -696,7 +799,8 @@ export async function dispatchRouting(
   // Tier 3a: Selection-Only Guard — ordinals/labels on active option set
   // Guard #1 (per routing-order-priority-plan.md line 81):
   // "Runs only when activeOptionSetId != null (don't bind to old visible pills in history)"
-  if (ctx.pendingOptions.length > 0 && ctx.activeOptionSetId !== null) {
+  // Question intent override: questions like "what is X?" should never bind to active list
+  if (ctx.pendingOptions.length > 0 && ctx.activeOptionSetId !== null && !hasQuestionIntent(ctx.trimmedInput)) {
     const optionLabels = ctx.pendingOptions.map(opt => opt.label)
     const selectionResult = isSelectionOnly(ctx.trimmedInput, ctx.pendingOptions.length, optionLabels)
 
@@ -801,17 +905,126 @@ export async function dispatchRouting(
       }
     }
 
-    // Not a pure selection or label match - fall through to LLM with context
-    void debugLog({
-      component: 'ChatNavigation',
-      action: 'selection_guard_passthrough_to_llm',
-      metadata: { input: ctx.trimmedInput, pendingCount: ctx.pendingOptions.length, tier: '3a' },
-    })
+    // Not a pure selection or label match.
+    // Per clarification-response-fit-plan.md "Selection-Like Typos (NEW)":
+    // Step 2: If input looks selection-like, call constrained LLM before falling through.
+    // Step 3: If LLM abstains/low confidence → ask_clarify (NOT route to docs).
+    if (looksSelectionLike(ctx.trimmedInput) && isLLMFallbackEnabledClient()) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'selection_typo_llm_fallback_attempt',
+        metadata: { input: ctx.trimmedInput, pendingCount: ctx.pendingOptions.length, tier: '3a' },
+      })
+
+      try {
+        const llmResult = await callClarificationLLMClient({
+          userInput: ctx.trimmedInput,
+          options: ctx.pendingOptions.map(opt => ({
+            id: opt.id,
+            label: opt.label,
+            sublabel: opt.sublabel,
+          })),
+          context: 'selection_typo_fallback',
+        })
+
+        if (llmResult.success && llmResult.response) {
+          const { decision, choiceId, confidence } = llmResult.response
+
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'selection_typo_llm_result',
+            metadata: {
+              input: ctx.trimmedInput,
+              decision,
+              choiceId,
+              confidence,
+              latencyMs: llmResult.latencyMs,
+              tier: '3a',
+            },
+          })
+
+          // LLM selected an option with sufficient confidence
+          if (decision === 'select' && choiceId) {
+            const matchedOption = ctx.pendingOptions.find(opt => opt.id === choiceId)
+            if (matchedOption) {
+              ctx.setPendingOptionsGraceCount(1)
+              const optionToSelect: SelectionOption = {
+                type: matchedOption.type as SelectionOption['type'],
+                id: matchedOption.id,
+                label: matchedOption.label,
+                sublabel: matchedOption.sublabel,
+                data: matchedOption.data as SelectionOption['data'],
+              }
+              ctx.setIsLoading(false)
+              ctx.handleSelectOption(optionToSelect)
+              return {
+                ...defaultResult,
+                handled: true,
+                handledByTier: 3,
+                tierLabel: 'selection_typo_llm_select',
+                clarificationCleared,
+                isNewQuestionOrCommandDetected,
+                classifierCalled: true,
+                classifierResult: true,
+                classifierTimeout,
+                classifierLatencyMs: llmResult.latencyMs,
+                classifierError,
+                isFollowUp,
+              }
+            }
+          }
+
+          // LLM abstained or low confidence → ask_clarify (do NOT route to docs)
+          if (decision === 'ask_clarify' || decision === 'none' || !choiceId) {
+            const askMessage: ChatMessage = {
+              id: `assistant-${Date.now()}`,
+              role: 'assistant',
+              content: "I couldn't tell which option you meant. Could you try again or say 'back to options' to see the list?",
+              timestamp: new Date(),
+              isError: false,
+            }
+            ctx.addMessage(askMessage)
+            ctx.setIsLoading(false)
+            return {
+              ...defaultResult,
+              handled: true,
+              handledByTier: 3,
+              tierLabel: 'selection_typo_llm_ask_clarify',
+              clarificationCleared,
+              isNewQuestionOrCommandDetected,
+              classifierCalled: true,
+              classifierResult: false,
+              classifierTimeout,
+              classifierLatencyMs: llmResult.latencyMs,
+              classifierError,
+              isFollowUp,
+            }
+          }
+
+          // decision === 'reroute' or 'reject_list' → let it fall through to later tiers
+        }
+        // LLM call failed — fall through gracefully
+      } catch (llmError) {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'selection_typo_llm_error',
+          metadata: { input: ctx.trimmedInput, error: String(llmError), tier: '3a' },
+        })
+        // On LLM error, fall through to later tiers (graceful degradation)
+      }
+    } else {
+      // Not selection-like or LLM disabled — log passthrough
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'selection_guard_passthrough',
+        metadata: { input: ctx.trimmedInput, pendingCount: ctx.pendingOptions.length, tier: '3a' },
+      })
+    }
   }
 
   // Tier 3a (cont.): Fallback Selection — use message-derived options when pendingOptions is empty
   // but activeOptionSetId is still set (options were presented recently and not yet cleared)
-  if (ctx.pendingOptions.length === 0 && ctx.activeOptionSetId !== null) {
+  if (ctx.pendingOptions.length === 0 && ctx.activeOptionSetId !== null && !hasQuestionIntent(ctx.trimmedInput)) {
     const now = Date.now()
     const lastOptionsMessage = ctx.findLastOptionsMessage(ctx.messages)
     const messageAge = lastOptionsMessage ? now - lastOptionsMessage.timestamp.getTime() : null
@@ -1031,6 +1244,7 @@ export async function dispatchRouting(
     setPendingOptionsMessageId: ctx.setPendingOptionsMessageId,
     setLastClarification: ctx.setLastClarification,
     handleSelectOption: ctx.handleSelectOption,
+    hasActiveOptionSet: ctx.pendingOptions.length > 0 && ctx.activeOptionSetId !== null,
   })
   if (knownNounResult.handled) {
     return {

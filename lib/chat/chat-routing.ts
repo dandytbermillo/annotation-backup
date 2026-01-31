@@ -7,6 +7,7 @@
  */
 
 import { debugLog } from '@/lib/utils/debug-logger'
+import { levenshteinDistance } from '@/lib/chat/typo-suggestions'
 import { getKnownTermsSync } from '@/lib/docs/known-terms-client'
 import {
   createRoutingTelemetryEvent,
@@ -1140,9 +1141,30 @@ function isSelectionOnly(
   optionCount: number,
   optionLabels: string[]
 ): { isSelection: boolean; index?: number } {
-  // Normalize and strip polite suffixes
+  // Normalize: strip polite suffixes, fix typos, split concatenations
   let normalized = input.trim().toLowerCase()
   normalized = normalized.replace(/\s*(pls|plz|please|thx|thanks|ty)\.?$/i, '').trim()
+  // Deduplicate repeated letters: "ffirst" → "first", "seecond" → "second"
+  normalized = normalized.replace(/(.)\1+/g, '$1')
+  // Split concatenated ordinal+option: "secondoption" → "second option"
+  normalized = normalized.replace(/^(first|second|third|fourth|fifth|last)(option|one)$/i, '$1 $2')
+  // Per-token fuzzy match against canonical ordinals (distance ≤ 2, token length ≥ 4).
+  // Catches "sesecond" → "second", "scond" → "second", "thrid" → "third".
+  const ORDINAL_TARGETS_LOCAL = ['first', 'second', 'third', 'fourth', 'fifth', 'last']
+  normalized = normalized.split(/\s+/).map(token => {
+    if (token.length < 4) return token
+    if (ORDINAL_TARGETS_LOCAL.includes(token)) return token
+    let bestOrdinal: string | null = null
+    let bestDist = Infinity
+    for (const ordinal of ORDINAL_TARGETS_LOCAL) {
+      const dist = levenshteinDistance(token, ordinal)
+      if (dist > 0 && dist <= 2 && dist < bestDist) {
+        bestDist = dist
+        bestOrdinal = ordinal
+      }
+    }
+    return bestOrdinal ?? token
+  }).join(' ')
 
   // Map input to index
   let index: number | undefined
@@ -1160,9 +1182,12 @@ function isSelectionOnly(
     'the first': 0, 'the second': 1, 'the third': 2, 'the fourth': 3, 'the fifth': 4,
     'the first one': 0, 'the second one': 1, 'the third one': 2,
     'the fourth one': 3, 'the fifth one': 4,
-    // Common typos
+    // Common typos (after dedup normalization, "ffirst"→"first" is already handled)
     'frist': 0, 'fisrt': 0, 'frst': 0,
-    'secnd': 1, 'secon': 1, 'scond': 1, 'secod': 1,
+    'sedond': 1, 'secnd': 1, 'secon': 1, 'scond': 1, 'secod': 1, 'sceond': 1,
+    'thrid': 2, 'tird': 2,
+    'foruth': 3, 'fouth': 3,
+    'fith': 4, 'fifht': 4,
     '2n': 1, '1s': 0, '3r': 2,
     // Last
     'last': optionCount - 1, 'the last': optionCount - 1, 'the last one': optionCount - 1,

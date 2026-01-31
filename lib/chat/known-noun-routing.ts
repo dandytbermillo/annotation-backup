@@ -269,6 +269,8 @@ export interface KnownNounRoutingContext {
   setPendingOptionsMessageId: (messageId: string | null) => void
   setLastClarification: (state: LastClarificationState | null) => void
   handleSelectOption: (option: SelectionOption) => void
+  /** When true, an active option set is displayed — skip fuzzy/unknown-noun fallbacks (Steps 4–5) */
+  hasActiveOptionSet?: boolean
 }
 
 export interface KnownNounRoutingResult {
@@ -486,6 +488,18 @@ export function handleKnownNounRouting(
   }
 
   // Step 4: Near match (fuzzy) → ask "Did you mean ___?"
+  // Skip when active option set exists — fuzzy matching could mis-bind user's
+  // intended list selection (e.g., "panel layoout" → incorrectly matches "panel layout")
+  if (ctx.hasActiveOptionSet) {
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'skip_noun_fuzzy_active_options',
+      metadata: { input: ctx.trimmedInput, reason: 'active_option_set', tier: 4 },
+    })
+    // Fall through to Tier 5 (LLM can handle contextually with the active list)
+    return { handled: false }
+  }
+
   const nearMatch = findNounNearMatch(ctx.trimmedInput)
   if (nearMatch) {
     // Resolve to actual visible panel (need real DB ID for option data)

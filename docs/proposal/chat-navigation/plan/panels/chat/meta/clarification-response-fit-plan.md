@@ -185,6 +185,22 @@ Rules:
 
 Rationale: These are high‑intent typos where users clearly meant a selection/repair, not a topic switch.
 
+### Selection‑Like Typos (NEW)
+If input looks **selection‑like** but fails deterministic parsing, call the constrained LLM **before**
+falling through to docs/notes routing.
+
+Selection‑like includes:
+- repeated‑letter ordinals (e.g., “ffirst”, “sedond”)
+- missing‑space ordinals (e.g., “secondoption”, “thirdoption”)
+- near‑ordinal tokens that normalize to an ordinal (e.g., “secod”, “secon”)
+
+Rules:
+- Run lightweight normalization (repeat‑letter collapse, spacing fixes) first.
+- If still no deterministic match, call LLM fallback (choiceId‑only).
+- If LLM abstains/low confidence → ask_clarify (do **not** route to docs).
+
+Rationale: Prevents typo ordinals from leaking into doc routing and avoids “robotic” dead ends.
+
 ---
 
 ## Repair Memory (Sticky Context)

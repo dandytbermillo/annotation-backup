@@ -176,6 +176,14 @@ This index documents plan timelines for chat navigation: doc retrieval and clari
 
 ---
 
+### 13. Suggestion Routing Unification Plan
+**File:** `suggestion-routing-unification-plan.md`
+**Purpose:** Move suggestion reject/affirm flows into the unified dispatcher (single routing spine)
+
+**Status:** 📝 Draft
+
+---
+
 ## Implementation Reports
 
 | Date | Report | Plan |
