@@ -44,6 +44,14 @@ Only if **no deterministic rule fired**:
 - Run response‑fit classification to decide **ask_clarify / soft_reject / noise / new_topic / select/repair**.
 - Deterministic rules should try to classify first; call constrained LLM only if classification remains uncertain.
 
+**Affirmation shortcut (NEW):**  
+If the user replies with an affirmation (e.g., “yes”, “yeah”, “sure”) while the clarification type is
+`option_selection`, treat it as a direct selection:
+- **1 option** → return `{ intent: 'select', choiceId }`
+- **>1 options** → return `{ intent: 'ask_clarify', reason: 'affirmation_multiple_options' }`
+
+Place this **before** short‑hint/no‑overlap checks to avoid misclassifying “yes” as noise.
+
 ### Step 2: Constrained LLM (Optional, Feature‑Flagged)
 Only when deterministic response‑fit cannot classify intent:
 - Must select **only** among current options.

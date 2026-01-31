@@ -10,6 +10,7 @@
  */
 
 import type { ClarificationOption, LastClarificationState } from './chat-navigation-context'
+import { isAffirmationPhrase } from './query-patterns'
 
 // =============================================================================
 // Types
@@ -905,6 +906,29 @@ export function classifyResponseFit(
 ): ResponseFitResult {
   if (!options || options.length === 0) {
     return { intent: 'ask_clarify', confidence: 0, reason: 'no_options' }
+  }
+
+  // Affirmation shortcut (per clarification-response-fit-plan.md Step 1):
+  // "yes" / "yeah" / "sure" in option-picking contexts → select or ask which one.
+  // Applies to option_selection (Tier 4 near-match) and panel_disambiguation (Tier 2c).
+  // Must run before short-hint/no-overlap to avoid misclassifying "yes" as noise.
+  const isOptionPickingContext = clarificationType === 'option_selection' || clarificationType === 'panel_disambiguation'
+  if (isOptionPickingContext && isAffirmationPhrase(input)) {
+    if (options.length === 1) {
+      return {
+        intent: 'select',
+        choiceId: options[0].id,
+        confidence: 0.9,
+        reason: 'affirmation_single_option',
+        matchedOption: options[0],
+      }
+    }
+    // Multiple options — can't auto-select; ask which one
+    return {
+      intent: 'ask_clarify',
+      confidence: 0.7,
+      reason: 'affirmation_multiple_options',
+    }
   }
 
   const inputTokens = toCanonicalTokens(input)

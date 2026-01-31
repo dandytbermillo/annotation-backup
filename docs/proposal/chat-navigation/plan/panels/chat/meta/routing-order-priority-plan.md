@@ -56,6 +56,14 @@ This plan defines a single, canonical routing order so the system behaves determ
    - If pausedReason = `interrupt`: allow ordinals **only if** an explicit return cue was given **or** the paused list is the only plausible list (no other list context active)  
    - If pausedReason = `stop`: block ordinals (“list was closed…”)
 
+**Post‑action selection gate (anti‑garbage guard):**  
+The post‑action ordinal window must only run when the input is **selection‑like**:  
+- contains a recognized ordinal (first/second/third/1/2/3/last), **or**  
+- exactly matches an option label, **or**  
+- is a return‑cue already handled above.  
+Otherwise, **skip post‑action selection** and fall through to normal routing.  
+This prevents garbage input (e.g., “anel layot”) from being mis‑selected simply because a snapshot exists.
+
 **Definition — “other list context active”:**
 - Any other visible option pills in chat, or
 - Any widget/panel showing a selectable list, or
@@ -72,10 +80,18 @@ This plan defines a single, canonical routing order so the system behaves determ
    - “open recent”, “show widget demo”  
    - Execute immediately, pause active list
 
+8. **Known‑noun interrupt (noun‑only, active list only)**  
+   - If a clarification list is active and input is an **allowlisted known noun** (Tier 4) **without a verb**,  
+     treat it as an interrupt command **only when**:  
+     - it does **not** overlap the active list’s option labels, and  
+     - it is **not** a question signal.  
+   - Action: pause the active list and execute the known‑noun command.  
+   - Rationale: enables power‑user noun commands (“widget manager”) to break out of an unrelated active list.
+
 ---
 
 ### Tier 3 — Clarification (active list only)
-8. **Response‑Fit classifier / deterministic selection**  
+9. **Response‑Fit classifier / deterministic selection**  
    - Ordinals, label match, off‑menu mapping  
    - LLM fallback (constrained) only if enabled
     - **Runs only when** `activeOptionSetId != null` (don’t bind to old visible pills in history)
@@ -83,19 +99,19 @@ This plan defines a single, canonical routing order so the system behaves determ
 ---
 
 ### Tier 4 — Known‑Noun Commands (global)
-9. **Known‑noun allowlist**  
+10. **Known‑noun allowlist**  
    - “links panel”, “widget manager”  
    - Execute deterministically  
 
 **Rule:** If a known‑noun command executes while a paused snapshot exists, the snapshot remains paused (no implicit resume). Subsequent ordinals should bind only to the new command’s UI list (if any).
 
-10. **Unknown noun fallback**  
+11. **Unknown noun fallback**  
    - Ask: “Open or Docs?” + “Did you mean ___?” if near‑match
 
 ---
 
 ### Tier 5 — Docs / Informational Routing
-11. **Question signals**  
+12. **Question signals**  
    - “what is…”, “how do I…”  
    - Route to docs/help
 
@@ -124,6 +140,7 @@ This is the core of the ChatGPT/Cursor “human” feel — consistent prioritie
 
 1. Stop + active list → confirm prompt (not noun routing)  
 2. “open recent” while list active → executes + pauses list  
+2b. “widget manager” while list active → executes + pauses list (noun‑only interrupt)  
 3. “links panel” (no verb, no list) → executes, not docs  
 4. “what is links panel?” → docs  
 5. “second option” after stop → blocked, ask for return cue  

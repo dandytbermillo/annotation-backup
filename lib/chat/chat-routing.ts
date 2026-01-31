@@ -3800,12 +3800,23 @@ export async function handleClarificationIntercept(
             })
           }
 
+          // Affirmation with multiple options: targeted "Which one?" prompt
+          // instead of generic escalation (per clarification-response-fit-plan.md Step 1)
+          const isAffirmationMultiple = responseFit.reason === 'affirmation_multiple_options'
+          const optionOrdinals = lastClarification.options.map((_: ClarificationOption, i: number) => {
+            const words = ['first', 'second', 'third', 'fourth', 'fifth']
+            return `**${words[i] ?? `${i + 1}`}**`
+          })
+          const affirmationPrompt = `Which one? Reply ${optionOrdinals.join(', ')}, or say **"none of these"**.`
+
           const reaskMessage: ChatMessage = {
             id: messageId,
             role: 'assistant',
-            content: useAskClarifyPrompt
-              ? getAskClarifyPrompt(Array.from(inputTokens), lastClarification.options.map(o => o.label))
-              : escalation.content,
+            content: isAffirmationMultiple
+              ? affirmationPrompt
+              : useAskClarifyPrompt
+                ? getAskClarifyPrompt(Array.from(inputTokens), lastClarification.options.map(o => o.label))
+                : escalation.content,
             timestamp: new Date(),
             isError: false,
             options: [...baseOptions, ...exitPills],

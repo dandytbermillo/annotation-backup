@@ -40,7 +40,7 @@ import type { UIContext } from '@/lib/chat/intent-prompt'
 import type { LastClarificationState } from '@/lib/chat/chat-navigation-context'
 import type { DocRetrievalState } from '@/lib/docs/doc-retrieval-state'
 import type { VisibleWidget } from '@/lib/chat/panel-command-matcher'
-import type { RepairMemoryState, ClarificationSnapshot, ClarificationOption } from '@/lib/chat/chat-navigation-context'
+import type { RepairMemoryState, ClarificationSnapshot, ClarificationOption, LastSuggestionState, SuggestionCandidate, ChatSuggestions } from '@/lib/chat/chat-navigation-context'
 import type {
   HandlerResult,
   PendingOptionState,
@@ -59,7 +59,7 @@ import type { DocRetrievalHandlerContext, DocRetrievalHandlerResult } from '@/li
 import { handleClarificationIntercept, handlePanelDisambiguation, handleCorrection, handleMetaExplain, handleFollowUp } from '@/lib/chat/chat-routing'
 import { handleCrossCorpusRetrieval } from '@/lib/chat/cross-corpus-handler'
 import { handleDocRetrieval } from '@/lib/chat/doc-routing'
-import { isAffirmationPhrase, matchesReshowPhrases, matchesShowAllHeuristic, hasGraceSkipActionVerb, hasQuestionIntent } from '@/lib/chat/query-patterns'
+import { isAffirmationPhrase, isRejectionPhrase, matchesReshowPhrases, matchesShowAllHeuristic, hasGraceSkipActionVerb, hasQuestionIntent } from '@/lib/chat/query-patterns'
 import { handleKnownNounRouting } from '@/lib/chat/known-noun-routing'
 import { callClarificationLLMClient, isLLMFallbackEnabledClient } from '@/lib/chat/clarification-llm-fallback'
 
@@ -94,9 +94,14 @@ export interface RoutingDispatcherContext {
   // --- Input ---
   trimmedInput: string
 
+  // --- Suggestion Routing (Tier S) ---
+  lastSuggestion: LastSuggestionState | null
+  setLastSuggestion: (state: LastSuggestionState | null) => void
+  addRejectedSuggestions: (labels: string[]) => void
+  clearRejectedSuggestions: () => void
+
   // --- Clarification Intercept (Tiers 0, 1, 3) ---
   lastClarification: LastClarificationState | null
-  lastSuggestion: unknown | null
   pendingOptions: PendingOptionState[]
   /** Active option set ID — when non-null, Tier 3 is allowed to bind selections.
    *  Per routing-order-priority-plan.md line 81:
@@ -164,6 +169,18 @@ export interface RoutingDispatcherResult {
   classifierLatencyMs?: number
   classifierError: boolean
   isFollowUp: boolean
+  /** Suggestion action for sendMessage() to execute (Tier S routing-only result) */
+  suggestionAction?: {
+    type: 'affirm_single'
+    candidate: SuggestionCandidate
+  } | {
+    type: 'affirm_multiple'
+    candidates: SuggestionCandidate[]
+  } | {
+    type: 'reject'
+    rejectedLabels: string[]
+    alternativesMessage: string
+  }
 }
 
 // =============================================================================
@@ -428,6 +445,7 @@ function findExactOptionMatch(
  *   TIER 2e — Correction
  *   TIER 2f — Follow-Up
  *   TIER 2g — Preview Shortcut ("show all" expansion)
+ *   TIER S  — Suggestion Reject / Affirm (routing-only; sendMessage executes)
  *   TIER 3a — Selection-Only Guard (ordinals/labels on active or recent list)
  *   TIER 3b — Affirmation Without Context ("yes" with no suggestion)
  *   TIER 3c — Re-show Options ("show options", "what were those")
@@ -492,6 +510,10 @@ export async function dispatchRouting(
   const { clarificationCleared, isNewQuestionOrCommandDetected } = clarificationResult
 
   if (clarificationResult.handled) {
+    // Per plan §10: clear stale suggestion state when stop/interrupt fires
+    if (ctx.lastSuggestion) {
+      ctx.setLastSuggestion(null)
+    }
     return {
       handled: true,
       handledByTier: 0, // Could be 0, 1, or 3 — logged internally
@@ -785,6 +807,134 @@ export async function dispatchRouting(
         action: 'classify_expand_error',
         metadata: { error: String(classifyError), tier: '2g' },
       })
+    }
+  }
+
+  // =========================================================================
+  // TIER S — Suggestion Reject / Affirm
+  //
+  // Per suggestion-routing-unification-plan.md:
+  // Runs AFTER stop/return/interrupt (Tiers 0–2) so "stop" is never
+  // misinterpreted as a rejection. Returns a routing-only action for
+  // sendMessage() to execute (no API calls in the dispatcher).
+  //
+  // Per plan §10: if stop/interrupt fired earlier while a suggestion was
+  // active, clear lastSuggestion to avoid stale confirm/reject on next turn.
+  // This is handled by the clarificationCleared flag — if clarification
+  // intercept handled the input, we never reach this point.
+  // =========================================================================
+  if (ctx.lastSuggestion) {
+    // Rejection: "no", "nope", "cancel" etc.
+    if (isRejectionPhrase(ctx.trimmedInput)) {
+      const rejectedLabels = ctx.lastSuggestion.candidates.map(c => c.label)
+
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'suggestion_rejected',
+        metadata: { rejectedLabels, userInput: ctx.trimmedInput, tier: 'S' },
+      })
+
+      // Clear suggestion state
+      ctx.addRejectedSuggestions(rejectedLabels)
+      ctx.setLastSuggestion(null)
+
+      // Build response message
+      let alternativesMessage = 'Okay — what would you like instead?'
+      if (ctx.lastSuggestion.candidates.length > 1) {
+        const alternativesList = ctx.lastSuggestion.candidates.map(c => c.label.toLowerCase()).join(', ')
+        alternativesMessage = `Okay — what would you like instead?\nYou can try: ${alternativesList}.`
+      }
+
+      const assistantMessage: ChatMessage = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: alternativesMessage,
+        timestamp: new Date(),
+        isError: false,
+      }
+      ctx.addMessage(assistantMessage)
+      ctx.setIsLoading(false)
+
+      return {
+        ...defaultResult,
+        handled: true,
+        handledByTier: 2,
+        tierLabel: 'suggestion_reject',
+        suggestionAction: {
+          type: 'reject',
+          rejectedLabels,
+          alternativesMessage,
+        },
+        clarificationCleared,
+        isNewQuestionOrCommandDetected,
+      }
+    }
+
+    // Affirmation: "yes", "yeah", "sure" etc.
+    if (isAffirmationPhrase(ctx.trimmedInput)) {
+      const candidates = ctx.lastSuggestion.candidates
+
+      if (candidates.length === 1) {
+        // Single candidate: return action for sendMessage() to execute
+        const candidate = candidates[0]
+
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'affirmation_confirm_single',
+          metadata: { candidate: candidate.label, primaryAction: candidate.primaryAction, tier: 'S' },
+        })
+
+        // Clear suggestion state (before API call in sendMessage)
+        ctx.setLastSuggestion(null)
+        ctx.clearRejectedSuggestions()
+
+        return {
+          ...defaultResult,
+          handled: true,
+          handledByTier: 2,
+          tierLabel: 'suggestion_affirm_single',
+          suggestionAction: {
+            type: 'affirm_single',
+            candidate,
+          },
+          clarificationCleared,
+          isNewQuestionOrCommandDetected,
+        }
+      } else {
+        // Multiple candidates: ask which one
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'affirmation_multiple_candidates',
+          metadata: { candidateCount: candidates.length, tier: 'S' },
+        })
+
+        const assistantMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: 'Which one?',
+          timestamp: new Date(),
+          isError: false,
+          suggestions: {
+            type: 'choose_multiple' as const,
+            candidates: candidates,
+          },
+        }
+        ctx.addMessage(assistantMessage)
+        ctx.setIsLoading(false)
+
+        return {
+          ...defaultResult,
+          handled: true,
+          handledByTier: 2,
+          tierLabel: 'suggestion_affirm_multiple',
+          suggestionAction: {
+            type: 'affirm_multiple',
+            candidates,
+          },
+          clarificationCleared,
+          isNewQuestionOrCommandDetected,
+        }
+      }
     }
   }
 

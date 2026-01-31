@@ -1359,196 +1359,10 @@ function ChatNavigationPanelContent({
       }
 
       // ---------------------------------------------------------------------------
-      // Rejection Detection: Check if user is rejecting a suggestion
-      // Per suggestion-rejection-handling-plan.md
+      // NOTE: Suggestion rejection and affirmation (previously inline here)
+      // have been moved to Tier S in routing-dispatcher.ts.
+      // Per suggestion-routing-unification-plan.md.
       // ---------------------------------------------------------------------------
-      console.log('[ChatPanel] Checkpoint 1: Rejection check', { lastSuggestion: !!lastSuggestion, isRejection: isRejectionPhrase(trimmedInput) })
-      if (lastSuggestion && isRejectionPhrase(trimmedInput)) {
-        // User rejected the suggestion - clear state and respond
-        const rejectedLabels = lastSuggestion.candidates.map(c => c.label)
-        addRejectedSuggestions(rejectedLabels)
-        setLastSuggestion(null)
-
-        void debugLog({
-          component: 'ChatNavigation',
-          action: 'suggestion_rejected',
-          metadata: { rejectedLabels, userInput: trimmedInput },
-        })
-
-        // Build response message - include alternatives if multiple candidates existed
-        let responseContent = 'Okay — what would you like instead?'
-        if (lastSuggestion.candidates.length > 1) {
-          const alternativesList = lastSuggestion.candidates.map(c => c.label.toLowerCase()).join(', ')
-          responseContent = `Okay — what would you like instead?\nYou can try: ${alternativesList}.`
-        }
-
-        const assistantMessage: ChatMessage = {
-          id: `assistant-${Date.now()}`,
-          role: 'assistant',
-          content: responseContent,
-          timestamp: new Date(),
-          isError: false,
-        }
-        addMessage(assistantMessage)
-        setIsLoading(false)
-        return
-      }
-
-      // ---------------------------------------------------------------------------
-      // Affirmation With Suggestion: Handle "yes" to confirm active suggestion
-      // Per suggestion-confirm-yes-plan.md
-      // ---------------------------------------------------------------------------
-      console.log('[ChatPanel] Checkpoint 2: Affirmation check', { lastSuggestion: !!lastSuggestion, isAffirmation: isAffirmationPhrase(trimmedInput) })
-      if (lastSuggestion && isAffirmationPhrase(trimmedInput)) {
-        const candidates = lastSuggestion.candidates
-
-        if (candidates.length === 1) {
-          // Single candidate: execute primary action directly
-          const candidate = candidates[0]
-
-          void debugLog({
-            component: 'ChatNavigation',
-            action: 'affirmation_confirm_single',
-            metadata: { candidate: candidate.label, primaryAction: candidate.primaryAction },
-          })
-
-          // Clear suggestion state before making API call
-          setLastSuggestion(null)
-          clearRejectedSuggestions()
-
-          // Build message based on primaryAction
-          // 'list' needs special handling to trigger preview mode
-          const confirmMessage = candidate.primaryAction === 'list'
-            ? `list ${candidate.label.toLowerCase()} in chat`
-            : candidate.label.toLowerCase()
-
-          // Make API call with confirmed candidate
-          const entryId = currentEntryId ?? getActiveEntryContext() ?? undefined
-          const workspaceId = currentWorkspaceId ?? getActiveWorkspaceContext() ?? undefined
-
-          try {
-            const response = await fetch('/api/chat/navigate', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                message: confirmMessage,
-                currentEntryId: entryId,
-                currentWorkspaceId: workspaceId,
-                context: {
-                  sessionState,
-                  visiblePanels,
-                  focusedPanelId,
-                },
-              }),
-            })
-
-            if (!response.ok) {
-              throw new Error('Failed to process confirmation')
-            }
-
-            const { resolution } = (await response.json()) as {
-              resolution: IntentResolutionResult
-            }
-
-            // Execute action based on resolution
-            if (resolution.action === 'open_panel_drawer' && resolution.panelId) {
-              openPanelDrawer(resolution.panelId, resolution.panelTitle)
-            }
-
-            // Handle actions that return selectable options: set pendingOptions so pills render
-            // Per suggestion-confirm-yes-plan.md: set pendingOptions when options are shown
-            // Phase 2b: Also include 'list_workspaces' which returns workspace pills
-            const hasSelectOptions = (
-              resolution.action === 'select' ||
-              resolution.action === 'list_workspaces'
-            ) && resolution.options && resolution.options.length > 0
-            if (hasSelectOptions) {
-              const newPendingOptions: PendingOptionState[] = resolution.options!.map((opt, idx) => ({
-                index: idx + 1,
-                label: opt.label,
-                sublabel: opt.sublabel,
-                type: opt.type,
-                id: opt.id,
-                data: opt.data,
-              }))
-              setPendingOptions(newPendingOptions)
-              setPendingOptionsMessageId(`assistant-${Date.now()}`)
-              setPendingOptionsGraceCount(0)
-              // Note: lastOptions state removed - now using findLastOptionsMessage() as source of truth
-
-              // Per options-visible-clarification-sync-plan.md: sync lastClarification with options
-              setLastClarification({
-                type: 'option_selection',
-                originalIntent: resolution.action || 'select',
-                messageId: `assistant-${Date.now()}`,
-                timestamp: Date.now(),
-                clarificationQuestion: resolution.message || 'Which one would you like?',
-                options: resolution.options!.map(opt => ({
-                  id: opt.id,
-                  label: opt.label,
-                  sublabel: opt.sublabel,
-                  type: opt.type,
-                })),
-                metaCount: 0,
-              })
-            }
-
-            // Add assistant message (include options for 'select' action)
-            const assistantMessage: ChatMessage = {
-              id: `assistant-${Date.now()}`,
-              role: 'assistant',
-              content: resolution.message,
-              timestamp: new Date(),
-              isError: !resolution.success,
-              options: hasSelectOptions
-                ? resolution.options!.map((opt) => ({
-                    type: opt.type,
-                    id: opt.id,
-                    label: opt.label,
-                    sublabel: opt.sublabel,
-                    data: opt.data,
-                  }))
-                : undefined,
-            }
-            addMessage(assistantMessage)
-          } catch (error) {
-            const assistantMessage: ChatMessage = {
-              id: `assistant-${Date.now()}`,
-              role: 'assistant',
-              content: 'Something went wrong. Please try again.',
-              timestamp: new Date(),
-              isError: true,
-            }
-            addMessage(assistantMessage)
-          }
-
-          setIsLoading(false)
-          return
-        } else {
-          // Multiple candidates: ask which one
-          void debugLog({
-            component: 'ChatNavigation',
-            action: 'affirmation_multiple_candidates',
-            metadata: { candidateCount: candidates.length },
-          })
-
-          const assistantMessage: ChatMessage = {
-            id: `assistant-${Date.now()}`,
-            role: 'assistant',
-            content: 'Which one?',
-            timestamp: new Date(),
-            isError: false,
-            // Re-display the candidates as suggestions
-            suggestions: {
-              type: 'choose_multiple',
-              candidates: candidates,
-            },
-          }
-          addMessage(assistantMessage)
-          setIsLoading(false)
-          return
-        }
-      }
 
 // ---------------------------------------------------------------------------
       // UNIFIED ROUTING DISPATCHER (per routing-order-priority-plan.md)
@@ -1566,9 +1380,13 @@ function ChatNavigationPanelContent({
       console.log('[ChatPanel] Checkpoint 3: Before dispatchRouting', { lastClarification: !!lastClarification, pendingOptions: pendingOptions?.length })
       const routingResult = await dispatchRouting({
         trimmedInput,
+        // Suggestion routing (Tier S)
+        lastSuggestion,
+        setLastSuggestion,
+        addRejectedSuggestions,
+        clearRejectedSuggestions,
         // Clarification intercept (Tiers 0, 1, 3)
         lastClarification,
-        lastSuggestion,
         pendingOptions,
         activeOptionSetId,
         uiContext,
@@ -1617,12 +1435,131 @@ function ChatNavigationPanelContent({
         classifierError,
       } = routingResult
       const isFollowUp = routingResult.isFollowUp
+
+      // ---------------------------------------------------------------------------
+      // Tier S: Suggestion Affirm (single candidate) — execute API call
+      // The dispatcher returns the routing decision; sendMessage() executes it.
+      // Per suggestion-routing-unification-plan.md §8 step 4.
+      // ---------------------------------------------------------------------------
+      if (routingResult.handled && routingResult.suggestionAction?.type === 'affirm_single') {
+        const candidate = routingResult.suggestionAction.candidate
+
+        // Build message based on primaryAction
+        const confirmMessage = candidate.primaryAction === 'list'
+          ? `list ${candidate.label.toLowerCase()} in chat`
+          : candidate.label.toLowerCase()
+
+        const entryId = currentEntryId ?? getActiveEntryContext() ?? undefined
+        const workspaceId = currentWorkspaceId ?? getActiveWorkspaceContext() ?? undefined
+
+        try {
+          const response = await fetch('/api/chat/navigate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message: confirmMessage,
+              currentEntryId: entryId,
+              currentWorkspaceId: workspaceId,
+              context: {
+                sessionState,
+                visiblePanels,
+                focusedPanelId,
+              },
+            }),
+          })
+
+          if (!response.ok) {
+            throw new Error('Failed to process confirmation')
+          }
+
+          const { resolution } = (await response.json()) as {
+            resolution: IntentResolutionResult
+          }
+
+          // Execute action based on resolution
+          if (resolution.action === 'open_panel_drawer' && resolution.panelId) {
+            openPanelDrawer(resolution.panelId, resolution.panelTitle)
+          }
+
+          // Handle actions that return selectable options
+          const hasSelectOptions = (
+            resolution.action === 'select' ||
+            resolution.action === 'list_workspaces'
+          ) && resolution.options && resolution.options.length > 0
+          if (hasSelectOptions) {
+            const newPendingOptions: PendingOptionState[] = resolution.options!.map((opt, idx) => ({
+              index: idx + 1,
+              label: opt.label,
+              sublabel: opt.sublabel,
+              type: opt.type,
+              id: opt.id,
+              data: opt.data,
+            }))
+            setPendingOptions(newPendingOptions)
+            setPendingOptionsMessageId(`assistant-${Date.now()}`)
+            setPendingOptionsGraceCount(0)
+
+            setLastClarification({
+              type: 'option_selection',
+              originalIntent: resolution.action || 'select',
+              messageId: `assistant-${Date.now()}`,
+              timestamp: Date.now(),
+              clarificationQuestion: resolution.message || 'Which one would you like?',
+              options: resolution.options!.map(opt => ({
+                id: opt.id,
+                label: opt.label,
+                sublabel: opt.sublabel,
+                type: opt.type,
+              })),
+              metaCount: 0,
+            })
+          }
+
+          const assistantMessage: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: resolution.message,
+            timestamp: new Date(),
+            isError: !resolution.success,
+            options: hasSelectOptions
+              ? resolution.options!.map((opt) => ({
+                  type: opt.type,
+                  id: opt.id,
+                  label: opt.label,
+                  sublabel: opt.sublabel,
+                  data: opt.data,
+                }))
+              : undefined,
+          }
+          addMessage(assistantMessage)
+        } catch {
+          const assistantMessage: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: 'Something went wrong. Please try again.',
+            timestamp: new Date(),
+            isError: true,
+          }
+          addMessage(assistantMessage)
+        }
+
+        setIsLoading(false)
+        return
+      }
+
       if (routingResult.handled) {
+        // Per plan §10: if a non-suggestion tier handled the input while a
+        // suggestion was active, clear stale suggestion state to prevent
+        // leftover confirm/reject on the next turn.
+        if (lastSuggestion && !routingResult.suggestionAction) {
+          setLastSuggestion(null)
+        }
         return
       }
 
       // ---------------------------------------------------------------------------
       // NOTE: The following blocks have been moved to routing-dispatcher.ts:
+      //   - Suggestion Reject / Affirm → Tier S
       //   - Affirmation Without Context → Tier 3b
       //   - Re-show Options → Tier 3c
       //   - Explicit Command Bypass → Tier 2a
@@ -2275,6 +2212,15 @@ function ChatNavigationPanelContent({
         setLastSuggestion({
           candidates: suggestions.candidates,
           messageId: assistantMessageId,
+        })
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'lastSuggestion_set',
+          metadata: {
+            messageId: assistantMessageId,
+            count: suggestions.candidates.length,
+            labels: suggestions.candidates.map(c => c.label),
+          },
         })
       } else {
         // Clear lastSuggestion if no suggestions (user moved on to valid command)

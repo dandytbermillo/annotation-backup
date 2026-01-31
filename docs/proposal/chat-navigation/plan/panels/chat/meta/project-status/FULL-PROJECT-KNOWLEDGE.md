@@ -2,7 +2,7 @@
 
 **Purpose:** This document captures the complete understanding of the project so that any future session can immediately get up to speed without re-reading dozens of files. It covers architecture, the chat navigation system we are actively working on, the clarification/disambiguation subsystem in detail, every fix applied, and the current state of work.
 
-**Last Updated:** 2026-01-29 18:49 MST
+**Last Updated:** 2026-01-31
 
 ---
 
@@ -195,11 +195,12 @@ clarification-response-fit-plan.md           ← PRIMARY: Intent classifier, con
   └── clarification-stop-scope-plan.md       ← ADDENDUM: Scope-aware stop/cancel
 ```
 
-### Layer 3: Command Routing Drafts (Pending)
+### Layer 3: Command Routing (Implemented + Pending)
 ```
+routing-order-priority-plan.md               ← Unified routing priority chain (implemented via dispatcher)
+known-noun-command-routing-plan.md           ← Noun‑only commands allowlist + unknown fallback (implemented)
+suggestion-routing-unification-plan.md       ← Suggestion reject/affirm unified in dispatcher (implemented)
 panel-command-matcher-stopword-plan.md       ← Action‑verb stopword gate (await red‑error debug log)
-known-noun-command-routing-plan.md           ← Noun‑only commands allowlist + unknown fallback
-routing-order-priority-plan.md               ← Unified routing priority chain (stop/interrupt/clarification/noun/docs)
 ```
 
 ### Supporting Documents
@@ -375,7 +376,9 @@ When user gives off-menu input repeatedly:
 
 ## 8. The Routing Flow (Step by Step)
 
-When a user sends a message, `handleClarificationIntercept()` in `chat-routing.ts` processes it in this **strict order**:
+Routing is orchestrated by `dispatchRouting()` in `lib/chat/routing-dispatcher.ts`. Tier 0 uses
+`handleClarificationIntercept()` in `chat-routing.ts`; the order below describes the clarification intercept
+portion of the unified routing chain.
 
 ### Phase 1: Pre-Clarification Guards
 1. **Reset stop suppression** counter on non-exit input
@@ -519,6 +522,33 @@ If LLM fails (timeout, error, or 429 rate limit):
 ---
 
 ## 11. All Fixes Applied
+
+### Session: 2026-01-31
+
+#### Fix 11: Unified routing dispatcher
+**File:** `lib/chat/routing-dispatcher.ts`
+- Centralized routing priority chain (stop/return/interrupt/clarification/known‑noun/docs) into a single dispatcher.
+- Removed scattered inline routing in `chat-navigation-panel.tsx`.
+
+#### Fix 12: Known‑noun command routing
+**File:** `lib/chat/known-noun-routing.ts`
+- Deterministic allowlist routing for noun‑only commands (e.g., “links panel”, “widget manager”).
+- Fuzzy near‑match hints for typo nouns (distance ≤ 2).
+
+#### Fix 13: Suggestion routing unification
+**File:** `lib/chat/routing-dispatcher.ts`
+- Suggestion reject/affirm handling moved into Tier S (post stop/return/interrupt).
+- Dispatcher remains routing‑only; `sendMessage()` executes the API call for single‑candidate affirmation.
+
+#### Fix 14: Selection‑like typo normalization
+**File:** `lib/chat/routing-dispatcher.ts`
+- Per‑token fuzzy normalization for ordinal typos (length ≥ 4, distance ≤ 2).
+- Prevents “sesecond option” / “scondd option” from falling to LLM.
+
+#### Fix 15: Affirmation shortcut for option selection
+**File:** `lib/chat/clarification-offmenu.ts`
+- `classifyResponseFit()` now treats “yes” as select when `option_selection` or `panel_disambiguation`.
+- Multiple options → targeted “Which one? Reply first, second, third…” prompt.
 
 ### Session: 2026-01-29
 
@@ -685,16 +715,15 @@ The `clarification-qa-checklist.md` defines **13 manual tests** (A1-E13) that mu
 
 ### Active Issues
 
-1. **Gemini LLM consistently times out at 800ms.** Every Tier 2 LLM call in test sessions failed with timeout. The Tier 3 confirm prompt catches this, but the LLM fallback (Tier 2) is effectively non-functional. Needs investigation — could be API key quota, Gemini Flash latency, or network issues.
+1. **Gemini LLM consistently times out at 800ms.** Tier 2 return‑cue LLM calls can still timeout; Tier 3 confirm prompt handles failure.
 
-2. **Restore logic duplicated.** The restore-paused-list logic exists in three places in `chat-routing.ts`: Tier 1 handler, Tier 2 handler, and affirmation handler. Should be extracted into a shared `restorePausedList()` helper.
+2. **Restore logic duplicated.** Paused‑list restore logic still appears in multiple handlers; could be extracted to a shared helper.
 
 3. **Remainder noise from non-standalone patterns.** E.g., "pls take it back" → remainder "pls". Harmless but could be cleaned up.
 
-4. **4 QA tests not yet run**: B7 (ordinal after interrupt), B9 (repair after interrupt), D11 (bare label without return cue), E13 (hesitation).
+4. **QA coverage gaps.** A few clarification QA items still require a fresh manual pass after recent routing changes.
 
 5. **"open links panel" red error after stop (under investigation).** Action verbs ("open", "show") are not stripped in `panel-command-matcher.ts` tokenization, causing panel disambiguation to miss multi-word panel commands. Falls through to LLM API which times out at 8 seconds (504). Fix planned: add action verbs to STOPWORDS. Awaiting debug log confirmation before implementing.
-6. **Noun‑only command routing (draft).** Known‑noun allowlist + unknown‑noun fallback plan exists but not implemented yet. This is intended to prevent noun‑only inputs from being hijacked by docs routing.
 
 ### Deferred/Pending Work
 
@@ -719,11 +748,13 @@ The `clarification-qa-checklist.md` defines **13 manual tests** (A1-E13) that mu
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `lib/chat/chat-routing.ts` | ~3800 | All routing handlers (this is the main file you'll edit) |
+| `lib/chat/routing-dispatcher.ts` | ~1100 | Unified routing priority chain (tiers 0–5 + suggestion tier) |
+| `lib/chat/chat-routing.ts` | ~3800 | Clarification intercept + routing helpers |
 | `lib/chat/clarification-offmenu.ts` | ~1100 | Deterministic detection (patterns, classifier, return signals) |
 | `lib/chat/chat-navigation-context.tsx` | ~1100 | Shared state (snapshots, clarification state, messages) |
 | `lib/chat/clarification-llm-fallback.ts` | ~530 | LLM fallback wrappers (selection + return-cue) |
 | `lib/chat/query-patterns.ts` | ~400 | Pattern utilities (affirmation, rejection, meta, fuzzy) |
+| `lib/chat/known-noun-routing.ts` | ~260 | Known‑noun allowlist routing + near‑match |
 | `lib/chat/routing-telemetry.ts` | ~200 | Telemetry event definitions |
 | `components/chat/chat-navigation-panel.tsx` | ~600 | UI orchestrator |
 
@@ -745,6 +776,9 @@ The `clarification-qa-checklist.md` defines **13 manual tests** (A1-E13) that mu
 | `clarification-interrupt-resume-plan.md` | Addendum: pause/resume (§46-69 = return-cue) |
 | `clarification-stop-scope-plan.md` | Addendum: stop/cancel scope |
 | `clarification-offmenu-handling-examples.md` | Canonical response wording |
+| `routing-order-priority-plan.md` | Unified routing priority chain |
+| `known-noun-command-routing-plan.md` | Noun‑only command routing |
+| `suggestion-routing-unification-plan.md` | Suggestion reject/affirm unification |
 
 ---
 

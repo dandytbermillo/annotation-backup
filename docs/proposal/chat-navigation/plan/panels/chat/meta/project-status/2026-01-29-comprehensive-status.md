@@ -1,6 +1,6 @@
 # Chat Navigation — Comprehensive Project Status
 
-**Date:** 2026-01-29
+**Date:** 2026-01-31
 **Scope:** Full status of chat navigation subsystem — plans, implementations, fixes, and current state.
 
 ---
@@ -41,11 +41,12 @@ Supporting Documents
 ├── clarification-offmenu-handling-examples.md   ← Canonical bot/user response wording
 ├── clarification-response-fit-implementation-guide.md ← Checklist-style guide
 └── INDEX.md                                      ← Plan timeline and quick reference
-Panel Command Routing (Drafts)
+Panel Command Routing
 ├── panel-command-matcher-stopword-plan.md        ← Action‑verb stopword gate (await red‑error debug log)
-└── known-noun-command-routing-plan.md            ← Noun‑only command routing (allowlist + unknown fallback)
-Routing Order (Draft)
+├── known-noun-command-routing-plan.md            ← Noun‑only command routing (allowlist + unknown fallback)
 └── routing-order-priority-plan.md                ← Unified routing priority chain to resolve plan conflicts
+Suggestion Routing
+└── suggestion-routing-unification-plan.md        ← Suggestion reject/affirm unified in dispatcher
 ```
 
 ---
@@ -90,11 +91,21 @@ Routing Order (Draft)
 | Panel routing hardening | **Complete** |
 | Links Panel naming consolidation | **Complete** |
 | Action‑verb stopword fix | **Draft** (pending debug‑log confirmation) |
-| Known‑noun command routing | **Draft** (ready to implement) |
+| Known‑noun command routing | **Implemented** (Tier 4 in dispatcher) |
+| Routing order priority | **Implemented** (dispatcher Tier order + guards) |
+| Suggestion routing unification | **Implemented** (Tier S in dispatcher) |
 
 ---
 
-## 4. Current Session Fixes (2026-01-29)
+## 4. Current Session Fixes (2026-01-31)
+
+### 2026-01-31 Updates (Routing Spine + Known‑Noun + Suggestion Unification)
+
+- **Unified routing dispatcher:** `lib/chat/routing-dispatcher.ts` is now the single routing spine (tiers 0–5 + suggestion tier). Inline routing in `chat-navigation-panel.tsx` removed.
+- **Known‑noun routing implemented:** `lib/chat/known-noun-routing.ts` handles noun‑only commands with allowlist + near‑match hints.
+- **Suggestion routing unified:** Suggestion reject/affirm moved into dispatcher Tier S; dispatcher stays routing‑only.
+- **Selection‑like typo normalization:** Per‑token fuzzy ordinal normalization now resolves “sesecond/scondd option” deterministically.
+- **Affirmation shortcut:** `classifyResponseFit()` treats “yes” as select for `option_selection` and `panel_disambiguation`.
 
 ### Issue: Natural-Language Return Cues Fell Through All Three Detection Tiers
 
@@ -171,7 +182,7 @@ if (isLLMFallbackEnabledClient() && !isRepairPhrase(trimmedInput) && !isOrdinalI
 - **LLM guard:** Ordinals now skip return‑cue LLM calls to avoid rate limiting.
 - **Failure recovery:** On LLM timeout/error, the system shows a confirm prompt instead of routing away.
 
-### New Draft Plans Added (Awaiting Implementation)
+### Draft / Pending Plans
 
 #### Panel Command Matcher — Action Verb Stopword Plan
 **File:** `panel-command-matcher-stopword-plan.md`  
@@ -182,7 +193,7 @@ if (isLLMFallbackEnabledClient() && !isRepairPhrase(trimmedInput) && !isOrdinalI
 
 #### Known‑Noun Command Routing Plan
 **File:** `known-noun-command-routing-plan.md`  
-**Status:** Draft (ready to implement)  
+**Status:** Implemented  
 **Purpose:** Deterministic routing for noun‑only commands; avoid docs hijack
 
 Key rules:
@@ -190,6 +201,16 @@ Key rules:
 - Question guard (trailing `?` only; question phrase starts)
 - Unknown noun fallback prompt (Open / Docs / Try again)
 - Near‑match hint (e.g., “widget managr” → “Did you mean Widget Manager?”)
+
+#### Routing Order & Priority Plan
+**File:** `routing-order-priority-plan.md`  
+**Status:** Implemented  
+**Purpose:** Unified routing priority chain to resolve plan conflicts
+
+#### Suggestion Routing Unification Plan
+**File:** `suggestion-routing-unification-plan.md`  
+**Status:** Implemented  
+**Purpose:** Suggestion reject/affirm flows unified in dispatcher (Tier S)
 
 ### Files Modified
 
