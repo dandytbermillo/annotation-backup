@@ -1,6 +1,6 @@
 # Chat Navigation Plans — Index
 
-**Last Updated:** 2026-01-30
+**Last Updated:** 2026-01-31
 
 This index documents plan timelines for chat navigation: doc retrieval and clarification/disambiguation.
 
@@ -179,6 +179,14 @@ This index documents plan timelines for chat navigation: doc retrieval and clari
 ### 13. Suggestion Routing Unification Plan
 **File:** `suggestion-routing-unification-plan.md`
 **Purpose:** Move suggestion reject/affirm flows into the unified dispatcher (single routing spine)
+
+**Status:** ✅ Implemented (routing dispatcher Tier S)
+
+---
+
+### 14. Grounding‑Set Fallback Plan
+**File:** `grounding-set-fallback-plan.md`
+**Purpose:** General grounding fallback (lists + non‑list contexts; multi‑widget ambiguity)
 
 **Status:** 📝 Draft
 

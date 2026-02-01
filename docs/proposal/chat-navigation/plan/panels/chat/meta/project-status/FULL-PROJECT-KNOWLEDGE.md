@@ -550,6 +550,14 @@ If LLM fails (timeout, error, or 429 rate limit):
 - `classifyResponseFit()` now treats “yes” as select when `option_selection` or `panel_disambiguation`.
 - Multiple options → targeted “Which one? Reply first, second, third…” prompt.
 
+#### Fix 16: Noun‑only interrupt honors new‑intent
+**File:** `lib/chat/chat-routing.ts`
+- If `isNewQuestionOrCommandDetected === true`, response‑fit is skipped so noun‑only commands (e.g., “widget manager”) can interrupt active clarification lists and reach Tier 4.
+
+#### Fix 17: Post‑action selection gate
+**File:** `lib/chat/chat-routing.ts`
+- Post‑action ordinal window now runs only on strict selection‑like inputs (ordinals or exact label match), preventing garbage inputs from selecting.
+
 ### Session: 2026-01-29
 
 **Bug:** "back pls" (and similar natural-language return cues with trailing politeness) fell through all three detection tiers and routed to unrelated doc retrieval instead of restoring the paused clarification list.

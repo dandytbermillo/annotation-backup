@@ -57,9 +57,12 @@ This plan defines a single, canonical routing order so the system behaves determ
    - If pausedReason = `stop`: block ordinals (“list was closed…”)
 
 **Post‑action selection gate (anti‑garbage guard):**  
-The post‑action ordinal window must only run when the input is **selection‑like**:  
+The post‑action selection window must only run when the input is **selection‑like**:  
 - contains a recognized ordinal (first/second/third/1/2/3/last), **or**  
 - exactly matches an option label, **or**  
+- uniquely matches an option via **canonical token subset**, **or**  
+- uniquely matches an option via **label contains input**, **or**  
+- uniquely matches via **badge/suffix** (e.g., panel D/E), **or**  
 - is a return‑cue already handled above.  
 Otherwise, **skip post‑action selection** and fall through to normal routing.  
 This prevents garbage input (e.g., “anel layot”) from being mis‑selected simply because a snapshot exists.
@@ -95,6 +98,13 @@ This prevents garbage input (e.g., “anel layot”) from being mis‑selected s
    - Ordinals, label match, off‑menu mapping  
    - LLM fallback (constrained) only if enabled
     - **Runs only when** `activeOptionSetId != null` (don’t bind to old visible pills in history)
+    - **Skip if** `isNewQuestionOrCommandDetected === true` (interrupt wins over clarification)
+
+**Soft‑active window (short‑term list stickiness):**  
+If `activeOptionSetId == null` but **lastOptionsShown** is still within a short TTL and the input is **selection‑like** (as defined above), treat the list as *soft‑active* for selection‑only routing.  
+This preserves “panel d/e” and “the other one” immediately after an action while still preventing binding to ancient history.
+
+**Selection‑like shorthand resolution:** use deterministic **unique** matching first; only fall back to LLM if deterministic matching cannot resolve uniquely (see `grounding-set-fallback-plan.md`).
 
 ---
 
@@ -145,3 +155,4 @@ This is the core of the ChatGPT/Cursor “human” feel — consistent prioritie
 4. “what is links panel?” → docs  
 5. “second option” after stop → blocked, ask for return cue  
 6. “back to options” after stop → restore list  
+7. After opening Links Panel D, input “panel e” → opens Links Panel E (soft‑active, unique match)  

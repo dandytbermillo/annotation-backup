@@ -28,6 +28,7 @@ import {
   isMetaPhrase,
   isNewQuestionOrCommand,
   hasFuzzyMatch,
+  hasQuestionIntent,
 } from '@/lib/chat/query-patterns'
 import { isBareNounQuery, maybeFormatSnippetWithHs3, dedupeHeaderPath, stripMarkdownHeadersForUI } from '@/lib/chat/doc-routing'
 import type { UIContext } from '@/lib/chat/intent-prompt'
@@ -66,6 +67,7 @@ import {
   type ClarificationType,
   type ResponseFitResult,
 } from '@/lib/chat/clarification-offmenu'
+import { matchKnownNoun } from '@/lib/chat/known-noun-routing'
 import {
   shouldCallLLMFallback,
   callClarificationLLMClient,
@@ -1408,7 +1410,8 @@ export async function handleClarificationIntercept(
     : false
 
   // Detect new question/command
-  const isNewQuestionOrCommandDetected =
+  // NOTE: `let` because Tier 2 known-noun interrupt may set this to true later
+  let isNewQuestionOrCommandDetected =
     isNewQuestionOrCommand(trimmedInput) ||
     trimmedInput.endsWith('?') ||
     isBareNounNewIntent ||
@@ -1948,6 +1951,36 @@ export async function handleClarificationIntercept(
     )
 
     if (snapshotSelection.isSelection && snapshotSelection.index !== undefined) {
+      // ====================================================================
+      // POST-ACTION SELECTION GATE (anti-garbage guard)
+      // Per routing-order-priority-plan.md Tier 1:
+      // Only run post-action selection if input is strictly selection-like:
+      //   - contains a recognized ordinal keyword (first/second/1/2/last/etc.)
+      //   - OR exactly matches an option label
+      // This prevents fuzzy ordinal normalization from mis-selecting garbage
+      // input (e.g., "anel layot" → "anel last" → selects last option).
+      // ====================================================================
+      const rawNormalized = trimmedInput.toLowerCase().trim()
+      const STRICT_ORDINAL_PATTERN = /\b(first|second|third|fourth|fifth|last|1st|2nd|3rd|4th|5th|one|two|three|four|five|top|bottom)\b/i
+      const hasStrictOrdinal = STRICT_ORDINAL_PATTERN.test(rawNormalized) || /^[1-9]$/.test(rawNormalized) || /^[a-e]$/i.test(rawNormalized) || /^option\s*[1-9]$/i.test(rawNormalized)
+      const hasExactLabelMatch = clarificationSnapshot.options.some(
+        opt => opt.label.toLowerCase().trim() === rawNormalized
+      )
+
+      if (!hasStrictOrdinal && !hasExactLabelMatch) {
+        // Garbage input — skip post-action selection, fall through to normal routing
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'post_action_selection_gate_blocked',
+          metadata: {
+            userInput: trimmedInput,
+            detectedIndex: snapshotSelection.index,
+            reason: 'input_not_strictly_selection_like',
+            snapshotTurnsSince: clarificationSnapshot.turnsSinceSet,
+          },
+        })
+        // Don't return — let input fall through to downstream handlers
+      } else {
       // STOP-PAUSED ORDINAL GUARD: If snapshot was paused by stop, do NOT auto-resume.
       // Per stop-scope-plan §39-44: ordinals should not resolve when pausedReason === 'stop'.
       // Guide user to use explicit return cue instead.
@@ -2090,6 +2123,7 @@ export async function handleClarificationIntercept(
         handleSelectOption(optionToSelect)
         return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
       }
+      } // end else (post-action selection gate passed)
     }
   }
 
@@ -3285,6 +3319,62 @@ export async function handleClarificationIntercept(
     }
 
     // ==========================================================================
+    // Known-Noun Interrupt (per routing-order-priority-plan.md Tier 2 item 8)
+    //
+    // If a clarification list is active and the input is a known noun without
+    // a verb, allow it to interrupt ONLY when:
+    //   - it does NOT overlap the active list's option labels, and
+    //   - it is NOT a question signal.
+    // This prevents "widget manager" from being trapped by an unrelated list.
+    // ==========================================================================
+    if (lastClarification?.options && lastClarification.options.length > 0 && !isNewQuestionOrCommandDetected) {
+      const knownNounMatch = matchKnownNoun(trimmedInput)
+      if (knownNounMatch && !hasQuestionIntent(trimmedInput)) {
+        // Check label overlap: tokenize input and all option labels
+        const inputTokens = toCanonicalTokens(trimmedInput)
+        const allOptionTokens = new Set<string>()
+        for (const opt of lastClarification.options) {
+          for (const t of toCanonicalTokens(opt.label)) {
+            allOptionTokens.add(t)
+          }
+        }
+        let hasOverlap = false
+        for (const t of inputTokens) {
+          if (allOptionTokens.has(t)) { hasOverlap = true; break }
+        }
+
+        if (!hasOverlap) {
+          // No overlap → treat as interrupt: pause active list and return
+          // unhandled so the dispatcher routes to Tier 4 (known-noun execution).
+          // We must return immediately BEFORE the response-fit classifier runs,
+          // otherwise the classifier consumes the input as ask_clarify.
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'known_noun_interrupt_active_list',
+            metadata: {
+              input: trimmedInput,
+              nounPanelId: knownNounMatch.panelId,
+              nounTitle: knownNounMatch.title,
+              activeListOptions: lastClarification.options.map(o => o.label),
+              tier: 2,
+            },
+          })
+          // Pause the active list (same as handleUnclear new-intent path)
+          if (lastClarification?.options && lastClarification.options.length > 0) {
+            saveClarificationSnapshot(lastClarification, true)
+          }
+          setLastClarification(null)
+          setPendingOptions([])
+          setPendingOptionsMessageId(null)
+          setPendingOptionsGraceCount(0)
+          isNewQuestionOrCommandDetected = true
+          // Return unhandled so dispatcher continues to Tier 4
+          return { handled: false, clarificationCleared: true, isNewQuestionOrCommandDetected }
+        }
+      }
+    }
+
+    // ==========================================================================
     // Response-Fit Classifier (per clarification-response-fit-plan.md)
     // Unified classification layer that handles:
     // - Short hints → ask_clarify
@@ -3294,7 +3384,7 @@ export async function handleClarificationIntercept(
     // - Optional LLM fallback
     // - Escalation as last resort
     // ==========================================================================
-    if (lastClarification?.options && lastClarification.options.length > 0) {
+    if (lastClarification?.options && lastClarification.options.length > 0 && !isNewQuestionOrCommandDetected) {
       // Map clarification type to ClarificationType
       const clarificationType: ClarificationType = lastClarification.type === 'cross_corpus'
         ? 'cross_corpus'

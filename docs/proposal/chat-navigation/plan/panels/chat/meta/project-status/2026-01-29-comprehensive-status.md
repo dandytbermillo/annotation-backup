@@ -106,6 +106,8 @@ Suggestion Routing
 - **Suggestion routing unified:** Suggestion reject/affirm moved into dispatcher Tier S; dispatcher stays routing‑only.
 - **Selection‑like typo normalization:** Per‑token fuzzy ordinal normalization now resolves “sesecond/scondd option” deterministically.
 - **Affirmation shortcut:** `classifyResponseFit()` treats “yes” as select for `option_selection` and `panel_disambiguation`.
+- **Noun‑only interrupt finalized:** When `isNewQuestionOrCommandDetected` is true, response‑fit is skipped so noun‑only commands (e.g., “widget manager”) can interrupt active lists and reach Tier 4.
+- **Post‑action selection gate:** Strict ordinal/label gate prevents garbage inputs (e.g., “anel layot”) from selecting against snapshots.
 
 ### Issue: Natural-Language Return Cues Fell Through All Three Detection Tiers
 

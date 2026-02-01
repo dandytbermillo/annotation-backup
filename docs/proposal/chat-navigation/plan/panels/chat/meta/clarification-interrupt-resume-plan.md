@@ -21,7 +21,8 @@ This matches human/ChatGPT/Cursor behavior: interrupt → execute → wait for a
 ## Guard: No Silent Return to Old List (With One‑Turn Grace)
 
 After an interrupt/new‑topic command, **ordinals/labels should not resolve against the old list**
-unless the user **explicitly signals return**.
+unless the user **explicitly signals return**. For selection‑like shorthand and unique‑match behavior,
+follow `grounding-set-fallback-plan.md` (deterministic unique matching first; LLM only if needed).
 
 **One‑turn grace (human‑friendly):** If the *very next* user message after the interrupt is an
 ordinal or an exact label reference, treat it as an implicit return and resolve against the paused
