@@ -1433,6 +1433,7 @@ function ChatNavigationPanelContent({
         sessionState,
         lastOptionsShown,
         incrementLastOptionsShownTurn,
+        saveLastOptionsShown,
       })
       const { clarificationCleared, isNewQuestionOrCommandDetected } = routingResult
       // Extract classifier state for downstream telemetry

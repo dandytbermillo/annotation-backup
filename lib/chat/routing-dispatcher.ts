@@ -153,6 +153,8 @@ export interface RoutingDispatcherContext {
   sessionState: import('@/lib/chat/intent-prompt').SessionState
   lastOptionsShown: import('@/lib/chat/chat-navigation-context').LastOptionsShown | null
   incrementLastOptionsShownTurn?: () => void
+  /** Save last options shown for soft-active window (called wherever dispatcher creates options) */
+  saveLastOptionsShown: (options: import('@/lib/chat/chat-navigation-context').ClarificationOption[], messageId: string) => void
 }
 
 // =============================================================================
@@ -562,6 +564,7 @@ export async function dispatchRouting(
     stopSuppressionCount: ctx.stopSuppressionCount,
     setStopSuppressionCount: ctx.setStopSuppressionCount,
     decrementStopSuppression: ctx.decrementStopSuppression,
+    saveLastOptionsShown: ctx.saveLastOptionsShown,
   })
 
   const { clarificationCleared, isNewQuestionOrCommandDetected } = clarificationResult
@@ -661,6 +664,7 @@ export async function dispatchRouting(
       setPendingOptions: ctx.setPendingOptions,
       setPendingOptionsMessageId: ctx.setPendingOptionsMessageId as (messageId: string) => void,
       setLastClarification: ctx.setLastClarification,
+      saveLastOptionsShown: ctx.saveLastOptionsShown,
     })
     if (panelDisambiguationResult.handled) {
       return {
@@ -689,6 +693,7 @@ export async function dispatchRouting(
     setPendingOptions: ctx.setPendingOptions,
     setPendingOptionsMessageId: ctx.setPendingOptionsMessageId as (messageId: string) => void,
     setLastClarification: ctx.setLastClarification,
+    saveLastOptionsShown: ctx.saveLastOptionsShown,
   })
   if (metaExplainResult.handled) {
     return {
@@ -1361,6 +1366,12 @@ export async function dispatchRouting(
       ctx.setPendingOptionsMessageId(messageId)
       ctx.setPendingOptionsGraceCount(0)
 
+      // Populate soft-active window so shorthand works after re-show
+      ctx.saveLastOptionsShown(
+        lastOptionsMessage.options.map(opt => ({ id: opt.id, label: opt.label, sublabel: opt.sublabel, type: opt.type })),
+        messageId,
+      )
+
       // Per options-visible-clarification-sync-plan.md: sync lastClarification on re-show
       ctx.setLastClarification({
         type: 'option_selection',
@@ -1441,6 +1452,11 @@ export async function dispatchRouting(
   // Rule: If a known-noun executes while a paused snapshot exists,
   // the snapshot remains paused (no implicit resume).
   // =========================================================================
+  const hasSoftActiveSelectionLike = ctx.activeOptionSetId === null
+    && !!ctx.lastOptionsShown
+    && ctx.lastOptionsShown.options.length > 0
+    && isSelectionLike(ctx.trimmedInput)
+
   const knownNounResult = handleKnownNounRouting({
     trimmedInput: ctx.trimmedInput,
     visibleWidgets: ctx.uiContext?.dashboard?.visibleWidgets,
@@ -1452,6 +1468,8 @@ export async function dispatchRouting(
     setLastClarification: ctx.setLastClarification,
     handleSelectOption: ctx.handleSelectOption,
     hasActiveOptionSet: ctx.pendingOptions.length > 0 && ctx.activeOptionSetId !== null,
+    hasSoftActiveSelectionLike,
+    saveLastOptionsShown: ctx.saveLastOptionsShown,
   })
   if (knownNounResult.handled) {
     return {
@@ -1584,6 +1602,42 @@ export async function dispatchRouting(
             isFollowUp,
           }
         }
+
+        // Fallback: recover full option data from the most recent options message
+        const lastOptionsMessage = ctx.findLastOptionsMessage(ctx.messages)
+        const messageAge = lastOptionsMessage ? Date.now() - lastOptionsMessage.timestamp.getTime() : null
+        const isWithinWindow = lastOptionsMessage
+          && messageAge !== null
+          && messageAge <= ctx.reshowWindowMs
+        const messageOption = isWithinWindow
+          ? lastOptionsMessage.options.find(opt => opt.id === groundingResult.selectedCandidate!.id)
+          : null
+
+        if (messageOption) {
+          const optionToSelect: SelectionOption = {
+            type: messageOption.type as SelectionOption['type'],
+            id: messageOption.id,
+            label: messageOption.label,
+            sublabel: messageOption.sublabel,
+            data: messageOption.data as SelectionOption['data'],
+          }
+          ctx.handleSelectOption(optionToSelect)
+          ctx.setIsLoading(false)
+          return {
+            ...defaultResult,
+            handled: true,
+            handledByTier: 4,
+            tierLabel: 'grounding_deterministic_select_message_fallback',
+            clarificationCleared,
+            isNewQuestionOrCommandDetected,
+            classifierCalled,
+            classifierResult,
+            classifierTimeout,
+            classifierLatencyMs,
+            classifierError,
+            isFollowUp,
+          }
+        }
       }
 
       // Option found but missing 'type'/'data' fields — can't execute.
@@ -1656,6 +1710,42 @@ export async function dispatchRouting(
                     handled: true,
                     handledByTier: 4,
                     tierLabel: 'grounding_llm_select',
+                    clarificationCleared,
+                    isNewQuestionOrCommandDetected,
+                    classifierCalled,
+                    classifierResult,
+                    classifierTimeout,
+                    classifierLatencyMs,
+                    classifierError,
+                    isFollowUp,
+                  }
+                }
+
+                // Fallback: recover full option data from the most recent options message
+                const lastOptionsMessage = ctx.findLastOptionsMessage(ctx.messages)
+                const messageAge = lastOptionsMessage ? Date.now() - lastOptionsMessage.timestamp.getTime() : null
+                const isWithinWindow = lastOptionsMessage
+                  && messageAge !== null
+                  && messageAge <= ctx.reshowWindowMs
+                const messageOption = isWithinWindow
+                  ? lastOptionsMessage.options.find(opt => opt.id === selected.id)
+                  : null
+
+                if (messageOption) {
+                  const optionToSelect: SelectionOption = {
+                    type: messageOption.type as SelectionOption['type'],
+                    id: messageOption.id,
+                    label: messageOption.label,
+                    sublabel: messageOption.sublabel,
+                    data: messageOption.data as SelectionOption['data'],
+                  }
+                  ctx.handleSelectOption(optionToSelect)
+                  ctx.setIsLoading(false)
+                  return {
+                    ...defaultResult,
+                    handled: true,
+                    handledByTier: 4,
+                    tierLabel: 'grounding_llm_select_message_fallback',
                     clarificationCleared,
                     isNewQuestionOrCommandDetected,
                     classifierCalled,

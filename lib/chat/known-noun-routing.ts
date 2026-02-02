@@ -271,6 +271,13 @@ export interface KnownNounRoutingContext {
   handleSelectOption: (option: SelectionOption) => void
   /** When true, an active option set is displayed — skip fuzzy/unknown-noun fallbacks (Steps 4–5) */
   hasActiveOptionSet?: boolean
+  /**
+   * When true, a soft-active list exists and the input is selection-like.
+   * In this case, unknown-noun fallback should decline to let Tier 4.5 resolve.
+   */
+  hasSoftActiveSelectionLike?: boolean
+  /** Save last options shown for soft-active window */
+  saveLastOptionsShown?: (options: import('@/lib/chat/chat-navigation-context').ClarificationOption[], messageId: string) => void
 }
 
 export interface KnownNounRoutingResult {
@@ -397,6 +404,7 @@ export function handleKnownNounRouting(
         data: opt.data,
       })))
       ctx.setPendingOptionsMessageId(messageId)
+      ctx.saveLastOptionsShown?.(options.map(opt => ({ id: opt.id, label: opt.label, sublabel: opt.sublabel, type: opt.type })), messageId)
 
       ctx.setLastClarification({
         type: 'option_selection',
@@ -552,6 +560,7 @@ export function handleKnownNounRouting(
       data: opt.data,
     })))
     ctx.setPendingOptionsMessageId(messageId)
+    ctx.saveLastOptionsShown?.(options.map(opt => ({ id: opt.id, label: opt.label, sublabel: opt.sublabel, type: opt.type })), messageId)
 
     // Sync lastClarification
     ctx.setLastClarification({
@@ -583,6 +592,11 @@ export function handleKnownNounRouting(
     && !/^(yes|no|ok|cancel|stop|help|thanks|thank you|hi|hello|hey)\b/i.test(normalized)
 
   if (isShortNounLike) {
+    // Soft-active window exists with selection-like input — let Tier 4.5 handle it.
+    if (ctx.hasSoftActiveSelectionLike) {
+      return { handled: false }
+    }
+
     void debugLog({
       component: 'ChatNavigation',
       action: 'unknown_noun_fallback_shown',

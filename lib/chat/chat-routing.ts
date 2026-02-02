@@ -136,6 +136,8 @@ export interface MetaExplainHandlerContext extends RoutingHandlerContext {
   setPendingOptions: (options: PendingOptionState[]) => void
   setPendingOptionsMessageId: (messageId: string) => void
   setLastClarification: (state: LastClarificationState | null) => void
+  // Soft-active window
+  saveLastOptionsShown?: (options: ClarificationOption[], messageId: string) => void
 }
 
 // =============================================================================
@@ -241,6 +243,7 @@ export async function handleMetaExplain(ctx: MetaExplainHandlerContext): Promise
     setPendingOptions,
     setPendingOptionsMessageId,
     setLastClarification,
+    saveLastOptionsShown,
   } = ctx
 
   // Check if we should defer to follow-up handler (docs or notes context)
@@ -395,6 +398,7 @@ export async function handleMetaExplain(ctx: MetaExplainHandlerContext): Promise
           data: opt.data,
         })))
         setPendingOptionsMessageId(messageId)
+        saveLastOptionsShown?.(options.map(opt => ({ id: opt.id, label: opt.label, sublabel: opt.sublabel, type: opt.type })), messageId)
 
         setLastClarification({
           type: 'doc_disambiguation',
@@ -458,6 +462,7 @@ export async function handleMetaExplain(ctx: MetaExplainHandlerContext): Promise
           data: weakOption.data,
         }])
         setPendingOptionsMessageId(messageId)
+        saveLastOptionsShown?.([{ id: weakOption.id, label: weakOption.label, sublabel: weakOption.sublabel, type: weakOption.type }], messageId)
 
         setLastClarification({
           type: 'doc_disambiguation',
@@ -1123,6 +1128,9 @@ export interface ClarificationInterceptContext {
   stopSuppressionCount: number
   setStopSuppressionCount: (count: number) => void
   decrementStopSuppression: () => void
+
+  // Soft-active window (per grounding-set-fallback-plan.md §Soft-Active)
+  saveLastOptionsShown?: (options: ClarificationOption[], messageId: string) => void
 }
 
 /**
@@ -1395,6 +1403,8 @@ export async function handleClarificationIntercept(
     // Stop suppression (per stop-scope-plan §40-48)
     stopSuppressionCount,
     setStopSuppressionCount,
+    // Soft-active window
+    saveLastOptionsShown,
   } = ctx
 
   // TD-3: Check for bare noun new intent
@@ -2296,6 +2306,7 @@ export async function handleClarificationIntercept(
         })) as PendingOptionState[])
         setPendingOptionsMessageId(messageId)
         setPendingOptionsGraceCount(0)
+        saveLastOptionsShown?.(workspaceOptions.map(opt => ({ id: opt.id, label: opt.label, sublabel: opt.sublabel, type: opt.type })), messageId)
         setNotesScopeFollowUpActive(true)
 
         setLastClarification({
@@ -4189,6 +4200,8 @@ export interface PanelDisambiguationHandlerContext {
   setPendingOptions: (options: PendingOptionState[]) => void
   setPendingOptionsMessageId: (messageId: string) => void
   setLastClarification: (state: LastClarificationState | null) => void
+  // Soft-active window (per grounding-set-fallback-plan.md §Soft-Active)
+  saveLastOptionsShown?: (options: ClarificationOption[], messageId: string) => void
 }
 
 export interface PanelDisambiguationHandlerResult extends HandlerResult {
@@ -4219,6 +4232,7 @@ export function handlePanelDisambiguation(
     setPendingOptions,
     setPendingOptionsMessageId,
     setLastClarification,
+    saveLastOptionsShown,
   } = context
 
   const matchResult = matchVisiblePanelCommand(trimmedInput, visibleWidgets)
@@ -4274,6 +4288,12 @@ export function handlePanelDisambiguation(
     }))
     setPendingOptions(pendingOptions)
     setPendingOptionsMessageId(messageId)
+
+    // Populate soft-active window so shorthand works after selection clears activeOptionSetId
+    saveLastOptionsShown?.(
+      pendingOptions.map(opt => ({ id: opt.id, label: opt.label, sublabel: opt.sublabel, type: opt.type })),
+      messageId,
+    )
 
     // Sync lastClarification for follow-up handling
     setLastClarification({
