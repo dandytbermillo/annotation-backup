@@ -201,6 +201,7 @@ Output:
 6) Multiple widgets open:
    - User: "first option"
    - Expected: ask which widget/list (no guessing)
+   - After user picks a widget, apply the original ordinal to that widget’s list (do not reopen the widget)
 
 7) Explicit widget reference:
    - User: "first option in Recent"
