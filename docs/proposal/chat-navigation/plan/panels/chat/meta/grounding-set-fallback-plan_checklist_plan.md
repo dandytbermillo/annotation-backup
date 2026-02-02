@@ -1,4 +1,4 @@
-Grounding‑Set Fallback Plan — Implementation Checklist
+wh — Implementation Checklist
 
   A) State & Data Contracts
 

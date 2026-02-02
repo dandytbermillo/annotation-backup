@@ -1,0 +1,818 @@
+/**
+ * Grounding-Set Fallback Module
+ *
+ * Per grounding-set-fallback-plan.md: Provides a general fallback that uses a small,
+ * explicit "grounding set" when deterministic routing fails. This prevents dead-end
+ * replies and avoids hallucinations by constraining the LLM to known candidates.
+ *
+ * Lists are just one kind of grounding set; this module works whether or not a list
+ * is present.
+ *
+ * Integration point: after Tier 4 (known-noun) and before Tier 5 (doc retrieval)
+ * in routing-dispatcher.ts.
+ */
+
+import { debugLog } from '@/lib/utils/debug-logger'
+import { levenshteinDistance } from '@/lib/chat/typo-suggestions'
+import type { ClarificationOption, ClarificationSnapshot, LastClarificationState, RepairMemoryState, SessionState } from '@/lib/chat/chat-navigation-context'
+
+// =============================================================================
+// Types
+// =============================================================================
+
+/** A single candidate in a grounding set */
+export interface GroundingCandidate {
+  id: string
+  label: string
+  type: 'option' | 'widget_option' | 'referent' | 'capability'
+  /** Optional hint about what action this candidate performs */
+  actionHint?: string
+  /** Source grounding set this candidate came from */
+  source: GroundingSetType
+}
+
+/** Types of grounding sets, in priority order per plan §Decision Flow Step 1 */
+export type GroundingSetType =
+  | 'active_options'
+  | 'paused_snapshot'
+  | 'widget_list'
+  | 'recent_referent'
+  | 'capability'
+
+/** A grounding set with its type and candidates */
+export interface GroundingSet {
+  type: GroundingSetType
+  candidates: GroundingCandidate[]
+  /** Whether this is a list-type set (allows larger candidate counts) */
+  isList: boolean
+  /** Source widget ID if this is a widget list */
+  widgetId?: string
+  /** Source widget label if this is a widget list */
+  widgetLabel?: string
+}
+
+/** State needed for building grounding sets */
+export interface GroundingSetBuildContext {
+  /** Active option set ID — non-null when a list is currently active */
+  activeOptionSetId: string | null
+  /** Current active options (from lastClarification or pendingOptions) */
+  activeOptions: ClarificationOption[]
+  /** Paused clarification snapshot (if any) */
+  pausedSnapshot: ClarificationSnapshot | null
+  /** Open widget lists (if multiple widgets expose options) */
+  openWidgets: OpenWidgetState[]
+  /** Recent referents from session state */
+  recentReferents: RecentReferent[]
+}
+
+/** Open widget state for multi-list grounding */
+export interface OpenWidgetState {
+  id: string
+  label: string
+  options: ClarificationOption[]
+}
+
+/** Recent referent for non-list grounding */
+export interface RecentReferent {
+  id: string
+  label: string
+  type: 'last_action' | 'last_target' | 'recent_entity'
+  actionHint?: string
+}
+
+/** Result of deterministic unique match */
+export interface DeterministicMatchResult {
+  matched: boolean
+  candidate?: GroundingCandidate
+  /** Index in the grounding set (for ordinal matches) */
+  index?: number
+  /** How the match was made */
+  matchMethod?: 'ordinal' | 'shorthand_keyword' | 'badge_token' | 'unique_token_subset'
+}
+
+/** Result of the grounding-set fallback handler */
+export interface GroundingSetResult {
+  handled: boolean
+  /** Which grounding set type resolved the input */
+  resolvedBy?: GroundingSetType
+  /** The selected candidate (if deterministic match succeeded) */
+  selectedCandidate?: GroundingCandidate
+  /** Whether LLM fallback is needed */
+  needsLLM?: boolean
+  /** Candidates to pass to constrained LLM */
+  llmCandidates?: GroundingCandidate[]
+  /** Whether multi-list ambiguity was detected */
+  multiListAmbiguity?: boolean
+  /** Whether a clarifier question should be asked */
+  askClarifier?: boolean
+  /** Clarifier message to show */
+  clarifierMessage?: string
+  /** Widget options for multi-list disambiguation */
+  widgetOptions?: { id: string; label: string }[]
+}
+
+// =============================================================================
+// Constants
+// =============================================================================
+
+/** Max candidates for non-list grounding sets (plan §Candidate Size Rule) */
+const NON_LIST_CANDIDATE_CAP = 5
+
+/** Max candidates for list-type grounding sets (plan §Candidate Size Rule) */
+const LIST_CANDIDATE_CAP = 12
+
+/** Known system capabilities for capability grounding set */
+const CAPABILITY_SET: GroundingCandidate[] = [
+  { id: 'cap_open', label: 'Open', type: 'capability', actionHint: 'open a panel or resource', source: 'capability' },
+  { id: 'cap_search', label: 'Search', type: 'capability', actionHint: 'search for content', source: 'capability' },
+  { id: 'cap_create', label: 'Create', type: 'capability', actionHint: 'create a new item', source: 'capability' },
+  { id: 'cap_explain', label: 'Explain', type: 'capability', actionHint: 'explain a concept or feature', source: 'capability' },
+]
+
+// =============================================================================
+// A2) Grounding Set Build Order (Decision Flow Step 1)
+// =============================================================================
+
+/**
+ * Build grounding sets in priority order per plan §Decision Flow Step 1:
+ *   1) Active options
+ *   2) Paused snapshot options
+ *   3) Active widget lists
+ *   4) Recent referents
+ *   5) Capability set
+ *
+ * Returns all non-empty grounding sets. The caller uses the first one for
+ * deterministic matching and falls back to LLM with the full list.
+ */
+export function buildGroundingSets(ctx: GroundingSetBuildContext): GroundingSet[] {
+  const sets: GroundingSet[] = []
+
+  // 1) Active options (if activeOptionSetId != null and options exist)
+  if (ctx.activeOptionSetId !== null && ctx.activeOptions.length > 0) {
+    const candidates = ctx.activeOptions.slice(0, LIST_CANDIDATE_CAP).map(opt => ({
+      id: opt.id,
+      label: opt.label,
+      type: 'option' as const,
+      source: 'active_options' as const,
+    }))
+    sets.push({ type: 'active_options', candidates, isList: true })
+  }
+
+  // 2) Active widget lists (from openWidgets[])
+  // Per plan §I: visible widget lists win over paused snapshots unless
+  // user explicitly returns to the paused list.
+  for (const widget of ctx.openWidgets) {
+    if (widget.options.length > 0) {
+      const candidates = widget.options.slice(0, LIST_CANDIDATE_CAP).map(opt => ({
+        id: opt.id,
+        label: opt.label,
+        type: 'widget_option' as const,
+        source: 'widget_list' as const,
+      }))
+      sets.push({
+        type: 'widget_list',
+        candidates,
+        isList: true,
+        widgetId: widget.id,
+        widgetLabel: widget.label,
+      })
+    }
+  }
+
+  // 3) Paused snapshot options (if any, and not expired)
+  // Ranked after widget lists per plan §I precedence rule.
+  if (ctx.pausedSnapshot && ctx.pausedSnapshot.options.length > 0) {
+    const candidates = ctx.pausedSnapshot.options.slice(0, LIST_CANDIDATE_CAP).map(opt => ({
+      id: opt.id,
+      label: opt.label,
+      type: 'option' as const,
+      source: 'paused_snapshot' as const,
+    }))
+    sets.push({ type: 'paused_snapshot', candidates, isList: true })
+  }
+
+  // 4) Recent referents (last_action, last_target, recent_entities)
+  if (ctx.recentReferents.length > 0) {
+    const candidates = ctx.recentReferents.slice(0, NON_LIST_CANDIDATE_CAP).map(ref => ({
+      id: ref.id,
+      label: ref.label,
+      type: 'referent' as const,
+      actionHint: ref.actionHint,
+      source: 'recent_referent' as const,
+    }))
+    sets.push({ type: 'recent_referent', candidates, isList: false })
+  }
+
+  // 5) Capability set (always available as last resort)
+  sets.push({ type: 'capability', candidates: CAPABILITY_SET, isList: false })
+
+  return sets
+}
+
+// =============================================================================
+// B) Selection-Like Detector (single source of truth)
+// =============================================================================
+
+/** Ordinal patterns per plan §Selection-like definition */
+const ORDINAL_WORDS = /\b(first|second|third|fourth|fifth|last|1st|2nd|3rd|4th|5th)\b/i
+const NUMERIC_SINGLE = /^[1-9]$/
+// "one" is only selection-like in short inputs (≤3 words) to avoid false positives
+// on phrases like "one moment" or "which one do you think".
+// "panel" only matches when followed by a letter/number (e.g., "panel d", "panel 3").
+const SHORTHAND_KEYWORDS = /\b(option|item|choice)\b/i
+const PANEL_SELECTION = /\bpanel\s+[a-e1-9]\b/i
+const ONE_SHORT_INPUT = /^(the\s+)?(one|this one|that one|the other one)$/i
+const BADGE_SINGLE_LETTER = /^[a-e]$/i
+// Action verb + pronoun referent per plan acceptance tests §1-3:
+//   "open it", "fix it", "do that again", "run this", "delete them"
+// Only action verbs — NOT informational verbs ("what is it", "explain it" → Tier 5).
+// Kept short (≤5 words) to avoid matching conversational sentences.
+const ACTION_PRONOUN_REF = /^(open|fix|run|show|delete|remove|close|do|undo|redo|rename|move|copy|create)\s+(it|that|this|them)(\s+again)?$/i
+
+/**
+ * Selection-Like Detector — single source of truth per plan §Selection-Like Detector.
+ *
+ * Returns true if the input looks like a selection attempt:
+ *   - Ordinals: first/second/third/1/2/3/last
+ *   - Shorthand keywords: option/panel/item/choice/one
+ *   - Badge token: only when UI displays badge letters (caller must confirm)
+ *   - Action + pronoun referent: "open it", "fix it", "do that again"
+ *   - Unique token-subset match (checked separately by resolveUniqueDeterministic)
+ *
+ * This function checks the first four categories. Token-subset matching is
+ * deferred to resolveUniqueDeterministic() since it needs the candidate list.
+ */
+export function isSelectionLike(
+  input: string,
+  options?: { hasBadgeLetters?: boolean }
+): boolean {
+  const normalized = input.trim().toLowerCase()
+
+  // Ordinals
+  if (ORDINAL_WORDS.test(normalized)) return true
+  if (NUMERIC_SINGLE.test(normalized)) return true
+
+  // Shorthand keywords
+  if (SHORTHAND_KEYWORDS.test(normalized)) return true
+  if (PANEL_SELECTION.test(normalized)) return true
+  if (ONE_SHORT_INPUT.test(normalized)) return true
+
+  // Badge tokens (only if UI displays badge letters)
+  if (options?.hasBadgeLetters && BADGE_SINGLE_LETTER.test(normalized)) return true
+
+  // Action verb + pronoun referent (per plan acceptance tests §1-3)
+  if (ACTION_PRONOUN_REF.test(normalized)) return true
+
+  return false
+}
+
+// =============================================================================
+// C) Candidate Size Rule (enforced in buildGroundingSets via caps)
+// =============================================================================
+
+/**
+ * Validate candidate count against plan rules.
+ * Non-list: 1-5, List-type: up to 12 (or full UI-bounded list).
+ */
+export function isValidCandidateCount(set: GroundingSet): boolean {
+  if (set.isList) {
+    return set.candidates.length >= 1 && set.candidates.length <= LIST_CANDIDATE_CAP
+  }
+  return set.candidates.length >= 1 && set.candidates.length <= NON_LIST_CANDIDATE_CAP
+}
+
+// =============================================================================
+// E) Deterministic Unique Match Before LLM
+// =============================================================================
+
+/**
+ * Attempt a deterministic unique match of user input against a grounding set.
+ * Per plan §E: "If list-type grounding set exists and selection-like resolves
+ * uniquely: Execute directly. Do not call LLM until deterministic unique match fails."
+ *
+ * Match methods (in order):
+ *   1. Ordinal index (first/second/1/2/last)
+ *   2. Exact label match
+ *   3. Unique token-subset match (unique-only)
+ */
+export function resolveUniqueDeterministic(
+  input: string,
+  candidates: GroundingCandidate[]
+): DeterministicMatchResult {
+  const normalized = input.trim().toLowerCase()
+
+  if (candidates.length === 0) {
+    return { matched: false }
+  }
+
+  // 1. Ordinal index resolution
+  const ordinalIndex = resolveOrdinalIndex(normalized, candidates.length)
+  if (ordinalIndex !== undefined && ordinalIndex >= 0 && ordinalIndex < candidates.length) {
+    return {
+      matched: true,
+      candidate: candidates[ordinalIndex],
+      index: ordinalIndex,
+      matchMethod: 'ordinal',
+    }
+  }
+
+  // 2. Exact label match (case-insensitive)
+  const exactMatch = candidates.find(c => c.label.toLowerCase() === normalized)
+  if (exactMatch) {
+    return {
+      matched: true,
+      candidate: exactMatch,
+      index: candidates.indexOf(exactMatch),
+      matchMethod: 'shorthand_keyword',
+    }
+  }
+
+  // 3. Unique token-subset match
+  // Input tokens must be a subset of exactly one candidate's label tokens.
+  // Per plan: "unique-only" — must resolve to exactly one option.
+  const inputTokens = tokenize(normalized)
+  if (inputTokens.length > 0) {
+    const subsetMatches: { candidate: GroundingCandidate; index: number }[] = []
+
+    for (let i = 0; i < candidates.length; i++) {
+      const candidateTokens = new Set(tokenize(candidates[i].label.toLowerCase()))
+      const allMatch = inputTokens.every(t => candidateTokens.has(t))
+      if (allMatch) {
+        subsetMatches.push({ candidate: candidates[i], index: i })
+      }
+    }
+
+    // Also try fuzzy token matching (Levenshtein ≤ 2 per token, min length 4)
+    if (subsetMatches.length === 0) {
+      for (let i = 0; i < candidates.length; i++) {
+        const candidateTokens = tokenize(candidates[i].label.toLowerCase())
+        const allFuzzyMatch = inputTokens.every(inputToken => {
+          if (inputToken.length < 4) {
+            return candidateTokens.includes(inputToken)
+          }
+          return candidateTokens.some(ct =>
+            ct === inputToken || (ct.length >= 4 && levenshteinDistance(inputToken, ct) <= 2)
+          )
+        })
+        if (allFuzzyMatch) {
+          subsetMatches.push({ candidate: candidates[i], index: i })
+        }
+      }
+    }
+
+    // Uniqueness invariant: must resolve to exactly one
+    if (subsetMatches.length === 1) {
+      return {
+        matched: true,
+        candidate: subsetMatches[0].candidate,
+        index: subsetMatches[0].index,
+        matchMethod: 'unique_token_subset',
+      }
+    }
+  }
+
+  return { matched: false }
+}
+
+// =============================================================================
+// D) Multi-List Early Guard (Decision Flow Step 2)
+// =============================================================================
+
+/**
+ * Check for multi-list ambiguity per plan §D.
+ * If multiple widget lists are open AND input is selection-like,
+ * return the widget options for disambiguation.
+ *
+ * Multi-list context is computed only from visible widget lists,
+ * NOT from paused snapshots (per plan clarification).
+ */
+export function checkMultiListAmbiguity(
+  input: string,
+  openWidgets: OpenWidgetState[],
+  options?: { hasBadgeLetters?: boolean }
+): { isAmbiguous: boolean; widgets?: { id: string; label: string }[] } {
+  // Need at least 2 visible widget lists with options
+  const listsWithOptions = openWidgets.filter(w => w.options.length > 0)
+  if (listsWithOptions.length < 2) {
+    return { isAmbiguous: false }
+  }
+
+  // Only trigger if input is selection-like
+  if (!isSelectionLike(input, options)) {
+    return { isAmbiguous: false }
+  }
+
+  // Check if user explicitly references a widget by name
+  const normalizedInput = input.trim().toLowerCase()
+  for (const widget of listsWithOptions) {
+    if (normalizedInput.includes(widget.label.toLowerCase())) {
+      // User specified which widget — not ambiguous
+      return { isAmbiguous: false }
+    }
+  }
+
+  return {
+    isAmbiguous: true,
+    widgets: listsWithOptions.map(w => ({ id: w.id, label: w.label })),
+  }
+}
+
+/**
+ * Resolve a selection-like input against a specific widget's options.
+ * Used when user explicitly references a widget (e.g., "first option in Recent").
+ */
+export function resolveWidgetSelection(
+  input: string,
+  widget: OpenWidgetState
+): DeterministicMatchResult {
+  // Strip widget name reference from input
+  const normalizedInput = input.trim().toLowerCase()
+    .replace(new RegExp(`\\b${escapeRegex(widget.label.toLowerCase())}\\b`, 'i'), '')
+    .replace(/\bin\b/i, '')
+    .trim()
+
+  const candidates: GroundingCandidate[] = widget.options.map(opt => ({
+    id: opt.id,
+    label: opt.label,
+    type: 'widget_option' as const,
+    source: 'widget_list' as const,
+  }))
+
+  return resolveUniqueDeterministic(normalizedInput, candidates)
+}
+
+// =============================================================================
+// G) Soft-Active Window (list stickiness)
+// =============================================================================
+
+/**
+ * Check if a soft-active window applies.
+ * Per plan §G: If activeOptionSetId == null but lastOptionsShown still valid
+ * (within TTL) and input is selection-like, treat it as a list grounding set.
+ *
+ * The soft-active window uses the clarificationSnapshot when:
+ *   - activeOptionSetId is null (list was cleared by an action)
+ *   - snapshot exists and is NOT paused (post-action, not post-stop)
+ *   - snapshot is within TTL (turnsSinceSet < SNAPSHOT_TURN_LIMIT)
+ *   - input is selection-like
+ *
+ * Returns the snapshot options as a grounding set if applicable.
+ */
+export function checkSoftActiveWindow(params: {
+  activeOptionSetId: string | null
+  clarificationSnapshot: ClarificationSnapshot | null
+  input: string
+  snapshotTurnLimit: number
+  hasBadgeLetters?: boolean
+}): { isSoftActive: boolean; options?: ClarificationOption[] } {
+  // Only applies when no active option set
+  if (params.activeOptionSetId !== null) {
+    return { isSoftActive: false }
+  }
+
+  const snapshot = params.clarificationSnapshot
+  if (!snapshot || snapshot.options.length === 0) {
+    return { isSoftActive: false }
+  }
+
+  // Paused snapshots (stop/interrupt) are NOT soft-active — they have their own rules (H)
+  if (snapshot.paused) {
+    return { isSoftActive: false }
+  }
+
+  // Check TTL
+  if (snapshot.turnsSinceSet >= params.snapshotTurnLimit) {
+    return { isSoftActive: false }
+  }
+
+  // Only activate for selection-like input
+  if (!isSelectionLike(params.input, { hasBadgeLetters: params.hasBadgeLetters })) {
+    return { isSoftActive: false }
+  }
+
+  return { isSoftActive: true, options: snapshot.options }
+}
+
+// =============================================================================
+// H) Paused-List Re-Anchor (after stop)
+// =============================================================================
+
+/**
+ * Check if a paused re-anchor response is needed.
+ * Per plan §H: If paused list exists and activeOptionSetId == null,
+ * and user uses ordinal/shorthand without return cue, respond with
+ * guidance to reopen the list.
+ *
+ * Returns the guidance message if re-anchor is needed, null otherwise.
+ * Note: The existing stop-paused ordinal guard in chat-routing.ts (lines 1987-2009)
+ * already implements this. This function provides a reusable check for the
+ * grounding-set fallback pathway.
+ */
+export function checkPausedReAnchor(params: {
+  activeOptionSetId: string | null
+  clarificationSnapshot: ClarificationSnapshot | null
+  input: string
+  hasBadgeLetters?: boolean
+}): { needsReAnchor: boolean; message?: string } {
+  if (params.activeOptionSetId !== null) {
+    return { needsReAnchor: false }
+  }
+
+  const snapshot = params.clarificationSnapshot
+  if (!snapshot || !snapshot.paused || snapshot.pausedReason !== 'stop') {
+    return { needsReAnchor: false }
+  }
+
+  if (snapshot.options.length === 0) {
+    return { needsReAnchor: false }
+  }
+
+  // Only trigger for selection-like input
+  if (!isSelectionLike(params.input, { hasBadgeLetters: params.hasBadgeLetters })) {
+    return { needsReAnchor: false }
+  }
+
+  return {
+    needsReAnchor: true,
+    message: "That list was closed. Say 'back to the options' to reopen it — or tell me what you want instead.",
+  }
+}
+
+// =============================================================================
+// Main Grounding-Set Fallback Handler
+// =============================================================================
+
+/**
+ * Main grounding-set fallback handler.
+ *
+ * Per plan §Decision Flow:
+ *   1) Build grounding sets
+ *   2) Multi-list early guard
+ *   3) Deterministic unique match (if list-type + selection-like)
+ *   4) Otherwise: return candidates for LLM fallback
+ *   5) If no grounding set: ask for missing slot
+ *
+ * This function handles steps 1-3 and 5. Step 4 (LLM call) is deferred
+ * to the caller (constrained LLM module, Task #10).
+ */
+export function handleGroundingSetFallback(
+  input: string,
+  ctx: GroundingSetBuildContext,
+  options?: { hasBadgeLetters?: boolean }
+): GroundingSetResult {
+  const trimmed = input.trim()
+
+  // Step 1: Build grounding sets
+  const groundingSets = buildGroundingSets(ctx)
+
+  void debugLog({
+    component: 'ChatNavigation',
+    action: 'grounding_set_built',
+    metadata: {
+      sets: groundingSets.map(s => ({ type: s.type, size: s.candidates.length })),
+      totalSets: groundingSets.length,
+    },
+  })
+
+  // Filter to non-empty sets (capability set is always present but may not be useful)
+  const nonCapabilitySets = groundingSets.filter(s => s.type !== 'capability')
+
+  // Step 2: Multi-list early guard
+  // NOTE: openWidgets is always [] until the UI supports multiple visible widget lists.
+  // When multi-widget support is added, pass actual open widgets via buildGroundingContext().
+  // Until then, this guard is a no-op. See grounding-set-fallback-plan.md §E.
+  const multiListCheck = checkMultiListAmbiguity(trimmed, ctx.openWidgets, options)
+  if (multiListCheck.isAmbiguous) {
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'multi_list_ambiguity_prompt_shown',
+      metadata: {
+        input: trimmed,
+        widgetCount: multiListCheck.widgets?.length,
+        widgets: multiListCheck.widgets?.map(w => w.label),
+      },
+    })
+
+    return {
+      handled: true,
+      multiListAmbiguity: true,
+      askClarifier: true,
+      clarifierMessage: 'I see multiple option lists open. Which one do you mean?',
+      widgetOptions: multiListCheck.widgets,
+    }
+  }
+
+  // Check if user explicitly references a widget
+  if (ctx.openWidgets.length > 0) {
+    const normalizedInput = trimmed.toLowerCase()
+    for (const widget of ctx.openWidgets) {
+      if (normalizedInput.includes(widget.label.toLowerCase()) && widget.options.length > 0) {
+        const widgetResult = resolveWidgetSelection(trimmed, widget)
+        if (widgetResult.matched) {
+          return {
+            handled: true,
+            resolvedBy: 'widget_list',
+            selectedCandidate: widgetResult.candidate,
+          }
+        }
+      }
+    }
+  }
+
+  // Step 3: Deterministic unique match on first list-type set
+  const firstListSet = groundingSets.find(s => s.isList)
+  if (firstListSet && isSelectionLike(trimmed, options)) {
+    const deterministicResult = resolveUniqueDeterministic(trimmed, firstListSet.candidates)
+    if (deterministicResult.matched) {
+      return {
+        handled: true,
+        resolvedBy: firstListSet.type,
+        selectedCandidate: deterministicResult.candidate,
+      }
+    }
+  }
+
+  // Gate: list-type and capability-only sets require selection-like input.
+  // Referent sets are allowed for non-selection-like inputs (e.g. "fix it", "open it")
+  // because the plan's trigger (§Trigger) is general, not list-only.
+  const selectionLike = isSelectionLike(trimmed, options)
+  const referentSets = nonCapabilitySets.filter(s => s.type === 'recent_referent')
+  const hasReferents = referentSets.length > 0 &&
+    referentSets.some(s => s.candidates.length > 0)
+
+  // If input is NOT selection-like AND no referent sets exist, fall through to Tier 5.
+  // Capability-only sets should not intercept informational queries.
+  if (!selectionLike && !hasReferents) {
+    return { handled: false }
+  }
+
+  // Step 4: If any list-type grounding set exists and input is selection-like,
+  // defer to constrained LLM with list candidates.
+  const listSets = nonCapabilitySets.filter(s => s.isList)
+  if (listSets.length > 0 && selectionLike) {
+    const listCandidates = listSets.flatMap(s => s.candidates)
+
+    return {
+      handled: false,
+      needsLLM: true,
+      llmCandidates: listCandidates,
+    }
+  }
+
+  // Step 4b: Referent-type sets exist (per plan acceptance tests §1-2).
+  // Allowed for both selection-like ("open it") and non-selection-like ("fix it")
+  // inputs when referents are available.
+  if (hasReferents) {
+    const referentCandidates = referentSets.flatMap(s => s.candidates)
+    return {
+      handled: false,
+      needsLLM: true,
+      llmCandidates: referentCandidates,
+    }
+  }
+
+  // Step 5: Selection-like input but no non-capability grounding set — ask for missing slot
+  return {
+    handled: false,
+    needsLLM: false,
+    askClarifier: true,
+    clarifierMessage: 'I\'m not sure what you\'re referring to. Could you tell me what you\'d like to do?',
+  }
+}
+
+// =============================================================================
+// Context Builder — bridges existing state to GroundingSetBuildContext
+// =============================================================================
+
+/**
+ * Build a GroundingSetBuildContext from the existing routing state.
+ * This avoids adding new state fields — it derives the grounding context
+ * from lastClarification, clarificationSnapshot, sessionState, etc.
+ *
+ * The openWidgets parameter is empty by default (multi-widget UI not yet implemented).
+ * When multi-widget support is added, pass the actual open widgets here.
+ */
+export function buildGroundingContext(params: {
+  activeOptionSetId: string | null
+  lastClarification: LastClarificationState | null
+  clarificationSnapshot: ClarificationSnapshot | null
+  sessionState: SessionState
+  repairMemory: RepairMemoryState | null
+  openWidgets?: OpenWidgetState[]
+}): GroundingSetBuildContext {
+  // Derive active options from lastClarification
+  const activeOptions: ClarificationOption[] =
+    (params.activeOptionSetId !== null && params.lastClarification?.options)
+      ? params.lastClarification.options
+      : []
+
+  // Derive paused snapshot — only if it's actually paused
+  const pausedSnapshot =
+    (params.clarificationSnapshot?.paused === true)
+      ? params.clarificationSnapshot
+      : null
+
+  // Soft-active window: if no active options but clarificationSnapshot exists
+  // (not paused, within TTL), treat it as a soft-active grounding set.
+  // This is handled by buildGroundingSets via the activeOptions/pausedSnapshot
+  // distinction — the caller should set activeOptionSetId to a synthetic value
+  // when soft-active applies. See Task #8 for soft-active wiring.
+
+  // Derive recent referents from sessionState
+  const recentReferents: RecentReferent[] = []
+  if (params.sessionState.lastAction) {
+    const la = params.sessionState.lastAction
+    const label = la.panelTitle || la.entryName || la.workspaceName || la.type
+    recentReferents.push({
+      id: `last_action_${la.type}`,
+      label: label,
+      type: 'last_action',
+      actionHint: la.type,
+    })
+    // Also add the target as a separate referent if it has an ID
+    if (la.panelId) {
+      recentReferents.push({
+        id: la.panelId,
+        label: la.panelTitle || la.panelId,
+        type: 'last_target',
+      })
+    } else if (la.entryId) {
+      recentReferents.push({
+        id: la.entryId,
+        label: la.entryName || la.entryId,
+        type: 'last_target',
+      })
+    } else if (la.workspaceId) {
+      recentReferents.push({
+        id: la.workspaceId,
+        label: la.workspaceName || la.workspaceId,
+        type: 'last_target',
+      })
+    }
+  }
+
+  return {
+    activeOptionSetId: params.activeOptionSetId,
+    activeOptions,
+    pausedSnapshot,
+    // FUTURE: Wire actual open widgets when multi-widget UI is implemented.
+    // Currently always [] — multi-list guard (§E) is a no-op until then.
+    openWidgets: params.openWidgets ?? [],
+    recentReferents,
+  }
+}
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+/** Resolve ordinal words/numbers to a 0-based index */
+function resolveOrdinalIndex(normalized: string, optionCount: number): number | undefined {
+  const ordinalMap: Record<string, number> = {
+    'first': 0, '1st': 0, '1': 0,
+    'second': 1, '2nd': 1, '2': 1,
+    'third': 2, '3rd': 2, '3': 2,
+    'fourth': 3, '4th': 3, '4': 3,
+    'fifth': 4, '5th': 4, '5': 4,
+    'sixth': 5, '6': 5,
+    'seventh': 6, '7': 6,
+    'eighth': 7, '8': 7,
+    'ninth': 8, '9': 8,
+    'last': optionCount - 1,
+    'the first': 0, 'the second': 1, 'the third': 2,
+    'the fourth': 3, 'the fifth': 4, 'the last': optionCount - 1,
+    'the first one': 0, 'the second one': 1, 'the third one': 2,
+    'the fourth one': 3, 'the fifth one': 4, 'the last one': optionCount - 1,
+    'option 1': 0, 'option 2': 1, 'option 3': 2,
+    'option 4': 3, 'option 5': 4,
+  }
+
+  // Strip shorthand wrapping: "panel X" → "X", "item X" → "X"
+  const stripped = normalized
+    .replace(/^(option|panel|item|choice)\s+/i, '')
+    .trim()
+
+  if (ordinalMap[normalized] !== undefined) return ordinalMap[normalized]
+  if (ordinalMap[stripped] !== undefined) return ordinalMap[stripped]
+
+  // Try numeric after stripping
+  if (/^[1-9]$/.test(stripped)) {
+    return parseInt(stripped, 10) - 1
+  }
+
+  return undefined
+}
+
+/** Tokenize a string into lowercase words, removing punctuation */
+function tokenize(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')
+    .split(/\s+/)
+    .filter(t => t.length > 0)
+}
+
+/** Escape special regex characters in a string */
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}

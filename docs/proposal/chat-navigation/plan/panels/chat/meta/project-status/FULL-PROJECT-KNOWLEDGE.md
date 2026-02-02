@@ -2,7 +2,7 @@
 
 **Purpose:** This document captures the complete understanding of the project so that any future session can immediately get up to speed without re-reading dozens of files. It covers architecture, the chat navigation system we are actively working on, the clarification/disambiguation subsystem in detail, every fix applied, and the current state of work.
 
-**Last Updated:** 2026-01-31
+**Last Updated:** 2026-02-01
 
 ---
 
@@ -18,7 +18,7 @@
 8. [The Routing Flow (Step by Step)](#8-the-routing-flow)
 9. [The Snapshot Lifecycle](#9-the-snapshot-lifecycle)
 10. [Three-Tier Return-Cue Detection](#10-three-tier-return-cue-detection)
-11. [All Fixes Applied (2026-01-29 Session)](#11-all-fixes-applied)
+11. [All Fixes Applied (2026-01-31 → 2026-02-01)](#11-all-fixes-applied)
 12. [Debug Logging & Telemetry](#12-debug-logging--telemetry)
 13. [Feature Flags](#13-feature-flags)
 14. [QA Checklist](#14-qa-checklist)
@@ -200,6 +200,8 @@ clarification-response-fit-plan.md           ← PRIMARY: Intent classifier, con
 routing-order-priority-plan.md               ← Unified routing priority chain (implemented via dispatcher)
 known-noun-command-routing-plan.md           ← Noun‑only commands allowlist + unknown fallback (implemented)
 suggestion-routing-unification-plan.md       ← Suggestion reject/affirm unified in dispatcher (implemented)
+grounding-set-fallback-plan.md               ← General fallback (lists + non-list grounding sets)
+grounding-set-fallback-plan_checklist_plan.md← Implementation checklist
 panel-command-matcher-stopword-plan.md       ← Action‑verb stopword gate (await red‑error debug log)
 ```
 
@@ -414,6 +416,11 @@ portion of the unified routing chain.
 21. **Response-fit classifier** — `classifyResponseFit()` master decision
 22. **LLM fallback** — `callClarificationLLMClient()` if deterministic fails
 23. **Escalation messaging** — attempt-based prompts with exit pills
+
+### Phase 7: Deterministic Post‑Clarification Routing
+24. **Tier 4 known‑noun routing** — noun‑only commands execute (allowlist + near‑match)
+25. **Tier 4.5 grounding‑set fallback** — build grounding sets → multi‑list guard → deterministic unique match → constrained LLM → grounded clarifier
+26. **Tier 5 doc retrieval** — informational queries and generic fallback
 
 ---
 

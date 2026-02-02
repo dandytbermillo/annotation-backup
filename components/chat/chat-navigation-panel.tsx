@@ -507,6 +507,11 @@ function ChatNavigationPanelContent({
     stopSuppressionCount,
     setStopSuppressionCount,
     decrementStopSuppression,
+    // Soft-active window (per grounding-set-fallback-plan §G)
+    lastOptionsShown,
+    saveLastOptionsShown,
+    incrementLastOptionsShownTurn,
+    clearLastOptionsShown,
   } = useChatNavigationContext()
 
   const { executeAction, selectOption, openPanelDrawer: openPanelDrawerBase } = useChatNavigation({
@@ -1424,6 +1429,10 @@ function ChatNavigationPanelContent({
         lastPreview,
         openPanelDrawer,
         openPanelWithTracking,
+        // Grounding-set fallback (Tier 4.5)
+        sessionState,
+        lastOptionsShown,
+        incrementLastOptionsShownTurn,
       })
       const { clarificationCleared, isNewQuestionOrCommandDetected } = routingResult
       // Extract classifier state for downstream telemetry
@@ -1499,20 +1508,23 @@ function ChatNavigationPanelContent({
             setPendingOptionsMessageId(`assistant-${Date.now()}`)
             setPendingOptionsGraceCount(0)
 
+            const clarOpts = resolution.options!.map(opt => ({
+                id: opt.id,
+                label: opt.label,
+                sublabel: opt.sublabel,
+                type: opt.type,
+              }))
             setLastClarification({
               type: 'option_selection',
               originalIntent: resolution.action || 'select',
               messageId: `assistant-${Date.now()}`,
               timestamp: Date.now(),
               clarificationQuestion: resolution.message || 'Which one would you like?',
-              options: resolution.options!.map(opt => ({
-                id: opt.id,
-                label: opt.label,
-                sublabel: opt.sublabel,
-                type: opt.type,
-              })),
+              options: clarOpts,
               metaCount: 0,
             })
+            // Grounding-set soft-active: persist options for post-action shorthand resolution
+            saveLastOptionsShown(clarOpts, `assistant-${Date.now()}`)
           }
 
           const assistantMessage: ChatMessage = {
@@ -1541,6 +1553,79 @@ function ChatNavigationPanelContent({
             isError: true,
           }
           addMessage(assistantMessage)
+        }
+
+        setIsLoading(false)
+        return
+      }
+
+      // ---------------------------------------------------------------------------
+      // Tier 4.5: Grounding-Set Referent Execution
+      // Per grounding-set-fallback-plan.md §5: "LLM select → execute deterministically."
+      // The dispatcher returns a groundingAction with a synthetic message; we route it
+      // through the navigate API the same way suggestion affirm works.
+      // ---------------------------------------------------------------------------
+      if (routingResult.handled && routingResult.groundingAction?.type === 'execute_referent') {
+        const { syntheticMessage, candidateLabel, actionHint } = routingResult.groundingAction
+
+        const entryId = currentEntryId ?? getActiveEntryContext() ?? undefined
+        const workspaceId = currentWorkspaceId ?? getActiveWorkspaceContext() ?? undefined
+
+        try {
+          const response = await fetch('/api/chat/navigate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message: syntheticMessage,
+              currentEntryId: entryId,
+              currentWorkspaceId: workspaceId,
+              context: {
+                sessionState,
+                visiblePanels,
+                focusedPanelId,
+              },
+            }),
+          })
+
+          if (!response.ok) {
+            throw new Error('Failed to execute grounding referent action')
+          }
+
+          const { resolution } = (await response.json()) as {
+            resolution: IntentResolutionResult
+          }
+
+          // Execute via normal action path
+          if (resolution.success && resolution.action !== 'error') {
+            const result = await executeAction(resolution)
+            const assistantMessage: ChatMessage = {
+              id: `assistant-${Date.now()}`,
+              role: 'assistant',
+              content: result?.message || resolution.message || `Done: ${actionHint || 'opened'} ${candidateLabel}`,
+              timestamp: new Date(),
+              isError: false,
+            }
+            addMessage(assistantMessage)
+          } else {
+            // Navigate API couldn't resolve — show what we resolved to
+            const assistantMessage: ChatMessage = {
+              id: `assistant-${Date.now()}`,
+              role: 'assistant',
+              content: resolution.message || `I understood "${candidateLabel}" but couldn't complete the action.`,
+              timestamp: new Date(),
+              isError: true,
+            }
+            addMessage(assistantMessage)
+          }
+        } catch (error) {
+          const errorMsg: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: `I understood "${candidateLabel}" but something went wrong. Try saying "${syntheticMessage}" directly.`,
+            timestamp: new Date(),
+            isError: true,
+          }
+          addMessage(errorMsg)
         }
 
         setIsLoading(false)
@@ -1932,20 +2017,23 @@ function ChatNavigationPanelContent({
           setPendingOptionsGraceCount(0)
 
           // Per options-visible-clarification-sync-plan.md: sync lastClarification on re-show
+          const reshowOpts = optionsToShow.map(opt => ({
+            id: opt.id,
+            label: opt.label,
+            sublabel: opt.sublabel,
+            type: opt.type,
+          }))
           setLastClarification({
             type: 'option_selection',
             originalIntent: 'reshow_options',
             messageId,
             timestamp: Date.now(),
             clarificationQuestion: resolution.message || 'Here are your options:',
-            options: optionsToShow.map(opt => ({
-              id: opt.id,
-              label: opt.label,
-              sublabel: opt.sublabel,
-              type: opt.type,
-            })),
+            options: reshowOpts,
             metaCount: 0,
           })
+          // Grounding-set soft-active: persist re-shown options
+          saveLastOptionsShown(reshowOpts, messageId)
 
           setIsLoading(false)
           return
@@ -2002,20 +2090,23 @@ function ChatNavigationPanelContent({
         // Note: lastOptions state removed - now using findLastOptionsMessage() as source of truth
 
         // Per options-visible-clarification-sync-plan.md: sync lastClarification with options
+        const postApiOpts = resolution.options.map(opt => ({
+          id: opt.id,
+          label: opt.label,
+          sublabel: opt.sublabel,
+          type: opt.type,
+        }))
         setLastClarification({
           type: 'option_selection',
           originalIntent: resolution.action || 'select',
           messageId: `assistant-${Date.now()}`,
           timestamp: Date.now(),
           clarificationQuestion: resolution.message || 'Which one would you like?',
-          options: resolution.options.map(opt => ({
-            id: opt.id,
-            label: opt.label,
-            sublabel: opt.sublabel,
-            type: opt.type,
-          })),
+          options: postApiOpts,
           metaCount: 0,
         })
+        // Grounding-set soft-active: persist options for post-action shorthand resolution
+        saveLastOptionsShown(postApiOpts, `assistant-${Date.now()}`)
 
         void debugLog({
           component: 'ChatNavigation',
@@ -2285,7 +2376,7 @@ function ChatNavigationPanelContent({
     } finally {
       setIsLoading(false)
     }
-  }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction, messages, addMessage, setInput, sessionState, setLastAction, setLastQuickLinksBadge, appendRequestHistory, openPanelWithTracking, openPanelDrawer, conversationSummary, pendingOptions, pendingOptionsGraceCount, handleSelectOption, lastPreview, lastSuggestion, setLastSuggestion, addRejectedSuggestions, clearRejectedSuggestions, isRejectedSuggestion, uiContext, visiblePanels, focusedPanelId, lastClarification, setLastClarification, setNotesScopeFollowUpActive, clarificationSnapshot, saveClarificationSnapshot, incrementSnapshotTurn, clearClarificationSnapshot, repairMemory, setRepairMemory, incrementRepairMemoryTurn, clearRepairMemory, docRetrievalState, updateDocRetrievalState, incrementOpenCount])
+  }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction, messages, addMessage, setInput, sessionState, setLastAction, setLastQuickLinksBadge, appendRequestHistory, openPanelWithTracking, openPanelDrawer, conversationSummary, pendingOptions, pendingOptionsGraceCount, handleSelectOption, lastPreview, lastSuggestion, setLastSuggestion, addRejectedSuggestions, clearRejectedSuggestions, isRejectedSuggestion, uiContext, visiblePanels, focusedPanelId, lastClarification, setLastClarification, setNotesScopeFollowUpActive, clarificationSnapshot, saveClarificationSnapshot, incrementSnapshotTurn, clearClarificationSnapshot, repairMemory, setRepairMemory, incrementRepairMemoryTurn, clearRepairMemory, docRetrievalState, updateDocRetrievalState, incrementOpenCount, lastOptionsShown, saveLastOptionsShown, incrementLastOptionsShownTurn, clearLastOptionsShown])
 
   // ---------------------------------------------------------------------------
   // Clear Chat

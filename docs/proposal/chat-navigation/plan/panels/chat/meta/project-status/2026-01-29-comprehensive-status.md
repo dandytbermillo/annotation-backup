@@ -1,6 +1,6 @@
 # Chat Navigation — Comprehensive Project Status
 
-**Date:** 2026-01-31
+**Date:** 2026-02-01
 **Scope:** Full status of chat navigation subsystem — plans, implementations, fixes, and current state.
 
 ---
@@ -45,6 +45,9 @@ Panel Command Routing
 ├── panel-command-matcher-stopword-plan.md        ← Action‑verb stopword gate (await red‑error debug log)
 ├── known-noun-command-routing-plan.md            ← Noun‑only command routing (allowlist + unknown fallback)
 └── routing-order-priority-plan.md                ← Unified routing priority chain to resolve plan conflicts
+Fallback & Grounding
+├── grounding-set-fallback-plan.md                ← General fallback (lists + non-list grounding sets)
+└── grounding-set-fallback-plan_checklist_plan.md ← Implementation checklist
 Suggestion Routing
 └── suggestion-routing-unification-plan.md        ← Suggestion reject/affirm unified in dispatcher
 ```
@@ -94,10 +97,11 @@ Suggestion Routing
 | Known‑noun command routing | **Implemented** (Tier 4 in dispatcher) |
 | Routing order priority | **Implemented** (dispatcher Tier order + guards) |
 | Suggestion routing unification | **Implemented** (Tier S in dispatcher) |
+| Grounding-set fallback | **Implemented** (Tier 4.5 between known‑noun and docs) |
 
 ---
 
-## 4. Current Session Fixes (2026-01-31)
+## 4. Current Session Fixes (2026-01-31 → 2026-02-01)
 
 ### 2026-01-31 Updates (Routing Spine + Known‑Noun + Suggestion Unification)
 
@@ -108,6 +112,15 @@ Suggestion Routing
 - **Affirmation shortcut:** `classifyResponseFit()` treats “yes” as select for `option_selection` and `panel_disambiguation`.
 - **Noun‑only interrupt finalized:** When `isNewQuestionOrCommandDetected` is true, response‑fit is skipped so noun‑only commands (e.g., “widget manager”) can interrupt active lists and reach Tier 4.
 - **Post‑action selection gate:** Strict ordinal/label gate prevents garbage inputs (e.g., “anel layot”) from selecting against snapshots.
+
+### 2026-02-01 Updates (Grounding‑Set Fallback)
+
+- **Grounding-set fallback implemented (Tier 4.5):** New deterministic → constrained LLM → clarifier safety net that prevents dead ends when deterministic routing fails.
+- **New grounding modules:** `lib/chat/grounding-set.ts`, `lib/chat/grounding-llm-fallback.ts`, `app/api/chat/grounding-llm/route.ts`.
+- **Soft‑active window:** 2‑turn TTL via `lastOptionsShown` (prevents “panel d/e” dead‑end immediately after actions).
+- **Multi‑list ambiguity guard:** If multiple widget lists are open, ask “Which list do you mean?” (no guessing).
+- **Referent support:** Non‑list referents (last_action/last_target/recent_entities) can be resolved via constrained LLM; selections execute through `/api/chat/navigate`.
+- **Safety rules enforced:** LLM is constrained to candidates only; no new labels/commands; if no candidates, ask for missing slot instead of hallucinating.
 
 ### Issue: Natural-Language Return Cues Fell Through All Three Detection Tiers
 
@@ -197,6 +210,11 @@ if (isLLMFallbackEnabledClient() && !isRepairPhrase(trimmedInput) && !isOrdinalI
 **File:** `known-noun-command-routing-plan.md`  
 **Status:** Implemented  
 **Purpose:** Deterministic routing for noun‑only commands; avoid docs hijack
+
+#### Grounding‑Set Fallback Plan
+**File:** `grounding-set-fallback-plan.md`  
+**Status:** Implemented  
+**Purpose:** General fallback (lists + non‑list referents) to avoid dead ends and constrain LLM selection
 
 Key rules:
 - Allowlist‑first execution (links panel, widget manager, recent, dashboard, workspaces)

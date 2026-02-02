@@ -62,6 +62,9 @@ import { handleDocRetrieval } from '@/lib/chat/doc-routing'
 import { isAffirmationPhrase, isRejectionPhrase, matchesReshowPhrases, matchesShowAllHeuristic, hasGraceSkipActionVerb, hasQuestionIntent } from '@/lib/chat/query-patterns'
 import { handleKnownNounRouting } from '@/lib/chat/known-noun-routing'
 import { callClarificationLLMClient, isLLMFallbackEnabledClient } from '@/lib/chat/clarification-llm-fallback'
+import { handleGroundingSetFallback, buildGroundingContext, checkSoftActiveWindow, isSelectionLike } from '@/lib/chat/grounding-set'
+import type { GroundingCandidate } from '@/lib/chat/grounding-set'
+import { callGroundingLLM, isGroundingLLMEnabled } from '@/lib/chat/grounding-llm-fallback'
 
 // =============================================================================
 // Types
@@ -145,6 +148,11 @@ export interface RoutingDispatcherContext {
   lastPreview: LastPreviewState | null
   openPanelDrawer: (panelId: string, panelTitle?: string) => void
   openPanelWithTracking: (content: ViewPanelContent, panelId?: string) => void
+
+  // --- Grounding-Set Fallback (Tier 4.5, per grounding-set-fallback-plan.md) ---
+  sessionState: import('@/lib/chat/intent-prompt').SessionState
+  lastOptionsShown: import('@/lib/chat/chat-navigation-context').LastOptionsShown | null
+  incrementLastOptionsShownTurn?: () => void
 }
 
 // =============================================================================
@@ -180,6 +188,15 @@ export interface RoutingDispatcherResult {
     type: 'reject'
     rejectedLabels: string[]
     alternativesMessage: string
+  }
+  /** Grounding-set action for sendMessage() to execute (Tier 4.5 referent resolution) */
+  groundingAction?: {
+    type: 'execute_referent'
+    /** Synthetic message to send through navigate API (e.g. "open Resume.pdf") */
+    syntheticMessage: string
+    candidateId: string
+    candidateLabel: string
+    actionHint?: string
   }
 }
 
@@ -427,6 +444,42 @@ function findExactOptionMatch(
 }
 
 // =============================================================================
+// Grounding-Set Helpers
+// =============================================================================
+
+/**
+ * Build a grounded clarifier message from candidates.
+ * Per plan §F: On need_more_info, ask a single grounded clarifier.
+ */
+function buildGroundedClarifier(candidates: GroundingCandidate[]): string {
+  if (candidates.length === 0) {
+    return "I'm not sure what you're referring to. Could you tell me what you'd like to do?"
+  }
+
+  // Group by type for natural phrasing
+  const options = candidates.filter(c => c.type === 'option' || c.type === 'widget_option')
+  const referents = candidates.filter(c => c.type === 'referent')
+  const capabilities = candidates.filter(c => c.type === 'capability')
+
+  if (options.length > 0) {
+    const labels = options.slice(0, 5).map(c => c.label)
+    return `Which option did you mean? ${labels.join(', ')}?`
+  }
+
+  if (referents.length > 0 && capabilities.length > 0) {
+    const refLabels = referents.map(c => c.label)
+    const capLabels = capabilities.map(c => c.label.toLowerCase())
+    return `Do you want to ${capLabels.join(', ')} ${refLabels[0]}, or something else?`
+  }
+
+  if (referents.length > 0) {
+    return `Are you referring to ${referents[0].label}?`
+  }
+
+  return "I'm not sure what you're referring to. Could you tell me what you'd like to do?"
+}
+
+// =============================================================================
 // Unified Routing Dispatcher
 // =============================================================================
 
@@ -469,6 +522,10 @@ export async function dispatchRouting(
     classifierError: false,
     isFollowUp: false,
   }
+
+  // NOTE: lastOptionsShown turn increment is deferred to AFTER Tier 4.5
+  // so the soft-active check can read the state before it expires on the same turn.
+  // See increment call after the Tier 4.5 block below.
 
   // =========================================================================
   // TIERS 0, 1, 3 — Clarification Intercept
@@ -1411,6 +1468,366 @@ export async function dispatchRouting(
       classifierError,
       isFollowUp,
     }
+  }
+
+  // =========================================================================
+  // TIER 4.5 — Grounding-Set Fallback
+  //
+  // Per grounding-set-fallback-plan.md: After deterministic routing fails,
+  // use a small explicit "grounding set" to prevent dead-end replies.
+  // Insertion point: after Tier 4 (known-noun) and before Tier 5 (doc retrieval).
+  //
+  // Decision flow:
+  //   1) Check paused re-anchor (stop-paused ordinal guidance)
+  //   2) Check soft-active window (post-action selection persistence)
+  //   3) Build grounding sets → multi-list guard → deterministic match
+  //   4) If deterministic fails + candidates exist → constrained LLM
+  //   5) If no candidates → ask missing slot
+  // =========================================================================
+  {
+    // NOTE: Paused re-anchor (H) is NOT handled here — it's already handled by
+    // the stop-paused ordinal guard in handleClarificationIntercept() (Tier 0,
+    // chat-routing.ts lines 1987-2009). That runs before Tier 4.5, so stop-paused
+    // ordinals never reach here. Duplicating it would risk double-messages.
+    // checkPausedReAnchor() is exported for future use if Tier 0 logic changes.
+
+    // G) Soft-active window check — uses lastOptionsShown (dedicated state),
+    // NOT clarificationSnapshot (which has a different lifecycle).
+    const softActiveOptions = (ctx.activeOptionSetId === null && ctx.lastOptionsShown)
+      ? ctx.lastOptionsShown.options
+      : null
+    const isSoftActive = softActiveOptions !== null && softActiveOptions.length > 0
+      && isSelectionLike(ctx.trimmedInput)
+
+    // Build grounding context from existing state
+    const groundingCtx = buildGroundingContext({
+      // If soft-active, treat as having an active option set
+      activeOptionSetId: isSoftActive ? 'soft-active' : ctx.activeOptionSetId,
+      lastClarification: isSoftActive
+        ? { type: 'option_selection' as const, originalIntent: '', messageId: '', timestamp: Date.now(), options: softActiveOptions! }
+        : ctx.lastClarification,
+      clarificationSnapshot: ctx.clarificationSnapshot,
+      sessionState: ctx.sessionState,
+      repairMemory: ctx.repairMemory,
+    })
+
+    // Run grounding-set fallback
+    const groundingResult = handleGroundingSetFallback(ctx.trimmedInput, groundingCtx)
+
+    // Handle multi-list ambiguity
+    if (groundingResult.multiListAmbiguity && groundingResult.askClarifier) {
+      const ambiguityMsg: ChatMessage = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: groundingResult.clarifierMessage || 'I see multiple option lists open. Which one do you mean?',
+        timestamp: new Date(),
+        isError: false,
+      }
+      ctx.addMessage(ambiguityMsg)
+      ctx.setIsLoading(false)
+
+      return {
+        ...defaultResult,
+        handled: true,
+        handledByTier: 4,
+        tierLabel: 'grounding_multi_list_ambiguity',
+        clarificationCleared,
+        isNewQuestionOrCommandDetected,
+        classifierCalled,
+        classifierResult,
+        classifierTimeout,
+        classifierLatencyMs,
+        classifierError,
+        isFollowUp,
+      }
+    }
+
+    // Deterministic match succeeded
+    if (groundingResult.handled && groundingResult.selectedCandidate) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'grounding_deterministic_select',
+        metadata: {
+          input: ctx.trimmedInput,
+          candidateId: groundingResult.selectedCandidate.id,
+          candidateLabel: groundingResult.selectedCandidate.label,
+          resolvedBy: groundingResult.resolvedBy,
+        },
+      })
+
+      // Execute the selected candidate
+      // For option-type candidates, use handleSelectOption
+      if (groundingResult.selectedCandidate.type === 'option' ||
+          groundingResult.selectedCandidate.type === 'widget_option') {
+        // Find matching option in pendingOptions or snapshot
+        const matchingOption = ctx.pendingOptions.find(
+          opt => opt.id === groundingResult.selectedCandidate!.id
+        ) || (ctx.clarificationSnapshot?.options.find(
+          opt => opt.id === groundingResult.selectedCandidate!.id
+        ))
+
+        if (matchingOption && 'type' in matchingOption && 'data' in matchingOption) {
+          ctx.handleSelectOption(matchingOption as unknown as SelectionOption)
+          ctx.setIsLoading(false)
+          return {
+            ...defaultResult,
+            handled: true,
+            handledByTier: 4,
+            tierLabel: 'grounding_deterministic_select',
+            clarificationCleared,
+            isNewQuestionOrCommandDetected,
+            classifierCalled,
+            classifierResult,
+            classifierTimeout,
+            classifierLatencyMs,
+            classifierError,
+            isFollowUp,
+          }
+        }
+      }
+
+      // Option found but missing 'type'/'data' fields — can't execute.
+      // Log and fall through to Tier 5.
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'grounding_deterministic_select_no_executable',
+        metadata: {
+          candidateId: groundingResult.selectedCandidate!.id,
+          reason: 'matching_option_missing_fields',
+        },
+      })
+    }
+
+    // LLM fallback needed
+    if (groundingResult.needsLLM && groundingResult.llmCandidates && groundingResult.llmCandidates.length > 0) {
+      if (isGroundingLLMEnabled()) {
+        try {
+          const llmResult = await callGroundingLLM({
+            userInput: ctx.trimmedInput,
+            candidates: groundingResult.llmCandidates.map(c => ({
+              id: c.id,
+              label: c.label,
+              type: c.type,
+              actionHint: c.actionHint,
+            })),
+          })
+
+          void debugLog({
+            component: 'ChatNavigation',
+            action: llmResult.success ? 'grounding_llm_called' : 'grounding_llm_error',
+            metadata: {
+              input: ctx.trimmedInput,
+              success: llmResult.success,
+              decision: llmResult.response?.decision,
+              choiceId: llmResult.response?.choiceId,
+              confidence: llmResult.response?.confidence,
+              latencyMs: llmResult.latencyMs,
+              error: llmResult.error,
+            },
+          })
+
+          if (llmResult.success && llmResult.response) {
+            if (llmResult.response.decision === 'select' && llmResult.response.choiceId) {
+              // LLM selected a candidate — find and execute
+              const selected = groundingResult.llmCandidates.find(
+                c => c.id === llmResult.response!.choiceId
+              )
+
+              if (selected) {
+                void debugLog({
+                  component: 'ChatNavigation',
+                  action: 'grounding_llm_select',
+                  metadata: {
+                    candidateId: selected.id,
+                    candidateLabel: selected.label,
+                    confidence: llmResult.response.confidence,
+                  },
+                })
+
+                // Try to execute via handleSelectOption
+                const matchingOption = ctx.pendingOptions.find(opt => opt.id === selected.id)
+                  || (ctx.clarificationSnapshot?.options.find(opt => opt.id === selected.id))
+
+                if (matchingOption && 'type' in matchingOption && 'data' in matchingOption) {
+                  ctx.handleSelectOption(matchingOption as unknown as SelectionOption)
+                  ctx.setIsLoading(false)
+                  return {
+                    ...defaultResult,
+                    handled: true,
+                    handledByTier: 4,
+                    tierLabel: 'grounding_llm_select',
+                    clarificationCleared,
+                    isNewQuestionOrCommandDetected,
+                    classifierCalled,
+                    classifierResult,
+                    classifierTimeout,
+                    classifierLatencyMs,
+                    classifierError,
+                    isFollowUp,
+                  }
+                }
+
+                // Referent-type candidate selected by LLM but not in pending options.
+                // Per plan §5: "LLM select → execute deterministically."
+                // Return a structured action for sendMessage() to execute via navigate API,
+                // following the same pattern as suggestionAction.
+                if (selected.type === 'referent') {
+                  const action = selected.actionHint || 'open'
+                  const syntheticMessage = `${action} ${selected.label}`
+
+                  void debugLog({
+                    component: 'ChatNavigation',
+                    action: 'grounding_referent_execute',
+                    metadata: {
+                      candidateId: selected.id,
+                      candidateLabel: selected.label,
+                      actionHint: selected.actionHint,
+                      syntheticMessage,
+                    },
+                  })
+
+                  return {
+                    ...defaultResult,
+                    handled: true,
+                    handledByTier: 4,
+                    tierLabel: 'grounding_llm_referent_execute',
+                    clarificationCleared,
+                    isNewQuestionOrCommandDetected,
+                    classifierCalled,
+                    classifierResult,
+                    classifierTimeout,
+                    classifierLatencyMs,
+                    classifierError,
+                    isFollowUp,
+                    groundingAction: {
+                      type: 'execute_referent',
+                      syntheticMessage,
+                      candidateId: selected.id,
+                      candidateLabel: selected.label,
+                      actionHint: selected.actionHint,
+                    },
+                  }
+                }
+              }
+            }
+
+            // need_more_info or failed select → ask grounded clarifier
+            if (llmResult.response.decision === 'need_more_info' || !llmResult.response.choiceId) {
+              void debugLog({
+                component: 'ChatNavigation',
+                action: 'grounding_llm_need_more_info',
+                metadata: { input: ctx.trimmedInput },
+              })
+
+              const clarifierMsg: ChatMessage = {
+                id: `assistant-${Date.now()}`,
+                role: 'assistant',
+                content: buildGroundedClarifier(groundingResult.llmCandidates),
+                timestamp: new Date(),
+                isError: false,
+              }
+              ctx.addMessage(clarifierMsg)
+              ctx.setIsLoading(false)
+
+              return {
+                ...defaultResult,
+                handled: true,
+                handledByTier: 4,
+                tierLabel: 'grounding_llm_need_more_info',
+                clarificationCleared,
+                isNewQuestionOrCommandDetected,
+                classifierCalled,
+                classifierResult,
+                classifierTimeout,
+                classifierLatencyMs,
+                classifierError,
+                isFollowUp,
+              }
+            }
+          }
+
+          // LLM failed/timeout — ask same grounded clarifier (no silent fallthrough)
+          if (!llmResult.success) {
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'grounding_llm_timeout',
+              metadata: { error: llmResult.error, latencyMs: llmResult.latencyMs },
+            })
+
+            const clarifierMsg: ChatMessage = {
+              id: `assistant-${Date.now()}`,
+              role: 'assistant',
+              content: buildGroundedClarifier(groundingResult.llmCandidates),
+              timestamp: new Date(),
+              isError: false,
+            }
+            ctx.addMessage(clarifierMsg)
+            ctx.setIsLoading(false)
+
+            return {
+              ...defaultResult,
+              handled: true,
+              handledByTier: 4,
+              tierLabel: 'grounding_llm_fallback_clarifier',
+              clarificationCleared,
+              isNewQuestionOrCommandDetected,
+              classifierCalled,
+              classifierResult,
+              classifierTimeout,
+              classifierLatencyMs,
+              classifierError,
+              isFollowUp,
+            }
+          }
+        } catch (error) {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'grounding_llm_error',
+            metadata: { error: error instanceof Error ? error.message : 'Unknown error' },
+          })
+          // Fall through to Tier 5
+        }
+      }
+      // If LLM not enabled, fall through to Tier 5
+    }
+
+    // No list grounding set — ask for missing slot.
+    // handleGroundingSetFallback already verified input is selection-like
+    // before setting askClarifier=true, so no redundant check needed.
+    if (groundingResult.askClarifier && !groundingResult.needsLLM) {
+      const clarifierMsg: ChatMessage = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: groundingResult.clarifierMessage || "I'm not sure what you're referring to. Could you tell me what you'd like to do?",
+        timestamp: new Date(),
+        isError: false,
+      }
+      ctx.addMessage(clarifierMsg)
+      ctx.setIsLoading(false)
+
+      return {
+        ...defaultResult,
+        handled: true,
+        handledByTier: 4,
+        tierLabel: 'grounding_missing_slot',
+        clarificationCleared,
+        isNewQuestionOrCommandDetected,
+        classifierCalled,
+        classifierResult,
+        classifierTimeout,
+        classifierLatencyMs,
+        classifierError,
+        isFollowUp,
+      }
+    }
+  }
+
+  // Per grounding-set-fallback-plan.md §G: increment soft-active turn counter
+  // AFTER Tier 4.5 so the soft-active check can read the state before it expires.
+  // If Tier 4.5 handled the input, it returned early and this line is never reached,
+  // which is correct — a used soft-active turn should still count.
+  if (ctx.incrementLastOptionsShownTurn) {
+    ctx.incrementLastOptionsShownTurn()
   }
 
   // =========================================================================

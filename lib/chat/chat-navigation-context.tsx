@@ -173,6 +173,26 @@ export const PAUSED_SNAPSHOT_TURN_LIMIT = 3
 export const STOP_SUPPRESSION_TURN_LIMIT = 2
 
 /**
+ * Last options shown snapshot for grounding-set soft-active window.
+ * Per grounding-set-fallback-plan.md §G:
+ *   Populated when options are shown (not only when selected).
+ *   TTL = 2 turns. Used as grounding set when activeOptionSetId is null
+ *   but options were recently displayed.
+ */
+export interface LastOptionsShown {
+  options: ClarificationOption[]
+  /** Message ID that displayed these options */
+  messageId: string
+  /** Timestamp when shown */
+  timestamp: number
+  /** Turn counter for TTL expiry */
+  turnsSinceShown: number
+}
+
+/** Soft-active TTL in turns (per grounding-set-fallback-plan.md §G) */
+export const SOFT_ACTIVE_TURN_LIMIT = 2
+
+/**
  * Doc retrieval conversation state for follow-ups and corrections.
  * Per general-doc-retrieval-routing-plan.md (v4)
  * Updated for v5 Hybrid Response Selection (lastChunkIdsShown for HS2)
@@ -313,6 +333,11 @@ interface ChatNavigationContextValue {
   stopSuppressionCount: number
   setStopSuppressionCount: (count: number) => void
   decrementStopSuppression: () => void
+  // Last options shown for grounding-set soft-active window (per grounding-set-fallback-plan.md §G)
+  lastOptionsShown: LastOptionsShown | null
+  saveLastOptionsShown: (options: ClarificationOption[], messageId: string) => void
+  incrementLastOptionsShownTurn: () => void
+  clearLastOptionsShown: () => void
 }
 
 // =============================================================================
@@ -1093,6 +1118,34 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     setStopSuppressionCountInternal((prev) => (prev > 0 ? prev - 1 : 0))
   }, [])
 
+  // Last options shown state for grounding-set soft-active window (per grounding-set-fallback-plan.md §G)
+  const [lastOptionsShown, setLastOptionsShownInternal] = useState<LastOptionsShown | null>(null)
+
+  const saveLastOptionsShown = useCallback((options: ClarificationOption[], messageId: string) => {
+    if (options.length > 0) {
+      setLastOptionsShownInternal({
+        options,
+        messageId,
+        timestamp: Date.now(),
+        turnsSinceShown: 0,
+      })
+    }
+  }, [])
+
+  const incrementLastOptionsShownTurn = useCallback(() => {
+    setLastOptionsShownInternal((prev) => {
+      if (!prev) return null
+      const newTurns = prev.turnsSinceShown + 1
+      // Expire after SOFT_ACTIVE_TURN_LIMIT full turns (> not >=, so TTL=2 allows turns 0,1,2)
+      if (newTurns > SOFT_ACTIVE_TURN_LIMIT) return null
+      return { ...prev, turnsSinceShown: newTurns }
+    })
+  }, [])
+
+  const clearLastOptionsShown = useCallback(() => {
+    setLastOptionsShownInternal(null)
+  }, [])
+
   return (
     <ChatNavigationContext.Provider
       value={{
@@ -1156,6 +1209,11 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         stopSuppressionCount,
         setStopSuppressionCount,
         decrementStopSuppression,
+        // Last options shown for grounding-set soft-active window
+        lastOptionsShown,
+        saveLastOptionsShown,
+        incrementLastOptionsShownTurn,
+        clearLastOptionsShown,
       }}
     >
       {children}

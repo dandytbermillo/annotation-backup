@@ -74,20 +74,30 @@ returns to the paused list.
 3) If a **list-type grounding set** exists and a deterministic, **unique** selection-like match can be made:
    - Execute that option directly (no LLM call).
 
-4) Otherwise, if any grounding set exists:
+4) If **referent sets exist** (non-list, non-capability) and deterministic matching cannot resolve uniquely:
+   - Call LLM with a constrained selection contract on **referent candidates only**.
+
+5) Otherwise, if any **list-type** grounding set exists:
    - Call LLM with a constrained selection contract:
      - Must pick one candidate id OR return "need_more_info".
      - No free-form execution.
 
-5) If LLM selects a candidate:
+6) If LLM selects a candidate:
    - Execute that action deterministically.
 
-6) If LLM returns need_more_info:
+7) If LLM returns need_more_info:
    - Ask a single grounded clarifier:
      - "Do you want to open X, search for X, or see docs?"
 
-7) If LLM fails/timeout:
+8) If LLM fails/timeout:
    - Ask the same grounded clarifier (no silent fallthrough).
+
+9) If **no non-capability grounding set** exists and input is referent/selection-like:
+   - Ask for the missing slot (target/action/scope) instead of routing to docs.
+
+**Rationale:** capability sets always exist, so we only relax the selection-like gate for
+referent sets. This avoids sending general informational queries to the LLM while still
+resolving “open it / do that again” reliably.
 
 ## List-Aware Shorthand (when a list is the grounding set)
 If the grounding set is a list (active or paused options), use deterministic unique matching to resolve
@@ -214,3 +224,7 @@ Output:
 - If multi‑list context exists, ask which list **before** applying soft‑active snapshot logic.
 - If a unique match exists within the selected list, you may execute deterministically without LLM.
 - Only call the LLM if deterministic selection‑like matching cannot resolve uniquely.
+
+## Known Limitations
+1. **Multi-widget guard is a no-op** — `openWidgets` is always `[]` until the UI supports multiple visible widget lists.
+2. **Open widgets wiring** — blocked until the UI exposes `openWidgets[]` state to the chat routing layer.
