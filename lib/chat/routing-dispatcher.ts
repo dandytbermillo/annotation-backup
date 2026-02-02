@@ -1287,7 +1287,50 @@ export async function dispatchRouting(
         }
       }
 
-      // Not a pure selection - let it go to LLM with context
+      // Tier 3a (cont.): Label/shorthand matching for message-derived options
+      // isSelectionOnly only matches ordinals ("first", "2", "d").
+      // findExactOptionMatch handles shorthand like "panel e", "workspace 6",
+      // "links panel d" via label contains/startsWith/exact matching.
+      const labelMatch = findExactOptionMatch(ctx.trimmedInput, lastOptionsMessage.options)
+      if (labelMatch) {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'label_match_from_message',
+          metadata: {
+            input: ctx.trimmedInput,
+            matchedLabel: labelMatch.label,
+            tier: '3a',
+          },
+        })
+
+        // Restore pendingOptions and execute selection
+        ctx.setPendingOptions(lastOptionsMessage.options)
+        const optionToSelect: SelectionOption = {
+          type: labelMatch.type as SelectionOption['type'],
+          id: labelMatch.id,
+          label: labelMatch.label,
+          sublabel: labelMatch.sublabel,
+          data: labelMatch.data as SelectionOption['data'],
+        }
+        ctx.setIsLoading(false)
+        ctx.handleSelectOption(optionToSelect)
+        return {
+          ...defaultResult,
+          handled: true,
+          handledByTier: 3,
+          tierLabel: 'label_match_from_message',
+          clarificationCleared,
+          isNewQuestionOrCommandDetected,
+          classifierCalled,
+          classifierResult,
+          classifierTimeout,
+          classifierLatencyMs,
+          classifierError,
+          isFollowUp,
+        }
+      }
+
+      // Not a pure selection or label match - let it go to LLM with context
       void debugLog({
         component: 'ChatNavigation',
         action: 'message_options_passthrough_to_llm',

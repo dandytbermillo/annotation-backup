@@ -330,7 +330,11 @@ export function resolveUniqueDeterministic(
   // 3. Unique token-subset match
   // Input tokens must be a subset of exactly one candidate's label tokens.
   // Per plan: "unique-only" — must resolve to exactly one option.
-  const inputTokens = tokenize(normalized)
+  // Strip leading verb prefixes so "open panel e" → "panel e" matches "Links Panel E"
+  const verbStripped = normalized
+    .replace(/^(pls\s+|please\s+)?(open|show|view|go\s+to|launch|list|find)\s+/i, '')
+    .trim()
+  const inputTokens = tokenize(verbStripped || normalized)
   if (inputTokens.length > 0) {
     const subsetMatches: { candidate: GroundingCandidate; index: number }[] = []
 
