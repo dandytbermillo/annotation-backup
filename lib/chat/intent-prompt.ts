@@ -626,6 +626,22 @@ export interface ConversationContext {
   chatContext?: ChatContext
   // UI context for current screen visibility
   uiContext?: UIContext
+  // Widget context from registry (widget-ui-snapshot-plan) — passed via API request payload
+  widgetContextVersion?: 1
+  widgetContextSegments?: Array<{
+    widgetId: string
+    widgetTitle: string
+    segmentId: string
+    summary: string
+    currentView: string
+    focusText?: string
+  }>
+  widgetItemDescriptions?: Array<{
+    widgetId: string
+    itemId: string
+    label: string
+    description: string
+  }>
 }
 
 /**
@@ -778,6 +794,24 @@ export async function buildIntentMessages(
               contextBlock += `          summary: "${sanitizeForPrompt(ws.summary, 200)}"\n`
             }
           })
+        }
+        // WidgetContext: block — separate from widgetStates (widget-ui-snapshot-plan)
+        // Guard 2 (layer 2): Only render if widgetContextVersion is recognized
+        if (context.widgetContextVersion === 1 && context.widgetContextSegments && context.widgetContextSegments.length > 0) {
+          contextBlock += `    WidgetContext:\n`
+          for (const seg of context.widgetContextSegments) {
+            contextBlock += `      - "${sanitizeForPrompt(seg.widgetTitle)}": "${sanitizeForPrompt(seg.summary, 200)}"\n`
+            if (seg.focusText) {
+              contextBlock += `        focus: "${sanitizeForPrompt(seg.focusText, 120)}"\n`
+            }
+          }
+          // Item descriptions (if present)
+          if (context.widgetItemDescriptions && context.widgetItemDescriptions.length > 0) {
+            contextBlock += `      items:\n`
+            for (const item of context.widgetItemDescriptions) {
+              contextBlock += `        - "${sanitizeForPrompt(item.label)}": "${sanitizeForPrompt(item.description, 200)}"\n`
+            }
+          }
         }
       }
       // Phase 4: Only include workspace info when mode is 'workspace'

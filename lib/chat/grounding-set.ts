@@ -222,6 +222,7 @@ const NUMERIC_SINGLE = /^[1-9]$/
 const SHORTHAND_KEYWORDS = /\b(option|item|choice)\b/i
 const PANEL_SELECTION = /\bpanel\s+[a-e1-9]\b/i
 const ONE_SHORT_INPUT = /^(the\s+)?(one|this one|that one|the other one)$/i
+const SEQUENTIAL_ONE = /^(next|previous|the next|the previous)(\s+one)?$/i
 const BADGE_SINGLE_LETTER = /^[a-e]$/i
 // Action verb + pronoun referent per plan acceptance tests §1-3:
 //   "open it", "fix it", "do that again", "run this", "delete them"
@@ -256,6 +257,7 @@ export function isSelectionLike(
   if (SHORTHAND_KEYWORDS.test(normalized)) return true
   if (PANEL_SELECTION.test(normalized)) return true
   if (ONE_SHORT_INPUT.test(normalized)) return true
+  if (SEQUENTIAL_ONE.test(normalized)) return true
 
   // Badge tokens (only if UI displays badge letters)
   if (options?.hasBadgeLetters && BADGE_SINGLE_LETTER.test(normalized)) return true

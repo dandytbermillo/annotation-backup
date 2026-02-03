@@ -338,6 +338,10 @@ export async function POST(request: NextRequest) {
     const userMessage = message.trim()
 
     // Extract conversation context (optional), session state, pending options, visibility, and chatContext
+    // Guard 2 (layer 1): Validate widgetContextVersion before forwarding
+    const widgetContextVersion = context?.widgetContextVersion
+    const hasValidWidgetContext = widgetContextVersion === 1
+
     const conversationContext: ConversationContext | undefined = context ? {
       summary: context.summary,
       recentUserMessages: context.recentUserMessages,
@@ -351,6 +355,12 @@ export async function POST(request: NextRequest) {
       chatContext: context.chatContext,
       // UI context for current screen visibility
       uiContext: context.uiContext,
+      // Widget context from registry (widget-ui-snapshot-plan) — only forwarded if version is recognized
+      ...(hasValidWidgetContext ? {
+        widgetContextVersion: 1 as const,
+        widgetContextSegments: context.widgetContextSegments,
+        widgetItemDescriptions: context.widgetItemDescriptions,
+      } : {}),
     } : undefined
 
     // DEBUG: Log context received from client

@@ -1588,16 +1588,17 @@ export async function dispatchRouting(
     // ordinals never reach here. Duplicating it would risk double-messages.
     // checkPausedReAnchor() is exported for future use if Tier 0 logic changes.
 
+    // Build widget registry snapshot (Layer 2 → Tier 4.5)
+    // Moved before soft-active check so hasBadgeLetters is available for isSelectionLike.
+    const turnSnapshot = buildTurnSnapshot({})
+
     // G) Soft-active window check — uses lastOptionsShown (dedicated state),
     // NOT clarificationSnapshot (which has a different lifecycle).
     const softActiveOptions = (ctx.activeOptionSetId === null && ctx.lastOptionsShown)
       ? ctx.lastOptionsShown.options
       : null
     const isSoftActive = softActiveOptions !== null && softActiveOptions.length > 0
-      && isSelectionLike(ctx.trimmedInput)
-
-    // Build widget registry snapshot (Layer 2 → Tier 4.5)
-    const turnSnapshot = buildTurnSnapshot({})
+      && isSelectionLike(ctx.trimmedInput, { hasBadgeLetters: turnSnapshot.hasBadgeLetters })
 
     // ActiveWidget preference: reorder openWidgets so the active widget's list
     // comes first. Only affects ordinal binding when no widget is named explicitly
@@ -1626,7 +1627,9 @@ export async function dispatchRouting(
     })
 
     // Run grounding-set fallback
-    const groundingResult = handleGroundingSetFallback(ctx.trimmedInput, groundingCtx)
+    const groundingResult = handleGroundingSetFallback(ctx.trimmedInput, groundingCtx, {
+      hasBadgeLetters: turnSnapshot.hasBadgeLetters,
+    })
 
     // Handle multi-list ambiguity
     if (groundingResult.multiListAmbiguity && groundingResult.askClarifier) {

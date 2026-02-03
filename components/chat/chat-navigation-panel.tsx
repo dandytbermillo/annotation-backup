@@ -50,7 +50,7 @@ import type { RoutingTelemetryEvent } from '@/lib/chat/routing-telemetry'
 import { type PendingOptionState } from '@/lib/chat/chat-routing'
 // Unified routing dispatcher (per routing-order-priority-plan.md)
 import { dispatchRouting, isExplicitCommand, type LastPreviewState } from '@/lib/chat/routing-dispatcher'
-import { getAllVisibleSnapshots, getActiveWidgetId } from '@/lib/widgets/ui-snapshot-registry'
+import { getAllVisibleSnapshots, getActiveWidgetId, type SnapshotListSegment } from '@/lib/widgets/ui-snapshot-registry'
 // TD-3: Import consolidated patterns from query-patterns module
 import {
   stripConversationalPrefix,
@@ -1783,6 +1783,75 @@ function ChatNavigationPanelContent({
       })
       const chatContext = buildChatContext(messages, uiContext)
 
+      // Build widget context payload from registry (client → server for intent-prompt)
+      // Guard 3: Dedup by widgetId (newest registeredAt wins), then segmentId
+      const allSnapshots = getAllVisibleSnapshots()
+      const dedupedSnapshots = new Map<string, typeof allSnapshots[number]>()
+      for (const snap of allSnapshots) {
+        const existing = dedupedSnapshots.get(snap.widgetId)
+        if (!existing || snap.registeredAt > existing.registeredAt) {
+          dedupedSnapshots.set(snap.widgetId, snap)
+        }
+      }
+      const uniqueSnapshots = Array.from(dedupedSnapshots.values())
+
+      // C1: Context segments (Guard 1: max 10, Guard 3: dedup by segmentId)
+      const widgetContextSegments: Array<{
+        widgetId: string; widgetTitle: string; segmentId: string
+        summary: string; currentView: string; focusText?: string
+      }> = []
+      for (const snap of uniqueSnapshots) {
+        const seenSegIds = new Set<string>()
+        for (const seg of snap.segments) {
+          if (seg.segmentType !== 'context') continue
+          if (seenSegIds.has(seg.segmentId)) continue
+          seenSegIds.add(seg.segmentId)
+          if (widgetContextSegments.length >= 10) break
+          widgetContextSegments.push({
+            widgetId: snap.widgetId,
+            widgetTitle: snap.title.slice(0, 200),
+            segmentId: seg.segmentId,
+            summary: seg.summary.slice(0, 200),
+            currentView: seg.currentView.slice(0, 120),
+            focusText: seg.focusText?.slice(0, 120),
+          })
+        }
+      }
+
+      // C2: Item descriptions (visible range only, max 50 total)
+      const widgetItemDescriptions: Array<{
+        widgetId: string; itemId: string; label: string; description: string
+      }> = []
+      for (const snap of uniqueSnapshots) {
+        for (const seg of snap.segments) {
+          if (seg.segmentType !== 'list') continue
+          const listSeg = seg as SnapshotListSegment
+          // Visible range consistency: start inclusive, end exclusive
+          const items = listSeg.visibleItemRange
+            ? listSeg.items.slice(listSeg.visibleItemRange.start, listSeg.visibleItemRange.end)
+            : listSeg.items
+          for (const item of items) {
+            if (!item.description) continue
+            if (widgetItemDescriptions.length >= 50) break
+            widgetItemDescriptions.push({
+              widgetId: snap.widgetId,
+              itemId: item.itemId,
+              label: item.label.slice(0, 200),
+              description: item.description.slice(0, 200),
+            })
+          }
+        }
+      }
+
+      // DEBUG: Log widget context payload
+      console.log('[chat-nav] widget context payload:', {
+        allSnapshotsCount: allSnapshots.length,
+        uniqueSnapshotsCount: uniqueSnapshots.length,
+        contextSegmentsCount: widgetContextSegments.length,
+        contextSegments: widgetContextSegments.map(s => ({ widgetId: s.widgetId, segmentId: s.segmentId })),
+        itemDescriptionsCount: widgetItemDescriptions.length,
+      })
+
       // Call the navigate API with normalized message, context, and session state
       const response = await fetch('/api/chat/navigate', {
         method: 'POST',
@@ -1810,6 +1879,10 @@ function ChatNavigationPanelContent({
               role: m.role,
               content: m.content,
             })),
+            // Widget context from registry (widget-ui-snapshot-plan)
+            widgetContextVersion: 1,
+            widgetContextSegments: widgetContextSegments.length > 0 ? widgetContextSegments : undefined,
+            widgetItemDescriptions: widgetItemDescriptions.length > 0 ? widgetItemDescriptions : undefined,
           },
         }),
       })

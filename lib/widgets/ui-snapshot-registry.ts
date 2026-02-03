@@ -29,6 +29,8 @@ export interface SnapshotListItem {
   badgeVisible?: boolean
   /** Allowed actions (e.g., ["open"]) — must have at least one */
   actions: string[]
+  /** Optional semantic description for context routing (e.g., "Latest sprint workspace") */
+  description?: string
 }
 
 export interface SnapshotListSegment {
@@ -43,6 +45,8 @@ export interface SnapshotListSegment {
   items: SnapshotListItem[]
   /** Currently focused/highlighted item */
   focusItemId?: string
+  /** Total item count in the full dataset (may exceed items.length if paginated) */
+  totalCount?: number
 }
 
 export interface SnapshotContextSegment {
@@ -116,6 +120,9 @@ function validateListItem(item: unknown): SnapshotListItem | null {
     badge: typeof data.badge === 'string' ? data.badge.slice(0, 1) : undefined,
     badgeVisible: typeof data.badgeVisible === 'boolean' ? data.badgeVisible : undefined,
     actions,
+    description: typeof data.description === 'string'
+      ? truncateString(data.description, MAX_SUMMARY_LENGTH)
+      : undefined,
   }
 }
 
@@ -152,6 +159,7 @@ function validateSegment(segment: unknown): SnapshotSegment | null {
       },
       items,
       focusItemId: typeof data.focusItemId === 'string' ? data.focusItemId : undefined,
+      totalCount: typeof data.totalCount === 'number' ? data.totalCount : undefined,
     } satisfies SnapshotListSegment
   }
 

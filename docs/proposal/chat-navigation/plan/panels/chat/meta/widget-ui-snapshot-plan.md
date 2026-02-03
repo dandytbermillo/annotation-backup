@@ -176,12 +176,29 @@ Before implementing the full widget registry, the routing/selection memory bugs 
 | `hasSoftActiveSelectionLike` guard (Tier 4 bypass) | `lib/chat/known-noun-routing.ts` | **Implemented** (prior session) |
 | `saveLastOptionsShown` wiring at option-creation sites | `lib/chat/chat-routing.ts` | **Implemented** (prior session) |
 
-### Widget Registry (Phase 2 — NOT STARTED)
-The full widget registry architecture is planned in `widget-registry-implementation-plan.md`:
-- Layer 1: `lib/widgets/ui-snapshot-registry.ts` — ephemeral in-memory store (not created)
-- Layer 2: `lib/chat/ui-snapshot-builder.ts` — per-turn snapshot assembler (not created)
-- Layer 3: Routing integration at Tier 4.5 — wire snapshot builder into dispatcher (not done)
-- Widget reporters (RecentPanel, QuickLinksWidget, etc.) — not wired
+### Widget Registry (Phase 2 — DONE)
+The widget registry architecture from `widget-registry-implementation-plan.md` is implemented:
+- Layer 1: `lib/widgets/ui-snapshot-registry.ts` — ephemeral in-memory store (**created**)
+- Layer 2: `lib/chat/ui-snapshot-builder.ts` — per-turn snapshot assembler (**created**)
+- Layer 3: Routing integration at Tier 4.5 — snapshot builder wired into dispatcher (**done**)
+- Widget reporters — RecentPanel + RecentWidget wired (**done**); add more widgets as needed
+
+### Widget UI Snapshot Plan (Phase 3 — DONE)
+Post-registry additions from this plan, implemented in session 2026-02-02:
+
+| Feature | Plan Section | File(s) | Status |
+|---|---|---|---|
+| A1: Snapshot metadata (`uiSnapshotId`, `revisionId`, `capturedAtMs`) | §Freshness Guard | `lib/chat/ui-snapshot-builder.ts` | **Implemented** (telemetry/debug only in v1) |
+| A2: `totalCount` on list segments | §Data Contract | `lib/widgets/ui-snapshot-registry.ts` | **Implemented** |
+| A3: `description` on list items | §Data Contract | `lib/widgets/ui-snapshot-registry.ts` | **Implemented** |
+| B1: "next one"/"previous one" patterns | §Selection-Like | `lib/chat/grounding-set.ts` | **Implemented** |
+| B2: `hasBadgeLetters` from builder | §Selection-Like | `ui-snapshot-builder.ts`, `routing-dispatcher.ts` | **Implemented** |
+| C1: Context segments via request payload | §Context Routing | `chat-navigation-panel.tsx`, `route.ts`, `intent-prompt.ts` | **Implemented** |
+| C2: Item descriptions via request payload | §Context Routing | Same as C1 | **Implemented** |
+| C-Guards: Payload caps, version gate, dedup, dedicated heading | §Safety | `chat-navigation-panel.tsx`, `route.ts`, `intent-prompt.ts` | **Implemented** |
+| D: LLM constrained pick | §LLM Fallback | `routing-dispatcher.ts` | **No changes needed** (already wired) |
+| E1: Unit tests (29 tests) | §Testing | `__tests__/unit/widgets/widget-ui-snapshot-plan.test.ts` | **Passing** |
+| E2: Integration tests (6 tests) | §Testing | `__tests__/integration/widget-context-prompt.test.ts` | **Passing** |
 
 ### Schema Elements vs Implementation
 
@@ -189,11 +206,14 @@ The full widget registry architecture is planned in `widget-registry-implementat
 |---|---|---|
 | `selectionMemory.activeOptionSetId` | §Routing Rules | Yes — `activeOptionSetId` in `chat-navigation-context.tsx` |
 | `selectionMemory.lastOptionsShown` | §Soft-Active | Yes — `LastOptionsShown` interface + 2-turn TTL |
-| `widgets[].segments[].segmentType: "list"` | §Core Principle | Not yet — requires widget registry |
-| `widgets[].segments[].segmentType: "context"` | §Core Principle | Not yet — requires widget registry |
-| Selection-like detector | §Selection-Like Detector | Partial — `isSelectionLike()` in `grounding-set.ts` covers ordinals/shorthand/badge; verb-prefix stripping added |
-| Freshness guard (`uiSnapshotId`, `capturedAtMs`) | §Freshness Guard | Not yet — requires snapshot builder |
+| `widgets[].segments[].segmentType: "list"` | §Core Principle | Yes — registry snapshots carry list segments |
+| `widgets[].segments[].segmentType: "context"` | §Core Principle | Yes — registry supports context segments; prompt usage wired via request payload |
+| Selection-like detector | §Selection-Like Detector | Yes — `isSelectionLike()` covers ordinals/shorthand/badge/sequential; `hasBadgeLetters` wired from builder |
+| Freshness guard (`uiSnapshotId`, `capturedAtMs`) | §Freshness Guard | Yes — metadata emitted by builder (v1: telemetry/debug only) |
 | Multi-list ambiguity guard | §Rule C | Yes — in `handleGroundingSetFallback()` |
+| Context-like routing (Rule A) | §Rule A | Yes — context segments passed client→server via `widgetContextSegments` in request payload |
+| Item-level context | §Context Answer Source | Yes — `widgetItemDescriptions` passed in request payload |
+| Version gate | §Safety | Yes — double-gated in `route.ts` (layer 1) and `intent-prompt.ts` (layer 2) |
 
 ## Notes
 - This plan is list-agnostic: lists are just one segment type.

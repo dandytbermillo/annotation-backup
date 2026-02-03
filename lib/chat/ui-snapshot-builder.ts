@@ -29,6 +29,9 @@ import {
  */
 export const DEFAULT_SNAPSHOT_FRESHNESS_MS = 60_000
 
+/** Monotonically incrementing revision counter for snapshot identity */
+let snapshotRevisionCounter = 0
+
 // ============================================================================
 // Main Builder
 // ============================================================================
@@ -36,6 +39,14 @@ export const DEFAULT_SNAPSHOT_FRESHNESS_MS = 60_000
 export interface TurnSnapshotResult {
   openWidgets: OpenWidgetState[]
   activeSnapshotWidgetId: string | null
+  /** Stable snapshot identity for telemetry/debug (v1: not used by routing) */
+  uiSnapshotId: string
+  /** Monotonically incrementing revision counter per call */
+  revisionId: number
+  /** Timestamp when this snapshot was captured */
+  capturedAtMs: number
+  /** Whether any fresh visible widget has badge letters enabled */
+  hasBadgeLetters: boolean
 }
 
 /**
@@ -55,11 +66,20 @@ export function buildTurnSnapshot(params?: {
 
   const allVisible = getAllVisibleSnapshots()
   const openWidgets: OpenWidgetState[] = []
+  let hasBadgeLetters = false
 
   for (const snapshot of allVisible) {
     // Freshness guard: skip stale snapshots
     if (now - snapshot.registeredAt >= freshnessMs) {
       continue
+    }
+
+    // Check for badge letters in any list segment
+    for (const seg of snapshot.segments) {
+      if (seg.segmentType === 'list' && (seg as SnapshotListSegment).badgesEnabled) {
+        hasBadgeLetters = true
+        break
+      }
     }
 
     // Extract list items from all list segments
@@ -75,9 +95,16 @@ export function buildTurnSnapshot(params?: {
     })
   }
 
+  snapshotRevisionCounter++
+  const uiSnapshotId = `snap_${now.toString(36)}_${Math.random().toString(36).slice(2, 6)}`
+
   return {
     openWidgets,
     activeSnapshotWidgetId: getActiveWidgetId(),
+    uiSnapshotId,
+    revisionId: snapshotRevisionCounter,
+    capturedAtMs: now,
+    hasBadgeLetters,
   }
 }
 

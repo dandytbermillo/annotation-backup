@@ -15,6 +15,7 @@ import { Link2 } from 'lucide-react'
 import type { WorkspacePanel, PanelConfig } from '@/lib/dashboard/panel-registry'
 import { usePanelChatVisibility } from '@/lib/hooks/use-panel-chat-visibility'
 import { upsertWidgetState, removeWidgetState } from '@/lib/widgets/widget-state-store'
+import { registerWidgetSnapshot, unregisterWidgetSnapshot } from '@/lib/widgets/ui-snapshot-registry'
 import {
   BaseWidget,
   WidgetLabel,
@@ -116,6 +117,13 @@ export function QuickLinksWidget({
   // Widget Chat State: Report internal state for LLM context
   useEffect(() => {
     const widgetTitle = panel.title || (badge ? `Links Panel ${badge}` : 'Links Panel')
+    const summary = links.length === 0
+      ? 'No links configured'
+      : `Showing ${Math.min(links.length, WIDGET_LINK_LIMIT)} of ${links.length} links`
+
+    // Derive unique widget ID from badge (e.g., "w_links_d" for badge "D")
+    const widgetId = badge ? `w_links_${badge.toLowerCase()}` : 'w_links'
+
     upsertWidgetState({
       _version: 1,
       widgetId: 'quick-links',
@@ -123,17 +131,47 @@ export function QuickLinksWidget({
       title: widgetTitle,
       view: 'list',
       selection: null,
-      summary: links.length === 0
-        ? 'No links configured'
-        : `Showing ${Math.min(links.length, WIDGET_LINK_LIMIT)} of ${links.length} links`,
+      summary,
       updatedAt: Date.now(),
       counts: { total: links.length, visible: Math.min(links.length, WIDGET_LINK_LIMIT) },
     })
 
+    // Widget UI Snapshot: Register structured snapshot for routing (Layer 1)
+    registerWidgetSnapshot({
+      _version: 1,
+      widgetId,
+      title: widgetTitle,
+      isVisible: true,
+      segments: [
+        {
+          segmentId: `${widgetId}:list`,
+          segmentType: 'list',
+          listLabel: widgetTitle,
+          badgesEnabled: !!badge,
+          visibleItemRange: { start: 0, end: Math.min(links.length, WIDGET_LINK_LIMIT) },
+          items: links.slice(0, WIDGET_LINK_LIMIT).map((link) => ({
+            itemId: link.workspaceId,
+            label: link.workspaceName,
+            badge: badge || undefined,
+            badgeVisible: !!badge,
+            actions: ['open'],
+          })),
+        },
+        {
+          segmentId: `${widgetId}:context`,
+          segmentType: 'context',
+          summary,
+          currentView: 'list',
+        },
+      ],
+      registeredAt: Date.now(),
+    })
+
     return () => {
       removeWidgetState(panel.id)
+      unregisterWidgetSnapshot(widgetId)
     }
-  }, [panel.id, badge, links.length])
+  }, [panel.id, badge, links.length, links])
 
   return (
     <BaseWidget
