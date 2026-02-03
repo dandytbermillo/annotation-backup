@@ -28,6 +28,7 @@ import { snapToGrid, GRID_CELL_SIZE, GRID_GAP, GRID_OFFSET } from "@/lib/dashboa
 import { cn } from "@/lib/utils"
 import { debugLog } from "@/lib/utils/debug-logger"
 import { pruneStaleWidgetStates, getAllWidgetStates, upsertWidgetState, removeWidgetState } from "@/lib/widgets/widget-state-store"
+import { setActiveWidgetId } from "@/lib/widgets/ui-snapshot-registry"
 import { RefreshCw, ChevronRight, LayoutDashboard, Loader2 } from "lucide-react"
 import { useAutoScroll } from "@/components/canvas/use-auto-scroll"
 
@@ -1096,6 +1097,7 @@ export function DashboardView({
   // Widget Architecture: Handle drawer close
   const handleDrawerClose = useCallback(() => {
     setDrawerPanel(null)
+    setActiveWidgetId(null)
     void debugLog({
       component: "DashboardView",
       action: "drawer_closed",
@@ -1129,6 +1131,7 @@ export function DashboardView({
           metadata: { panelId: panel.id, panelType: panel.panelType, panelTitle: panel.title },
         })
         setDrawerPanel(panel)
+        setActiveWidgetId(panel.id)
         console.log('[DashboardView] drawer_opened_from_chat:', { panelId: panel.id, panelType: panel.panelType })
         void debugLog({
           component: "DashboardView",

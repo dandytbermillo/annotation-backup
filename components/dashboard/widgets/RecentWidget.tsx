@@ -14,6 +14,7 @@ import React, { useEffect, useState } from 'react'
 import type { WorkspacePanel } from '@/lib/dashboard/panel-registry'
 import { usePanelChatVisibility } from '@/lib/hooks/use-panel-chat-visibility'
 import { upsertWidgetState, removeWidgetState } from '@/lib/widgets/widget-state-store'
+import { registerWidgetSnapshot, unregisterWidgetSnapshot } from '@/lib/widgets/ui-snapshot-registry'
 import {
   BaseWidget,
   WidgetLabel,
@@ -118,8 +119,38 @@ export function RecentWidget({
       counts: { total: workspaces.length, visible: Math.min(workspaces.length, WIDGET_ITEM_LIMIT) },
     })
 
+    // Widget UI Snapshot: Register structured snapshot for routing (Layer 1)
+    registerWidgetSnapshot({
+      _version: 1,
+      widgetId: 'w_recent_widget',
+      title: 'Recent',
+      isVisible: true,
+      segments: [
+        {
+          segmentId: 'w_recent_widget:list',
+          segmentType: 'list',
+          listLabel: 'Recent Workspaces',
+          badgesEnabled: false,
+          visibleItemRange: { start: 0, end: Math.min(workspaces.length, WIDGET_ITEM_LIMIT) },
+          items: workspaces.slice(0, WIDGET_ITEM_LIMIT).map(ws => ({
+            itemId: ws.id,
+            label: ws.name,
+            actions: ['open'],
+          })),
+        },
+        {
+          segmentId: 'w_recent_widget:context',
+          segmentType: 'context',
+          summary,
+          currentView: 'list',
+        },
+      ],
+      registeredAt: Date.now(),
+    })
+
     return () => {
       removeWidgetState(panel.id)
+      unregisterWidgetSnapshot('w_recent_widget')
     }
   }, [panel.id, isLoading, error, workspaces.length])
 

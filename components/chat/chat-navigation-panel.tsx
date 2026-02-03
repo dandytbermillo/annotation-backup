@@ -50,6 +50,7 @@ import type { RoutingTelemetryEvent } from '@/lib/chat/routing-telemetry'
 import { type PendingOptionState } from '@/lib/chat/chat-routing'
 // Unified routing dispatcher (per routing-order-priority-plan.md)
 import { dispatchRouting, isExplicitCommand, type LastPreviewState } from '@/lib/chat/routing-dispatcher'
+import { getAllVisibleSnapshots, getActiveWidgetId } from '@/lib/widgets/ui-snapshot-registry'
 // TD-3: Import consolidated patterns from query-patterns module
 import {
   stripConversationalPrefix,
@@ -1434,6 +1435,9 @@ function ChatNavigationPanelContent({
         lastOptionsShown,
         incrementLastOptionsShownTurn,
         saveLastOptionsShown,
+        // Widget registry (Tier 4.5)
+        getVisibleSnapshots: () => getAllVisibleSnapshots(),
+        getActiveWidgetId: () => getActiveWidgetId(),
       })
       const { clarificationCleared, isNewQuestionOrCommandDetected } = routingResult
       // Extract classifier state for downstream telemetry
@@ -1623,6 +1627,76 @@ function ChatNavigationPanelContent({
             id: `assistant-${Date.now()}`,
             role: 'assistant',
             content: `I understood "${candidateLabel}" but something went wrong. Try saying "${syntheticMessage}" directly.`,
+            timestamp: new Date(),
+            isError: true,
+          }
+          addMessage(errorMsg)
+        }
+
+        setIsLoading(false)
+        return
+      }
+
+      // ---------------------------------------------------------------------------
+      // Tier 4.5: Widget Registry Item Execution
+      // Per widget-registry-implementation-plan.md §4d.
+      // ---------------------------------------------------------------------------
+      if (routingResult.handled && routingResult.groundingAction?.type === 'execute_widget_item') {
+        const { widgetId, itemId, itemLabel, action } = routingResult.groundingAction
+
+        const entryId = currentEntryId ?? getActiveEntryContext() ?? undefined
+        const workspaceId = currentWorkspaceId ?? getActiveWorkspaceContext() ?? undefined
+
+        try {
+          const syntheticMessage = `${action} ${itemLabel}`
+          const response = await fetch('/api/chat/navigate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message: syntheticMessage,
+              currentEntryId: entryId,
+              currentWorkspaceId: workspaceId,
+              context: {
+                sessionState,
+                visiblePanels,
+                focusedPanelId,
+              },
+            }),
+          })
+
+          if (!response.ok) {
+            throw new Error('Widget item action failed')
+          }
+
+          const { resolution } = (await response.json()) as {
+            resolution: IntentResolutionResult
+          }
+
+          if (resolution.success && resolution.action !== 'error') {
+            const result = await executeAction(resolution)
+            const assistantMessage: ChatMessage = {
+              id: `assistant-${Date.now()}`,
+              role: 'assistant',
+              content: result?.message || resolution.message || `Done: ${action} ${itemLabel}`,
+              timestamp: new Date(),
+              isError: false,
+            }
+            addMessage(assistantMessage)
+          } else {
+            const assistantMessage: ChatMessage = {
+              id: `assistant-${Date.now()}`,
+              role: 'assistant',
+              content: resolution.message || `I found "${itemLabel}" in widget ${widgetId} but couldn't complete the action.`,
+              timestamp: new Date(),
+              isError: true,
+            }
+            addMessage(assistantMessage)
+          }
+        } catch (error) {
+          const errorMsg: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: `I found "${itemLabel}" but something went wrong. Try saying "open ${itemLabel}" directly.`,
             timestamp: new Date(),
             isError: true,
           }

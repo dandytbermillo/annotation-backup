@@ -64,7 +64,32 @@ import { handleKnownNounRouting } from '@/lib/chat/known-noun-routing'
 import { callClarificationLLMClient, isLLMFallbackEnabledClient } from '@/lib/chat/clarification-llm-fallback'
 import { handleGroundingSetFallback, buildGroundingContext, checkSoftActiveWindow, isSelectionLike } from '@/lib/chat/grounding-set'
 import type { GroundingCandidate } from '@/lib/chat/grounding-set'
+import { buildTurnSnapshot } from '@/lib/chat/ui-snapshot-builder'
 import { callGroundingLLM, isGroundingLLMEnabled } from '@/lib/chat/grounding-llm-fallback'
+import { getWidgetSnapshot } from '@/lib/widgets/ui-snapshot-registry'
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+/**
+ * Find which list segment an item belongs to in the registry snapshot.
+ * Local helper — not exported.
+ */
+function findSourceSegmentId(widgetId: string | undefined, itemId: string): string | undefined {
+  if (!widgetId) return undefined
+  const snapshot = getWidgetSnapshot(widgetId)
+  if (!snapshot) return undefined
+
+  for (const segment of snapshot.segments) {
+    if (segment.segmentType === 'list') {
+      if (segment.items.some(item => item.itemId === itemId)) {
+        return segment.segmentId
+      }
+    }
+  }
+  return undefined
+}
 
 // =============================================================================
 // Types
@@ -155,6 +180,10 @@ export interface RoutingDispatcherContext {
   incrementLastOptionsShownTurn?: () => void
   /** Save last options shown for soft-active window (called wherever dispatcher creates options) */
   saveLastOptionsShown: (options: import('@/lib/chat/chat-navigation-context').ClarificationOption[], messageId: string) => void
+
+  // --- Widget Registry (Tier 4.5, per widget-registry-implementation-plan.md) ---
+  getVisibleSnapshots: () => import('@/lib/widgets/ui-snapshot-registry').WidgetSnapshot[]
+  getActiveWidgetId: () => string | null
 }
 
 // =============================================================================
@@ -199,6 +228,13 @@ export interface RoutingDispatcherResult {
     candidateId: string
     candidateLabel: string
     actionHint?: string
+  } | {
+    type: 'execute_widget_item'
+    widgetId: string
+    segmentId?: string
+    itemId: string
+    itemLabel: string
+    action: string
   }
 }
 
@@ -1560,6 +1596,22 @@ export async function dispatchRouting(
     const isSoftActive = softActiveOptions !== null && softActiveOptions.length > 0
       && isSelectionLike(ctx.trimmedInput)
 
+    // Build widget registry snapshot (Layer 2 → Tier 4.5)
+    const turnSnapshot = buildTurnSnapshot({})
+
+    // ActiveWidget preference: reorder openWidgets so the active widget's list
+    // comes first. Only affects ordinal binding when no widget is named explicitly
+    // and checkMultiListAmbiguity has already passed.
+    if (turnSnapshot.activeSnapshotWidgetId && turnSnapshot.openWidgets.length > 1) {
+      const activeIdx = turnSnapshot.openWidgets.findIndex(
+        w => w.id === turnSnapshot.activeSnapshotWidgetId
+      )
+      if (activeIdx > 0) {
+        const [active] = turnSnapshot.openWidgets.splice(activeIdx, 1)
+        turnSnapshot.openWidgets.unshift(active)
+      }
+    }
+
     // Build grounding context from existing state
     const groundingCtx = buildGroundingContext({
       // If soft-active, treat as having an active option set
@@ -1570,6 +1622,7 @@ export async function dispatchRouting(
       clarificationSnapshot: ctx.clarificationSnapshot,
       sessionState: ctx.sessionState,
       repairMemory: ctx.repairMemory,
+      openWidgets: turnSnapshot.openWidgets,
     })
 
     // Run grounding-set fallback
@@ -1680,6 +1733,47 @@ export async function dispatchRouting(
             classifierError,
             isFollowUp,
           }
+        }
+      }
+
+      // Widget registry item — not in chat options (expected for registry items).
+      // Return execute_widget_item for sendMessage() to handle.
+      if (groundingResult.selectedCandidate.type === 'widget_option') {
+        const sourceWidget = turnSnapshot.openWidgets.find(w =>
+          w.options.some(opt => opt.id === groundingResult.selectedCandidate!.id)
+        )
+
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'grounding_widget_item_execute',
+          metadata: {
+            candidateId: groundingResult.selectedCandidate.id,
+            candidateLabel: groundingResult.selectedCandidate.label,
+            widgetId: sourceWidget?.id,
+          },
+        })
+
+        return {
+          ...defaultResult,
+          handled: true,
+          handledByTier: 4,
+          tierLabel: 'grounding_widget_item_execute',
+          clarificationCleared,
+          isNewQuestionOrCommandDetected,
+          classifierCalled,
+          classifierResult,
+          classifierTimeout,
+          classifierLatencyMs,
+          classifierError,
+          isFollowUp,
+          groundingAction: {
+            type: 'execute_widget_item',
+            widgetId: sourceWidget?.id || '',
+            segmentId: findSourceSegmentId(sourceWidget?.id, groundingResult.selectedCandidate.id),
+            itemId: groundingResult.selectedCandidate.id,
+            itemLabel: groundingResult.selectedCandidate.label,
+            action: 'open',
+          },
         }
       }
 
@@ -1838,6 +1932,47 @@ export async function dispatchRouting(
                       candidateId: selected.id,
                       candidateLabel: selected.label,
                       actionHint: selected.actionHint,
+                    },
+                  }
+                }
+
+                // Widget registry item selected by LLM
+                if (selected.type === 'widget_option') {
+                  const sourceWidget = turnSnapshot.openWidgets.find(w =>
+                    w.options.some(opt => opt.id === selected.id)
+                  )
+
+                  void debugLog({
+                    component: 'ChatNavigation',
+                    action: 'grounding_llm_widget_item_execute',
+                    metadata: {
+                      candidateId: selected.id,
+                      candidateLabel: selected.label,
+                      widgetId: sourceWidget?.id,
+                      confidence: llmResult.response!.confidence,
+                    },
+                  })
+
+                  return {
+                    ...defaultResult,
+                    handled: true,
+                    handledByTier: 4,
+                    tierLabel: 'grounding_llm_widget_item_execute',
+                    clarificationCleared,
+                    isNewQuestionOrCommandDetected,
+                    classifierCalled,
+                    classifierResult,
+                    classifierTimeout,
+                    classifierLatencyMs,
+                    classifierError,
+                    isFollowUp,
+                    groundingAction: {
+                      type: 'execute_widget_item',
+                      widgetId: sourceWidget?.id || '',
+                      segmentId: findSourceSegmentId(sourceWidget?.id, selected.id),
+                      itemId: selected.id,
+                      itemLabel: selected.label,
+                      action: 'open',
                     },
                   }
                 }

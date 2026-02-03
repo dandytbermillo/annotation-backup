@@ -284,9 +284,9 @@ When the user mentions a widget by name (e.g., "first option in recent widget"):
 1. The grounding-set's existing logic at lines 606-620 checks if input mentions a widget label
 2. If matched to exactly one widget → resolve within that widget's list via `resolveWidgetSelection`
 3. If matched to zero widgets → fall through to Tier 5
-4. If input is selection-like but no widget named and **activeWidgetId has a visible list**, prefer that list.
-5. Else if only one widget has a list → auto-resolve against that single list.
-6. Else if multiple widgets have lists → `checkMultiListAmbiguity` asks "which list?"
+4. If input is selection-like but no widget named and **multiple widgets have lists**, `checkMultiListAmbiguity` asks "which list?"
+5. Else if input is selection-like and **activeWidgetId has a visible list**, prefer that list.
+6. Else if only one widget has a list → auto-resolve against that single list.
 
 ---
 
@@ -308,6 +308,10 @@ Each widget that exposes selectable items registers a snapshot alongside its exi
   - Context segment: summary from existing `upsertWidgetState`
 - On unmount: `unregisterWidgetSnapshot("w_recent_widget")`
 
+### QuickLinksWidget (optional)
+- If this widget exposes a list, register a snapshot using the same pattern.
+- Add as needed (not required for initial phase).
+
 ### QuickLinksWidget (`components/dashboard/widgets/QuickLinksWidget.tsx`)
 - Register snapshot with link items as list segment
 - On unmount: unregister
@@ -327,7 +331,7 @@ Each widget that exposes selectable items registers a snapshot alongside its exi
 | `lib/widgets/ui-snapshot-registry.ts` | 1 | Ephemeral widget snapshot store |
 | `lib/chat/ui-snapshot-builder.ts` | 2 | Assembles per-turn snapshot for routing |
 
-### Modified Files (6)
+### Modified Files (7)
 
 | File | Layer | Changes |
 |------|-------|---------|
@@ -335,6 +339,7 @@ Each widget that exposes selectable items registers a snapshot alongside its exi
 | `lib/chat/chat-routing.ts` | 3 | Wire saveLastOptionsShown at option-creation sites, guard bare_ordinal_no_context |
 | `lib/chat/known-noun-routing.ts` | 3 | Wire saveLastOptionsShown at option-creation sites |
 | `components/chat/chat-navigation-panel.tsx` | 3 | Pass clearLastOptionsShown + snapshot getters to dispatcher |
+| `components/dashboard/DashboardView.tsx` | Reporter | Set activeWidgetId on drawer open/close |
 | `components/dashboard/panels/RecentPanel.tsx` | Reporter | Register snapshot with list segment |
 | `components/dashboard/widgets/RecentWidget.tsx` | Reporter | Register snapshot with list segment |
 
@@ -357,7 +362,7 @@ Phase 1 (parallel):
 
 Phase 2 (depends on Step 1):
   Step 3: Create ui-snapshot-builder.ts (Layer 2)
-  Step 4: Widget reporters register snapshots (RecentPanel, RecentWidget, QuickLinks)
+  Step 4: Widget reporters register snapshots (RecentPanel, RecentWidget, QuickLinks — optional)
 
 Phase 3 (depends on Phase 2):
   Step 5: Integrate builder into dispatcher at Tier 4.5 (Layer 3a)

@@ -13,6 +13,7 @@ import { BaseDashboardPanel } from './BaseDashboardPanel'
 import { panelTypeRegistry } from '@/lib/dashboard/panel-registry'
 import type { BasePanelProps, PanelConfig } from '@/lib/dashboard/panel-registry'
 import { cn } from '@/lib/utils'
+import { registerWidgetSnapshot, unregisterWidgetSnapshot } from '@/lib/widgets/ui-snapshot-registry'
 import { setActiveWorkspaceContext } from '@/lib/note-workspaces/state'
 import { useChatNavigationContext } from '@/lib/chat/chat-navigation-context'
 
@@ -82,6 +83,41 @@ export function RecentPanel({ panel, onClose, onTitleChange, onNavigate, onDelet
   useEffect(() => {
     fetchRecentWorkspaces()
   }, [limit])
+
+  // Widget UI Snapshot: Register structured snapshot for routing (Layer 1)
+  useEffect(() => {
+    if (isLoading) return
+
+    registerWidgetSnapshot({
+      _version: 1,
+      widgetId: 'w_recent',
+      title: 'Recent',
+      isVisible: true,
+      segments: [
+        {
+          segmentId: 'w_recent:list',
+          segmentType: 'list',
+          listLabel: 'Recent Workspaces',
+          badgesEnabled: false,
+          visibleItemRange: { start: 0, end: workspaces.length },
+          items: workspaces.map(ws => ({
+            itemId: ws.id,
+            label: ws.name,
+            actions: ['open'],
+          })),
+        },
+        {
+          segmentId: 'w_recent:context',
+          segmentType: 'context',
+          summary: `Shows ${workspaces.length} recently accessed workspaces`,
+          currentView: 'list',
+        },
+      ],
+      registeredAt: Date.now(),
+    })
+
+    return () => { unregisterWidgetSnapshot('w_recent') }
+  }, [isLoading, workspaces])
 
   const handleWorkspaceClick = (workspace: RecentWorkspace) => {
     setActiveWorkspaceContext(workspace.id)
