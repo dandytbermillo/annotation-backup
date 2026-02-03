@@ -96,6 +96,17 @@ export function RecentWidget({
     return name.charAt(0).toUpperCase()
   }
 
+  /**
+   * Get display name for a workspace.
+   * If the workspace is "Dashboard", use the entry name instead (more descriptive).
+   */
+  const getDisplayName = (workspace: RecentWorkspace): string => {
+    if (workspace.name === 'Dashboard' && workspace.entryName) {
+      return workspace.entryName
+    }
+    return workspace.name
+  }
+
   // Widget Chat State: Report internal state for LLM context
   useEffect(() => {
     // Only report once loaded (avoid reporting loading state)
@@ -134,7 +145,7 @@ export function RecentWidget({
           visibleItemRange: { start: 0, end: Math.min(workspaces.length, WIDGET_ITEM_LIMIT) },
           items: workspaces.slice(0, WIDGET_ITEM_LIMIT).map(ws => ({
             itemId: ws.id,
-            label: ws.name,
+            label: getDisplayName(ws),
             actions: ['open'],
           })),
         },
@@ -178,9 +189,9 @@ export function RecentWidget({
               {workspaces.slice(0, WIDGET_ITEM_LIMIT).map((workspace) => (
                 <WidgetListItemGradient
                   key={workspace.id}
-                  letter={getInitial(workspace.name)}
+                  letter={getInitial(getDisplayName(workspace))}
                 >
-                  {workspace.name}
+                  {getDisplayName(workspace)}
                 </WidgetListItemGradient>
               ))}
             </WidgetList>

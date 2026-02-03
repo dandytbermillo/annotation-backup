@@ -102,7 +102,7 @@ export function RecentPanel({ panel, onClose, onTitleChange, onNavigate, onDelet
           visibleItemRange: { start: 0, end: workspaces.length },
           items: workspaces.map(ws => ({
             itemId: ws.id,
-            label: ws.name,
+            label: getDisplayName(ws),
             actions: ['open'],
           })),
         },
@@ -124,6 +124,17 @@ export function RecentPanel({ panel, onClose, onTitleChange, onNavigate, onDelet
     if (onNavigate && workspace.entryId) {
       onNavigate(workspace.entryId, workspace.id)
     }
+  }
+
+  /**
+   * Get display name for a workspace.
+   * If the workspace is "Dashboard", use the entry name instead (more descriptive).
+   */
+  const getDisplayName = (workspace: RecentWorkspace): string => {
+    if (workspace.name === 'Dashboard' && workspace.entryName) {
+      return workspace.entryName
+    }
+    return workspace.name
   }
 
   const formatRelativeTime = (dateString: string): string => {
@@ -245,9 +256,10 @@ export function RecentPanel({ panel, onClose, onTitleChange, onNavigate, onDelet
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="truncate" style={{ fontSize: 13, fontWeight: 500, color: '#f0f0f0' }}>
-                    {workspace.name}
+                    {getDisplayName(workspace)}
                   </div>
-                  {workspace.entryName && (
+                  {/* Show entry name as subtitle only for non-Dashboard workspaces */}
+                  {workspace.name !== 'Dashboard' && workspace.entryName && (
                     <div className="truncate" style={{ fontSize: 11, color: '#5c6070' }}>
                       {workspace.entryName}
                     </div>

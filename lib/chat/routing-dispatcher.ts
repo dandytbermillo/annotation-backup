@@ -2102,6 +2102,56 @@ export async function dispatchRouting(
   }
 
   // =========================================================================
+  // TIER 4.6 — Widget Context Questions
+  //
+  // Per widget-ui-snapshot-plan.md: When user asks about "this widget" and
+  // widget context segments exist, skip doc retrieval and let the API handle
+  // it with widgetContextSegments in the payload.
+  //
+  // Patterns: "what does this widget mean?", "what is this widget?",
+  //           "explain this widget", "tell me about this widget"
+  // =========================================================================
+  const widgetContextQuestionPattern = /\b(this|the)\s+(widget|panel)\b/i
+  const isWidgetContextQuestion = widgetContextQuestionPattern.test(ctx.trimmedInput)
+
+  if (isWidgetContextQuestion) {
+    // Check if we have visible widget snapshots with context segments
+    const visibleSnapshots = ctx.getVisibleSnapshots?.() ?? []
+    const hasWidgetContext = visibleSnapshots.some(snap =>
+      snap.segments.some(seg => seg.segmentType === 'context')
+    )
+
+    if (hasWidgetContext) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'tier_4_6_widget_context_question',
+        metadata: {
+          input: ctx.trimmedInput,
+          snapshotCount: visibleSnapshots.length,
+          reason: 'skip_docs_use_widget_context',
+        },
+      })
+
+      // Return handled: false so it falls through to the API call,
+      // where widgetContextSegments will be included in the payload
+      return {
+        ...defaultResult,
+        handled: false,
+        handledByTier: undefined,
+        tierLabel: 'widget_context_passthrough',
+        clarificationCleared,
+        isNewQuestionOrCommandDetected,
+        classifierCalled,
+        classifierResult,
+        classifierTimeout,
+        classifierLatencyMs,
+        classifierError,
+        isFollowUp,
+      }
+    }
+  }
+
+  // =========================================================================
   // TIER 5 — Docs / Informational Routing
   //
   // Only reached when all higher tiers declined. Routes doc-style queries

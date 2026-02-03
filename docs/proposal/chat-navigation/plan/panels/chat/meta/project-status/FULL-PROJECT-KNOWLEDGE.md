@@ -2,7 +2,7 @@
 
 **Purpose:** This document captures the complete understanding of the project so that any future session can immediately get up to speed without re-reading dozens of files. It covers architecture, the chat navigation system we are actively working on, the clarification/disambiguation subsystem in detail, every fix applied, and the current state of work.
 
-**Last Updated:** 2026-02-02
+**Last Updated:** 2026-02-03
 
 ---
 
@@ -156,6 +156,45 @@ The chat navigation panel is a natural-language interface where users can:
 3. **Disambiguate** → when multiple results match, shows clarification pills
 4. **Navigate cross-corpus** → docs vs notes disambiguation
 5. **Resume interrupted flows** → return to previous clarification lists
+
+### Entries, Workspaces, and Dashboard Semantics (Recent Widget)
+The **Recent** widget can contain both **workspaces** and **entries**.
+
+Key rules:
+- Each **entry** contains exactly **one dashboard** and **one or more workspaces**.
+- Entries can be referenced inside other entries (cross‑entry links).
+- The **dashboard itself does not have its own name**. If it appears in lists, it should inherit the **entry title**.
+
+Practical implications for widget snapshots and labels:
+- Prefer listing **Entry** items by the entry title (user‑renamed name).
+- Prefer listing **Workspace** items by the workspace name.
+- Do **not** list a separate “Dashboard” item unless it is a distinct navigation target (different from opening the entry itself).
+- If you need to signal dashboard view, put it in the **item description** (e.g., `"Entry dashboard view"`), not the label.
+
+Suggested item description templates:
+- `Workspace · <workspace name>` (type: workspace)
+- `Entry · <entry title>` (type: entry)
+- `Entry · <entry title> (dashboard view)` if the UI treats dashboard as a distinct destination
+
+### Links Panel Semantics (Links as a Dictionary)
+Links panels can contain a **mixed list of targets**:
+- **Entry links** (open another entry/dashboard)
+- **Note links** (open a note)
+- **External URLs** (open a website)
+
+User‑provided descriptions act like **dictionary definitions** for each link:
+- **Word** = the link label
+- **Definition** = the description the user provides (entry/note/url context)
+
+This means link items should carry:
+- `itemType`: `entry | note | url`
+- `label`: the word/phrase shown in the UI
+- `description`: the user’s definition/meaning of the link target
+
+Recommended description templates:
+- `Entry · <entry title>` (type: entry)
+- `Note · <note title>` (type: note)
+- `Website · <domain or title>` (type: url)
 
 ### The Problem We Solve
 
