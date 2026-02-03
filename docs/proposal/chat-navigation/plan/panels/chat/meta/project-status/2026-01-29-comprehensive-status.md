@@ -1,6 +1,6 @@
 # Chat Navigation — Comprehensive Project Status
 
-**Date:** 2026-02-01
+**Date:** 2026-02-02
 **Scope:** Full status of chat navigation subsystem — plans, implementations, fixes, and current state.
 
 ---
@@ -48,6 +48,9 @@ Panel Command Routing
 Fallback & Grounding
 ├── grounding-set-fallback-plan.md                ← General fallback (lists + non-list grounding sets)
 └── grounding-set-fallback-plan_checklist_plan.md ← Implementation checklist
+Widget & UI Snapshot
+├── widget-ui-snapshot-plan.md                    ← UI snapshot data contract (list + context segments)
+└── widget-registry-implementation-plan.md        ← Widget registry architecture (in-memory, 3-layer)
 Suggestion Routing
 └── suggestion-routing-unification-plan.md        ← Suggestion reject/affirm unified in dispatcher
 ```
@@ -98,10 +101,13 @@ Suggestion Routing
 | Routing order priority | **Implemented** (dispatcher Tier order + guards) |
 | Suggestion routing unification | **Implemented** (Tier S in dispatcher) |
 | Grounding-set fallback | **Implemented** (Tier 4.5 between known‑noun and docs) |
+| Panel D/E soft-active selection routing | **Fixed** (Tier 3a label matching + verb-prefix stripping) |
+| Widget UI Snapshot Plan | **Spec complete** (routing prereqs done; registry Phase 2 not started) |
+| Widget Registry Implementation Plan | **Spec complete** (in-memory ephemeral registry architecture defined) |
 
 ---
 
-## 4. Current Session Fixes (2026-01-31 → 2026-02-01)
+## 4. Current Session Fixes (2026-01-31 → 2026-02-02)
 
 ### 2026-01-31 Updates (Routing Spine + Known‑Noun + Suggestion Unification)
 
@@ -196,6 +202,15 @@ if (isLLMFallbackEnabledClient() && !isRepairPhrase(trimmedInput) && !isOrdinalI
   - “put it/them/those back”
 - **LLM guard:** Ordinals now skip return‑cue LLM calls to avoid rate limiting.
 - **Failure recovery:** On LLM timeout/error, the system shows a confirm prompt instead of routing away.
+
+### 2026-02-02 Updates (Panel D/E Routing Fix + Widget Registry Plan)
+
+- **Panel D/E soft-active selection routing fixed:** "panel e" (and "panel d") now resolves correctly after intervening explicit commands that clear `activeOptionSetId`. Two fixes applied:
+  - **Tier 3a label/shorthand matching:** Added `findExactOptionMatch()` to the Tier 3a message-derived fallback block in `routing-dispatcher.ts`. Previously, only `isSelectionOnly()` (ordinals) was checked; shorthand like "panel e" was missed.
+  - **Verb-prefix stripping in deterministic resolver:** Added verb-prefix stripping (`open|show|view|go to|launch|list|find`, optionally preceded by `pls|please`) in `resolveUniqueDeterministic()` in `grounding-set.ts`. "open panel e" → "panel e" → deterministic token-subset match against "Links Panel E".
+- **Widget UI Snapshot Plan finalized:** `widget-ui-snapshot-plan.md` defines the data contract (list + context segments, selection memory, freshness guard). Routing prereqs are now implemented; widget registry Phase 2 not started.
+- **Widget Registry Implementation Plan created:** `widget-registry-implementation-plan.md` defines the 3-layer architecture: Layer 1 (ephemeral in-memory store), Layer 2 (per-turn snapshot builder), Layer 3 (routing/grounding integration). Key design: in-memory only (not database), session-scoped, separate from `widget-state-store.ts`.
+- **Tier 3 / Tier 4.5 boundary rule established:** Chat-created options (pendingOptions, activeOptionSetId) handled at Tier 3; widget-registered lists handled ONLY at Tier 4.5. The two tiers never share candidate lists.
 
 ### Draft / Pending Plans
 
@@ -393,7 +408,13 @@ From `clarification-qa-checklist.md` (13 tests, A1-E13):
 | 2026-01-20 | `reports/2026-01-20-prereq4-cross-corpus-ambiguity-implementation-report.md` | Prereq 4 |
 | 2026-01-20 | `reports/2026-01-20-prereq5-safety-fallback-implementation-report.md` | Prereq 5 |
 | 2026-01-25 | `clarification-offmenu-handling-implementation-report.md` | Off-menu handling |
-| 2026-01-29 | `reports/2026-01-29-return-cue-fix-implementation-report.md` | **Return-cue fix (this session)** |
+| 2026-01-29 | `reports/2026-01-29-return-cue-fix-implementation-report.md` | Return-cue fix |
+| 2026-01-30 | `reports/2026-01-30-routing-order-priority-plan-implementation.md` | Routing priority |
+| 2026-01-30 | `reports/2026-01-30-affirmation-shortcut-implementation.md` | Affirmation shortcut |
+| 2026-01-30 | `reports/2026-01-30-suggestion-routing-unification-report.md` | Suggestion unification |
+| 2026-01-31 | `reports/2026-01-31-tier2-noun-interrupt-and-post-action-gate.md` | Noun interrupt + post-action gate |
+| 2026-02-01 | `reports/2026-02-01-grounding-set-fallback-implementation.md` | Grounding-set fallback |
+| 2026-02-02 | `reports/2026-02-02-panel-de-routing-fix.md` | **Panel D/E routing fix (latest)** |
 
 ---
 
@@ -490,11 +511,20 @@ Also added `input` to the existing `sendMessage_error` log.
 
 ## 14. Next Steps
 
-- [ ] Reproduce the red error with new `api_response_not_ok` debug log to confirm HTTP 504
+### Immediate
+- [ ] Run `npm run type-check` to verify no type errors from 2026-02-02 fixes
+- [ ] Test verb-prefix stripping fix for deterministic resolution (verify debug logs show deterministic match, not LLM fallback)
+- [ ] Implement Widget Registry Phase 2: `lib/widgets/ui-snapshot-registry.ts` (Layer 1) + `lib/chat/ui-snapshot-builder.ts` (Layer 2)
+- [ ] Wire widget reporters (RecentPanel, QuickLinksWidget) into registry
+- [ ] Add `execute_widget_item` groundingAction in Tier 4.5 for widget registry items
+
+### Ongoing
+- [ ] Reproduce the red error with `api_response_not_ok` debug log to confirm HTTP 504
 - [ ] Implement action-verb stopword fix in `panel-command-matcher.ts` (per plan)
 - [ ] Investigate Gemini timeout issue (API key quota, model latency, or network)
 - [ ] Run remaining QA checklist tests (B7, B9, D11, E13)
+- [ ] Add unit tests for `resolveUniqueDeterministic` verb stripping + `findExactOptionMatch` in Tier 3a
+- [ ] Standardize soft-active turn decrement policy (TTL increment consistency)
 - [ ] Consider refactoring restore logic into shared helper
 - [ ] Continue response-fit classifier iteration
 - [ ] Begin Unified Retrieval Phase 2 adoption after response-fit stabilizes
-- [ ] Commit current changes

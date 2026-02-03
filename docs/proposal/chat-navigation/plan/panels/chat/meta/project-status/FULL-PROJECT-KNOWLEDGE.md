@@ -2,7 +2,7 @@
 
 **Purpose:** This document captures the complete understanding of the project so that any future session can immediately get up to speed without re-reading dozens of files. It covers architecture, the chat navigation system we are actively working on, the clarification/disambiguation subsystem in detail, every fix applied, and the current state of work.
 
-**Last Updated:** 2026-02-01
+**Last Updated:** 2026-02-02
 
 ---
 
@@ -18,7 +18,7 @@
 8. [The Routing Flow (Step by Step)](#8-the-routing-flow)
 9. [The Snapshot Lifecycle](#9-the-snapshot-lifecycle)
 10. [Three-Tier Return-Cue Detection](#10-three-tier-return-cue-detection)
-11. [All Fixes Applied (2026-01-31 → 2026-02-01)](#11-all-fixes-applied)
+11. [All Fixes Applied (2026-01-31 → 2026-02-02)](#11-all-fixes-applied)
 12. [Debug Logging & Telemetry](#12-debug-logging--telemetry)
 13. [Feature Flags](#13-feature-flags)
 14. [QA Checklist](#14-qa-checklist)
@@ -203,6 +203,8 @@ suggestion-routing-unification-plan.md       ← Suggestion reject/affirm unifie
 grounding-set-fallback-plan.md               ← General fallback (lists + non-list grounding sets)
 grounding-set-fallback-plan_checklist_plan.md← Implementation checklist
 panel-command-matcher-stopword-plan.md       ← Action‑verb stopword gate (await red‑error debug log)
+widget-ui-snapshot-plan.md                   ← UI snapshot data contract (list + context segments)
+widget-registry-implementation-plan.md       ← Widget registry architecture (in-memory, 3-layer)
 ```
 
 ### Supporting Documents
@@ -418,9 +420,10 @@ portion of the unified routing chain.
 23. **Escalation messaging** — attempt-based prompts with exit pills
 
 ### Phase 7: Deterministic Post‑Clarification Routing
-24. **Tier 4 known‑noun routing** — noun‑only commands execute (allowlist + near‑match)
-25. **Tier 4.5 grounding‑set fallback** — build grounding sets → multi‑list guard → deterministic unique match → constrained LLM → grounded clarifier
-26. **Tier 5 doc retrieval** — informational queries and generic fallback
+24. **Tier 3a label/shorthand matching** — `findExactOptionMatch()` catches shorthand like "panel e" against message-derived options when `isSelectionOnly()` misses (ordinals only)
+25. **Tier 4 known‑noun routing** — noun‑only commands execute (allowlist + near‑match)
+26. **Tier 4.5 grounding‑set fallback** — build grounding sets → multi‑list guard → deterministic unique match (with verb-prefix stripping) → constrained LLM → grounded clarifier
+27. **Tier 5 doc retrieval** — informational queries and generic fallback
 
 ---
 
@@ -528,7 +531,7 @@ If LLM fails (timeout, error, or 429 rate limit):
 
 ---
 
-## 11. All Fixes Applied
+## 11. All Fixes Applied (2026-01-29 → 2026-02-02)
 
 ### Session: 2026-01-31
 
@@ -626,6 +629,31 @@ If LLM fails (timeout, error, or 429 rate limit):
 - Added `api_response_not_ok` debug log at the `!response.ok` throw point, capturing: input, HTTP status, statusText, response body (first 500 chars).
 - Enhanced existing `sendMessage_error` log to also include the input.
 - Purpose: diagnose the "Something went wrong" red error for "open links panel" after stop.
+
+### Session: 2026-02-02
+
+#### Fix 18: Tier 3a label/shorthand matching in routing-dispatcher
+**File:** `lib/chat/routing-dispatcher.ts` (after line 1288)
+- `isSelectionOnly()` only matches ordinals ("first", "2", "d") but NOT shorthand like "panel e" or "links panel d".
+- Added `findExactOptionMatch()` call as a secondary matcher in the Tier 3a message-derived fallback block.
+- When `activeOptionSetId` is still set and `isSelectionOnly` misses, `findExactOptionMatch` catches shorthand via label contains/startsWith/exact matching.
+- Debug log action: `label_match_from_message` (tier 3a).
+
+#### Fix 19: Verb-prefix stripping in deterministic resolver
+**File:** `lib/chat/grounding-set.ts` (line 330–337, `resolveUniqueDeterministic()`)
+- Token-subset matching failed for verb-prefixed inputs: "open panel e" tokenized to `["open", "panel", "e"]` but "open" isn't in candidate label "Links Panel E" → no match → fell to LLM.
+- Added verb-prefix stripping before tokenization: `open|show|view|go to|launch|list|find` (optionally preceded by `pls|please`).
+- "open panel e" → strip "open " → "panel e" → tokens `["panel", "e"]` → subset of "Links Panel E" tokens → deterministic match.
+
+#### Widget Registry Implementation Plan created
+**File:** `docs/proposal/chat-navigation/plan/panels/chat/meta/widget-registry-implementation-plan.md`
+- Companion plan to `widget-ui-snapshot-plan.md` defining the 3-layer architecture:
+  - Layer 1: `lib/widgets/ui-snapshot-registry.ts` — ephemeral in-memory Map store (session-scoped, NOT database)
+  - Layer 2: `lib/chat/ui-snapshot-builder.ts` — per-turn snapshot assembler
+  - Layer 3: Routing/grounding integration at Tier 4.5
+- Tier 3 / Tier 4.5 boundary rule: chat-created options at Tier 3, widget-registered lists ONLY at Tier 4.5
+- Registration lifecycle rules, `_version: 1` contract, validation limits
+- Status: **Spec complete, implementation not started**
 
 ### Open Investigation: "open links panel" red error after stop
 
@@ -770,7 +798,10 @@ The `clarification-qa-checklist.md` defines **13 manual tests** (A1-E13) that mu
 | `lib/chat/clarification-llm-fallback.ts` | ~530 | LLM fallback wrappers (selection + return-cue) |
 | `lib/chat/query-patterns.ts` | ~400 | Pattern utilities (affirmation, rejection, meta, fuzzy) |
 | `lib/chat/known-noun-routing.ts` | ~260 | Known‑noun allowlist routing + near‑match |
+| `lib/chat/grounding-set.ts` | ~700 | Grounding-set fallback (deterministic resolver, selection-like detector, verb stripping) |
+| `lib/chat/grounding-llm-fallback.ts` | ~200 | Constrained LLM fallback for grounding set |
 | `lib/chat/routing-telemetry.ts` | ~200 | Telemetry event definitions |
+| `lib/widgets/widget-state-store.ts` | ~150 | Widget state for LLM context (separate from registry) |
 | `components/chat/chat-navigation-panel.tsx` | ~600 | UI orchestrator |
 
 ### API Routes
@@ -794,6 +825,9 @@ The `clarification-qa-checklist.md` defines **13 manual tests** (A1-E13) that mu
 | `routing-order-priority-plan.md` | Unified routing priority chain |
 | `known-noun-command-routing-plan.md` | Noun‑only command routing |
 | `suggestion-routing-unification-plan.md` | Suggestion reject/affirm unification |
+| `grounding-set-fallback-plan.md` | General fallback (lists + non-list grounding sets) |
+| `widget-ui-snapshot-plan.md` | UI snapshot data contract (list + context segments) |
+| `widget-registry-implementation-plan.md` | Widget registry architecture (in-memory, 3-layer) |
 
 ---
 
@@ -835,22 +869,29 @@ npx tsc --noEmit
 
 ## 18. What to Do Next
 
-### Immediate (This Feature)
-1. **Reproduce red error with new debug logs** — trigger “open links panel” after stop, check `api_response_not_ok` for HTTP status/body confirmation
-2. **Gate action‑verb stopword fix on logs** — implement only if logs confirm verb commands fall into LLM path (`panel-command-matcher-stopword-plan.md`)
-3. **Implement known‑noun command routing** — allowlist + unknown‑noun fallback (`known-noun-command-routing-plan.md`)
-4. Investigate Gemini timeout issue — Tier 2 calls sometimes time out at 800ms
-5. Run remaining QA tests: B7, B9, D11, E13
-6. Refactor restore logic into shared `restorePausedList()` helper
-7. Commit current changes
+### Immediate
+1. **Run `npm run type-check`** to verify no type errors from 2026-02-02 fixes
+2. **Test verb-prefix stripping** — verify debug logs show deterministic match (not LLM fallback) for "open panel e" and "pls open panel d"
+3. **Widget Registry Phase 2** — create `lib/widgets/ui-snapshot-registry.ts` (Layer 1) + `lib/chat/ui-snapshot-builder.ts` (Layer 2) per `widget-registry-implementation-plan.md`
+4. **Wire widget reporters** (RecentPanel, QuickLinksWidget) into registry
+5. **Add `execute_widget_item` groundingAction** in Tier 4.5 for widget registry items
+
+### Ongoing
+6. Reproduce red error with `api_response_not_ok` debug log (HTTP 504 confirmation)
+7. Gate action‑verb stopword fix on logs (`panel-command-matcher-stopword-plan.md`)
+8. Investigate Gemini timeout issue — Tier 2 calls sometimes time out at 800ms
+9. Run remaining QA tests: B7, B9, D11, E13
+10. Add unit tests for `resolveUniqueDeterministic` verb stripping + `findExactOptionMatch` in Tier 3a
+11. Standardize soft-active turn decrement policy (TTL increment consistency)
+12. Refactor restore logic into shared `restorePausedList()` helper
 
 ### Short Term
-7. Continue response-fit classifier iteration
-8. Address any new edge cases discovered during QA
+13. Continue response-fit classifier iteration
+14. Address any new edge cases discovered during QA
 
 ### Medium Term
-7. Begin Unified Retrieval Phase 2 adoption after response-fit stabilizes
-8. Consider Embeddings (Phase 3) if keyword retrieval success rate drops
+15. Begin Unified Retrieval Phase 2 adoption after response-fit stabilizes
+16. Consider Embeddings (Phase 3) if keyword retrieval success rate drops
 
 ---
 
@@ -876,4 +917,10 @@ All reports live under `docs/proposal/chat-navigation/plan/panels/chat/meta/repo
 | 2026-01-20 | prereq4-cross-corpus-ambiguity | Prereq 4 |
 | 2026-01-20 | prereq5-safety-fallback | Prereq 5 |
 | 2026-01-25 | clarification-offmenu-handling | Off-menu handling |
-| 2026-01-29 | return-cue-fix | Return-cue fix (latest) |
+| 2026-01-29 | return-cue-fix | Return-cue fix |
+| 2026-01-30 | routing-order-priority-plan-implementation | Routing priority |
+| 2026-01-30 | affirmation-shortcut-implementation | Affirmation shortcut |
+| 2026-01-30 | suggestion-routing-unification-report | Suggestion unification |
+| 2026-01-31 | tier2-noun-interrupt-and-post-action-gate | Noun interrupt + post-action gate |
+| 2026-02-01 | grounding-set-fallback-implementation | Grounding-set fallback |
+| 2026-02-02 | panel-de-routing-fix | Panel D/E routing fix (latest) |

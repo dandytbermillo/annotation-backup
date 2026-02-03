@@ -163,6 +163,38 @@ If the user asks about an item (e.g., "what does Panel E mean?"):
 1. Widget has only a context segment (no list).
 2. User: "summarize this widget" → responds from context.
 
+## Implementation Status (as of 2026-02-02)
+
+### Routing Fixes (Prerequisite — DONE)
+Before implementing the full widget registry, the routing/selection memory bugs that caused "panel e" to fail after intervening commands were fixed:
+
+| Fix | File | Status |
+|-----|------|--------|
+| Tier 3a label/shorthand matching | `lib/chat/routing-dispatcher.ts` | **Implemented** (commit `2416f9c0`) |
+| Verb-prefix stripping in deterministic resolver | `lib/chat/grounding-set.ts` | **Implemented** (commit `2416f9c0`) |
+| Soft-active window (`lastOptionsShown` 2-turn TTL) | `lib/chat/chat-navigation-context.tsx` | **Implemented** (prior session) |
+| `hasSoftActiveSelectionLike` guard (Tier 4 bypass) | `lib/chat/known-noun-routing.ts` | **Implemented** (prior session) |
+| `saveLastOptionsShown` wiring at option-creation sites | `lib/chat/chat-routing.ts` | **Implemented** (prior session) |
+
+### Widget Registry (Phase 2 — NOT STARTED)
+The full widget registry architecture is planned in `widget-registry-implementation-plan.md`:
+- Layer 1: `lib/widgets/ui-snapshot-registry.ts` — ephemeral in-memory store (not created)
+- Layer 2: `lib/chat/ui-snapshot-builder.ts` — per-turn snapshot assembler (not created)
+- Layer 3: Routing integration at Tier 4.5 — wire snapshot builder into dispatcher (not done)
+- Widget reporters (RecentPanel, QuickLinksWidget, etc.) — not wired
+
+### Schema Elements vs Implementation
+
+| Schema Element | Plan Section | Implemented? |
+|---|---|---|
+| `selectionMemory.activeOptionSetId` | §Routing Rules | Yes — `activeOptionSetId` in `chat-navigation-context.tsx` |
+| `selectionMemory.lastOptionsShown` | §Soft-Active | Yes — `LastOptionsShown` interface + 2-turn TTL |
+| `widgets[].segments[].segmentType: "list"` | §Core Principle | Not yet — requires widget registry |
+| `widgets[].segments[].segmentType: "context"` | §Core Principle | Not yet — requires widget registry |
+| Selection-like detector | §Selection-Like Detector | Partial — `isSelectionLike()` in `grounding-set.ts` covers ordinals/shorthand/badge; verb-prefix stripping added |
+| Freshness guard (`uiSnapshotId`, `capturedAtMs`) | §Freshness Guard | Not yet — requires snapshot builder |
+| Multi-list ambiguity guard | §Rule C | Yes — in `handleGroundingSetFallback()` |
+
 ## Notes
 - This plan is list-agnostic: lists are just one segment type.
 - Do not merge openWidgets and widgetStates; instead, map both into widget segments.

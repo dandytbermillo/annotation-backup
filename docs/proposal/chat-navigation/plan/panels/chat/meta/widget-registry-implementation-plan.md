@@ -8,11 +8,11 @@
 
 ## Problem Summary
 
-The snapshot plan requires every visible widget to expose a structured snapshot with typed segments (list + context). Currently:
+The snapshot plan requires every visible widget to expose a structured snapshot with typed segments (list + context). Previously:
 
 1. `widget-state-store.ts` reports only aggregate summaries (no individual items).
 2. `OpenWidgetState` in `grounding-set.ts` expects widget list items but always receives `[]`.
-3. `saveLastOptionsShown` is only called at 3 post-dispatch API response sites — never for dispatcher-created options (Tier 2c, meta-explain, known-noun).
+3. `saveLastOptionsShown` was only called at 3 post-dispatch API response sites — it did not cover dispatcher-created options (Tier 2c, meta-explain, known-noun). **Now wired at all option-creation sites.**
 4. A previous attempt to wire widget items directly into `chat-navigation-context.tsx` failed because widget-registered items interfered with chat-created options (`pendingOptions` / `activeOptionSetId`), causing the wrong option to execute in the active widget list.
 
 ---
@@ -211,11 +211,11 @@ buildTurnSnapshot(params):
 getWidgetListItems(widgetId, segmentId?):
   Input: widget ID, optional segment ID for multi-list widgets
   Output: ClarificationOption[]           — mapped from SnapshotListItem
-  Maps: itemId → id, label → label, "widget_item" → type
+  Maps: itemId → id, label → label, "widget_option" → type
 ```
 
 ### Freshness Guard
-- Each `WidgetSnapshot.registeredAt` is checked against a threshold (e.g., 30 seconds).
+- Each `WidgetSnapshot.registeredAt` is checked against a threshold (configurable).
 - Stale snapshots (widget mounted but hasn't re-registered) are excluded from `openWidgets`.
 - This prevents binding to stale UI after rapid widget changes.
 
@@ -235,7 +235,11 @@ The pull model rebuilds the snapshot fresh each turn from the registry. There is
 
 **Tier 2a (Explicit Command Bypass) — state clearing:**
 When an explicit verb command is detected (e.g., "open recent widget"):
-- Call `clearLastOptionsShown()` — prevents stale soft-active options from previous disambiguations
+- **Do NOT** clear `lastOptionsShown` on explicit commands.
+- Only clear `lastOptionsShown` when:
+  - user confirms stop/cancel, or
+  - a new options list is shown (replaces it), or
+  - TTL expires naturally.
 - Clear non-paused `clarificationSnapshot` — prevents stale post-action window
 - Do NOT clear paused snapshots (they represent interrupted flows the user may return to)
 
@@ -249,11 +253,11 @@ When an explicit verb command is detected (e.g., "open recent widget"):
    - isSelectionLike() for detection
 ```
 
-### 3b. saveLastOptionsShown Wiring
+### 3b. saveLastOptionsShown Wiring (Completed)
 
-**Problem:** `saveLastOptionsShown` is only called at 3 post-dispatch API response sites. Dispatcher-created options (Tier 2c panel disambiguation, meta-explain, known-noun) never save, so the soft-active window is dead code for those paths.
+**Problem (resolved):** `saveLastOptionsShown` was only called at 3 post-dispatch API response sites. Dispatcher-created options (Tier 2c panel disambiguation, meta-explain, known-noun) did not save, so the soft-active window was dead code for those paths.
 
-**Fix:** Call `saveLastOptionsShown` at every site where `setPendingOptions` is called with non-empty options:
+**Fix (completed):** Call `saveLastOptionsShown` at every site where `setPendingOptions` is called with non-empty options:
 
 | File | Location | Description |
 |------|----------|-------------|
@@ -280,8 +284,9 @@ When the user mentions a widget by name (e.g., "first option in recent widget"):
 1. The grounding-set's existing logic at lines 606-620 checks if input mentions a widget label
 2. If matched to exactly one widget → resolve within that widget's list via `resolveWidgetSelection`
 3. If matched to zero widgets → fall through to Tier 5
-4. If input is selection-like but no widget named and only one widget has a list → auto-resolve against that single list
-5. If input is selection-like but no widget named and multiple widgets have lists → `checkMultiListAmbiguity` asks "which list?"
+4. If input is selection-like but no widget named and **activeWidgetId has a visible list**, prefer that list.
+5. Else if only one widget has a list → auto-resolve against that single list.
+6. Else if multiple widgets have lists → `checkMultiListAmbiguity` asks "which list?"
 
 ---
 
@@ -326,7 +331,7 @@ Each widget that exposes selectable items registers a snapshot alongside its exi
 
 | File | Layer | Changes |
 |------|-------|---------|
-| `lib/chat/routing-dispatcher.ts` | 3 | Add snapshot getters to context, consume builder at Tier 4.5, clear state at Tier 2a |
+| `lib/chat/routing-dispatcher.ts` | 3 | Add snapshot getters to context, consume builder at Tier 4.5, **do not** clear lastOptionsShown at Tier 2a |
 | `lib/chat/chat-routing.ts` | 3 | Wire saveLastOptionsShown at option-creation sites, guard bare_ordinal_no_context |
 | `lib/chat/known-noun-routing.ts` | 3 | Wire saveLastOptionsShown at option-creation sites |
 | `components/chat/chat-navigation-panel.tsx` | 3 | Pass clearLastOptionsShown + snapshot getters to dispatcher |
@@ -348,19 +353,41 @@ Each widget that exposes selectable items registers a snapshot alongside its exi
 ```
 Phase 1 (parallel):
   Step 1: Create ui-snapshot-registry.ts (Layer 1)
-  Step 3: Wire saveLastOptionsShown into dispatcher + handlers (Layer 3b)
+  Step 2: Wire saveLastOptionsShown into dispatcher + handlers (Layer 3b) **(DONE)**
 
 Phase 2 (depends on Step 1):
-  Step 2: Create ui-snapshot-builder.ts (Layer 2)
+  Step 3: Create ui-snapshot-builder.ts (Layer 2)
   Step 4: Widget reporters register snapshots (RecentPanel, RecentWidget, QuickLinks)
 
 Phase 3 (depends on Phase 2):
   Step 5: Integrate builder into dispatcher at Tier 4.5 (Layer 3a)
   Step 6: Add bare_ordinal_no_context guards (Layer 3c)
-  Step 7: Explicit command state clearing at Tier 2a (Layer 3d)
+  Step 7: Ensure explicit commands **do not** clear lastOptionsShown (Layer 3d)
 
 Phase 4:
   Validation against acceptance tests from widget-ui-snapshot-plan.md
+
+## Acceptance Test Additions
+
+Add test to cover shorthand after unrelated query:
+1. Show disambiguation list (“Links Panel D / E / …”)
+2. User asks unrelated question (e.g., “what is recent?”)
+3. User types shorthand (“panel e”)
+4. Expect: resolves within soft-active window unless stop/cancel or new list replaced it.
+
+## Implementation Status Notes
+
+**Completed:** saveLastOptionsShown wiring at option-creation sites (Tier 2c / meta-explain / known-noun).  
+Remaining work focuses on registry + snapshot builder + widget reporters.
+
+## Widget Item Execution (Tier 4.5)
+
+When grounding resolves a widget list item, execution must be explicit (not via chat pills):
+- Introduce `groundingAction: { type: 'execute_widget_item', widgetId, segmentId, itemId, action }`
+- `sendMessage()` executes this action via widget navigation API or handler
+- This avoids relying on `handleSelectOption()` for widget items
+
+This is required for selection‑like inputs such as “first option in recent widget.”
 ```
 
 ---
