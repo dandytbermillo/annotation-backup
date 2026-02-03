@@ -796,12 +796,43 @@ function resolveOrdinalIndex(normalized: string, optionCount: number): number | 
     .replace(/^(option|panel|item|choice)\s+/i, '')
     .trim()
 
+  // 1. Exact whole-string match
   if (ordinalMap[normalized] !== undefined) return ordinalMap[normalized]
   if (ordinalMap[stripped] !== undefined) return ordinalMap[stripped]
 
   // Try numeric after stripping
   if (/^[1-9]$/.test(stripped)) {
     return parseInt(stripped, 10) - 1
+  }
+
+  // 2. Extract ordinal from within a longer string.
+  //    Handles inputs like "open the first option in the widget" where the
+  //    ordinal is embedded in a command sentence. Matches the FIRST ordinal
+  //    token found via word-boundary search.
+  const embeddedOrdinals: [RegExp, number][] = [
+    [/\bfirst\b|(?<!\d)1st\b/, 0],
+    [/\bsecond\b|(?<!\d)2nd\b/, 1],
+    [/\bthird\b|(?<!\d)3rd\b/, 2],
+    [/\bfourth\b|(?<!\d)4th\b/, 3],
+    [/\bfifth\b|(?<!\d)5th\b/, 4],
+    [/\bsixth\b/, 5],
+    [/\bseventh\b/, 6],
+    [/\beighth\b/, 7],
+    [/\bninth\b/, 8],
+    [/\blast\b/, optionCount - 1],
+  ]
+
+  // Also match "option N" / "item N" / "#N" embedded anywhere
+  const embeddedNumbered = normalized.match(/\b(?:option|item|#)\s*([1-9])\b/)
+  if (embeddedNumbered) {
+    const idx = parseInt(embeddedNumbered[1], 10) - 1
+    if (idx >= 0 && idx < optionCount) return idx
+  }
+
+  for (const [pattern, index] of embeddedOrdinals) {
+    if (pattern.test(normalized) && index >= 0 && index < optionCount) {
+      return index
+    }
   }
 
   return undefined

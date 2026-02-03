@@ -382,8 +382,23 @@ Add test to cover shorthand after unrelated query:
 
 ## Implementation Status Notes
 
-**Completed:** saveLastOptionsShown wiring at option-creation sites (Tier 2c / meta-explain / known-noun).  
-Remaining work focuses on registry + snapshot builder + widget reporters.
+**All steps complete as of 2026-02-02.**
+
+| Step | Description | Status | Commit / Session |
+|------|-------------|--------|-----------------|
+| Step 1 | Create `ui-snapshot-registry.ts` (Layer 1) | **Done** | `e2bd3e3f` |
+| Step 2 | Wire `saveLastOptionsShown` (Layer 3b) | **Done** | Prior session |
+| Step 3 | Create `ui-snapshot-builder.ts` (Layer 2) | **Done** | `e2bd3e3f` |
+| Step 4 | Widget reporters (RecentPanel, RecentWidget, DashboardView) | **Done** | `e2bd3e3f` |
+| Step 5 | Integrate builder into dispatcher at Tier 4.5 | **Done** | `e2bd3e3f` |
+| Step 6 | `bare_ordinal_no_context` guards (Layer 3c) | **Done** | 2026-02-02 session (not yet committed) |
+| Step 7 | Don't clear `lastOptionsShown` at Tier 2a | **Done** | Already correct in `e2bd3e3f` |
+
+**Additional fix (2026-02-02 session):** `resolveOrdinalIndex` in `grounding-set.ts` extended with embedded ordinal extraction to handle ordinals within longer command sentences (e.g., "open the first option in the recent widget").
+
+**End-to-end verified:** "open the first option in the recent widget" → Opened workspace "Sprint 14".
+
+**Report:** `reports/2026-02-02-widget-registry-session-report.md`
 
 ## Widget Item Execution (Tier 4.5)
 

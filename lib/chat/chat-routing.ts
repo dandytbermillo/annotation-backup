@@ -2204,8 +2204,13 @@ export async function handleClarificationIntercept(
   // Per stop-scope-plan acceptance test 3 (§74-76):
   // After stop clears the snapshot, ordinals like "second option" should not
   // silently fall through to doc routing. Ask what list the user means.
+  //
+  // Guards (Step 6 — widget-registry-implementation-plan):
+  //   - Skip if input is a command/question (let it reach Tier 4.5 widget resolution)
+  //   - Skip if input is longer than 4 words (not a bare ordinal)
   // ==========================================================================
-  if (!lastClarification && !clarificationSnapshot) {
+  const bareOrdinalWordCount = trimmedInput.split(/\s+/).length
+  if (!lastClarification && !clarificationSnapshot && !isNewQuestionOrCommandDetected && bareOrdinalWordCount <= 4) {
     const bareOrdinalCheck = isSelectionOnly(trimmedInput, 10, [])
     if (bareOrdinalCheck.isSelection) {
       void debugLog({
