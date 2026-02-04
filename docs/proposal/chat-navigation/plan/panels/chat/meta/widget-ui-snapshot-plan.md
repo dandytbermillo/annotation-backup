@@ -9,6 +9,12 @@ without relying on raw HTML/CSS or fragile heuristics.
 This plan defines the **data contract** that feeds the existing routing spine and the grounding-set fallback.
 It does **not** replace those plans. It supplies a consistent, machine-readable snapshot that enables them.
 
+**Related Plan:** `universal-selection-resolver-plan.md` (selection follow-up routing and chat vs widget context separation)
+
+**Addendum (Selection Resolver Integration):**
+- The universal resolver uses `widgetSelectionContext` with a **selection-like + question-intent** gate.
+- If a widget clarifier shows pills, populate `message.options` for re-show/repair UI, but do **not** write widget options into `pendingOptions`.
+
 ## Scope
 - Applies to widgets/panels that are visible in the UI.
 - Supports mixed widgets (list + context in the same widget).
@@ -167,6 +173,25 @@ This plan supplies the **UI Snapshot contract** to the routing system:
 - The grounding-set fallback consumes list segments as candidates.
 - Context-like inputs should be answered using `context` segments.
 - The selection-like detector is a shared utility (used by both routing and fallback).
+
+## Selection Context (Chat Options Only)
+To avoid re‑introducing mixed list sources, **universal selection registration applies only to chat‑created option lists**
+(panel disambiguation, meta‑explain, known‑noun prompts, re‑show options, etc.).
+
+**Widget lists must NOT write into `pendingOptions` / `activeOptionSetId`.**
+Widget items are handled in Tier‑4.5 and executed via `execute_widget_item`.
+
+Requirements for the universal helper:
+- `registerSelectionContext(...)` accepts `source: 'chat'` and a `messageId`/`optionSetId`.
+- Tier‑3 binds only to the matching `optionSetId` (prevents cross‑list binding).
+- `clearSelectionContext(...)` only on explicit stop/cancel, explicit start‑over, new list registration, or TTL expiry.
+- **Do not clear on explicit commands.**
+
+Additional universal resolver rules:
+- **Precedence:** `chatSelectionContext` wins for selection‑like inputs. Use `widgetSelectionContext` only when chat context is null.
+- **Selection‑like gate:** the universal resolver should only run when input is selection‑like.
+- **Bypass clarification intercept:** if `widgetSelectionContext` is active, skip clarification‑mode handling so follow‑ups route through the universal resolver.
+- **Helper placement:** keep selection helpers in `lib/chat/...` (not only in the component) for reuse across routing paths.
 
 ## Context Answer Source Rule
 If the user asks about an item (e.g., "what does Panel E mean?"):
