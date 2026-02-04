@@ -2244,6 +2244,27 @@ export async function handleClarificationIntercept(
   const hasClarificationContext = lastClarification?.nextAction ||
     (lastClarification?.options && lastClarification.options.length > 0)
 
+  // Guard: If all options are widget_option, skip clarification-mode handling.
+  // Let dispatcher Tier 3a handle it (which supports widget_option → execute_widget_item).
+  // This avoids "Unknown option type" from handleSelectOption which doesn't support widget_option.
+  const allWidgetOptions = lastClarification?.options?.length
+    ? lastClarification.options.every(opt => opt.type === 'widget_option')
+    : false
+
+  if (allWidgetOptions && hasClarificationContext) {
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'clarification_skip_widget_options',
+      metadata: {
+        userInput: trimmedInput,
+        optionCount: lastClarification?.options?.length,
+        reason: 'all_widget_options_defer_to_dispatcher',
+      },
+    })
+    // Return handled: false so dispatcher Tier 3a handles it
+    return { handled: false, clarificationCleared: false, isNewQuestionOrCommandDetected }
+  }
+
   if (!lastSuggestion && hasClarificationContext) {
     void debugLog({
       component: 'ChatNavigation',

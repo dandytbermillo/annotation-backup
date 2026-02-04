@@ -733,6 +733,36 @@ export function handleGroundingSetFallback(
         },
       })
     }
+
+    // Step 3b: Deterministic failed but widget lists exist → trigger LLM fallback
+    // Per widget-ui-snapshot-plan.md §Canonical Resolver Path:
+    //   "If deterministic matching failed/ambiguous AND widget lists are visible
+    //    THEN → Call constrained LLM with candidates from widget lists"
+    // Scope to the active widget first when available to avoid mixing other widget items
+    // into the candidate set (e.g., Links Panel D vs Links Panel E).
+    const widgetCandidates = activeWidgetList?.candidates?.length
+      ? activeWidgetList.candidates
+      : widgetListSets.flatMap(s => s.candidates)
+    if (widgetCandidates.length > 0) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'widget_list_deterministic_failed_llm_fallback',
+        metadata: {
+          input: trimmed,
+          candidateCount: widgetCandidates.length,
+          candidateScope: activeWidgetList?.candidates?.length ? 'active_widget' : 'all_widgets',
+          activeWidgetId: activeWidgetList?.widgetId,
+          activeWidgetLabel: activeWidgetList?.widgetLabel,
+          widgetIds: widgetListSets.map(s => s.widgetId),
+        },
+      })
+
+      return {
+        handled: false,
+        needsLLM: true,
+        llmCandidates: widgetCandidates,
+      }
+    }
   }
 
   // Step 3: Deterministic unique match on first list-type set (selection-like required)

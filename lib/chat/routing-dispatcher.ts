@@ -91,6 +91,31 @@ function findSourceSegmentId(widgetId: string | undefined, itemId: string): stri
   return undefined
 }
 
+/**
+ * Resolve a widget item ID to its widget + segment from visible snapshots.
+ * Used to execute widget_option selections outside Tier 4.5 (e.g., clarifier follow-ups).
+ */
+function resolveWidgetItemFromSnapshots(
+  getVisibleSnapshots: () => import('@/lib/widgets/ui-snapshot-registry').WidgetSnapshot[],
+  itemId: string
+): { widgetId: string; widgetLabel: string; segmentId?: string } | null {
+  const snapshots = getVisibleSnapshots()
+  for (const snapshot of snapshots) {
+    for (const segment of snapshot.segments) {
+      if (segment.segmentType === 'list') {
+        if (segment.items.some(item => item.itemId === itemId)) {
+          return {
+            widgetId: snapshot.widgetId,
+            widgetLabel: snapshot.title,
+            segmentId: segment.segmentId,
+          }
+        }
+      }
+    }
+  }
+  return null
+}
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -515,6 +540,97 @@ function buildGroundedClarifier(candidates: GroundingCandidate[]): string {
   }
 
   return "I'm not sure what you're referring to. Could you tell me what you'd like to do?"
+}
+
+/**
+ * Bind a grounded clarifier to pending options so follow-up replies can resolve.
+ * Only binds option/widget_option candidates (others are ignored).
+ * Returns the built options so they can be added to the clarifier message.
+ */
+function bindGroundingClarifierOptions(
+  ctx: RoutingDispatcherContext,
+  candidates: GroundingCandidate[],
+  messageId: string
+): PendingOptionState[] {
+  const optionCandidates = candidates.filter(c => c.type === 'option' || c.type === 'widget_option')
+  if (optionCandidates.length === 0) return []
+
+  const pendingOptions: PendingOptionState[] = []
+
+  optionCandidates.forEach((candidate, index) => {
+    if (candidate.type === 'widget_option') {
+      const widgetInfo = resolveWidgetItemFromSnapshots(ctx.getVisibleSnapshots, candidate.id)
+      pendingOptions.push({
+        index,
+        id: candidate.id,
+        label: candidate.label,
+        type: 'widget_option',
+        data: {
+          widgetId: widgetInfo?.widgetId,
+          segmentId: widgetInfo?.segmentId,
+          itemId: candidate.id,
+        },
+      })
+      return
+    }
+
+    // For option-type candidates, attempt to find a full option with data.
+    const messageOption = ctx.findLastOptionsMessage(ctx.messages)?.options.find(opt => opt.id === candidate.id)
+    if (messageOption) {
+      pendingOptions.push({
+        index,
+        id: messageOption.id,
+        label: messageOption.label,
+        sublabel: messageOption.sublabel,
+        type: messageOption.type,
+        data: messageOption.data,
+      })
+    }
+  })
+
+  if (pendingOptions.length === 0) return []
+
+  ctx.setPendingOptions(pendingOptions)
+  ctx.setPendingOptionsMessageId(messageId)
+  ctx.setPendingOptionsGraceCount(0)
+  ctx.saveLastOptionsShown(
+    pendingOptions.map(opt => ({
+      id: opt.id,
+      label: opt.label,
+      sublabel: opt.sublabel,
+      type: opt.type,
+    })),
+    messageId
+  )
+
+  // Sync lastClarification so bare labels can be matched through handleClarificationIntercept.
+  // This matches the pattern used in Tier 3c re-show options (lines 1609-1622).
+  ctx.setLastClarification({
+    type: 'option_selection',
+    originalIntent: 'grounding_clarifier',
+    messageId,
+    timestamp: Date.now(),
+    clarificationQuestion: 'Which one?',
+    options: pendingOptions.map(opt => ({
+      id: opt.id,
+      label: opt.label,
+      sublabel: opt.sublabel,
+      type: opt.type,
+    })),
+    metaCount: 0,
+  })
+
+  void debugLog({
+    component: 'ChatNavigation',
+    action: 'grounding_clarifier_bound_options',
+    metadata: {
+      messageId,
+      candidateCount: candidates.length,
+      pendingCount: pendingOptions.length,
+    },
+  })
+
+  return pendingOptions
 }
 
 // =============================================================================
@@ -1076,6 +1192,35 @@ export async function dispatchRouting(
       // Use grace window: keep options for one more turn
       ctx.setPendingOptionsGraceCount(1)
 
+      if (selectedOption.type === 'widget_option') {
+        const widgetInfo = resolveWidgetItemFromSnapshots(ctx.getVisibleSnapshots, selectedOption.id)
+        if (widgetInfo) {
+          ctx.setIsLoading(false)
+          return {
+            ...defaultResult,
+            handled: true,
+            handledByTier: 3,
+            tierLabel: 'selection_only_widget_option',
+            clarificationCleared,
+            isNewQuestionOrCommandDetected,
+            classifierCalled,
+            classifierResult,
+            classifierTimeout,
+            classifierLatencyMs,
+            classifierError,
+            isFollowUp,
+            groundingAction: {
+              type: 'execute_widget_item',
+              widgetId: widgetInfo.widgetId,
+              segmentId: widgetInfo.segmentId,
+              itemId: selectedOption.id,
+              itemLabel: selectedOption.label,
+              action: 'open',
+            },
+          }
+        }
+      }
+
       // Execute the selection directly
       const optionToSelect: SelectionOption = {
         type: selectedOption.type as SelectionOption['type'],
@@ -1125,6 +1270,35 @@ export async function dispatchRouting(
 
       // Use grace window: keep options for one more turn
       ctx.setPendingOptionsGraceCount(1)
+
+      if (labelMatch.type === 'widget_option') {
+        const widgetInfo = resolveWidgetItemFromSnapshots(ctx.getVisibleSnapshots, labelMatch.id)
+        if (widgetInfo) {
+          ctx.setIsLoading(false)
+          return {
+            ...defaultResult,
+            handled: true,
+            handledByTier: 3,
+            tierLabel: 'label_match_widget_option',
+            clarificationCleared,
+            isNewQuestionOrCommandDetected,
+            classifierCalled,
+            classifierResult,
+            classifierTimeout,
+            classifierLatencyMs,
+            classifierError,
+            isFollowUp,
+            groundingAction: {
+              type: 'execute_widget_item',
+              widgetId: widgetInfo.widgetId,
+              segmentId: widgetInfo.segmentId,
+              itemId: labelMatch.id,
+              itemLabel: labelMatch.label,
+              action: 'open',
+            },
+          }
+        }
+      }
 
       // Execute the selection directly
       const optionToSelect: SelectionOption = {
@@ -2012,12 +2186,21 @@ export async function dispatchRouting(
                 metadata: { input: ctx.trimmedInput },
               })
 
+              const clarifierMsgId = `assistant-${Date.now()}`
+              const boundOptions = bindGroundingClarifierOptions(ctx, groundingResult.llmCandidates, clarifierMsgId)
               const clarifierMsg: ChatMessage = {
-                id: `assistant-${Date.now()}`,
+                id: clarifierMsgId,
                 role: 'assistant',
                 content: buildGroundedClarifier(groundingResult.llmCandidates),
                 timestamp: new Date(),
                 isError: false,
+                options: boundOptions.map(opt => ({
+                  type: opt.type as SelectionOption['type'],
+                  id: opt.id,
+                  label: opt.label,
+                  sublabel: opt.sublabel,
+                  data: opt.data as SelectionOption['data'],
+                })),
               }
               ctx.addMessage(clarifierMsg)
               ctx.setIsLoading(false)
@@ -2047,12 +2230,21 @@ export async function dispatchRouting(
               metadata: { error: llmResult.error, latencyMs: llmResult.latencyMs },
             })
 
+            const clarifierMsgId = `assistant-${Date.now()}`
+            const boundOptions = bindGroundingClarifierOptions(ctx, groundingResult.llmCandidates, clarifierMsgId)
             const clarifierMsg: ChatMessage = {
-              id: `assistant-${Date.now()}`,
+              id: clarifierMsgId,
               role: 'assistant',
               content: buildGroundedClarifier(groundingResult.llmCandidates),
               timestamp: new Date(),
               isError: false,
+              options: boundOptions.map(opt => ({
+                type: opt.type as SelectionOption['type'],
+                id: opt.id,
+                label: opt.label,
+                sublabel: opt.sublabel,
+                data: opt.data as SelectionOption['data'],
+              })),
             }
             ctx.addMessage(clarifierMsg)
             ctx.setIsLoading(false)
@@ -2093,12 +2285,21 @@ export async function dispatchRouting(
           },
         })
 
+        const clarifierMsgId = `assistant-${Date.now()}`
+        const boundOptions = bindGroundingClarifierOptions(ctx, groundingResult.llmCandidates, clarifierMsgId)
         const clarifierMsg: ChatMessage = {
-          id: `assistant-${Date.now()}`,
+          id: clarifierMsgId,
           role: 'assistant',
           content: buildGroundedClarifier(groundingResult.llmCandidates),
           timestamp: new Date(),
           isError: false,
+          options: boundOptions.map(opt => ({
+            type: opt.type as SelectionOption['type'],
+            id: opt.id,
+            label: opt.label,
+            sublabel: opt.sublabel,
+            data: opt.data as SelectionOption['data'],
+          })),
         }
         ctx.addMessage(clarifierMsg)
         ctx.setIsLoading(false)

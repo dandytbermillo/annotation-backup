@@ -148,6 +148,10 @@ If input targets widget content (explicit widget reference like "in links panel 
 1. Try deterministic unique match (label/ordinal/unique token subset).
 2. If still ambiguous/messy → call constrained LLM (candidates = that widget’s list/context).
 3. If LLM fails/disabled → show clarifier (or “back to options”).
+4. Candidate scoping:
+   - If an active widget has a visible list, **scope candidates to that widget only**.
+   - Fall back to **all visible widget lists** only when no active widget (or no list on the active widget).
+   - If multiple lists are visible and no active widget is set, **ask “Which list?” before any LLM**.
 
 **Rule 4 — Non-widget input (Grounding fallback):**
 If input is **not** widget-targeted, allow the existing grounding-set fallback to run (recent referents / capability set) per `grounding-set-fallback-plan.md`.
@@ -219,6 +223,8 @@ Post-registry additions from this plan, implemented in session 2026-02-02:
 | C2: Item descriptions via request payload | §Context Routing | Same as C1 | **Implemented** |
 | C-Guards: Payload caps, version gate, dedup, dedicated heading | §Safety | `chat-navigation-panel.tsx`, `route.ts`, `intent-prompt.ts` | **Implemented** |
 | D: LLM constrained pick | §LLM Fallback | `routing-dispatcher.ts` | **No changes needed** (already wired) |
+| D2: Step 3b LLM trigger | §Canonical Resolver | `lib/chat/grounding-set.ts` | **Implemented** (2026-02-03) — triggers `needsLLM: true` when deterministic fails but widget lists exist |
+| D3: Clarifier follow-up binding | §Canonical Resolver | `lib/chat/routing-dispatcher.ts` | **Implemented** (2026-02-04) — `bindGroundingClarifierOptions()` now sets `lastClarification` and adds `options` to clarifier message so bare labels resolve |
 | E1: Unit tests (29 tests) | §Testing | `__tests__/unit/widgets/widget-ui-snapshot-plan.test.ts` | **Passing** |
 | E2: Integration tests (6 tests) | §Testing | `__tests__/integration/widget-context-prompt.test.ts` | **Passing** |
 
