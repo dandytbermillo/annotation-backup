@@ -88,35 +88,47 @@ export function RecentPanel({ panel, onClose, onTitleChange, onNavigate, onDelet
   useEffect(() => {
     if (isLoading) return
 
-    registerWidgetSnapshot({
-      _version: 1,
-      widgetId: 'w_recent',
-      title: 'Recent',
-      isVisible: true,
-      segments: [
-        {
-          segmentId: 'w_recent:list',
-          segmentType: 'list',
-          listLabel: 'Recent Workspaces',
-          badgesEnabled: false,
-          visibleItemRange: { start: 0, end: workspaces.length },
-          items: workspaces.map(ws => ({
-            itemId: ws.id,
-            label: getDisplayName(ws),
-            actions: ['open'],
-          })),
-        },
-        {
-          segmentId: 'w_recent:context',
-          segmentType: 'context',
-          summary: `Shows ${workspaces.length} recently accessed workspaces`,
-          currentView: 'list',
-        },
-      ],
-      registeredAt: Date.now(),
-    })
+    // Re-registration function for heartbeat (keeps snapshot fresh for routing)
+    const registerSnapshot = () => {
+      registerWidgetSnapshot({
+        _version: 1,
+        widgetId: 'w_recent',
+        title: 'Recent',
+        isVisible: true,
+        segments: [
+          {
+            segmentId: 'w_recent:list',
+            segmentType: 'list',
+            listLabel: 'Recent Workspaces',
+            badgesEnabled: false,
+            visibleItemRange: { start: 0, end: workspaces.length },
+            items: workspaces.map(ws => ({
+              itemId: ws.id,
+              label: getDisplayName(ws),
+              actions: ['open'],
+            })),
+          },
+          {
+            segmentId: 'w_recent:context',
+            segmentType: 'context',
+            summary: `Shows ${workspaces.length} recently accessed workspaces`,
+            currentView: 'list',
+          },
+        ],
+        registeredAt: Date.now(),
+      })
+    }
 
-    return () => { unregisterWidgetSnapshot('w_recent') }
+    // Register immediately
+    registerSnapshot()
+
+    // Heartbeat: re-register every 30s to stay under the 60s freshness threshold
+    const heartbeatInterval = setInterval(registerSnapshot, 30_000)
+
+    return () => {
+      clearInterval(heartbeatInterval)
+      unregisterWidgetSnapshot('w_recent')
+    }
   }, [isLoading, workspaces])
 
   const handleWorkspaceClick = (workspace: RecentWorkspace) => {

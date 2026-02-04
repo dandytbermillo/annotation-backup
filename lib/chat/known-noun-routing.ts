@@ -276,6 +276,11 @@ export interface KnownNounRoutingContext {
    * In this case, unknown-noun fallback should decline to let Tier 4.5 resolve.
    */
   hasSoftActiveSelectionLike?: boolean
+  /**
+   * When true, at least one widget list is visible.
+   * In this case, unknown-noun fallback should decline to let Tier 4.5 try matching.
+   */
+  hasVisibleWidgetList?: boolean
   /** Save last options shown for soft-active window */
   saveLastOptionsShown?: (options: import('@/lib/chat/chat-navigation-context').ClarificationOption[], messageId: string) => void
 }
@@ -594,6 +599,17 @@ export function handleKnownNounRouting(
   if (isShortNounLike) {
     // Soft-active window exists with selection-like input — let Tier 4.5 handle it.
     if (ctx.hasSoftActiveSelectionLike) {
+      return { handled: false }
+    }
+
+    // Visible widget list exists — let Tier 4.5 try to match against it.
+    // Example: "open summary144" should match against Links Panel D's list.
+    if (ctx.hasVisibleWidgetList) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'unknown_noun_bypass_for_widget_list',
+        metadata: { input: ctx.trimmedInput, normalized, wordCount, tier: 4 },
+      })
       return { handled: false }
     }
 

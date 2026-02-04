@@ -33,7 +33,7 @@ This preserves the rule:
 ## UI Snapshot Schema (v1.1)
 ```json
 {
-  "uiSnapshotVersion": "1.0",
+  "uiSnapshotVersion": "1.1",
   "uiSnapshotId": "snap_018f",
   "revisionId": 42,
   "capturedAtMs": 1738440000000,
@@ -94,6 +94,7 @@ If not selection-like, treat as context-like.
 - Use the active widget's `context` segment to answer.
 - Do not clear selection memory.
 - Do not trigger list selection.
+- For context-like queries, include the active widget’s `context` segment in the `/api/chat/navigate` payload so the LLM answers from widget context instead of docs.
 
 ### Rule B: Selection-like input
 Resolve only against list segments:
@@ -111,13 +112,18 @@ If two or more list segments are visible and input is selection-like:
 - Ask: "Which list do you mean?" with widget/list buttons.
 - Also allow typing the widget name.
 
+**Multi-segment note:** If a single widget exposes multiple list segments, treat it as multi-list ambiguity unless a primary segment is explicitly designated.
+
 ## Soft-Active Selection Memory
 Maintain `lastOptionsShown` for **2 turns** after list display, even across context questions.
 Clear only when:
 - explicit stop/cancel confirmed, or
 - a new list replaces it.
 
-## LLM Usage (Constrained, Deterministic-First)
+## Resolver Path (Canonical)
+This is the **single, authoritative** resolver path. There is no alternate “LLM-first” mode.
+
+### LLM Usage (Constrained, Deterministic-First)
 Only use the LLM when deterministic matching **cannot uniquely resolve**.
 
 Contract:
@@ -129,6 +135,22 @@ Order:
 1. Deterministic unique match → execute.
 2. Constrained LLM pick → execute.
 3. Otherwise ask grounded clarification ("D or E?").
+
+### Rules (Applied in Order)
+**Rule 1 — Multi-list ambiguity (highest guard):**
+If multiple widget lists are visible and input is selection-like → ask which widget/list (no LLM).
+
+**Rule 2 — Context-like input:**
+Answer from widget context segments (no candidate picking; do not clear selection memory).
+
+**Rule 3 — Widget-targeted selection (deterministic-first):**
+If input targets widget content (explicit widget reference like "in links panel d", or the active widget is visible and the input looks label/selection-like):
+1. Try deterministic unique match (label/ordinal/unique token subset).
+2. If still ambiguous/messy → call constrained LLM (candidates = that widget’s list/context).
+3. If LLM fails/disabled → show clarifier (or “back to options”).
+
+**Rule 4 — Non-widget input (Grounding fallback):**
+If input is **not** widget-targeted, allow the existing grounding-set fallback to run (recent referents / capability set) per `grounding-set-fallback-plan.md`.
 
 ## Freshness Guard
 Only bind to list items if:

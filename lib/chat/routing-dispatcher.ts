@@ -1531,10 +1531,33 @@ export async function dispatchRouting(
   // Rule: If a known-noun executes while a paused snapshot exists,
   // the snapshot remains paused (no implicit resume).
   // =========================================================================
+
+  // Build widget registry snapshot early so Tier 4 can check for visible widget lists.
+  // This allows "open summary144" to bypass Tier 4's unknown-noun fallback when a
+  // widget list is visible (let Tier 4.5 handle it instead).
+  const turnSnapshot = buildTurnSnapshot({})
+
+  // DIAGNOSTIC: Log openWidgets state to debug single-widget-list matching
+  void debugLog({
+    component: 'ChatNavigation',
+    action: 'turn_snapshot_built',
+    metadata: {
+      openWidgetsCount: turnSnapshot.openWidgets.length,
+      widgetLabels: turnSnapshot.openWidgets.map(w => w.label),
+      widgetIds: turnSnapshot.openWidgets.map(w => w.id),
+      widgetOptionCounts: turnSnapshot.openWidgets.map(w => w.options.length),
+      hasBadgeLetters: turnSnapshot.hasBadgeLetters,
+      input: ctx.trimmedInput,
+    },
+  })
+
   const hasSoftActiveSelectionLike = ctx.activeOptionSetId === null
     && !!ctx.lastOptionsShown
     && ctx.lastOptionsShown.options.length > 0
-    && isSelectionLike(ctx.trimmedInput)
+    && isSelectionLike(ctx.trimmedInput, { hasBadgeLetters: turnSnapshot.hasBadgeLetters })
+
+  // Check if there's a visible widget list that could match the input
+  const hasVisibleWidgetList = turnSnapshot.openWidgets.length > 0
 
   const knownNounResult = handleKnownNounRouting({
     trimmedInput: ctx.trimmedInput,
@@ -1548,6 +1571,7 @@ export async function dispatchRouting(
     handleSelectOption: ctx.handleSelectOption,
     hasActiveOptionSet: ctx.pendingOptions.length > 0 && ctx.activeOptionSetId !== null,
     hasSoftActiveSelectionLike,
+    hasVisibleWidgetList,
     saveLastOptionsShown: ctx.saveLastOptionsShown,
   })
   if (knownNounResult.handled) {
@@ -1588,9 +1612,7 @@ export async function dispatchRouting(
     // ordinals never reach here. Duplicating it would risk double-messages.
     // checkPausedReAnchor() is exported for future use if Tier 0 logic changes.
 
-    // Build widget registry snapshot (Layer 2 → Tier 4.5)
-    // Moved before soft-active check so hasBadgeLetters is available for isSelectionLike.
-    const turnSnapshot = buildTurnSnapshot({})
+    // turnSnapshot is already built before Tier 4 (see above) and reused here.
 
     // G) Soft-active window check — uses lastOptionsShown (dedicated state),
     // NOT clarificationSnapshot (which has a different lifecycle).
@@ -2058,8 +2080,44 @@ export async function dispatchRouting(
           })
           // Fall through to Tier 5
         }
+      } else {
+        // Grounding LLM disabled — show clarifier with candidates instead of falling through
+        // This prevents the main API from misinterpreting widget-scoped selection as panel commands
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'grounding_llm_disabled_clarifier',
+          metadata: {
+            input: ctx.trimmedInput,
+            candidateCount: groundingResult.llmCandidates.length,
+            candidates: groundingResult.llmCandidates.slice(0, 5).map(c => c.label),
+          },
+        })
+
+        const clarifierMsg: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: buildGroundedClarifier(groundingResult.llmCandidates),
+          timestamp: new Date(),
+          isError: false,
+        }
+        ctx.addMessage(clarifierMsg)
+        ctx.setIsLoading(false)
+
+        return {
+          ...defaultResult,
+          handled: true,
+          handledByTier: 4,
+          tierLabel: 'grounding_llm_disabled_clarifier',
+          clarificationCleared,
+          isNewQuestionOrCommandDetected,
+          classifierCalled,
+          classifierResult,
+          classifierTimeout,
+          classifierLatencyMs,
+          classifierError,
+          isFollowUp,
+        }
       }
-      // If LLM not enabled, fall through to Tier 5
     }
 
     // No list grounding set — ask for missing slot.

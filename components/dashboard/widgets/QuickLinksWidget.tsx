@@ -137,37 +137,47 @@ export function QuickLinksWidget({
     })
 
     // Widget UI Snapshot: Register structured snapshot for routing (Layer 1)
-    registerWidgetSnapshot({
-      _version: 1,
-      widgetId,
-      title: widgetTitle,
-      isVisible: true,
-      segments: [
-        {
-          segmentId: `${widgetId}:list`,
-          segmentType: 'list',
-          listLabel: widgetTitle,
-          badgesEnabled: !!badge,
-          visibleItemRange: { start: 0, end: Math.min(links.length, WIDGET_LINK_LIMIT) },
-          items: links.slice(0, WIDGET_LINK_LIMIT).map((link) => ({
-            itemId: link.workspaceId,
-            label: link.workspaceName,
-            badge: badge || undefined,
-            badgeVisible: !!badge,
-            actions: ['open'],
-          })),
-        },
-        {
-          segmentId: `${widgetId}:context`,
-          segmentType: 'context',
-          summary,
-          currentView: 'list',
-        },
-      ],
-      registeredAt: Date.now(),
-    })
+    // Re-registration function for heartbeat (keeps snapshot fresh for routing)
+    const registerSnapshot = () => {
+      registerWidgetSnapshot({
+        _version: 1,
+        widgetId,
+        title: widgetTitle,
+        isVisible: true,
+        segments: [
+          {
+            segmentId: `${widgetId}:list`,
+            segmentType: 'list',
+            listLabel: widgetTitle,
+            badgesEnabled: !!badge,
+            visibleItemRange: { start: 0, end: Math.min(links.length, WIDGET_LINK_LIMIT) },
+            items: links.slice(0, WIDGET_LINK_LIMIT).map((link) => ({
+              itemId: link.workspaceId,
+              label: link.workspaceName,
+              badge: badge || undefined,
+              badgeVisible: !!badge,
+              actions: ['open'],
+            })),
+          },
+          {
+            segmentId: `${widgetId}:context`,
+            segmentType: 'context',
+            summary,
+            currentView: 'list',
+          },
+        ],
+        registeredAt: Date.now(),
+      })
+    }
+
+    // Register immediately
+    registerSnapshot()
+
+    // Heartbeat: re-register every 30s to stay under the 60s freshness threshold
+    const heartbeatInterval = setInterval(registerSnapshot, 30_000)
 
     return () => {
+      clearInterval(heartbeatInterval)
       removeWidgetState(panel.id)
       unregisterWidgetSnapshot(widgetId)
     }

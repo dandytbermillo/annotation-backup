@@ -1,4 +1,4 @@
-# Full Project Knowledge — Chat Navigation & Annotation System
+w# Full Project Knowledge — Chat Navigation & Annotation System
 
 **Purpose:** This document captures the complete understanding of the project so that any future session can immediately get up to speed without re-reading dozens of files. It covers architecture, the chat navigation system we are actively working on, the clarification/disambiguation subsystem in detail, every fix applied, and the current state of work.
 

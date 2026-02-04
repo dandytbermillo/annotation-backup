@@ -1891,9 +1891,13 @@ function ChatNavigationPanelContent({
         // Capture HTTP details for debugging before throwing
         let errorBody = ''
         try { errorBody = await response.text() } catch { /* ignore */ }
+
+        // Detect abort errors from response body
+        const isAbortResponse = errorBody.toLowerCase().includes('aborted')
+
         void debugLog({
           component: 'ChatNavigation',
-          action: 'api_response_not_ok',
+          action: isAbortResponse ? 'api_request_aborted' : 'api_response_not_ok',
           metadata: {
             input: trimmedInput,
             status: response.status,
@@ -1901,6 +1905,14 @@ function ChatNavigationPanelContent({
             body: errorBody.slice(0, 500),
           },
         })
+
+        // For abort errors, throw with a marker so catch block can handle silently
+        if (isAbortResponse) {
+          const abortError = new Error('Request aborted')
+          abortError.name = 'AbortError'
+          throw abortError
+        }
+
         throw new Error(`Failed to process request (HTTP ${response.status})`)
       }
 
@@ -2503,24 +2515,37 @@ function ChatNavigationPanelContent({
         openPanelWithTracking(resolution.viewPanelContent, resolution.panelId)
       }
     } catch (error) {
-      console.error('[ChatNavigation] sendMessage error:', error)
-      void debugLog({
-        component: 'ChatNavigation',
-        action: 'sendMessage_error',
-        metadata: {
-          input: trimmedInput,
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack?.split('\n').slice(0, 5).join('\n') : undefined,
-        },
-      })
-      const errorMessage: ChatMessage = {
-        id: `error-${Date.now()}`,
-        role: 'assistant',
-        content: 'Something went wrong. Please try again.',
-        timestamp: new Date(),
-        isError: true,
+      // Check if this is an abort error (user canceled, navigation, etc.)
+      const isAbortError = error instanceof Error && (
+        error.name === 'AbortError' ||
+        error.message.toLowerCase().includes('aborted')
+      )
+
+      if (isAbortError) {
+        // Abort errors are expected (user action) - log but don't show error UI
+        console.log('[ChatNavigation] Request aborted (this is normal if user navigated or clicked again)')
+        // Debug log already captured in api_request_aborted action
+      } else {
+        // Real error - log and show error message
+        console.error('[ChatNavigation] sendMessage error:', error)
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'sendMessage_error',
+          metadata: {
+            input: trimmedInput,
+            error: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack?.split('\n').slice(0, 5).join('\n') : undefined,
+          },
+        })
+        const errorMessage: ChatMessage = {
+          id: `error-${Date.now()}`,
+          role: 'assistant',
+          content: 'Something went wrong. Please try again.',
+          timestamp: new Date(),
+          isError: true,
+        }
+        addMessage(errorMessage)
       }
-      addMessage(errorMessage)
     } finally {
       setIsLoading(false)
     }

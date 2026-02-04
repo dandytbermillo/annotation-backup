@@ -432,9 +432,15 @@ export function resolveWidgetSelection(
   widget: OpenWidgetState
 ): DeterministicMatchResult {
   // Strip widget name reference from input
+  // Handle patterns: "in the links panel d", "in links panel d", "from the recent"
+  const widgetPattern = escapeRegex(widget.label.toLowerCase())
   const normalizedInput = input.trim().toLowerCase()
-    .replace(new RegExp(`\\b${escapeRegex(widget.label.toLowerCase())}\\b`, 'i'), '')
-    .replace(/\bin\b/i, '')
+    // Strip "in/from (the) <widget>" patterns
+    .replace(new RegExp(`\\b(in|from)\\s+(the\\s+)?${widgetPattern}\\b`, 'gi'), '')
+    // Strip standalone "(the) <widget>" if no preposition
+    .replace(new RegExp(`\\b(the\\s+)?${widgetPattern}\\b`, 'gi'), '')
+    // Normalize whitespace
+    .replace(/\s+/g, ' ')
     .trim()
 
   const candidates: GroundingCandidate[] = widget.options.map(opt => ({
@@ -609,6 +615,7 @@ export function handleGroundingSetFallback(
   }
 
   // Check if user explicitly references a widget
+  // When widget is explicitly mentioned, force widget-scoped selection (don't fall through to panel commands)
   if (ctx.openWidgets.length > 0) {
     const normalizedInput = trimmed.toLowerCase()
     for (const widget of ctx.openWidgets) {
@@ -621,11 +628,114 @@ export function handleGroundingSetFallback(
             selectedCandidate: widgetResult.candidate,
           }
         }
+
+        // Widget explicitly referenced but item not uniquely matched
+        // → Force LLM selection scoped to this widget's items (don't fall through to panel commands)
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'widget_reference_detected_no_unique_match',
+          metadata: {
+            input: trimmed,
+            widgetId: widget.id,
+            widgetLabel: widget.label,
+            optionCount: widget.options.length,
+          },
+        })
+
+        // Build candidates from this widget only
+        const widgetCandidates: GroundingCandidate[] = widget.options.map(opt => ({
+          id: opt.id,
+          label: opt.label,
+          type: 'widget_option' as const,
+          source: 'widget_list' as const,
+        }))
+
+        return {
+          handled: true,
+          resolvedBy: 'widget_list',
+          needsLLM: true,
+          llmCandidates: widgetCandidates,
+        }
       }
     }
   }
 
-  // Step 3: Deterministic unique match on first list-type set
+  // Step 2.5: Widget-list direct match (widget-ui-snapshot-plan.md)
+  // Try to match input against visible widget lists WITHOUT requiring selection-like input.
+  // Priority: (1) activeWidgetId's list, (2) any list with unique match
+  const widgetListSets = groundingSets.filter(s => s.type === 'widget_list')
+  if (widgetListSets.length > 0) {
+    // (1) If activeWidgetId is set, prioritize that widget's list
+    const activeWidgetList = ctx.openWidgets.length > 0
+      ? widgetListSets.find(s => s.widgetId === ctx.openWidgets[0]?.id) // First widget is active (reordered by dispatcher)
+      : undefined
+
+    if (activeWidgetList) {
+      const matchResult = resolveUniqueDeterministic(trimmed, activeWidgetList.candidates)
+      if (matchResult.matched) {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'active_widget_list_direct_match',
+          metadata: {
+            input: trimmed,
+            widgetId: activeWidgetList.widgetId,
+            widgetLabel: activeWidgetList.widgetLabel,
+            matchedLabel: matchResult.candidate?.label,
+            matchMethod: matchResult.matchMethod,
+          },
+        })
+        return {
+          handled: true,
+          resolvedBy: 'widget_list',
+          selectedCandidate: matchResult.candidate,
+        }
+      }
+    }
+
+    // (2) Try all widget lists - if exactly one has a unique match, use it
+    const matchingResults: Array<{ set: GroundingSet; result: DeterministicMatchResult }> = []
+    for (const listSet of widgetListSets) {
+      const matchResult = resolveUniqueDeterministic(trimmed, listSet.candidates)
+      if (matchResult.matched) {
+        matchingResults.push({ set: listSet, result: matchResult })
+      }
+    }
+
+    if (matchingResults.length === 1) {
+      const { set, result } = matchingResults[0]
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'widget_list_unique_match',
+        metadata: {
+          input: trimmed,
+          widgetId: set.widgetId,
+          widgetLabel: set.widgetLabel,
+          matchedLabel: result.candidate?.label,
+          matchMethod: result.matchMethod,
+          totalWidgetLists: widgetListSets.length,
+        },
+      })
+      return {
+        handled: true,
+        resolvedBy: 'widget_list',
+        selectedCandidate: result.candidate,
+      }
+    }
+
+    // Multiple lists match → log ambiguity (fall through to clarifier)
+    if (matchingResults.length > 1) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'widget_list_ambiguous_match',
+        metadata: {
+          input: trimmed,
+          matchingWidgets: matchingResults.map(m => m.set.widgetLabel),
+        },
+      })
+    }
+  }
+
+  // Step 3: Deterministic unique match on first list-type set (selection-like required)
   const firstListSet = groundingSets.find(s => s.isList)
   if (firstListSet && isSelectionLike(trimmed, options)) {
     const deterministicResult = resolveUniqueDeterministic(trimmed, firstListSet.candidates)
