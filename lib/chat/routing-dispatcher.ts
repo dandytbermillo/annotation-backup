@@ -2169,6 +2169,70 @@ export async function dispatchRouting(
   }
 
   // =========================================================================
+  // TIER 3.6 — Deterministic Miss Guard
+  //
+  // Per universal-selection-resolver-plan.md Reliability Addendum item 8:
+  // If an active executable selection context exists and deterministic
+  // ordinal/label matching failed, show a targeted retry prompt before
+  // broader Tier 4.5/LLM fallback.
+  //
+  // IMPORTANT: Do NOT trigger for new commands (e.g., "open links panel d").
+  // These should escape the selection context and execute normally.
+  // =========================================================================
+  const hasActiveExecutableContext =
+    (ctx.widgetSelectionContext !== null && ctx.widgetSelectionContext.turnsSinceShown < WIDGET_SELECTION_TTL) ||
+    (ctx.pendingOptions.length > 0 && ctx.activeOptionSetId !== null)
+
+  // Check if input looks like a new command (has action verb like "open", "show", etc.)
+  // If so, let it escape to lower tiers instead of showing retry prompt.
+  // BUT: if the input contains selection keywords ("option", "choice", "item"), the user
+  // is referring to a list item, not issuing a new command (e.g., "pls open the initial choice now").
+  const hasSelectionKeyword = /\b(option|choice|item)\b/i.test(ctx.trimmedInput)
+  const looksLikeNewCommand = ACTION_VERB_PATTERN.test(ctx.trimmedInput)
+    && !isSelectionOnly(ctx.trimmedInput, 10, []).isSelection
+    && !hasSelectionKeyword
+
+  if (hasActiveExecutableContext && isSelectionLike(ctx.trimmedInput) && !looksLikeNewCommand && !isNewQuestionOrCommandDetected) {
+    // Deterministic matching failed but input looked like a pure selection attempt
+    // (not a new command). Show targeted retry prompt to keep user in selection flow.
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'deterministic_miss_with_active_context',
+      metadata: {
+        input: ctx.trimmedInput,
+        hasWidgetContext: ctx.widgetSelectionContext !== null,
+        hasChatContext: ctx.pendingOptions.length > 0,
+        tier: '3.6',
+      },
+    })
+
+    const retryMessage: ChatMessage = {
+      id: `assistant-${Date.now()}`,
+      role: 'assistant',
+      content: "I didn't catch that. Say 'first', 'second', etc. or tap an option pill.",
+      timestamp: new Date(),
+      isError: false,
+    }
+    ctx.addMessage(retryMessage)
+    ctx.setIsLoading(false)
+
+    return {
+      ...defaultResult,
+      handled: true,
+      handledByTier: 3,
+      tierLabel: 'deterministic_miss_retry',
+      clarificationCleared,
+      isNewQuestionOrCommandDetected,
+      classifierCalled,
+      classifierResult,
+      classifierTimeout,
+      classifierLatencyMs,
+      classifierError,
+      isFollowUp,
+    }
+  }
+
+  // =========================================================================
   // TIER 4 — Known-Noun Commands
   //
   // Per routing-order-priority-plan.md Core Principle #4:

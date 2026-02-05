@@ -5,10 +5,11 @@
 **Last updated:** 2026-02-05
 
 ## Purpose
-Provide a single, deterministic selection follow-up resolver that:
+Provide a single, hybrid selection follow-up resolver that:
 - Keeps ordinals/labels active until stop/new list/TTL.
 - Prevents "Unknown option type" by never routing widget items through `handleSelectOption()`.
 - Preserves the separation between chat-created lists (Tier 3) and widget lists (Tier 4.5).
+- Uses deterministic-first with constrained LLM fallback for messy real-world phrasing.
 
 ## Non-Goals
 - Do not merge widget lists into `pendingOptions` / `activeOptionSetId`.
@@ -85,12 +86,22 @@ Provide a single, deterministic selection follow-up resolver that:
 - Add `resolveSelectionFollowUp(input)` after Tier 3 and before known-noun (Tier 4) routing.
 - Gate: `isSelectionLike(input)` must be true.
 - Question-intent filter: default to requiring `hasQuestionIntent(input) === false`, **except** for polite command-style ordinals (for example, `"can you open the second option pls"`), which must still be treated as selection follow-ups.
+- **Deterministic scope (minimal/high-confidence only):**
+  - ordinal words/numbers/badge letters
+  - exact label matches
+  - keep core ordinal coverage (`first/second/last`, numeric ordinals, badge letters) in deterministic matching
+  - avoid aggressive synonym expansion as a primary strategy
 - **Ordinal parsing:** use embedded ordinal extraction (e.g., `resolveOrdinalIndex`) so phrases like "can you open that second one pls" resolve for both chat and widget contexts (do not rely solely on strict `isSelectionOnly`).
 - Resolution order:
-  1) If `chatSelectionContext` active → resolve ordinals/labels → `handleSelectOption`.
-  2) Else if `widgetSelectionContext` active → resolve ordinals/labels → `execute_widget_item`.
-  3) Else fall through.
+  1) If `chatSelectionContext` active → strict deterministic match → `handleSelectOption`.
+  2) Else if `widgetSelectionContext` active → strict deterministic match → `execute_widget_item`.
+  3) Explicit command escape: if input is a named command resolvable by known-noun routing (or explicit command with no active-candidate match), do not trap it as a selection miss; allow Tier 4 known-noun execution.
+  4) If deterministic misses and active executable context exists → call constrained selection LLM with only active context candidates.
+  5) On LLM `select(choiceId)` → execute selected candidate by context source.
+  6) On LLM `need_more_info`/timeout/error → show targeted retry prompt.
+  7) Else fall through.
  - **Context plumbing:** add `widgetSelectionContext` to dispatcher context (alongside `pendingOptions`, `activeOptionSetId`, etc.) and pass it into the resolver.
+ - **LLM safety contract:** constrained output only (`select` with valid `choiceId` or `need_more_info`), never execute without valid candidate id.
 
 ### Phase 5 — Clarification Intercept Bypass for Widget Context
 **File:** `lib/chat/chat-routing.ts`
@@ -134,6 +145,7 @@ Provide a single, deterministic selection follow-up resolver that:
 5. **Tier bypass rules**
    - When an active executable context exists (`uiOnly: false`) and input is selection-like, bypass lower routing tiers until the universal resolver runs.
    - When `uiOnly: true`, do not bypass broadly; return a targeted clarifier (for example, "Tap an option pill to choose.") and avoid background tier hijacking.
+   - In executable contexts, deterministic miss should route to constrained LLM before broader grounding/doc fallback.
 6. **Required logs**
    - Emit explicit logs for:
      - `selection_context_registered`
@@ -147,7 +159,8 @@ Provide a single, deterministic selection follow-up resolver that:
   - `uiOnly` context shows pills but does not execute ordinals.
   - Question-intent inputs do not trigger selection execution.
 8. **Deterministic miss behavior with active context**
-   - If an active executable selection context exists and deterministic ordinal/label matching fails, return a targeted retry prompt (for example, "I didn't catch that. Say first/second, or tap an option.") before broader Tier 4.5/LLM fallback.
+   - If an active executable selection context exists and deterministic ordinal/label matching fails, call constrained LLM over active context candidates first.
+   - If constrained LLM returns `need_more_info`/fails, return a targeted retry prompt (for example, "I didn't catch that. Say first/second, or tap an option.") before broader Tier 4.5/doc fallback.
 
 ## Acceptance Tests
 1. **Widget clarifier + ordinal follow-up**
@@ -158,6 +171,10 @@ Provide a single, deterministic selection follow-up resolver that:
    - Stop/cancel clears chat + widget selection contexts.
 4. **Selection-like gate**
    - "what does summary144 mean?" does **not** trigger selection resolver.
+5. **Hybrid long-tail follow-up**
+   - Active clarifier + `"pls open the initial choice now"` resolves via constrained LLM to a valid candidate (or returns targeted retry, not multi-list/doc detour).
+6. **Explicit command escape with active context**
+   - Active clarifier context + `"open links panel d"` executes panel command via known-noun routing, not retry prompt and not selection resolution.
 
 ## Risks / Mitigations
 - **Risk:** Cross-list binding if contexts leak.
