@@ -2,7 +2,7 @@
 
 **Status:** Draft
 **Owner:** Chat Navigation
-**Last updated:** 2026-02-04
+**Last updated:** 2026-02-05
 
 ## Purpose
 Provide a single, deterministic selection follow-up resolver that:
@@ -83,7 +83,8 @@ Provide a single, deterministic selection follow-up resolver that:
 ### Phase 4 — Universal Follow-Up Resolver
 **File:** `lib/chat/routing-dispatcher.ts`
 - Add `resolveSelectionFollowUp(input)` after Tier 3 and before known-noun (Tier 4) routing.
-- Gate: `isSelectionLike(input)` must be true **and** `hasQuestionIntent(input)` must be false.
+- Gate: `isSelectionLike(input)` must be true.
+- Question-intent filter: default to requiring `hasQuestionIntent(input) === false`, **except** for polite command-style ordinals (for example, `"can you open the second option pls"`), which must still be treated as selection follow-ups.
 - **Ordinal parsing:** use embedded ordinal extraction (e.g., `resolveOrdinalIndex`) so phrases like "can you open that second one pls" resolve for both chat and widget contexts (do not rely solely on strict `isSelectionOnly`).
 - Resolution order:
   1) If `chatSelectionContext` active → resolve ordinals/labels → `handleSelectOption`.
@@ -94,7 +95,7 @@ Provide a single, deterministic selection follow-up resolver that:
 ### Phase 5 — Clarification Intercept Bypass for Widget Context
 **File:** `lib/chat/chat-routing.ts`
 - If `widgetSelectionContext` is active, skip clarification-mode handling and return `{ handled: false }` to allow the dispatcher resolver to run.
-- Optional defensive guard: if `lastClarification.options` include **any** `widget_option`, also skip clarification-mode handling.
+- Optional defensive guard: only if `lastClarification.options` are **all** `widget_option`, also skip clarification-mode handling.
 - Keep existing chat clarification logic for chat-only contexts.
 
 ### Phase 6 — Clear Rules
@@ -104,6 +105,47 @@ Provide a single, deterministic selection follow-up resolver that:
   - New list registration (replaces old)
   - TTL expiry
 - Do **not** clear on ordinary commands.
+
+## Reliability Addendum
+
+1. **Unified selection contract**
+   - Use one normalized selection contract for both chat and widget sources:
+     - `source: 'chat' | 'widget'`
+     - `optionSetId`
+     - `orderedOptions[]` (display order = ordinal order)
+     - `executionRef` per option
+     - `turnsSinceShown`
+     - `uiOnly` flag
+2. **Execution refs at registration**
+   - Register execution refs when the clarifier is created (no late reconstruction from unrelated state).
+   - Widget options must carry `{ widgetId, segmentId, itemId }` at registration time.
+3. **`uiOnly` behavior**
+   - If execution refs are missing, mark the context `uiOnly: true`.
+   - In `uiOnly` mode, keep pills clickable for UI display, but do not allow ordinal follow-up execution from that context.
+4. **Full state replacement**
+   - Registering a new selection context must replace competing selection state:
+     - `pendingOptions`
+     - `activeOptionSetId`
+     - `lastClarification`
+     - `lastOptionsShown`
+     - `clarificationSnapshot`
+     - `widgetSelectionContext`
+   - Invariant: do not end registration with dual active executable contexts (chat XOR widget). The only allowed overlap is when one context is `uiOnly`.
+5. **Tier bypass rules**
+   - When an active executable context exists (`uiOnly: false`) and input is selection-like, bypass lower routing tiers until the universal resolver runs.
+   - When `uiOnly: true`, do not bypass broadly; return a targeted clarifier (for example, "Tap an option pill to choose.") and avoid background tier hijacking.
+6. **Required logs**
+   - Emit explicit logs for:
+     - `selection_context_registered`
+     - `selection_context_ui_only`
+     - `universal_resolver_hit`
+     - `resolver_bypassed_by_tier`
+7. **Reliability acceptance tests**
+   - Long-phrase ordinal works for chat options (`"can you open the second option pls"`).
+   - Long-phrase ordinal works for widget clarifiers (`"can you open that second one pls"`).
+   - New clarifier context does not allow stale list binding.
+   - `uiOnly` context shows pills but does not execute ordinals.
+   - Question-intent inputs do not trigger selection execution.
 
 ## Acceptance Tests
 1. **Widget clarifier + ordinal follow-up**
