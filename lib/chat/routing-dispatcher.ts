@@ -60,7 +60,7 @@ import type { DocRetrievalHandlerContext, DocRetrievalHandlerResult } from '@/li
 import { handleClarificationIntercept, handlePanelDisambiguation, handleCorrection, handleMetaExplain, handleFollowUp } from '@/lib/chat/chat-routing'
 import { handleCrossCorpusRetrieval } from '@/lib/chat/cross-corpus-handler'
 import { handleDocRetrieval } from '@/lib/chat/doc-routing'
-import { isAffirmationPhrase, isRejectionPhrase, matchesReshowPhrases, matchesShowAllHeuristic, hasGraceSkipActionVerb, hasQuestionIntent } from '@/lib/chat/query-patterns'
+import { isAffirmationPhrase, isRejectionPhrase, matchesReshowPhrases, matchesShowAllHeuristic, hasGraceSkipActionVerb, hasQuestionIntent, ACTION_VERB_PATTERN } from '@/lib/chat/query-patterns'
 import { handleKnownNounRouting } from '@/lib/chat/known-noun-routing'
 import { callClarificationLLMClient, isLLMFallbackEnabledClient } from '@/lib/chat/clarification-llm-fallback'
 import { handleGroundingSetFallback, buildGroundingContext, checkSoftActiveWindow, isSelectionLike } from '@/lib/chat/grounding-set'
@@ -611,8 +611,20 @@ function resolveSelectionFollowUp(
   matchedChatOption?: PendingOptionState
   groundingAction?: GroundingAction
 } {
-  // Gate: must be selection-like and not a question
-  if (!isSelectionLike(input) || hasQuestionIntent(input)) {
+  // Gate: must be selection-like
+  if (!isSelectionLike(input)) {
+    return { handled: false }
+  }
+
+  // Question-intent filter with polite command exception
+  // Per universal-selection-resolver-plan.md Phase 4:
+  // "can you open the second option pls" is a polite command, not a question.
+  // These should still be treated as selection follow-ups.
+  const normalizedInput = input.toLowerCase().trim()
+  const isPoliteCommand = /^(can|could|would)\s+(you\s+)?(please\s+)?/.test(normalizedInput)
+    && ACTION_VERB_PATTERN.test(input)
+
+  if (hasQuestionIntent(input) && !isPoliteCommand) {
     return { handled: false }
   }
 

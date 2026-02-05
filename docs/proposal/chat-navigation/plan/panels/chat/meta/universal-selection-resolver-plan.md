@@ -141,11 +141,13 @@ Provide a single, deterministic selection follow-up resolver that:
      - `universal_resolver_hit`
      - `resolver_bypassed_by_tier`
 7. **Reliability acceptance tests**
-   - Long-phrase ordinal works for chat options (`"can you open the second option pls"`).
-   - Long-phrase ordinal works for widget clarifiers (`"can you open that second one pls"`).
-   - New clarifier context does not allow stale list binding.
-   - `uiOnly` context shows pills but does not execute ordinals.
-   - Question-intent inputs do not trigger selection execution.
+  - Long-phrase ordinal works for chat options (`"can you open the second option pls"`).
+  - Long-phrase ordinal works for widget clarifiers (`"can you open that second one pls"`).
+  - New clarifier context does not allow stale list binding.
+  - `uiOnly` context shows pills but does not execute ordinals.
+  - Question-intent inputs do not trigger selection execution.
+8. **Deterministic miss behavior with active context**
+   - If an active executable selection context exists and deterministic ordinal/label matching fails, return a targeted retry prompt (for example, "I didn't catch that. Say first/second, or tap an option.") before broader Tier 4.5/LLM fallback.
 
 ## Acceptance Tests
 1. **Widget clarifier + ordinal follow-up**
