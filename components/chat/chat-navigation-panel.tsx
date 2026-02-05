@@ -513,6 +513,11 @@ function ChatNavigationPanelContent({
     saveLastOptionsShown,
     incrementLastOptionsShownTurn,
     clearLastOptionsShown,
+    // Widget selection context (per universal-selection-resolver-plan.md)
+    widgetSelectionContext,
+    setWidgetSelectionContext,
+    incrementWidgetSelectionTurn,
+    clearWidgetSelectionContext,
   } = useChatNavigationContext()
 
   const { executeAction, selectOption, openPanelDrawer: openPanelDrawerBase } = useChatNavigation({
@@ -1395,6 +1400,7 @@ function ChatNavigationPanelContent({
         lastClarification,
         pendingOptions,
         activeOptionSetId,
+        setActiveOptionSetId,
         uiContext,
         currentEntryId,
         addMessage,
@@ -1435,9 +1441,15 @@ function ChatNavigationPanelContent({
         lastOptionsShown,
         incrementLastOptionsShownTurn,
         saveLastOptionsShown,
+        clearLastOptionsShown,
         // Widget registry (Tier 4.5)
         getVisibleSnapshots: () => getAllVisibleSnapshots(),
         getActiveWidgetId: () => getActiveWidgetId(),
+        // Widget selection context (per universal-selection-resolver-plan.md)
+        widgetSelectionContext,
+        setWidgetSelectionContext,
+        incrementWidgetSelectionTurn,
+        clearWidgetSelectionContext,
       })
       const { clarificationCleared, isNewQuestionOrCommandDetected } = routingResult
       // Extract classifier state for downstream telemetry

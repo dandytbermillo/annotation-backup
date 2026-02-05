@@ -193,6 +193,30 @@ export interface LastOptionsShown {
 export const SOFT_ACTIVE_TURN_LIMIT = 2
 
 /**
+ * Widget selection context for universal selection resolver.
+ * Per universal-selection-resolver-plan.md:
+ *   Stores widget options separately from chat options (pendingOptions).
+ *   Used for widget clarifier follow-ups without mixing into chat selection state.
+ */
+export interface WidgetSelectionContext {
+  /** Unique ID for this option set (typically the message ID) */
+  optionSetId: string
+  /** Widget ID from registry */
+  widgetId: string
+  /** Segment ID from registry (optional) */
+  segmentId?: string
+  /** Options in exact order as shown in clarifier message (for ordinal alignment) */
+  options: Array<{ id: string; label: string; sublabel?: string }>
+  /** Timestamp when registered */
+  timestamp: number
+  /** Turn counter for TTL expiry */
+  turnsSinceShown: number
+}
+
+/** Widget selection TTL in turns (matches SOFT_ACTIVE_TURN_LIMIT) */
+export const WIDGET_SELECTION_TTL = 2
+
+/**
  * Doc retrieval conversation state for follow-ups and corrections.
  * Per general-doc-retrieval-routing-plan.md (v4)
  * Updated for v5 Hybrid Response Selection (lastChunkIdsShown for HS2)
@@ -338,6 +362,11 @@ interface ChatNavigationContextValue {
   saveLastOptionsShown: (options: ClarificationOption[], messageId: string) => void
   incrementLastOptionsShownTurn: () => void
   clearLastOptionsShown: () => void
+  // Widget selection context for universal selection resolver (per universal-selection-resolver-plan.md)
+  widgetSelectionContext: WidgetSelectionContext | null
+  setWidgetSelectionContext: (context: WidgetSelectionContext | null) => void
+  incrementWidgetSelectionTurn: () => void
+  clearWidgetSelectionContext: () => void
 }
 
 // =============================================================================
@@ -1146,6 +1175,27 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     setLastOptionsShownInternal(null)
   }, [])
 
+  // Widget selection context state for universal selection resolver (per universal-selection-resolver-plan.md)
+  const [widgetSelectionContext, setWidgetSelectionContextInternal] = useState<WidgetSelectionContext | null>(null)
+
+  const setWidgetSelectionContext = useCallback((context: WidgetSelectionContext | null) => {
+    setWidgetSelectionContextInternal(context)
+  }, [])
+
+  const incrementWidgetSelectionTurn = useCallback(() => {
+    setWidgetSelectionContextInternal((prev) => {
+      if (!prev) return null
+      const newTurns = prev.turnsSinceShown + 1
+      // Expire after WIDGET_SELECTION_TTL full turns (> not >=, so TTL=2 allows turns 0,1,2)
+      if (newTurns > WIDGET_SELECTION_TTL) return null
+      return { ...prev, turnsSinceShown: newTurns }
+    })
+  }, [])
+
+  const clearWidgetSelectionContext = useCallback(() => {
+    setWidgetSelectionContextInternal(null)
+  }, [])
+
   return (
     <ChatNavigationContext.Provider
       value={{
@@ -1214,6 +1264,11 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         saveLastOptionsShown,
         incrementLastOptionsShownTurn,
         clearLastOptionsShown,
+        // Widget selection context for universal selection resolver
+        widgetSelectionContext,
+        setWidgetSelectionContext,
+        incrementWidgetSelectionTurn,
+        clearWidgetSelectionContext,
       }}
     >
       {children}

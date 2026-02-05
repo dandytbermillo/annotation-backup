@@ -55,7 +55,7 @@ Provide a single, deterministic selection follow-up resolver that:
  - **TTL handling:** increment `turnsSinceShown` once per user turn (parallel to `incrementLastOptionsShownTurn`).
 
 ### Phase 2 — Centralize Registration Helpers
-**Location:** `components/chat/chat-navigation-panel.tsx` **or** a shared helper module (recommended) `lib/chat/selection-context.ts`
+**Location:** `components/chat/chat-navigation-panel.tsx` **or** a shared helper module (recommended) `lib/chat/selection-context-helpers.ts`
 - `registerChatSelectionContext(...)`
   - Sets `pendingOptions`, `activeOptionSetId`, `lastClarification`, `lastOptionsShown`.
 - `registerWidgetSelectionContext(...)`
@@ -73,11 +73,18 @@ Provide a single, deterministic selection follow-up resolver that:
   - Tier 4.5 LLM `need_more_info`
   - LLM disabled/timeout clarifier
  - **Clarifier message options:** if a widget clarifier shows pills, populate `message.options` for re-show/repair UI, but **do not** write widget options into `pendingOptions`.
+ - **Option-type grounding clarifiers (new lists):**
+   - If `option` candidates are not found in `findLastOptionsMessage`, still register a fresh chat selection context **only when** you can safely attach execution data (from the candidate payload or a lookup).
+   - If you cannot attach data, do **not** leave stale `pendingOptions` active; clear chat selection context and still render the pills in `message.options` for UI-only display.
+ - **Widget list grounding clarifiers (source: `widget_list`):**
+   - Candidates must be typed `widget_option` and registered via `registerWidgetSelectionContext`.
+   - If widget list candidates cannot be typed as `widget_option` (missing `widgetId`/`segmentId`), do **not** register chat context; clear stale chat context and keep pills UI-only.
 
 ### Phase 4 — Universal Follow-Up Resolver
 **File:** `lib/chat/routing-dispatcher.ts`
-- Add `resolveSelectionFollowUp(input)` before doc routing.
+- Add `resolveSelectionFollowUp(input)` after Tier 3 and before known-noun (Tier 4) routing.
 - Gate: `isSelectionLike(input)` must be true **and** `hasQuestionIntent(input)` must be false.
+- **Ordinal parsing:** use embedded ordinal extraction (e.g., `resolveOrdinalIndex`) so phrases like "can you open that second one pls" resolve for both chat and widget contexts (do not rely solely on strict `isSelectionOnly`).
 - Resolution order:
   1) If `chatSelectionContext` active → resolve ordinals/labels → `handleSelectOption`.
   2) Else if `widgetSelectionContext` active → resolve ordinals/labels → `execute_widget_item`.

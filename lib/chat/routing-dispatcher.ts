@@ -40,7 +40,8 @@ import type { UIContext } from '@/lib/chat/intent-prompt'
 import type { LastClarificationState } from '@/lib/chat/chat-navigation-context'
 import type { DocRetrievalState } from '@/lib/docs/doc-retrieval-state'
 import type { VisibleWidget } from '@/lib/chat/panel-command-matcher'
-import type { RepairMemoryState, ClarificationSnapshot, ClarificationOption, LastSuggestionState, SuggestionCandidate, ChatSuggestions } from '@/lib/chat/chat-navigation-context'
+import type { RepairMemoryState, ClarificationSnapshot, ClarificationOption, LastSuggestionState, SuggestionCandidate, ChatSuggestions, WidgetSelectionContext } from '@/lib/chat/chat-navigation-context'
+import { WIDGET_SELECTION_TTL } from '@/lib/chat/chat-navigation-context'
 import type {
   HandlerResult,
   PendingOptionState,
@@ -160,6 +161,8 @@ export interface RoutingDispatcherContext {
    *  Per routing-order-priority-plan.md line 81:
    *  "Runs only when activeOptionSetId != null (don't bind to old visible pills in history)" */
   activeOptionSetId: string | null
+  /** Per universal-selection-resolver-plan.md: needed to clear activeOptionSetId when registering widget context */
+  setActiveOptionSetId: (id: string | null) => void
   uiContext?: UIContext | null
   currentEntryId?: string
   addMessage: (message: ChatMessage) => void
@@ -205,10 +208,18 @@ export interface RoutingDispatcherContext {
   incrementLastOptionsShownTurn?: () => void
   /** Save last options shown for soft-active window (called wherever dispatcher creates options) */
   saveLastOptionsShown: (options: import('@/lib/chat/chat-navigation-context').ClarificationOption[], messageId: string) => void
+  /** Per universal-selection-resolver-plan.md: clear soft-active window when registering widget context */
+  clearLastOptionsShown?: () => void
 
   // --- Widget Registry (Tier 4.5, per widget-registry-implementation-plan.md) ---
   getVisibleSnapshots: () => import('@/lib/widgets/ui-snapshot-registry').WidgetSnapshot[]
   getActiveWidgetId: () => string | null
+
+  // --- Widget Selection Context (per universal-selection-resolver-plan.md) ---
+  widgetSelectionContext: import('@/lib/chat/chat-navigation-context').WidgetSelectionContext | null
+  setWidgetSelectionContext: (context: import('@/lib/chat/chat-navigation-context').WidgetSelectionContext | null) => void
+  incrementWidgetSelectionTurn: () => void
+  clearWidgetSelectionContext: () => void
 }
 
 // =============================================================================
@@ -262,6 +273,9 @@ export interface RoutingDispatcherResult {
     action: string
   }
 }
+
+/** Type alias for grounding actions (extracted from RoutingDispatcherResult for reuse) */
+export type GroundingAction = NonNullable<RoutingDispatcherResult['groundingAction']>
 
 // =============================================================================
 // Explicit Command Detection (moved from chat-navigation-panel.tsx)
@@ -395,6 +409,71 @@ function looksSelectionLike(input: string): boolean {
  * - Single letters: "a", "b", "c", "d", "e" (when options use letter badges)
  * - Common typos: "ffirst", "sedond", "secondoption" (normalized before matching)
  */
+/**
+ * Extract ordinal index from input, supporting both strict patterns and embedded ordinals.
+ * This mirrors resolveOrdinalIndex from grounding-set.ts but returns in the format expected
+ * by the universal resolver.
+ *
+ * Strict patterns: "first", "the second one", "option 3"
+ * Embedded patterns: "can you open that second one pls", "open the first option in the widget"
+ */
+function extractOrdinalIndex(input: string, optionCount: number): number | undefined {
+  const normalized = normalizeOrdinalTypos(input).toLowerCase()
+
+  const ordinalMap: Record<string, number> = {
+    'first': 0, '1': 0, '1st': 0, 'option 1': 0, 'the first one': 0, 'the first option': 0, 'first option': 0,
+    'second': 1, '2': 1, '2nd': 1, 'option 2': 1, 'the second one': 1, 'the second option': 1, 'second option': 1,
+    'third': 2, '3': 2, '3rd': 2, 'option 3': 2, 'the third one': 2, 'the third option': 2, 'third option': 2,
+    'fourth': 3, '4': 3, '4th': 3, 'option 4': 3, 'the fourth one': 3, 'the fourth option': 3, 'fourth option': 3,
+    'fifth': 4, '5': 4, '5th': 4, 'option 5': 4, 'the fifth one': 4, 'the fifth option': 4, 'fifth option': 4,
+  }
+
+  // Handle "last"
+  if (normalized === 'last' || normalized === 'the last one' || normalized === 'the last option') {
+    const index = optionCount - 1
+    return index >= 0 ? index : undefined
+  }
+
+  // 1. Exact whole-string match
+  if (ordinalMap[normalized] !== undefined) {
+    const index = ordinalMap[normalized]
+    return index < optionCount ? index : undefined
+  }
+
+  // 2. Extract embedded ordinal from within a longer string.
+  //    Handles inputs like "can you open that second one pls" where the
+  //    ordinal is embedded in a command sentence.
+  const embeddedOrdinals: [RegExp, number][] = [
+    [/\bfirst\b|(?<!\d)1st\b/, 0],
+    [/\bsecond\b|(?<!\d)2nd\b/, 1],
+    [/\bthird\b|(?<!\d)3rd\b/, 2],
+    [/\bfourth\b|(?<!\d)4th\b/, 3],
+    [/\bfifth\b|(?<!\d)5th\b/, 4],
+    [/\bsixth\b/, 5],
+    [/\bseventh\b/, 6],
+    [/\beighth\b/, 7],
+    [/\bninth\b/, 8],
+    [/\blast\b/, optionCount - 1],
+  ]
+
+  for (const [pattern, index] of embeddedOrdinals) {
+    if (pattern.test(normalized) && index >= 0 && index < optionCount) {
+      return index
+    }
+  }
+
+  // 3. Single digit number
+  const singleDigit = normalized.match(/\b([1-9])\b/)
+  if (singleDigit) {
+    const index = parseInt(singleDigit[1], 10) - 1
+    if (index >= 0 && index < optionCount) {
+      return index
+    }
+  }
+
+  return undefined
+}
+
 function isSelectionOnly(
   input: string,
   optionCount: number,
@@ -507,6 +586,102 @@ function findExactOptionMatch(
 }
 
 // =============================================================================
+// Universal Selection Follow-Up Resolver
+// Per universal-selection-resolver-plan.md Phase 4
+// =============================================================================
+
+/**
+ * Resolve selection follow-ups against chat or widget selection contexts.
+ * Precedence: chat context first, then widget context.
+ * Gate: Must be selection-like and NOT a question.
+ *
+ * Returns { handled: true, groundingAction } for widget selections,
+ * or { handled: true, matchedOption } for chat selections (caller handles).
+ */
+function resolveSelectionFollowUp(
+  input: string,
+  chatContext: {
+    pendingOptions: PendingOptionState[]
+    activeOptionSetId: string | null
+  },
+  widgetContext: WidgetSelectionContext | null,
+  getVisibleSnapshots: () => ReturnType<typeof getWidgetSnapshot>[]
+): {
+  handled: boolean
+  matchedChatOption?: PendingOptionState
+  groundingAction?: GroundingAction
+} {
+  // Gate: must be selection-like and not a question
+  if (!isSelectionLike(input) || hasQuestionIntent(input)) {
+    return { handled: false }
+  }
+
+  // Precedence 1: Chat context first
+  if (chatContext.pendingOptions.length > 0 && chatContext.activeOptionSetId !== null) {
+    // Use extractOrdinalIndex for embedded ordinal support (e.g., "can you open the second one")
+    const ordinalIndex = extractOrdinalIndex(input, chatContext.pendingOptions.length)
+
+    if (ordinalIndex !== undefined) {
+      const match = chatContext.pendingOptions[ordinalIndex]
+      return { handled: true, matchedChatOption: match }
+    }
+
+    // Try label match (reuse existing helper)
+    const labelMatch = findExactOptionMatch(input, chatContext.pendingOptions)
+    if (labelMatch) {
+      return { handled: true, matchedChatOption: labelMatch }
+    }
+  }
+
+  // Precedence 2: Widget context (only if chat context didn't match)
+  if (widgetContext && widgetContext.turnsSinceShown < WIDGET_SELECTION_TTL) {
+    // Use extractOrdinalIndex for embedded ordinal support (e.g., "can you open that second one pls")
+    const ordinalIndex = extractOrdinalIndex(input, widgetContext.options.length)
+
+    if (ordinalIndex !== undefined) {
+      const match = widgetContext.options[ordinalIndex]
+      return {
+        handled: true,
+        groundingAction: {
+          type: 'execute_widget_item',
+          widgetId: widgetContext.widgetId,
+          segmentId: widgetContext.segmentId,
+          itemId: match.id,
+          itemLabel: match.label,
+          action: 'open',
+        },
+      }
+    }
+
+    // Try label match for widget options — convert to PendingOptionState format
+    const widgetOptionsAsPending: PendingOptionState[] = widgetContext.options.map((opt, idx) => ({
+      index: idx + 1,
+      type: 'widget_option' as const,
+      id: opt.id,
+      label: opt.label,
+      sublabel: opt.sublabel,
+      data: undefined, // Widget options don't carry data payload
+    }))
+    const labelMatch = findExactOptionMatch(input, widgetOptionsAsPending)
+    if (labelMatch) {
+      return {
+        handled: true,
+        groundingAction: {
+          type: 'execute_widget_item',
+          widgetId: widgetContext.widgetId,
+          segmentId: widgetContext.segmentId,
+          itemId: labelMatch.id,
+          itemLabel: labelMatch.label,
+          action: 'open',
+        },
+      }
+    }
+  }
+
+  return { handled: false }
+}
+
+// =============================================================================
 // Grounding-Set Helpers
 // =============================================================================
 
@@ -546,6 +721,10 @@ function buildGroundedClarifier(candidates: GroundingCandidate[]): string {
  * Bind a grounded clarifier to pending options so follow-up replies can resolve.
  * Only binds option/widget_option candidates (others are ignored).
  * Returns the built options so they can be added to the clarifier message.
+ *
+ * Per universal-selection-resolver-plan.md Phase 3:
+ * - If ALL options are widget_option → register widgetSelectionContext (not pendingOptions)
+ * - If mixed or chat-only → use existing pendingOptions/lastClarification behavior
  */
 function bindGroundingClarifierOptions(
   ctx: RoutingDispatcherContext,
@@ -555,6 +734,71 @@ function bindGroundingClarifierOptions(
   const optionCandidates = candidates.filter(c => c.type === 'option' || c.type === 'widget_option')
   if (optionCandidates.length === 0) return []
 
+  // Check if ALL candidates are widget_option
+  const allWidgetOptions = optionCandidates.every(c => c.type === 'widget_option')
+
+  if (allWidgetOptions) {
+    // Per universal-selection-resolver-plan.md Phase 3:
+    // Register widgetSelectionContext instead of pendingOptions for pure widget lists
+    const firstCandidate = optionCandidates[0]
+    const widgetInfo = resolveWidgetItemFromSnapshots(ctx.getVisibleSnapshots, firstCandidate.id)
+
+    if (widgetInfo) {
+      // Build options in exact same order as candidates (for ordinal alignment)
+      // Note: GroundingCandidate doesn't have sublabel, so we omit it
+      const widgetOptions = optionCandidates.map(c => ({
+        id: c.id,
+        label: c.label,
+      }))
+
+      // Register widget selection context
+      ctx.setWidgetSelectionContext({
+        optionSetId: messageId,
+        widgetId: widgetInfo.widgetId,
+        segmentId: widgetInfo.segmentId,
+        options: widgetOptions,
+        timestamp: Date.now(),
+        turnsSinceShown: 0,
+      })
+
+      // Clear chat selection context to prevent cross-context ambiguity
+      // CRITICAL: Must clear activeOptionSetId to prevent Tier 3a from matching against old options
+      // CRITICAL: Must clear lastOptionsShown to prevent soft-active window (Tier 4.5) from matching old options
+      ctx.setPendingOptions([])
+      ctx.setPendingOptionsMessageId(null)
+      ctx.setPendingOptionsGraceCount(0)
+      ctx.setActiveOptionSetId(null)
+      ctx.setLastClarification(null)
+      ctx.clearLastOptionsShown?.()
+
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'grounding_clarifier_widget_context',
+        metadata: {
+          messageId,
+          widgetId: widgetInfo.widgetId,
+          optionCount: widgetOptions.length,
+          optionLabels: widgetOptions.map(o => o.label),
+        },
+      })
+
+      // Still return options for message UI rendering (pills display)
+      // but they are NOT bound to pendingOptions
+      return optionCandidates.map((candidate, index) => ({
+        index,
+        id: candidate.id,
+        label: candidate.label,
+        type: 'widget_option' as const,
+        data: {
+          widgetId: widgetInfo.widgetId,
+          segmentId: widgetInfo.segmentId,
+          itemId: candidate.id,
+        },
+      }))
+    }
+  }
+
+  // Mixed or chat-only options: use existing pendingOptions/lastClarification behavior
   const pendingOptions: PendingOptionState[] = []
 
   optionCandidates.forEach((candidate, index) => {
@@ -589,6 +833,9 @@ function bindGroundingClarifierOptions(
   })
 
   if (pendingOptions.length === 0) return []
+
+  // Clear widget selection context to prevent cross-context ambiguity
+  ctx.clearWidgetSelectionContext()
 
   ctx.setPendingOptions(pendingOptions)
   ctx.setPendingOptionsMessageId(messageId)
@@ -717,6 +964,8 @@ export async function dispatchRouting(
     setStopSuppressionCount: ctx.setStopSuppressionCount,
     decrementStopSuppression: ctx.decrementStopSuppression,
     saveLastOptionsShown: ctx.saveLastOptionsShown,
+    // Widget selection context (per universal-selection-resolver-plan.md)
+    widgetSelectionContext: ctx.widgetSelectionContext,
   })
 
   const { clarificationCleared, isNewQuestionOrCommandDetected } = clarificationResult
@@ -774,26 +1023,50 @@ export async function dispatchRouting(
     // Don't return — let the command proceed through remaining tiers
   }
 
-  // Tier 2b: Cross-Corpus Retrieval
-  const crossCorpusResult = await handleCrossCorpusRetrieval({
-    trimmedInput: ctx.trimmedInput,
-    docRetrievalState: ctx.docRetrievalState,
-    visibleWidgets: ctx.uiContext?.dashboard?.visibleWidgets,
-    addMessage: ctx.addMessage,
-    updateDocRetrievalState: ctx.updateDocRetrievalState,
-    setIsLoading: ctx.setIsLoading,
-    setPendingOptions: ctx.setPendingOptions,
-    setPendingOptionsMessageId: ctx.setPendingOptionsMessageId as (messageId: string) => void,
-    setLastClarification: ctx.setLastClarification,
-  })
-  if (crossCorpusResult.handled) {
-    return {
-      ...defaultResult,
-      handled: true,
-      handledByTier: 2,
-      tierLabel: 'cross_corpus',
-      clarificationCleared,
-      isNewQuestionOrCommandDetected,
+  // ==========================================================================
+  // Widget Selection Context Guard — Skip Tier 2b for selection follow-ups
+  //
+  // Per universal-selection-resolver-plan.md: If widgetSelectionContext is active
+  // and input is selection-like and not a question, skip cross-corpus retrieval
+  // so the universal resolver (Tier 3.5) can handle it.
+  // ==========================================================================
+  const skipCrossCorpusForWidgetSelection = ctx.widgetSelectionContext !== null
+    && isSelectionLike(ctx.trimmedInput)
+    && !hasQuestionIntent(ctx.trimmedInput)
+
+  if (skipCrossCorpusForWidgetSelection) {
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'skip_cross_corpus_widget_context',
+      metadata: {
+        input: ctx.trimmedInput,
+        widgetId: ctx.widgetSelectionContext?.widgetId,
+        reason: 'widget_selection_context_active_and_selection_like',
+      },
+    })
+    // Fall through to Tier 2c, 3.5, etc.
+  } else {
+    // Tier 2b: Cross-Corpus Retrieval
+    const crossCorpusResult = await handleCrossCorpusRetrieval({
+      trimmedInput: ctx.trimmedInput,
+      docRetrievalState: ctx.docRetrievalState,
+      visibleWidgets: ctx.uiContext?.dashboard?.visibleWidgets,
+      addMessage: ctx.addMessage,
+      updateDocRetrievalState: ctx.updateDocRetrievalState,
+      setIsLoading: ctx.setIsLoading,
+      setPendingOptions: ctx.setPendingOptions,
+      setPendingOptionsMessageId: ctx.setPendingOptionsMessageId as (messageId: string) => void,
+      setLastClarification: ctx.setLastClarification,
+    })
+    if (crossCorpusResult.handled) {
+      return {
+        ...defaultResult,
+        handled: true,
+        handledByTier: 2,
+        tierLabel: 'cross_corpus',
+        clarificationCleared,
+        isNewQuestionOrCommandDetected,
+      }
     }
   }
 
@@ -817,6 +1090,7 @@ export async function dispatchRouting(
       setPendingOptionsMessageId: ctx.setPendingOptionsMessageId as (messageId: string) => void,
       setLastClarification: ctx.setLastClarification,
       saveLastOptionsShown: ctx.saveLastOptionsShown,
+      clearWidgetSelectionContext: ctx.clearWidgetSelectionContext,
     })
     if (panelDisambiguationResult.handled) {
       return {
@@ -1164,7 +1438,9 @@ export async function dispatchRouting(
   // Guard #1 (per routing-order-priority-plan.md line 81):
   // "Runs only when activeOptionSetId != null (don't bind to old visible pills in history)"
   // Question intent override: questions like "what is X?" should never bind to active list
-  if (ctx.pendingOptions.length > 0 && ctx.activeOptionSetId !== null && !hasQuestionIntent(ctx.trimmedInput)) {
+  // Widget context bypass (per universal-selection-resolver-plan.md Phase 5.2):
+  // If widgetSelectionContext is active, skip this guard and defer to universal resolver
+  if (ctx.pendingOptions.length > 0 && ctx.activeOptionSetId !== null && !hasQuestionIntent(ctx.trimmedInput) && !ctx.widgetSelectionContext) {
     const optionLabels = ctx.pendingOptions.map(opt => opt.label)
     const selectionResult = isSelectionOnly(ctx.trimmedInput, ctx.pendingOptions.length, optionLabels)
 
@@ -1470,6 +1746,8 @@ export async function dispatchRouting(
           },
         })
 
+        // Per universal-selection-resolver-plan.md: clear widget context when restoring chat options
+        ctx.clearWidgetSelectionContext()
         // Restore pendingOptions and execute selection
         ctx.setPendingOptions(lastOptionsMessage.options)
         const optionToSelect: SelectionOption = {
@@ -1513,6 +1791,8 @@ export async function dispatchRouting(
           },
         })
 
+        // Per universal-selection-resolver-plan.md: clear widget context when restoring chat options
+        ctx.clearWidgetSelectionContext()
         // Restore pendingOptions and execute selection
         ctx.setPendingOptions(lastOptionsMessage.options)
         const optionToSelect: SelectionOption = {
@@ -1614,6 +1894,8 @@ export async function dispatchRouting(
       }
       ctx.addMessage(assistantMessage)
 
+      // Per universal-selection-resolver-plan.md: clear widget context when restoring chat options
+      ctx.clearWidgetSelectionContext()
       // Restore pendingOptions for selection handling
       ctx.setPendingOptions(lastOptionsMessage.options)
       ctx.setPendingOptionsMessageId(messageId)
@@ -1691,6 +1973,129 @@ export async function dispatchRouting(
   }
 
   // =========================================================================
+  // TIER 3.5 — Universal Selection Follow-Up Resolver
+  //
+  // Per universal-selection-resolver-plan.md Phase 4:
+  // Handle selection follow-ups that weren't caught by Tier 3a (which was
+  // bypassed when widgetSelectionContext is active). This ensures widget
+  // selection follow-ups route through execute_widget_item, not handleSelectOption.
+  // =========================================================================
+  const selectionResult = resolveSelectionFollowUp(
+    ctx.trimmedInput,
+    {
+      pendingOptions: ctx.pendingOptions,
+      activeOptionSetId: ctx.activeOptionSetId,
+    },
+    ctx.widgetSelectionContext,
+    ctx.getVisibleSnapshots
+  )
+
+  if (selectionResult.handled) {
+    if (selectionResult.groundingAction && selectionResult.groundingAction.type === 'execute_widget_item') {
+      // Widget selection — return groundingAction for caller to execute
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'universal_resolver_widget_selection',
+        metadata: {
+          input: ctx.trimmedInput,
+          widgetId: selectionResult.groundingAction.widgetId,
+          itemId: selectionResult.groundingAction.itemId,
+          tier: '3.5',
+        },
+      })
+
+      ctx.setIsLoading(false)
+      // Clear widget selection context after successful resolution
+      ctx.clearWidgetSelectionContext()
+      return {
+        ...defaultResult,
+        handled: true,
+        handledByTier: 3,
+        tierLabel: 'universal_resolver_widget',
+        groundingAction: selectionResult.groundingAction,
+        clarificationCleared,
+        isNewQuestionOrCommandDetected,
+        classifierCalled,
+        classifierResult,
+        classifierTimeout,
+        classifierLatencyMs,
+        classifierError,
+        isFollowUp,
+      }
+    }
+
+    if (selectionResult.matchedChatOption) {
+      // Chat selection — execute via handleSelectOption
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'universal_resolver_chat_selection',
+        metadata: {
+          input: ctx.trimmedInput,
+          selectedLabel: selectionResult.matchedChatOption.label,
+          tier: '3.5',
+        },
+      })
+
+      ctx.setPendingOptionsGraceCount(1)
+      ctx.setIsLoading(false)
+
+      // If it's a widget_option, resolve through execute_widget_item
+      if (selectionResult.matchedChatOption.type === 'widget_option') {
+        const widgetInfo = resolveWidgetItemFromSnapshots(ctx.getVisibleSnapshots, selectionResult.matchedChatOption.id)
+        if (widgetInfo) {
+          return {
+            ...defaultResult,
+            handled: true,
+            handledByTier: 3,
+            tierLabel: 'universal_resolver_chat_widget_option',
+            groundingAction: {
+              type: 'execute_widget_item',
+              widgetId: widgetInfo.widgetId,
+              segmentId: widgetInfo.segmentId,
+              itemId: selectionResult.matchedChatOption.id,
+              itemLabel: selectionResult.matchedChatOption.label,
+              action: 'open',
+            },
+            clarificationCleared,
+            isNewQuestionOrCommandDetected,
+            classifierCalled,
+            classifierResult,
+            classifierTimeout,
+            classifierLatencyMs,
+            classifierError,
+            isFollowUp,
+          }
+        }
+      }
+
+      // Regular chat option — execute via handleSelectOption
+      const optionToSelect: SelectionOption = {
+        type: selectionResult.matchedChatOption.type as SelectionOption['type'],
+        id: selectionResult.matchedChatOption.id,
+        label: selectionResult.matchedChatOption.label,
+        sublabel: selectionResult.matchedChatOption.sublabel,
+        data: selectionResult.matchedChatOption.data as SelectionOption['data'],
+      }
+
+      ctx.handleSelectOption(optionToSelect)
+      return {
+        ...defaultResult,
+        handled: true,
+        handledByTier: 3,
+        tierLabel: 'universal_resolver_chat',
+        clarificationCleared,
+        isNewQuestionOrCommandDetected,
+        classifierCalled,
+        classifierResult,
+        classifierTimeout,
+        classifierLatencyMs,
+        classifierError,
+        isFollowUp,
+      }
+    }
+  }
+
+  // =========================================================================
   // TIER 4 — Known-Noun Commands
   //
   // Per routing-order-priority-plan.md Core Principle #4:
@@ -1747,6 +2152,7 @@ export async function dispatchRouting(
     hasSoftActiveSelectionLike,
     hasVisibleWidgetList,
     saveLastOptionsShown: ctx.saveLastOptionsShown,
+    clearWidgetSelectionContext: ctx.clearWidgetSelectionContext,
   })
   if (knownNounResult.handled) {
     return {
@@ -2358,6 +2764,12 @@ export async function dispatchRouting(
   // which is correct — a used soft-active turn should still count.
   if (ctx.incrementLastOptionsShownTurn) {
     ctx.incrementLastOptionsShownTurn()
+  }
+
+  // Per universal-selection-resolver-plan.md: increment widget selection turn counter
+  // in parallel with lastOptionsShown turn counter.
+  if (ctx.incrementWidgetSelectionTurn) {
+    ctx.incrementWidgetSelectionTurn()
   }
 
   // =========================================================================

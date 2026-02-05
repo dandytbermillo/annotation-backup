@@ -283,6 +283,8 @@ export interface KnownNounRoutingContext {
   hasVisibleWidgetList?: boolean
   /** Save last options shown for soft-active window */
   saveLastOptionsShown?: (options: import('@/lib/chat/chat-navigation-context').ClarificationOption[], messageId: string) => void
+  /** Per universal-selection-resolver-plan.md: clear widget context when registering chat context */
+  clearWidgetSelectionContext?: () => void
 }
 
 export interface KnownNounRoutingResult {
@@ -399,6 +401,9 @@ export function handleKnownNounRouting(
         options,
       }
       ctx.addMessage(assistantMessage)
+
+      // Per universal-selection-resolver-plan.md: clear widget context when registering chat context
+      ctx.clearWidgetSelectionContext?.()
 
       ctx.setPendingOptions(options.map((opt, idx) => ({
         index: idx + 1,
@@ -554,6 +559,9 @@ export function handleKnownNounRouting(
       options,
     }
     ctx.addMessage(assistantMessage)
+
+    // Per universal-selection-resolver-plan.md: clear widget context when registering chat context
+    ctx.clearWidgetSelectionContext?.()
 
     // Set pending options for selection handling
     ctx.setPendingOptions(options.map((opt, idx) => ({

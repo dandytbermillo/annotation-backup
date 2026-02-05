@@ -1131,6 +1131,10 @@ export interface ClarificationInterceptContext {
 
   // Soft-active window (per grounding-set-fallback-plan.md §Soft-Active)
   saveLastOptionsShown?: (options: ClarificationOption[], messageId: string) => void
+
+  // Widget selection context (per universal-selection-resolver-plan.md)
+  // When non-null, skip clarification-mode handling and defer to universal resolver
+  widgetSelectionContext: import('@/lib/chat/chat-navigation-context').WidgetSelectionContext | null
 }
 
 /**
@@ -1405,6 +1409,8 @@ export async function handleClarificationIntercept(
     setStopSuppressionCount,
     // Soft-active window
     saveLastOptionsShown,
+    // Widget selection context (per universal-selection-resolver-plan.md Phase 5)
+    widgetSelectionContext,
   } = ctx
 
   // TD-3: Check for bare noun new intent
@@ -2208,9 +2214,10 @@ export async function handleClarificationIntercept(
   // Guards (Step 6 — widget-registry-implementation-plan):
   //   - Skip if input is a command/question (let it reach Tier 4.5 widget resolution)
   //   - Skip if input is longer than 4 words (not a bare ordinal)
+  //   - Skip if widgetSelectionContext exists (per universal-selection-resolver-plan.md)
   // ==========================================================================
   const bareOrdinalWordCount = trimmedInput.split(/\s+/).length
-  if (!lastClarification && !clarificationSnapshot && !isNewQuestionOrCommandDetected && bareOrdinalWordCount <= 4) {
+  if (!lastClarification && !clarificationSnapshot && !widgetSelectionContext && !isNewQuestionOrCommandDetected && bareOrdinalWordCount <= 4) {
     const bareOrdinalCheck = isSelectionOnly(trimmedInput, 10, [])
     if (bareOrdinalCheck.isSelection) {
       void debugLog({
@@ -2244,9 +2251,30 @@ export async function handleClarificationIntercept(
   const hasClarificationContext = lastClarification?.nextAction ||
     (lastClarification?.options && lastClarification.options.length > 0)
 
-  // Guard: If all options are widget_option, skip clarification-mode handling.
-  // Let dispatcher Tier 3a handle it (which supports widget_option → execute_widget_item).
-  // This avoids "Unknown option type" from handleSelectOption which doesn't support widget_option.
+  // ==========================================================================
+  // Widget Selection Context Bypass (per universal-selection-resolver-plan.md)
+  //
+  // When widgetSelectionContext is active, skip ALL clarification-mode handling
+  // and defer to the universal resolver in the dispatcher. This MUST be before
+  // any label-matching code to prevent widget_option → handleSelectOption path.
+  // ==========================================================================
+  if (widgetSelectionContext !== null) {
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'clarification_bypass_widget_context',
+      metadata: {
+        userInput: trimmedInput,
+        widgetId: widgetSelectionContext.widgetId,
+        optionCount: widgetSelectionContext.options.length,
+        reason: 'widget_selection_context_active',
+      },
+    })
+    // Return handled: false so universal resolver handles it
+    return { handled: false, clarificationCleared: false, isNewQuestionOrCommandDetected }
+  }
+
+  // Fallback guard: If all options are widget_option but no widgetSelectionContext
+  // (edge case during transition), still skip clarification-mode handling.
   const allWidgetOptions = lastClarification?.options?.length
     ? lastClarification.options.every(opt => opt.type === 'widget_option')
     : false
@@ -2254,14 +2282,13 @@ export async function handleClarificationIntercept(
   if (allWidgetOptions && hasClarificationContext) {
     void debugLog({
       component: 'ChatNavigation',
-      action: 'clarification_skip_widget_options',
+      action: 'clarification_skip_widget_options_fallback',
       metadata: {
         userInput: trimmedInput,
         optionCount: lastClarification?.options?.length,
-        reason: 'all_widget_options_defer_to_dispatcher',
+        reason: 'all_widget_options_no_context',
       },
     })
-    // Return handled: false so dispatcher Tier 3a handles it
     return { handled: false, clarificationCleared: false, isNewQuestionOrCommandDetected }
   }
 
@@ -4228,6 +4255,8 @@ export interface PanelDisambiguationHandlerContext {
   setLastClarification: (state: LastClarificationState | null) => void
   // Soft-active window (per grounding-set-fallback-plan.md §Soft-Active)
   saveLastOptionsShown?: (options: ClarificationOption[], messageId: string) => void
+  // Per universal-selection-resolver-plan.md: clear widget context when registering chat context
+  clearWidgetSelectionContext?: () => void
 }
 
 export interface PanelDisambiguationHandlerResult extends HandlerResult {
@@ -4259,6 +4288,7 @@ export function handlePanelDisambiguation(
     setPendingOptionsMessageId,
     setLastClarification,
     saveLastOptionsShown,
+    clearWidgetSelectionContext,
   } = context
 
   const matchResult = matchVisiblePanelCommand(trimmedInput, visibleWidgets)
@@ -4302,6 +4332,10 @@ export function handlePanelDisambiguation(
       options,
     }
     addMessage(assistantMessage)
+
+    // Per universal-selection-resolver-plan.md: clear widget context when registering chat context
+    // This prevents leftover widget context from causing bypass guard to skip clarification handling
+    clearWidgetSelectionContext?.()
 
     // Set pending options for pill selection
     const pendingOptions: PendingOptionState[] = options.map((opt, idx) => ({
