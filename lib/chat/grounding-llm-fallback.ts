@@ -46,8 +46,8 @@ export interface GroundingLLMResult {
 // Configuration
 // =============================================================================
 
-const GROUNDING_LLM_TIMEOUT_MS = 800
-const MIN_CONFIDENCE_SELECT = 0.6
+const GROUNDING_LLM_TIMEOUT_MS = 2000
+const MIN_CONFIDENCE_SELECT = 0.4
 
 // Feature flag (client-side)
 export function isGroundingLLMEnabled(): boolean {
@@ -152,8 +152,12 @@ export async function callGroundingLLM(
 
     const data = await response.json()
 
+    // The API route returns a GroundingLLMResult wrapper: { success, response?, error?, latencyMs }
+    // Unwrap the server envelope to get the inner LLM response.
+    const innerResponse = data?.response ?? data
+
     // Validate response structure
-    if (!data || typeof data.decision !== 'string' || typeof data.confidence !== 'number') {
+    if (!innerResponse || typeof innerResponse.decision !== 'string' || typeof innerResponse.confidence !== 'number') {
       return {
         success: false,
         error: 'Invalid response structure',
@@ -161,10 +165,19 @@ export async function callGroundingLLM(
       }
     }
 
+    // If the server explicitly reported failure, propagate it
+    if (data?.success === false) {
+      return {
+        success: false,
+        error: data.error || 'Server returned failure',
+        latencyMs: Date.now() - startTime,
+      }
+    }
+
     const parsed: GroundingLLMResponse = {
-      decision: data.decision,
-      choiceId: data.choiceId ?? null,
-      confidence: data.confidence,
+      decision: innerResponse.decision,
+      choiceId: innerResponse.choiceId ?? null,
+      confidence: innerResponse.confidence,
     }
 
     // Safety: validate choiceId for select decisions

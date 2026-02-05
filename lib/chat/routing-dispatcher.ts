@@ -41,7 +41,7 @@ import type { LastClarificationState } from '@/lib/chat/chat-navigation-context'
 import type { DocRetrievalState } from '@/lib/docs/doc-retrieval-state'
 import type { VisibleWidget } from '@/lib/chat/panel-command-matcher'
 import type { RepairMemoryState, ClarificationSnapshot, ClarificationOption, LastSuggestionState, SuggestionCandidate, ChatSuggestions, WidgetSelectionContext } from '@/lib/chat/chat-navigation-context'
-import { WIDGET_SELECTION_TTL } from '@/lib/chat/chat-navigation-context'
+import { WIDGET_SELECTION_TTL, SOFT_ACTIVE_TURN_LIMIT } from '@/lib/chat/chat-navigation-context'
 import type {
   HandlerResult,
   PendingOptionState,
@@ -2169,43 +2169,234 @@ export async function dispatchRouting(
   }
 
   // =========================================================================
-  // TIER 3.6 — Deterministic Miss Guard
+  // TIER 3.6 — Hybrid Selection Resolver (Deterministic Miss → Constrained LLM)
   //
-  // Per universal-selection-resolver-plan.md Reliability Addendum item 8:
+  // Per universal-selection-resolver-plan.md Phase 4 & Reliability Addendum item 8:
   // If an active executable selection context exists and deterministic
-  // ordinal/label matching failed, show a targeted retry prompt before
-  // broader Tier 4.5/LLM fallback.
+  // ordinal/label matching failed, call constrained LLM with active context
+  // candidates. Retry prompt only as final fallback after LLM need_more_info/error.
   //
   // IMPORTANT: Do NOT trigger for new commands (e.g., "open links panel d").
-  // These should escape the selection context and execute normally.
+  // These should escape the selection context and execute normally via Tier 4.
   // =========================================================================
+  // Recoverable chat context: lastOptionsShown has recently-shown options even when
+  // pendingOptions was cleared by Tier 2a explicit command bypass.
+  // Guard: if widget lists are currently visible, do not recover stale chat options.
+  const hasVisibleWidgetListInRegistry = ctx.getVisibleSnapshots().some(snapshot =>
+    snapshot.segments.some(segment =>
+      segment.segmentType === 'list' &&
+      Array.isArray((segment as { items?: unknown[] }).items) &&
+      ((segment as { items?: unknown[] }).items?.length ?? 0) > 0
+    )
+  )
+  const hasRecoverableChatContext = ctx.pendingOptions.length === 0
+    && ctx.lastOptionsShown !== null
+    && ctx.lastOptionsShown.options.length > 0
+    && ctx.lastOptionsShown.turnsSinceShown <= SOFT_ACTIVE_TURN_LIMIT
+    && !hasVisibleWidgetListInRegistry
+
   const hasActiveExecutableContext =
     (ctx.widgetSelectionContext !== null && ctx.widgetSelectionContext.turnsSinceShown < WIDGET_SELECTION_TTL) ||
-    (ctx.pendingOptions.length > 0 && ctx.activeOptionSetId !== null)
+    (ctx.pendingOptions.length > 0 && ctx.activeOptionSetId !== null) ||
+    hasRecoverableChatContext
 
-  // Check if input looks like a new command (has action verb like "open", "show", etc.)
-  // If so, let it escape to lower tiers instead of showing retry prompt.
-  // BUT: if the input contains selection keywords ("option", "choice", "item"), the user
-  // is referring to a list item, not issuing a new command (e.g., "pls open the initial choice now").
+  // Explicit command escape (Phase 4 step 3):
+  // If input has an action verb + non-selection target, it's a new command, not a selection miss.
+  // Let it fall through to Tier 4 known-noun routing.
   const hasSelectionKeyword = /\b(option|choice|item)\b/i.test(ctx.trimmedInput)
   const looksLikeNewCommand = ACTION_VERB_PATTERN.test(ctx.trimmedInput)
     && !isSelectionOnly(ctx.trimmedInput, 10, []).isSelection
     && !hasSelectionKeyword
 
   if (hasActiveExecutableContext && isSelectionLike(ctx.trimmedInput) && !looksLikeNewCommand && !isNewQuestionOrCommandDetected) {
-    // Deterministic matching failed but input looked like a pure selection attempt
-    // (not a new command). Show targeted retry prompt to keep user in selection flow.
+    // Deterministic matching failed but input is selection-like with active context.
+    // Try constrained LLM before showing retry prompt.
     void debugLog({
       component: 'ChatNavigation',
-      action: 'deterministic_miss_with_active_context',
+      action: 'deterministic_miss_trying_constrained_llm',
       metadata: {
         input: ctx.trimmedInput,
         hasWidgetContext: ctx.widgetSelectionContext !== null,
         hasChatContext: ctx.pendingOptions.length > 0,
+        hasRecoverableChatContext,
+        hasVisibleWidgetListInRegistry,
         tier: '3.6',
       },
     })
 
+    // Build candidates from active context.
+    // Priority: pendingOptions > lastOptionsShown (recoverable) > widgetSelectionContext
+    // This ensures recently-shown clarification options are preferred over ambient widget items.
+    const llmCandidates: { id: string; label: string; type: string; actionHint?: string }[] = []
+    let sourceContext: 'chat' | 'recoverable_chat' | 'widget' = 'chat'
+
+    if (ctx.pendingOptions.length > 0 && ctx.activeOptionSetId !== null) {
+      // Priority 1: Active chat context (pendingOptions)
+      for (const opt of ctx.pendingOptions) {
+        llmCandidates.push({ id: opt.id, label: opt.label, type: opt.type || 'option' })
+      }
+      sourceContext = 'chat'
+    } else if (hasRecoverableChatContext && ctx.lastOptionsShown) {
+      // Priority 2: Recoverable chat context (lastOptionsShown — cleared by Tier 2a but still recent)
+      for (const opt of ctx.lastOptionsShown.options) {
+        llmCandidates.push({ id: opt.id, label: opt.label, type: opt.type || 'option' })
+      }
+      sourceContext = 'recoverable_chat'
+    } else if (ctx.widgetSelectionContext !== null && ctx.widgetSelectionContext.turnsSinceShown < WIDGET_SELECTION_TTL) {
+      // Priority 3: Widget context
+      for (const opt of ctx.widgetSelectionContext.options) {
+        llmCandidates.push({ id: opt.id, label: opt.label, type: 'widget_option', actionHint: 'open' })
+      }
+      sourceContext = 'widget'
+    }
+
+    if (llmCandidates.length > 0 && isGroundingLLMEnabled()) {
+      try {
+        const llmResult = await callGroundingLLM({
+          userInput: ctx.trimmedInput,
+          candidates: llmCandidates,
+        })
+
+        void debugLog({
+          component: 'ChatNavigation',
+          action: llmResult.success ? 'tier3_6_constrained_llm_called' : 'tier3_6_constrained_llm_error',
+          metadata: {
+            input: ctx.trimmedInput,
+            success: llmResult.success,
+            decision: llmResult.response?.decision,
+            choiceId: llmResult.response?.choiceId,
+            confidence: llmResult.response?.confidence,
+            latencyMs: llmResult.latencyMs,
+            sourceContext,
+            error: llmResult.error,
+          },
+        })
+
+        if (llmResult.success && llmResult.response?.decision === 'select' && llmResult.response.choiceId) {
+          const choiceId = llmResult.response.choiceId
+
+          // Safety: validate choiceId is in candidates
+          const validChoice = llmCandidates.find(c => c.id === choiceId)
+          if (validChoice) {
+            if (sourceContext === 'widget' && ctx.widgetSelectionContext) {
+              // Widget execution path
+              void debugLog({
+                component: 'ChatNavigation',
+                action: 'tier3_6_llm_widget_select',
+                metadata: { choiceId, label: validChoice.label, confidence: llmResult.response.confidence },
+              })
+              ctx.clearWidgetSelectionContext()
+              ctx.setIsLoading(false)
+              return {
+                ...defaultResult,
+                handled: true,
+                handledByTier: 3,
+                tierLabel: 'tier3_6_constrained_llm_widget_select',
+                clarificationCleared,
+                isNewQuestionOrCommandDetected,
+                classifierCalled,
+                classifierResult,
+                classifierTimeout,
+                classifierLatencyMs,
+                classifierError,
+                isFollowUp,
+                groundingAction: {
+                  type: 'execute_widget_item',
+                  widgetId: ctx.widgetSelectionContext.widgetId,
+                  segmentId: ctx.widgetSelectionContext.segmentId,
+                  itemId: choiceId,
+                  itemLabel: validChoice.label,
+                  action: 'open',
+                },
+              }
+            } else {
+              // Chat / recoverable-chat execution path
+              // For recoverable context, pendingOptions is empty — look up from findLastOptionsMessage
+              const matchingOption = ctx.pendingOptions.find(opt => opt.id === choiceId)
+                || (sourceContext === 'recoverable_chat'
+                  ? ctx.findLastOptionsMessage(ctx.messages)?.options.find(opt => opt.id === choiceId)
+                  : undefined)
+
+              if (matchingOption && 'type' in matchingOption && 'data' in matchingOption) {
+                void debugLog({
+                  component: 'ChatNavigation',
+                  action: 'tier3_6_llm_chat_select',
+                  metadata: {
+                    choiceId,
+                    label: validChoice.label,
+                    confidence: llmResult.response.confidence,
+                    sourceContext,
+                  },
+                })
+                ctx.handleSelectOption(matchingOption as unknown as SelectionOption)
+                ctx.setIsLoading(false)
+                return {
+                  ...defaultResult,
+                  handled: true,
+                  handledByTier: 3,
+                  tierLabel: sourceContext === 'recoverable_chat'
+                    ? 'tier3_6_constrained_llm_recoverable_chat_select'
+                    : 'tier3_6_constrained_llm_chat_select',
+                  clarificationCleared,
+                  isNewQuestionOrCommandDetected,
+                  classifierCalled,
+                  classifierResult,
+                  classifierTimeout,
+                  classifierLatencyMs,
+                  classifierError,
+                  isFollowUp,
+                }
+              }
+              // Chat option found but missing type/data — resolve via widget snapshots
+              const matchingOptionType = (matchingOption as { type?: string } | undefined)?.type
+              if (matchingOptionType === 'widget_option') {
+                const widgetInfo = resolveWidgetItemFromSnapshots(ctx.getVisibleSnapshots, choiceId)
+                if (widgetInfo) {
+                  void debugLog({
+                    component: 'ChatNavigation',
+                    action: 'tier3_6_llm_chat_widget_option_select',
+                    metadata: { choiceId, label: validChoice.label, widgetId: widgetInfo.widgetId },
+                  })
+                  ctx.setIsLoading(false)
+                  return {
+                    ...defaultResult,
+                    handled: true,
+                    handledByTier: 3,
+                    tierLabel: 'tier3_6_constrained_llm_chat_widget_select',
+                    clarificationCleared,
+                    isNewQuestionOrCommandDetected,
+                    classifierCalled,
+                    classifierResult,
+                    classifierTimeout,
+                    classifierLatencyMs,
+                    classifierError,
+                    isFollowUp,
+                    groundingAction: {
+                      type: 'execute_widget_item',
+                      widgetId: widgetInfo.widgetId,
+                      segmentId: widgetInfo.segmentId,
+                      itemId: choiceId,
+                      itemLabel: validChoice.label,
+                      action: 'open',
+                    },
+                  }
+                }
+              }
+            }
+          }
+        }
+        // LLM returned need_more_info, invalid choiceId, or error — fall through to retry prompt
+      } catch (err) {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'tier3_6_constrained_llm_exception',
+          metadata: { input: ctx.trimmedInput, error: String(err) },
+        })
+        // Fall through to retry prompt
+      }
+    }
+
+    // Final fallback: targeted retry prompt (LLM disabled, failed, or returned need_more_info)
     const retryMessage: ChatMessage = {
       id: `assistant-${Date.now()}`,
       role: 'assistant',
@@ -2283,6 +2474,8 @@ export async function dispatchRouting(
     openPanelDrawer: ctx.openPanelDrawer,
     setPendingOptions: ctx.setPendingOptions,
     setPendingOptionsMessageId: ctx.setPendingOptionsMessageId,
+    setPendingOptionsGraceCount: ctx.setPendingOptionsGraceCount,
+    setActiveOptionSetId: ctx.setActiveOptionSetId,
     setLastClarification: ctx.setLastClarification,
     handleSelectOption: ctx.handleSelectOption,
     hasActiveOptionSet: ctx.pendingOptions.length > 0 && ctx.activeOptionSetId !== null,
@@ -2290,6 +2483,8 @@ export async function dispatchRouting(
     hasVisibleWidgetList,
     saveLastOptionsShown: ctx.saveLastOptionsShown,
     clearWidgetSelectionContext: ctx.clearWidgetSelectionContext,
+    clearLastOptionsShown: ctx.clearLastOptionsShown,
+    clearClarificationSnapshot: ctx.clearClarificationSnapshot,
   })
   if (knownNounResult.handled) {
     return {

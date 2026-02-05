@@ -267,6 +267,8 @@ export interface KnownNounRoutingContext {
   openPanelDrawer: (panelId: string, panelTitle?: string) => void
   setPendingOptions: (options: PendingOptionState[]) => void
   setPendingOptionsMessageId: (messageId: string | null) => void
+  setPendingOptionsGraceCount?: (count: number) => void
+  setActiveOptionSetId?: (id: string | null) => void
   setLastClarification: (state: LastClarificationState | null) => void
   handleSelectOption: (option: SelectionOption) => void
   /** When true, an active option set is displayed — skip fuzzy/unknown-noun fallbacks (Steps 4–5) */
@@ -285,6 +287,10 @@ export interface KnownNounRoutingContext {
   saveLastOptionsShown?: (options: import('@/lib/chat/chat-navigation-context').ClarificationOption[], messageId: string) => void
   /** Per universal-selection-resolver-plan.md: clear widget context when registering chat context */
   clearWidgetSelectionContext?: () => void
+  /** Clear soft-active selection memory */
+  clearLastOptionsShown?: () => void
+  /** Clear post-action snapshot memory */
+  clearClarificationSnapshot?: () => void
 }
 
 export interface KnownNounRoutingResult {
@@ -489,6 +495,17 @@ export function handleKnownNounRouting(
         tier: 4,
       },
     })
+
+    // Known-noun command execution starts a fresh command context.
+    // Clear stale selection memories so follow-up ordinals don't bind to old lists.
+    ctx.setPendingOptions([])
+    ctx.setPendingOptionsMessageId(null)
+    ctx.setPendingOptionsGraceCount?.(0)
+    ctx.setActiveOptionSetId?.(null)
+    ctx.setLastClarification(null)
+    ctx.clearLastOptionsShown?.()
+    ctx.clearClarificationSnapshot?.()
+    ctx.clearWidgetSelectionContext?.()
 
     // Execute: open the panel drawer using the real panel ID
     ctx.openPanelDrawer(realPanel.id, realPanel.title ?? match.title)
