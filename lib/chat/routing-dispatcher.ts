@@ -764,12 +764,14 @@ function bindGroundingClarifierOptions(
       // Clear chat selection context to prevent cross-context ambiguity
       // CRITICAL: Must clear activeOptionSetId to prevent Tier 3a from matching against old options
       // CRITICAL: Must clear lastOptionsShown to prevent soft-active window (Tier 4.5) from matching old options
+      // CRITICAL: Must clear clarificationSnapshot to prevent POST-ACTION ORDINAL WINDOW from matching old options
       ctx.setPendingOptions([])
       ctx.setPendingOptionsMessageId(null)
       ctx.setPendingOptionsGraceCount(0)
       ctx.setActiveOptionSetId(null)
       ctx.setLastClarification(null)
       ctx.clearLastOptionsShown?.()
+      ctx.clearClarificationSnapshot()
 
       void debugLog({
         component: 'ChatNavigation',
@@ -795,6 +797,38 @@ function bindGroundingClarifierOptions(
           itemId: candidate.id,
         },
       }))
+    } else {
+      // Per universal-selection-resolver-plan.md Phase 3 (lines 79-81):
+      // Widget list candidates without valid widgetInfo (missing widgetId/segmentId)
+      // should NOT be registered in chat context. Clear stale context and keep pills UI-only.
+      ctx.setPendingOptions([])
+      ctx.setPendingOptionsMessageId(null)
+      ctx.setPendingOptionsGraceCount(0)
+      ctx.setActiveOptionSetId(null)
+      ctx.setLastClarification(null)
+      ctx.clearLastOptionsShown?.()
+      ctx.clearWidgetSelectionContext()
+      ctx.clearClarificationSnapshot()
+
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'grounding_clarifier_widget_no_registry',
+        metadata: {
+          messageId,
+          candidateCount: optionCandidates.length,
+          candidateLabels: optionCandidates.map(c => c.label),
+          reason: 'widget_option_candidates_not_in_snapshot_registry',
+        },
+      })
+
+      // Return pills for UI-only display (clickable but not ordinal-selectable)
+      return optionCandidates.map((candidate, index) => ({
+        index,
+        id: candidate.id,
+        label: candidate.label,
+        type: 'widget_option' as const,
+        data: undefined, // No execution data available
+      }))
     }
   }
 
@@ -819,6 +853,7 @@ function bindGroundingClarifierOptions(
     }
 
     // For option-type candidates, attempt to find a full option with data.
+    // Per universal-selection-resolver-plan.md Phase 3: only register if we can attach execution data.
     const messageOption = ctx.findLastOptionsMessage(ctx.messages)?.options.find(opt => opt.id === candidate.id)
     if (messageOption) {
       pendingOptions.push({
@@ -830,9 +865,35 @@ function bindGroundingClarifierOptions(
         data: messageOption.data,
       })
     }
+    // If candidate not found in message history, we cannot attach execution data.
+    // Per plan: do NOT add to pendingOptions (would be unexecutable).
   })
 
-  if (pendingOptions.length === 0) return []
+  // Per universal-selection-resolver-plan.md Phase 3 (lines 76-78):
+  // If we cannot attach execution data to option-type candidates, do NOT leave stale
+  // pendingOptions active. Clear chat selection context to prevent cross-binding.
+  if (pendingOptions.length === 0) {
+    // Clear stale chat context — pills will be UI-only (clickable but not ordinal-selectable)
+    // CRITICAL: Must also clear clarificationSnapshot to prevent POST-ACTION ORDINAL WINDOW from matching old options
+    ctx.setPendingOptions([])
+    ctx.setPendingOptionsMessageId(null)
+    ctx.setPendingOptionsGraceCount(0)
+    ctx.setActiveOptionSetId(null)
+    ctx.setLastClarification(null)
+    ctx.clearLastOptionsShown?.()
+    ctx.clearClarificationSnapshot()
+
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'grounding_clarifier_no_exec_data',
+      metadata: {
+        candidateCount: candidates.length,
+        reason: 'option_candidates_not_in_message_history',
+      },
+    })
+
+    return []
+  }
 
   // Clear widget selection context to prevent cross-context ambiguity
   ctx.clearWidgetSelectionContext()
