@@ -96,6 +96,7 @@ export function buildTurnSnapshot(params?: {
       label: snapshot.title,
       options,
       listSegmentCount,
+      panelId: snapshot.panelId,
     })
   }
 

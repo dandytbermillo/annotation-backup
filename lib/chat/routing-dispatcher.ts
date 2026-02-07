@@ -34,7 +34,6 @@
  */
 
 import { debugLog } from '@/lib/utils/debug-logger'
-import { levenshteinDistance } from '@/lib/chat/typo-suggestions'
 import type { ChatMessage, SelectionOption, ViewPanelContent } from '@/lib/chat'
 import type { UIContext } from '@/lib/chat/intent-prompt'
 import type { LastClarificationState } from '@/lib/chat/chat-navigation-context'
@@ -289,61 +288,13 @@ export type GroundingAction = NonNullable<RoutingDispatcherResult['groundingActi
 // =============================================================================
 
 // Import from shared utility (extracted to avoid circular dependency with chat-routing.ts)
-import { isExplicitCommand } from '@/lib/chat/input-classifiers'
+import { isExplicitCommand, isSelectionOnly, normalizeOrdinalTypos } from '@/lib/chat/input-classifiers'
 // Re-export to avoid breaking existing imports from this file
 export { isExplicitCommand }
 
 // =============================================================================
 // Selection Helpers (moved from chat-navigation-panel.tsx)
 // =============================================================================
-
-/**
- * Normalize ordinal typos before selection matching.
- * Handles repeated letters, common misspellings, and concatenated ordinals.
- *
- * Examples:
- * - "ffirst" → "first" (repeated letters)
- * - "sedond" → "second" (common misspelling)
- * - "secondoption" → "second option" (concatenation)
- * - "firstoption" → "first option" (concatenation)
- */
-/** Canonical ordinals for per-token fuzzy matching. */
-const ORDINAL_TARGETS = ['first', 'second', 'third', 'fourth', 'fifth', 'last']
-
-function normalizeOrdinalTypos(input: string): string {
-  let n = input.toLowerCase().trim()
-
-  // Strip polite suffixes
-  n = n.replace(/\s*(pls|plz|please|thx|thanks|ty)\.?$/i, '').trim()
-
-  // Deduplicate repeated letters: "ffirst" → "first", "seecond" → "second"
-  n = n.replace(/(.)\1+/g, '$1')
-
-  // Split concatenated ordinal+option: "secondoption" → "second option"
-  n = n.replace(/^(first|second|third|fourth|fifth|last)(option|one)$/i, '$1 $2')
-
-  // Per-token fuzzy match against canonical ordinals (distance ≤ 2, token length ≥ 4).
-  // Catches typos like "sesecond" → "second", "scond" → "second", "thrid" → "third".
-  const tokens = n.split(/\s+/)
-  const normalized = tokens.map(token => {
-    if (token.length < 4) return token // Guard: skip short tokens to avoid "for"→"fourth"
-    // Skip tokens that are already canonical ordinals
-    if (ORDINAL_TARGETS.includes(token)) return token
-
-    let bestOrdinal: string | null = null
-    let bestDist = Infinity
-    for (const ordinal of ORDINAL_TARGETS) {
-      const dist = levenshteinDistance(token, ordinal)
-      if (dist > 0 && dist <= 2 && dist < bestDist) {
-        bestDist = dist
-        bestOrdinal = ordinal
-      }
-    }
-    return bestOrdinal ?? token
-  }).join(' ')
-
-  return normalized
-}
 
 /**
  * Check if input looks like a selection attempt even though deterministic
@@ -386,19 +337,6 @@ function looksSelectionLike(input: string): boolean {
   return false
 }
 
-/**
- * Check if input is a selection-only pattern (ordinal or single letter).
- * Per llm-chat-context-first-plan.md: Only intercept pure selection patterns.
- *
- * Returns: { isSelection: true, index: number } if input is a selection
- *          { isSelection: false } if input should go to LLM
- *
- * Selection patterns (fully match, no extra words):
- * - Ordinals: "first", "second", "third", "last", "1", "2", "3"
- * - Option phrases: "option 2", "the first one", "the second one"
- * - Single letters: "a", "b", "c", "d", "e" (when options use letter badges)
- * - Common typos: "ffirst", "sedond", "secondoption" (normalized before matching)
- */
 /**
  * Extract ordinal index from input, supporting both strict patterns and embedded ordinals.
  * This mirrors resolveOrdinalIndex from grounding-set.ts but returns in the format expected
@@ -464,59 +402,6 @@ function extractOrdinalIndex(input: string, optionCount: number): number | undef
   return undefined
 }
 
-function isSelectionOnly(
-  input: string,
-  optionCount: number,
-  optionLabels?: string[]
-): { isSelection: boolean; index?: number } {
-  const normalized = normalizeOrdinalTypos(input)
-
-  const selectionPattern = /^(first|second|third|fourth|fifth|last|[1-9]|option\s*[1-9]|the\s+(first|second|third|fourth|fifth|last)\s+(one|option)|first\s+option|second\s+option|third\s+option|fourth\s+option|fifth\s+option|[a-e])$/i
-
-  if (!selectionPattern.test(normalized)) {
-    return { isSelection: false }
-  }
-
-  // Map to 0-based index
-  const ordinalMap: Record<string, number> = {
-    'first': 0, '1': 0, 'option 1': 0, 'the first one': 0, 'the first option': 0, 'first option': 0, 'a': 0,
-    'second': 1, '2': 1, 'option 2': 1, 'the second one': 1, 'the second option': 1, 'second option': 1, 'b': 1,
-    'third': 2, '3': 2, 'option 3': 2, 'the third one': 2, 'the third option': 2, 'third option': 2, 'c': 2,
-    'fourth': 3, '4': 3, 'option 4': 3, 'the fourth one': 3, 'the fourth option': 3, 'fourth option': 3, 'd': 3,
-    'fifth': 4, '5': 4, 'option 5': 4, 'the fifth one': 4, 'the fifth option': 4, 'fifth option': 4, 'e': 4,
-  }
-
-  // Handle "last"
-  if (normalized === 'last' || normalized === 'the last one' || normalized === 'the last option') {
-    const index = optionCount - 1
-    if (index >= 0) {
-      return { isSelection: true, index }
-    }
-    return { isSelection: false }
-  }
-
-  // For single letters, check if option labels contain that letter badge
-  if (/^[a-e]$/.test(normalized) && optionLabels) {
-    const letterUpper = normalized.toUpperCase()
-    const matchIndex = optionLabels.findIndex(label =>
-      label.toUpperCase().includes(letterUpper) ||
-      label.toUpperCase().endsWith(` ${letterUpper}`)
-    )
-    if (matchIndex >= 0) {
-      return { isSelection: true, index: matchIndex }
-    }
-    // Letter doesn't match any option - not a selection
-    return { isSelection: false }
-  }
-
-  // Check ordinal map
-  const index = ordinalMap[normalized]
-  if (index !== undefined && index < optionCount) {
-    return { isSelection: true, index }
-  }
-
-  return { isSelection: false }
-}
 
 /**
  * Find exact match in pending options by label or sublabel.
@@ -1056,6 +941,7 @@ export async function dispatchRouting(
     }
     if (sourceWidget) {
       ctx.setFocusLatch({
+        kind: 'resolved',
         widgetId: sourceWidget.id,
         widgetLabel: sourceWidget.label,
         latchedAt: Date.now(),
@@ -1065,12 +951,35 @@ export async function dispatchRouting(
     }
   }
 
-  // Latch-off: latched widget no longer visible in registry
+  // Latch validity: check discriminated union kind for resolution/expiry
   if (isLatchEnabled && ctx.focusLatch) {
-    const stillOpen = turnSnapshot.openWidgets.some(w => w.id === ctx.focusLatch!.widgetId)
-    if (!stillOpen) {
-      ctx.clearFocusLatch()
-      void debugLog({ component: 'ChatNavigation', action: 'focus_latch_cleared', metadata: { reason: 'widget_gone', widgetId: ctx.focusLatch.widgetId } })
+    if (ctx.focusLatch.kind === 'resolved') {
+      // Resolved latch: verify widget is still open
+      const stillOpen = turnSnapshot.openWidgets.some(w => w.id === ctx.focusLatch!.widgetId)
+      if (!stillOpen) {
+        void debugLog({ component: 'ChatNavigation', action: 'focus_latch_cleared', metadata: { reason: 'widget_gone', widgetId: (ctx.focusLatch as import('@/lib/chat/chat-navigation-context').ResolvedFocusLatch).widgetId } })
+        ctx.clearFocusLatch()
+      }
+    } else if (ctx.focusLatch.kind === 'pending') {
+      // Pending latch: try to resolve via panelId → widget slug
+      const resolved = turnSnapshot.openWidgets.find(w => w.panelId === ctx.focusLatch!.pendingPanelId)
+      if (resolved) {
+        // Upgrade pending → resolved
+        ctx.setFocusLatch({
+          kind: 'resolved',
+          widgetId: resolved.id,
+          widgetLabel: ctx.focusLatch.widgetLabel,
+          latchedAt: ctx.focusLatch.latchedAt,
+          turnsSinceLatched: ctx.focusLatch.turnsSinceLatched,
+          suspended: ctx.focusLatch.suspended,
+        })
+        void debugLog({ component: 'ChatNavigation', action: 'focus_latch_upgraded', metadata: { from: 'pending', widgetId: resolved.id, panelId: (ctx.focusLatch as import('@/lib/chat/chat-navigation-context').PendingFocusLatch).pendingPanelId } })
+      } else if (ctx.focusLatch.turnsSinceLatched >= 2) {
+        // Graceful degradation: pending latch expired without resolution
+        void debugLog({ component: 'ChatNavigation', action: 'focus_latch_cleared', metadata: { reason: 'pending_expired', pendingPanelId: (ctx.focusLatch as import('@/lib/chat/chat-navigation-context').PendingFocusLatch).pendingPanelId } })
+        ctx.clearFocusLatch()
+      }
+      // else: keep pending alive (async registration window, turnsSinceLatched < 2)
     }
   }
 
@@ -1634,7 +1543,7 @@ export async function dispatchRouting(
     && isSelectionLike(ctx.trimmedInput)
   if (ctx.pendingOptions.length > 0 && ctx.activeOptionSetId !== null && !hasQuestionIntent(ctx.trimmedInput) && !ctx.widgetSelectionContext && !hasActiveFocusLatch && !isPreLatchWidgetScope) {
     const optionLabels = ctx.pendingOptions.map(opt => opt.label)
-    const selectionResult = isSelectionOnly(ctx.trimmedInput, ctx.pendingOptions.length, optionLabels)
+    const selectionResult = isSelectionOnly(ctx.trimmedInput, ctx.pendingOptions.length, optionLabels, 'strict')
 
     if (selectionResult.isSelection && selectionResult.index !== undefined) {
       // Pure selection pattern - handle locally for speed
@@ -1927,7 +1836,7 @@ export async function dispatchRouting(
     if (isWithinGraceWindow && lastOptionsMessage) {
       // Use selection-only guard for message-derived options too
       const optionLabels = lastOptionsMessage.options.map(opt => opt.label)
-      const selectionResult = isSelectionOnly(ctx.trimmedInput, lastOptionsMessage.options.length, optionLabels)
+      const selectionResult = isSelectionOnly(ctx.trimmedInput, lastOptionsMessage.options.length, optionLabels, 'strict')
 
       if (selectionResult.isSelection && selectionResult.index !== undefined) {
         const selectedOption = lastOptionsMessage.options[selectionResult.index]
@@ -2332,7 +2241,7 @@ export async function dispatchRouting(
   // Let it fall through to Tier 4 known-noun routing.
   const hasSelectionKeyword = /\b(option|choice|item)\b/i.test(ctx.trimmedInput)
   const looksLikeNewCommand = ACTION_VERB_PATTERN.test(ctx.trimmedInput)
-    && !isSelectionOnly(ctx.trimmedInput, 10, []).isSelection
+    && !isSelectionOnly(ctx.trimmedInput, 10, [], 'embedded').isSelection
     && !hasSelectionKeyword
 
   if (hasActiveExecutableContext && isSelectionLike(ctx.trimmedInput) && !looksLikeNewCommand && !isNewQuestionOrCommandDetected) {
@@ -2675,8 +2584,13 @@ export async function dispatchRouting(
     // Per selection-intent-arbitration-incubation-plan Rules 2, 6, 12:
     let activeWidgetId: string | undefined
     if (isLatchEnabled && ctx.focusLatch && !ctx.focusLatch.suspended) {
-      // Latch active → always scope to latched widget (Rule 2, 6, Test 9)
-      activeWidgetId = ctx.focusLatch.widgetId
+      // Latch active → scope to latched widget (Rule 2, 6, Test 9)
+      if (ctx.focusLatch.kind === 'resolved') {
+        activeWidgetId = ctx.focusLatch.widgetId
+      } else {
+        // Pending latch: widget not yet registered, use activeSnapshotWidgetId as fallback
+        activeWidgetId = turnSnapshot.activeSnapshotWidgetId ?? undefined
+      }
     } else if (isLatchEnabled && (!ctx.focusLatch || ctx.focusLatch.suspended) && isPreLatchDefault(turnSnapshot, ctx)) {
       // Pre-latch Rule 12 (strict): exactly one fresh visible list-segment, no active chat
       // activeSnapshotWidgetId may be null (no panel focused), so fall back to sole visible widget
@@ -2692,6 +2606,27 @@ export async function dispatchRouting(
       activeWidgetId = turnSnapshot.activeSnapshotWidgetId
     }
     // else: no activeWidgetId → multi-list ambiguity handling fires normally
+
+    // Pending latch + no activeWidgetId: widget hasn't registered yet.
+    // Per plan: show deterministic "Still loading" message on first turn, silently proceed on subsequent turns.
+    if (isLatchEnabled && ctx.focusLatch && ctx.focusLatch.kind === 'pending' && !activeWidgetId) {
+      if (ctx.focusLatch.turnsSinceLatched === 0) {
+        // First turn with pending latch — show loading message
+        const loadingMsg: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: 'Still loading that panel — try again in a moment.',
+          timestamp: new Date(),
+          isError: false,
+        }
+        ctx.addMessage(loadingMsg)
+        ctx.setIsLoading(false)
+        void debugLog({ component: 'ChatNavigation', action: 'pending_latch_still_loading', metadata: { pendingPanelId: ctx.focusLatch.pendingPanelId, turnsSinceLatched: 0 } })
+        return { ...defaultResult, handled: true }
+      }
+      // Cooldown: turnsSinceLatched > 0 — silently proceed without activeWidgetId
+      void debugLog({ component: 'ChatNavigation', action: 'pending_latch_cooldown_proceed', metadata: { pendingPanelId: ctx.focusLatch.pendingPanelId, turnsSinceLatched: ctx.focusLatch.turnsSinceLatched } })
+    }
 
     // Run grounding-set fallback
     const groundingResult = handleGroundingSetFallback(ctx.trimmedInput, groundingCtx, {

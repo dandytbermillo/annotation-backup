@@ -7,7 +7,6 @@
  */
 
 import { debugLog } from '@/lib/utils/debug-logger'
-import { levenshteinDistance } from '@/lib/chat/typo-suggestions'
 import { getKnownTermsSync } from '@/lib/docs/known-terms-client'
 import {
   createRoutingTelemetryEvent,
@@ -34,7 +33,7 @@ import { isBareNounQuery, maybeFormatSnippetWithHs3, dedupeHeaderPath, stripMark
 import type { UIContext } from '@/lib/chat/intent-prompt'
 import type { ChatMessage, DocRetrievalState, SelectionOption, LastClarificationState, WorkspaceMatch, NoteMatch } from '@/lib/chat'
 import type { ClarificationOption, RepairMemoryState, ClarificationSnapshot, PanelDrawerData, DocData } from '@/lib/chat/chat-navigation-context'
-import { REPAIR_MEMORY_TURN_LIMIT, STOP_SUPPRESSION_TURN_LIMIT } from '@/lib/chat/chat-navigation-context'
+import { REPAIR_MEMORY_TURN_LIMIT, STOP_SUPPRESSION_TURN_LIMIT, getLatchId } from '@/lib/chat/chat-navigation-context'
 import type { EntryMatch } from '@/lib/chat/resolution-types'
 import { matchVisiblePanelCommand, type VisibleWidget } from '@/lib/chat/panel-command-matcher'
 import {
@@ -74,7 +73,7 @@ import {
   callReturnCueLLM,
   isLLMFallbackEnabledClient,
 } from '@/lib/chat/clarification-llm-fallback'
-import { isExplicitCommand } from '@/lib/chat/input-classifiers'
+import { isExplicitCommand, isSelectionOnly } from '@/lib/chat/input-classifiers'
 import { isSelectionLike } from '@/lib/chat/grounding-set'
 import type { LastOptionsShown } from '@/lib/chat/chat-navigation-context'
 
@@ -1176,190 +1175,6 @@ export interface ClarificationInterceptContext {
 }
 
 /**
- * Check if input is a selection-only pattern (ordinal or single letter).
- * Per clarification-llm-last-resort-plan.md: Expanded ordinal parsing before LLM.
- *
- * Handles:
- * - Basic ordinals: "first", "second", "1", "2", "a", "b"
- * - Ordinal suffixes: "1st", "2nd", "3rd"
- * - Word numbers: "number one", "number two"
- * - Positional: "top", "bottom", "upper", "lower", "the other one"
- * - Phrases: "the first one", "the second one", "option 1"
- * - Polite suffixes: "second pls", "first please", "2 plz"
- * - Common typos: "secnd", "secon", "frist", "2n"
- */
-function isSelectionOnly(
-  input: string,
-  optionCount: number,
-  optionLabels: string[]
-): { isSelection: boolean; index?: number } {
-  // Normalize: strip polite suffixes, fix typos, split concatenations
-  let normalized = input.trim().toLowerCase()
-  normalized = normalized.replace(/\s*(pls|plz|please|thx|thanks|ty)\.?$/i, '').trim()
-  // Deduplicate repeated letters: "ffirst" → "first", "seecond" → "second"
-  normalized = normalized.replace(/(.)\1+/g, '$1')
-  // Split concatenated ordinal+option: "secondoption" → "second option"
-  normalized = normalized.replace(/^(first|second|third|fourth|fifth|last)(option|one)$/i, '$1 $2')
-  // Per-token fuzzy match against canonical ordinals (distance ≤ 2, token length ≥ 4).
-  // Catches "sesecond" → "second", "scond" → "second", "thrid" → "third".
-  const ORDINAL_TARGETS_LOCAL = ['first', 'second', 'third', 'fourth', 'fifth', 'last']
-  normalized = normalized.split(/\s+/).map(token => {
-    if (token.length < 4) return token
-    if (ORDINAL_TARGETS_LOCAL.includes(token)) return token
-    let bestOrdinal: string | null = null
-    let bestDist = Infinity
-    for (const ordinal of ORDINAL_TARGETS_LOCAL) {
-      const dist = levenshteinDistance(token, ordinal)
-      if (dist > 0 && dist <= 2 && dist < bestDist) {
-        bestDist = dist
-        bestOrdinal = ordinal
-      }
-    }
-    return bestOrdinal ?? token
-  }).join(' ')
-
-  // Map input to index
-  let index: number | undefined
-
-  // Static ordinal map (includes typos and variations)
-  const ordinalMap: Record<string, number> = {
-    // Basic ordinals
-    'first': 0, 'second': 1, 'third': 2, 'fourth': 3, 'fifth': 4,
-    '1st': 0, '2nd': 1, '3rd': 2, '4th': 3, '5th': 4,
-    // Word numbers
-    'one': 0, 'two': 1, 'three': 2, 'four': 3, 'five': 4,
-    'number one': 0, 'number two': 1, 'number three': 2, 'number four': 3, 'number five': 4,
-    'num one': 0, 'num two': 1, 'num 1': 0, 'num 2': 1,
-    // Phrases
-    'the first': 0, 'the second': 1, 'the third': 2, 'the fourth': 3, 'the fifth': 4,
-    'the first one': 0, 'the second one': 1, 'the third one': 2,
-    'the fourth one': 3, 'the fifth one': 4,
-    // Common typos (after dedup normalization, "ffirst"→"first" is already handled)
-    'frist': 0, 'fisrt': 0, 'frst': 0,
-    'sedond': 1, 'secnd': 1, 'secon': 1, 'scond': 1, 'secod': 1, 'sceond': 1,
-    'thrid': 2, 'tird': 2,
-    'foruth': 3, 'fouth': 3,
-    'fith': 4, 'fifht': 4,
-    '2n': 1, '1s': 0, '3r': 2,
-    // Last
-    'last': optionCount - 1, 'the last': optionCount - 1, 'the last one': optionCount - 1,
-  }
-
-  // Check static map first
-  if (ordinalMap[normalized] !== undefined) {
-    index = ordinalMap[normalized]
-  }
-  // Numeric: "1", "2", etc.
-  else if (/^[1-9]$/.test(normalized)) {
-    index = parseInt(normalized, 10) - 1
-  }
-  // Option phrases: "option 1", "option 2"
-  else if (/^option\s*[1-9]$/i.test(normalized)) {
-    const num = normalized.match(/[1-9]/)?.[0]
-    if (num) index = parseInt(num, 10) - 1
-  }
-  // Single letters: "a", "b", "c", "d", "e"
-  else if (/^[a-e]$/i.test(normalized)) {
-    index = normalized.charCodeAt(0) - 'a'.charCodeAt(0)
-    if (index >= optionCount) {
-      return { isSelection: false }
-    }
-  }
-  // Positional: "top", "bottom", "upper", "lower"
-  else if (/^(top|upper|first one|top one)$/.test(normalized)) {
-    index = 0
-  }
-  else if (/^(bottom|lower|last one|bottom one)$/.test(normalized)) {
-    index = optionCount - 1
-  }
-  // "the other one" (only valid when exactly 2 options)
-  else if (/^(the other one|the other|other one|other)$/.test(normalized) && optionCount === 2) {
-    // Ambiguous without context, but conventionally means "not the first" = second
-    index = 1
-  }
-
-  // =========================================================================
-  // NEW: Ordinal Extraction Rule (per clarification-llm-last-resort-plan.md)
-  // Extract ordinals from ANY phrase, not only exact matches.
-  // =========================================================================
-  if (index === undefined) {
-    const extractedIndex = extractOrdinalFromPhrase(normalized, optionCount)
-    if (extractedIndex !== undefined) {
-      index = extractedIndex
-    }
-  }
-
-  // Validate index is within bounds
-  if (index !== undefined && index >= 0 && index < optionCount) {
-    return { isSelection: true, index }
-  }
-
-  return { isSelection: false }
-}
-
-/**
- * Extract ordinal from any phrase that contains ordinal tokens.
- * Per clarification-llm-last-resort-plan.md: "Ordinal Extraction Rule (NEW)"
- *
- * Examples:
- * - "the first option" → 0
- * - "I pick the first" → 0
- * - "go with the second" → 1
- * - "I choose the second one" → 1
- * - "pick number two" → 1
- * - "option 2 please" → 1
- */
-function extractOrdinalFromPhrase(input: string, optionCount: number): number | undefined {
-  // Word-based ordinal patterns (match anywhere in phrase)
-  const wordOrdinals: Array<{ pattern: RegExp; index: number | 'last' }> = [
-    // First
-    { pattern: /\bfirst\b/i, index: 0 },
-    { pattern: /\b1st\b/i, index: 0 },
-    // Second
-    { pattern: /\bsecond\b/i, index: 1 },
-    { pattern: /\b2nd\b/i, index: 1 },
-    // Third
-    { pattern: /\bthird\b/i, index: 2 },
-    { pattern: /\b3rd\b/i, index: 2 },
-    // Fourth
-    { pattern: /\bfourth\b/i, index: 3 },
-    { pattern: /\b4th\b/i, index: 3 },
-    // Fifth
-    { pattern: /\bfifth\b/i, index: 4 },
-    { pattern: /\b5th\b/i, index: 4 },
-    // Last (special handling)
-    { pattern: /\blast\b/i, index: 'last' },
-    // Word numbers with "number" prefix
-    { pattern: /\bnumber\s+one\b/i, index: 0 },
-    { pattern: /\bnumber\s+two\b/i, index: 1 },
-    { pattern: /\bnumber\s+three\b/i, index: 2 },
-  ]
-
-  for (const { pattern, index: rawIndex } of wordOrdinals) {
-    if (pattern.test(input)) {
-      const resolvedIndex = rawIndex === 'last' ? optionCount - 1 : rawIndex
-      if (resolvedIndex >= 0 && resolvedIndex < optionCount) {
-        return resolvedIndex
-      }
-    }
-  }
-
-  // Numeric extraction: "option 2", "pick 1", etc.
-  // Only match standalone numbers 1-5 (to avoid false positives)
-  if (optionCount <= 5) {
-    const numericMatch = input.match(/\b([1-5])\b/)
-    if (numericMatch) {
-      const num = parseInt(numericMatch[1], 10)
-      if (num >= 1 && num <= optionCount) {
-        return num - 1
-      }
-    }
-  }
-
-  return undefined
-}
-
-/**
  * Reconstruct the `data` payload for a ClarificationOption when selecting from
  * a snapshot (post-action ordinal/repair window). ClarificationOption doesn't
  * store data, so we build minimal-valid data from id/label/type.
@@ -1461,21 +1276,22 @@ export async function handleClarificationIntercept(
     activeSnapshotWidgetId,
   } = ctx
 
-  // DIAGNOSTIC: trace intercept entry state (remove after debugging)
-  console.log('[LATCH_DIAG] intercept_entry:', {
-    input: trimmedInput,
-    hasLastClarification: !!lastClarification,
-    lastClarificationCount: lastClarification?.options?.length ?? 0,
-    hasSnapshot: !!clarificationSnapshot,
-    snapshotPausedReason: clarificationSnapshot?.pausedReason ?? null,
-    snapshotCount: clarificationSnapshot?.options?.length ?? 0,
-    isLatchEnabled,
-    focusLatch: focusLatch ? { widgetId: focusLatch.widgetId, suspended: focusLatch.suspended } : null,
-    hasVisibleWidgetItems,
-    totalListSegmentCount,
-    activeSnapshotWidgetId,
-    pendingOptionsCount: pendingOptions.length,
+  void debugLog({
+    component: 'ChatNavigation',
+    action: 'intercept_entry',
+    metadata: {
+      input: trimmedInput,
+      hasSnapshot: !!clarificationSnapshot,
+      snapshotPausedReason: clarificationSnapshot?.pausedReason ?? null,
+      isLatchEnabled,
+      focusLatch: focusLatch ? { latchId: getLatchId(focusLatch), kind: focusLatch.kind, suspended: focusLatch.suspended } : null,
+      activeSnapshotWidgetId,
+      pendingOptionsCount: pendingOptions.length,
+    },
   })
+
+  // Hard invariant: when latch is resolved or pending, stale-chat ordinal paths are blocked
+  const latchBlocksStaleChat = isLatchEnabled && !!focusLatch && !focusLatch.suspended
 
   // TD-3: Check for bare noun new intent
   const bareNounKnownTerms = getKnownTermsSync()
@@ -1760,7 +1576,8 @@ export async function handleClarificationIntercept(
         const compoundSelection = isSelectionOnly(
           returnResult.remainder,
           clarificationSnapshot.options.length,
-          clarificationSnapshot.options.map(o => o.label)
+          clarificationSnapshot.options.map(o => o.label),
+          'embedded'
         )
 
         if (compoundSelection.isSelection && compoundSelection.index !== undefined) {
@@ -1842,7 +1659,8 @@ export async function handleClarificationIntercept(
     const isOrdinalInput = isSelectionOnly(
       trimmedInput,
       clarificationSnapshot.options.length,
-      clarificationSnapshot.options.map(o => o.label)
+      clarificationSnapshot.options.map(o => o.label),
+      'embedded'
     ).isSelection
 
     // Allowlist: only inputs containing return-related tokens are candidates
@@ -2024,17 +1842,21 @@ export async function handleClarificationIntercept(
   if (!lastClarification &&
       clarificationSnapshot &&
       clarificationSnapshot.options.length > 0) {
-    // DIAGNOSTIC: confirm post-action ordinal window entry (remove after debugging)
-    console.log('[LATCH_DIAG] post_action_ordinal_window_entered:', {
-      input: trimmedInput,
-      snapshotPausedReason: clarificationSnapshot.pausedReason,
-      snapshotOptions: clarificationSnapshot.options.map(o => o.label),
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'post_action_ordinal_window_entered',
+      metadata: {
+        input: trimmedInput,
+        snapshotPausedReason: clarificationSnapshot.pausedReason,
+        snapshotOptionsCount: clarificationSnapshot.options.length,
+      },
     })
 
     const snapshotSelection = isSelectionOnly(
       trimmedInput,
       clarificationSnapshot.options.length,
-      clarificationSnapshot.options.map(o => o.label)
+      clarificationSnapshot.options.map(o => o.label),
+      'embedded'
     )
 
     if (snapshotSelection.isSelection && snapshotSelection.index !== undefined) {
@@ -2110,7 +1932,7 @@ export async function handleClarificationIntercept(
         const hasOtherActivePills = pendingOptions.length > 0
         const hasOpenDrawerList = !!(uiContext?.dashboard?.openDrawer)
 
-        if (hasOtherActivePills || hasOpenDrawerList) {
+        if (hasOtherActivePills || hasOpenDrawerList || latchBlocksStaleChat) {
           void debugLog({
             component: 'ChatNavigation',
             action: 'interrupt_paused_ordinal_blocked_other_context',
@@ -2141,8 +1963,8 @@ export async function handleClarificationIntercept(
           })
         }
 
-        // If blocked (other context exists), skip selection from paused list
-        if (hasOtherActivePills || hasOpenDrawerList) {
+        // If blocked (other context exists or latch active), skip selection from paused list
+        if (hasOtherActivePills || hasOpenDrawerList || latchBlocksStaleChat) {
           // Fall through to downstream handlers — ordinal may match other context
         } else {
           // Only list — proceed with selection (code below)
@@ -2192,16 +2014,15 @@ export async function handleClarificationIntercept(
           (!focusLatch && !!activeSnapshotWidgetId)  // Pre-latch: focused widget exists
         )
 
-        // DIAGNOSTIC: trace post-action ordinal guard values (remove after debugging)
-        console.log('[LATCH_DIAG] post_action_ordinal_guard:', {
-          isLatchEnabled,
-          focusLatch: focusLatch ? { widgetId: focusLatch.widgetId, suspended: focusLatch.suspended } : null,
-          activeSnapshotWidgetId,
-          hasVisibleWidgetItems,
-          totalListSegmentCount,
-          isLatchOrPreLatch,
-          input: trimmedInput,
-          snapshotOptionsCount: clarificationSnapshot.options.length,
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'post_action_ordinal_guard',
+          metadata: {
+            isLatchOrPreLatch,
+            latchKind: focusLatch?.kind ?? null,
+            activeSnapshotWidgetId,
+            input: trimmedInput,
+          },
         })
 
         if (isLatchOrPreLatch) {
@@ -2363,7 +2184,7 @@ export async function handleClarificationIntercept(
   if (!lastClarification && !clarificationSnapshot && !widgetSelectionContext
       && !hasActiveLatch && !isPreLatchSingleList
       && !isNewQuestionOrCommandDetected && bareOrdinalWordCount <= 4) {
-    const bareOrdinalCheck = isSelectionOnly(trimmedInput, 10, [])
+    const bareOrdinalCheck = isSelectionOnly(trimmedInput, 10, [], 'embedded')
     if (bareOrdinalCheck.isSelection) {
       void debugLog({
         component: 'ChatNavigation',
@@ -2441,7 +2262,7 @@ export async function handleClarificationIntercept(
         timestamp: Date.now(),
         options: recoverable,
       })
-      void debugLog({ component: 'ChatNavigation', action: 'focus_latch_suspended', metadata: { reason: 'chat_reanchor', widgetId: focusLatch.widgetId } })
+      void debugLog({ component: 'ChatNavigation', action: 'focus_latch_suspended', metadata: { reason: 'chat_reanchor', latchId: getLatchId(focusLatch) } })
       return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
     } else {
       addMessage({
@@ -2470,17 +2291,17 @@ export async function handleClarificationIntercept(
     const questionDetected = hasQuestionIntent(trimmedInput)
 
     // Log input classification for observability (per incubation plan §Observability)
-    void debugLog({ component: 'ChatNavigation', action: 'selection_input_classified', metadata: { input: trimmedInput, isSelectionLike: selectionClassified, isCommand: commandDetected, isQuestion: questionDetected, latchActive: true, widgetId: focusLatch.widgetId } })
+    void debugLog({ component: 'ChatNavigation', action: 'selection_input_classified', metadata: { input: trimmedInput, isSelectionLike: selectionClassified, isCommand: commandDetected, isQuestion: questionDetected, latchActive: true, latchId: getLatchId(focusLatch) } })
 
     if (commandDetected) {
       // Rule 4: command bypasses latch — logged regardless of selection-like status
-      void debugLog({ component: 'ChatNavigation', action: 'focus_latch_bypassed_command', metadata: { widgetId: focusLatch.widgetId, input: trimmedInput } })
+      void debugLog({ component: 'ChatNavigation', action: 'focus_latch_bypassed_command', metadata: { latchId: getLatchId(focusLatch), input: trimmedInput } })
     } else if (questionDetected) {
       // Rule 4: question bypasses latch — logged regardless of selection-like status
-      void debugLog({ component: 'ChatNavigation', action: 'focus_latch_bypassed_question_intent', metadata: { widgetId: focusLatch.widgetId, input: trimmedInput } })
+      void debugLog({ component: 'ChatNavigation', action: 'focus_latch_bypassed_question_intent', metadata: { latchId: getLatchId(focusLatch), input: trimmedInput } })
     } else if (selectionClassified) {
       // Pure selection-like with no command/question → latch applies (Rules 2, 6)
-      void debugLog({ component: 'ChatNavigation', action: 'focus_latch_applied', metadata: { widgetId: focusLatch.widgetId, input: trimmedInput } })
+      void debugLog({ component: 'ChatNavigation', action: 'focus_latch_applied', metadata: { latchId: getLatchId(focusLatch), input: trimmedInput } })
       // Return handled: false so Tier 4.5 resolves against latched widget
       return { handled: false, clarificationCleared: false, isNewQuestionOrCommandDetected }
     }
@@ -3555,7 +3376,8 @@ export async function handleClarificationIntercept(
       const ordinalResult = isSelectionOnly(
         trimmedInput,
         lastClarification.options.length,
-        lastClarification.options.map(opt => opt.label)
+        lastClarification.options.map(opt => opt.label),
+        'embedded'
       )
 
       if (ordinalResult.isSelection && ordinalResult.index !== undefined) {
@@ -4336,7 +4158,7 @@ export async function handleClarificationIntercept(
     // Tier 1d: Ordinal/selection check for multi-option clarifications
     if (lastClarification && !clarificationCleared && lastClarification.options && lastClarification.options.length > 0) {
       const clarificationOptionLabels = lastClarification.options.map(opt => opt.label)
-      const clarificationSelectionResult = isSelectionOnly(trimmedInput, lastClarification.options.length, clarificationOptionLabels)
+      const clarificationSelectionResult = isSelectionOnly(trimmedInput, lastClarification.options.length, clarificationOptionLabels, 'embedded')
 
       if (clarificationSelectionResult.isSelection && clarificationSelectionResult.index !== undefined) {
         const selectedClarificationOption = lastClarification.options[clarificationSelectionResult.index]

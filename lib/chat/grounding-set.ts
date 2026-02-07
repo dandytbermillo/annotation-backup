@@ -72,6 +72,8 @@ export interface OpenWidgetState {
   options: ClarificationOption[]
   /** Number of list segments in this widget (for Rule 12 segment-level counting) */
   listSegmentCount: number
+  /** Panel UUID for mapping activeWidgetId (UUID) → widget slug */
+  panelId?: string
 }
 
 /** Recent referent for non-list grounding */

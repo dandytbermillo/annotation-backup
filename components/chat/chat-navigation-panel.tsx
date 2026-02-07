@@ -883,8 +883,43 @@ function ChatNavigationPanelContent({
 
       // Save snapshot before clearing so stop/return-cue system can restore after pill clicks.
       // Only when there are options and it's not an exit pill (exit pills clear everything).
+      // Per selection-intent-arbitration plan: ABSOLUTE snapshot policy for panel_drawer —
+      // never write to clarificationSnapshot (prevents stale-chat ordinal capture).
+      // Save to lastOptionsShown only (for re-anchor recovery).
       if (lastClarification?.options && lastClarification.options.length > 0 && option.type !== 'exit') {
-        saveClarificationSnapshot(lastClarification)
+        if (option.type === 'panel_drawer') {
+          // Absolute snapshot policy: save to lastOptionsShown for re-anchor, not clarificationSnapshot
+          saveLastOptionsShown(lastClarification.options, lastClarification.messageId)
+          // Clear any stale pre-existing clarificationSnapshot from prior non-panel_drawer interactions
+          clearClarificationSnapshot()
+          // Proactive latch: set focus latch before panel opens
+          const panelData = option.data as { panelId?: string; panelTitle?: string }
+          if (panelData.panelId) {
+            const allSnapshots = getAllVisibleSnapshots()
+            const existing = allSnapshots.find(s => s.panelId === panelData.panelId)
+            if (existing) {
+              // Widget already registered — resolve immediately
+              setFocusLatch({
+                kind: 'resolved',
+                widgetId: existing.widgetId,
+                widgetLabel: panelData.panelTitle || existing.title,
+                latchedAt: Date.now(),
+                turnsSinceLatched: 0,
+              })
+            } else {
+              // Widget not registered yet — set pending latch for async resolution
+              setFocusLatch({
+                kind: 'pending',
+                pendingPanelId: panelData.panelId,
+                widgetLabel: panelData.panelTitle || option.label,
+                latchedAt: Date.now(),
+                turnsSinceLatched: 0,
+              })
+            }
+          }
+        } else {
+          saveClarificationSnapshot(lastClarification)
+        }
       }
 
       // Per options-visible-clarification-sync-plan.md: clear lastClarification when option is selected
