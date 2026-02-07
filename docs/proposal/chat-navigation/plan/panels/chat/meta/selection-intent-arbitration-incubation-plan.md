@@ -4,7 +4,9 @@
 **Owner:** Chat Navigation
 **Last updated:** 2026-02-07
 **Scope:** Planning-only. No implementation changes in this document.
-**Implementation addendum:** `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-intent-arbitration-widget-first-fix-plan.md`
+**Implementation addenda:**
+- `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-intent-arbitration-widget-first-fix-plan.md`
+- `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-intent-arbitration-scope-cues-addendum-plan.md`
 
 ## Why This Exists
 Current behavior can over-clarify or bind to stale chat lists when users are clearly interacting with an open widget.
@@ -215,8 +217,9 @@ Add logs for:
 1. Keep this as separate incubation plan until behavior is stable in QA.
 2. Implement behind feature flag:
 - `SELECTION_INTENT_ARBITRATION_V1=true`
-3. For implementation sequencing and race-condition fixes, follow addendum:
+3. For implementation sequencing and race-condition fixes, follow addenda:
 - `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-intent-arbitration-widget-first-fix-plan.md`
+- `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-intent-arbitration-scope-cues-addendum-plan.md`
 4. Validate with scripted mixed flows (chat list -> widget engagement -> unspecific follow-ups).
 5. Merge into `universal-selection-resolver-plan.md` only after blocker tests pass.
 
@@ -224,8 +227,9 @@ Add logs for:
 - Widget snapshot/registry contract remains defined by `widget-ui-snapshot-plan.md`.
 - Universal selection resolver integration remains tracked in `universal-selection-resolver-plan.md`.
 - For selection routing behavior, this incubation plan is source of truth until merged.
-- For concrete implementation details, use addendum:
-  `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-intent-arbitration-widget-first-fix-plan.md`.
+- For concrete implementation details, use addenda:
+  - `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-intent-arbitration-widget-first-fix-plan.md`
+  - `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-intent-arbitration-scope-cues-addendum-plan.md`.
 
 ## Pre-Read Compliance
 - `codex/codex_needs_to_avoid/isolation-reactivity-anti-patterns.md` reviewed.

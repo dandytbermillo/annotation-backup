@@ -8,6 +8,8 @@
 
 Fixed the intermittent ordinal hijack bug where ordinals ("open second one") resolved against stale chat disambiguation lists instead of widget items after opening a panel. Root cause: stale `clarificationSnapshot` persisted after panel opens, and the focus latch guard depended on a timing race with `activeSnapshotWidgetId`.
 
+Post-implementation review uncovered 5 additional issues (Fixes A–E): a missing discriminant field on prelatch promotion, a cooldown path that contradicted the no-ambiguity rule, a missing integration test file, an overly broad input-swallowing guard, and a gap in test coverage (helper-level only, no dispatcher-level). All fixed and verified with 196 passing tests across 6 suites.
+
 ## 6 Principles Applied
 
 1. **Single owner** — selection arbitration happens once, before Tier 3a stale-chat paths
@@ -15,7 +17,7 @@ Fixed the intermittent ordinal hijack bug where ordinals ("open second one") res
 3. **State machine** — `none → pending(panelId) → resolved(widgetId) → suspended → cleared`
 4. **Snapshot policy** — panel-drawer selection does not leave an ordinal-capturable stale snapshot
 5. **Parser scope** — strict for stale-chat guards, embedded for looksLikeNewCommand
-6. **Proof over tweaks** — 28 red/green tests pass
+6. **Proof over tweaks** — 196 tests pass (28 unit + 144 existing + 20 integration race + 4 dispatcher-level)
 
 ## Changes
 
@@ -74,9 +76,9 @@ Fixed the intermittent ordinal hijack bug where ordinals ("open second one") res
 **File:** `__tests__/unit/chat/selection-intent-arbitration.test.ts` (NEW)
 - 28 tests covering: strict vs embedded mode, discriminated union, getLatchId, normalizeOrdinalTypos, command escape, isExplicitCommand
 
-## Post-Implementation Fixes (2026-02-07, second pass)
+## Post-Implementation Fixes (2026-02-07, passes 2–3)
 
-Three issues found during review and addressed:
+Five issues found across two review cycles and addressed:
 
 ### Fix A: Missing `kind: 'resolved'` in prelatch promotion (HIGH)
 
@@ -102,19 +104,40 @@ Three issues found during review and addressed:
 - **Flag-off behavior** (4 tests): latchBlocksStaleChat false, no activeWidgetId, pure parsers unaffected, all 4 stale-chat paths pass through
 - **Pending cooldown** (3 tests): first turn message, silent handled on subsequent turns, expiry at 2 turns
 
-## Files Modified (9 files)
+### Fix D: Pending null-flow isSelectionLike guard (MEDIUM)
+
+**File:** `lib/chat/routing-dispatcher.ts:2612`
+**Bug:** The pending latch cooldown block (from Fix B) swallowed ALL inputs when pending + no activeWidgetId, including non-selection inputs like commands and questions. This contradicts the plan's "non-selection input should fall through to downstream tiers normally."
+**Fix:** Added `isSelectionLike()` guard to the pending null-flow check. Only selection-like inputs ("second one", "open the first") are swallowed; commands ("open recent") and questions fall through normally.
+
+### Fix E: Dispatcher-level integration race tests
+
+**File:** `__tests__/integration/chat/selection-intent-arbitration-dispatcher.test.ts` (NEW)
+**Gap:** Existing integration race tests (20 tests in `selection-intent-arbitration-race.test.ts`) validate helper logic and state transitions in isolation but do NOT call the full routing chain. A reviewer noted these are "logic simulations, not dispatcher/UI runtime tests."
+**Fix:** Created 4 dispatcher-level tests that call `dispatchRouting()` with real context objects:
+- **Test 1**: Resolved latch + stale snapshot + ordinal → widget item (NOT stale chat)
+- **Test 2**: Pending latch + stale snapshot + ordinal → pending upgrades to resolved, widget resolves
+- **Test 3**: No latch + stale snapshot + ordinal → stale chat captures (baseline behavior)
+- **Test 4**: Latch + explicit command → latch bypassed, known-noun routes
+
+**Approach:** Mock heavy externals (LLM, doc retrieval, debug-logger, fetch), run core routing real (`dispatchRouting`, `handleClarificationIntercept`, `handleGroundingSetFallback`, parsers).
+
+**Bug found during test run:** `handleKnownNounRouting` is synchronous (no `await`), but initial mock used `mockResolvedValue` (returns Promise). Fixed to `mockReturnValue`.
+
+## Files Modified (10 files)
 
 | File | Changes |
 |------|---------|
 | `lib/chat/input-classifiers.ts` | Unified `isSelectionOnly(mode)` + moved `normalizeOrdinalTypos`, `ORDINAL_TARGETS`, `extractOrdinalFromPhrase` |
 | `lib/chat/chat-navigation-context.tsx` | Discriminated union `FocusLatchState` + `getLatchId()` + feature flag gating |
-| `lib/chat/routing-dispatcher.ts` | Import unified parser, latch validity with pending resolution, Tier 4.5 pending scoping, "Still loading" message + silent cooldown, trySetWidgetLatch union update |
+| `lib/chat/routing-dispatcher.ts` | Import unified parser, latch validity with pending resolution, Tier 4.5 pending scoping, "Still loading" message + silent cooldown, trySetWidgetLatch union update, **isSelectionLike guard on pending null-flow** |
 | `lib/chat/chat-routing.ts` | Import unified parser, `latchBlocksStaleChat` invariant, interrupt-paused guard, console.log removal, union migration, **`kind: 'resolved'` fix at line 2044** |
 | `components/chat/chat-navigation-panel.tsx` | Absolute snapshot policy for panel_drawer, proactive latch, stale snapshot cleanup |
 | `lib/chat/grounding-set.ts` | `panelId?: string` on `OpenWidgetState` |
 | `lib/chat/ui-snapshot-builder.ts` | Propagate `panelId` to openWidgets |
 | `__tests__/unit/chat/selection-intent-arbitration.test.ts` | 28 unit tests (created in initial pass) |
 | `__tests__/integration/chat/selection-intent-arbitration-race.test.ts` | **NEW — 20 integration race tests** (created in second pass) |
+| `__tests__/integration/chat/selection-intent-arbitration-dispatcher.test.ts` | **NEW — 4 dispatcher-level race tests** (created in third pass) |
 
 ## Verification
 
@@ -126,8 +149,11 @@ $ npx tsc --noEmit
 $ npx jest __tests__/unit/chat/ --no-coverage --runInBand
 # 4 suites, 172 tests, 0 failures
 
-$ npx jest __tests__/integration/chat/selection-intent-arbitration-race.test.ts --no-coverage --runInBand
-# 1 suite, 20 tests, 0 failures
+$ npx jest __tests__/integration/chat/ --no-coverage --runInBand
+# 2 suites, 24 tests, 0 failures (20 race + 4 dispatcher)
+
+$ npx jest __tests__/unit/chat/ __tests__/integration/chat/ --no-coverage --runInBand
+# 6 suites, 196 tests, 0 failures
 ```
 
 **Note:** `npx tsc --noEmit` has a pre-existing parse error at `__tests__/unit/use-panel-close-handler.test.tsx:87` (`TS1005: ')' expected`). This is unrelated to this work and existed before any changes.
@@ -152,4 +178,6 @@ Tested 3 scenarios (screenshots captured 2026-02-07):
 3. Both `ResolvedFocusLatch` and `PendingFocusLatch` satisfy `latchBlocksStaleChat` (blocking all 4 stale-chat paths) ✅
 4. Feature flag `NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1=false` → all latch setters are no-ops, existing behavior unchanged ✅
 5. Pending cooldown returns `handled: true` silently — no multi-list ambiguity on unresolved latch ✅
-6. Integration race tests pass (20/20) ✅
+6. Pending cooldown only swallows selection-like inputs; commands/questions fall through normally ✅
+7. Integration race tests pass (20/20) ✅
+8. Dispatcher-level race tests pass (4/4) — calls `dispatchRouting()` with real context objects ✅

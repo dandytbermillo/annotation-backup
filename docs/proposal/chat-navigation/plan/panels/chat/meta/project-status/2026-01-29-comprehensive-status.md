@@ -1,6 +1,6 @@
 # Chat Navigation — Comprehensive Project Status
 
-**Date:** 2026-02-02
+**Date:** 2026-02-07
 **Scope:** Full status of chat navigation subsystem — plans, implementations, fixes, and current state.
 
 ---
@@ -53,6 +53,9 @@ Widget & UI Snapshot
 └── widget-registry-implementation-plan.md        ← Widget registry architecture (in-memory, 3-layer)
 Suggestion Routing
 └── suggestion-routing-unification-plan.md        ← Suggestion reject/affirm unified in dispatcher
+Selection Intent Arbitration
+├── selection-intent-arbitration-incubation-plan.md    ← Focus latch model (8 phases)
+└── selection-intent-arbitration-widget-first-fix-plan.md ← Widget-first fix (6 steps)
 ```
 
 ---
@@ -103,7 +106,21 @@ Suggestion Routing
 | Grounding-set fallback | **Implemented** (Tier 4.5 between known‑noun and docs) |
 | Panel D/E soft-active selection routing | **Fixed** (Tier 3a label matching + verb-prefix stripping) |
 | Widget UI Snapshot Plan | **Spec complete** (routing prereqs done; registry Phase 2 not started) |
-| Widget Registry Implementation Plan | **Spec complete** (in-memory ephemeral registry architecture defined) |
+| Widget Registry Implementation Plan | **Complete** (Layer 1: `ui-snapshot-registry.ts`, Layer 2: `ui-snapshot-builder.ts`, Layer 3: Tier 4.5 integration) |
+
+### 3.5 Selection Intent Arbitration (2026-02-06 → 2026-02-07)
+
+| Area | Status |
+|------|--------|
+| Focus latch incubation plan (8 phases) | **Implemented** (all phases complete, feature-flagged) |
+| Widget-first latch fix (6 steps) | **Implemented** (unified parser, proactive latch, pending resolution, hard invariant, cleanup, 28 unit tests) |
+| FocusLatchState discriminated union | **Implemented** (`kind: 'resolved' \| 'pending'`) |
+| Proactive latch on panel-drawer | **Implemented** (immediate UUID→slug resolution or pending latch) |
+| Absolute snapshot policy | **Implemented** (panel_drawer never writes to clarificationSnapshot) |
+| Hard invariant (latchBlocksStaleChat) | **Implemented** (blocks all 4 stale-chat ordinal paths) |
+| Unified ordinal parser | **Implemented** (`isSelectionOnly(mode: 'strict' \| 'embedded')` in input-classifiers.ts) |
+| Feature flag gating in handleSelectOption | **Open issue** — snapshot policy runs unconditionally for panel_drawer |
+| Integration race tests | **Not implemented** — plan specified 3 red/green tests |
 
 ---
 
@@ -211,6 +228,45 @@ if (isLLMFallbackEnabledClient() && !isRepairPhrase(trimmedInput) && !isOrdinalI
 - **Widget UI Snapshot Plan finalized:** `widget-ui-snapshot-plan.md` defines the data contract (list + context segments, selection memory, freshness guard). Routing prereqs are now implemented; widget registry Phase 2 not started.
 - **Widget Registry Implementation Plan created:** `widget-registry-implementation-plan.md` defines the 3-layer architecture: Layer 1 (ephemeral in-memory store), Layer 2 (per-turn snapshot builder), Layer 3 (routing/grounding integration). Key design: in-memory only (not database), session-scoped, separate from `widget-state-store.ts`.
 - **Tier 3 / Tier 4.5 boundary rule established:** Chat-created options (pendingOptions, activeOptionSetId) handled at Tier 3; widget-registered lists handled ONLY at Tier 4.5. The two tiers never share candidate lists.
+
+### 2026-02-06 → 2026-02-07 Updates (Selection Intent Arbitration — Widget-First Latch Fix)
+
+**Problem:** Ordinals ("open the second one pls") after panel-drawer selection intermittently resolved against stale chat disambiguation list instead of widget items. Root cause: `clarificationSnapshot` captured stale options, no focus latch set on panel engagement, and two `isSelectionOnly` parsers with different strictness.
+
+**Solution (6 steps):**
+
+1. **Unified ordinal parser** — Single `isSelectionOnly(mode: 'strict' | 'embedded')` in `input-classifiers.ts`. Moved `normalizeOrdinalTypos`, `ORDINAL_TARGETS`, `extractOrdinalFromPhrase`. Deleted both local implementations. `looksLikeNewCommand` (line 2244) uses `'embedded'` so "open second one" stays in selection flow.
+
+2. **FocusLatchState discriminated union** — `ResolvedFocusLatch` (kind='resolved', widgetId slug) | `PendingFocusLatch` (kind='pending', pendingPanelId UUID). State machine: `none → pending → resolved → suspended → cleared`. All latch setters gated behind feature flag in `chat-navigation-context.tsx`.
+
+3. **Proactive latch on panel-drawer selection** — In `handleSelectOption` (`chat-navigation-panel.tsx`): attempts immediate UUID→slug resolution via `getAllVisibleSnapshots()`, sets `kind: 'resolved'` if found, `kind: 'pending'` if not. **Absolute snapshot policy**: `clarificationSnapshot` NEVER written for panel_drawer (uses `lastOptionsShown` only). Calls `clearClarificationSnapshot()` to clean residual snapshots.
+
+4. **Pending resolution + validity check** — Dispatcher upgrades pending→resolved when widget registers (via `panelId` match on `OpenWidgetState`). 2-turn TTL for unresolved pending latch. "Still loading" message with turn-based cooldown (shows once on turn 0). Added `panelId?: string` to `OpenWidgetState` and propagated through `ui-snapshot-builder.ts`.
+
+5. **Hard invariant (latchBlocksStaleChat)** — `isLatchEnabled && focusLatch && !focusLatch.suspended` blocks ALL four stale-chat ordinal paths: Tier 3a primary, Tier 3a message-derived, interrupt-paused, post-action ordinal window.
+
+6. **28 unit tests** — `__tests__/unit/chat/selection-intent-arbitration.test.ts` covers: strict vs embedded modes, discriminated union, normalizeOrdinalTypos, command escape, feature flag behavior.
+
+**Verification (manual tests — all pass):**
+- "links panel" → "second one pls" → Links Panel D → "open the second one pls" → widget item #2 (not Links Panel D again)
+- Same ordinal repeated → still widget item #2 (repeatable)
+- "open recent widget" → "open the second one pls" → Recent widget item #2 (latch transfer)
+- "open links panel d" (direct) → "open the first one pls" → widget item #1
+
+**Known issue:** `handleSelectOption` panel_drawer snapshot policy (lines 890-922) runs unconditionally — not gated behind feature flag. When flag is off, `clearClarificationSnapshot()` and snapshot policy change still fire.
+
+**Files modified (9):**
+| File | Changes |
+|------|---------|
+| `lib/chat/chat-navigation-context.tsx` | FocusLatchState discriminated union + getLatchId() |
+| `lib/chat/input-classifiers.ts` | Unified isSelectionOnly(mode) + extractOrdinalFromPhrase + normalizeOrdinalTypos |
+| `lib/chat/routing-dispatcher.ts` | Import unified parser, latch validity check, pending resolution, Tier 4.5 scoping, hard invariant, union migration |
+| `lib/chat/chat-routing.ts` | Import unified parser, interrupt-paused latch guard, post-action guard, union migration, console.log cleanup |
+| `components/chat/chat-navigation-panel.tsx` | Proactive latch on panel-drawer, absolute snapshot policy |
+| `lib/chat/grounding-set.ts` | panelId?: string on OpenWidgetState |
+| `lib/chat/ui-snapshot-builder.ts` | Propagate panelId to openWidgets |
+| `__tests__/unit/chat/selection-intent-arbitration.test.ts` | NEW — 28 unit tests |
+| `docs/proposal/.../selection-intent-arbitration-widget-first-fix-plan.md` | NEW — 6-step plan document |
 
 ### Draft / Pending Plans
 
@@ -347,6 +403,7 @@ From `clarification-qa-checklist.md` (13 tests, A1-E13):
 | `CLARIFICATION_LLM_MODEL` | Server | Model selection for LLM calls |
 | `NEXT_PUBLIC_CROSS_CORPUS_FUZZY` | Client | Cross-corpus fuzzy normalization |
 | `SEMANTIC_FALLBACK_ENABLED` | Server | Semantic fallback classifier for routing |
+| `NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1` | Client | Focus latch model — widget-first selection arbitration |
 
 ---
 
@@ -354,8 +411,12 @@ From `clarification-qa-checklist.md` (13 tests, A1-E13):
 
 ### Chat Routing & Navigation
 - `lib/chat/chat-routing.ts` — Main routing logic (~3800 lines)
-- `lib/chat/chat-navigation-context.tsx` — Snapshot management (save/pause/clear)
-- `components/chat/chat-navigation-panel.tsx` — Chat UI panel
+- `lib/chat/routing-dispatcher.ts` — Unified routing priority chain (Tiers 0-5 + suggestion tier)
+- `lib/chat/chat-navigation-context.tsx` — Snapshot management, focus latch state (save/pause/clear)
+- `lib/chat/input-classifiers.ts` — Shared parsers: isExplicitCommand, isSelectionOnly(mode), normalizeOrdinalTypos
+- `lib/widgets/ui-snapshot-registry.ts` — Ephemeral in-memory widget snapshot registry
+- `lib/chat/ui-snapshot-builder.ts` — Per-turn snapshot assembler (openWidgets with panelId)
+- `components/chat/chat-navigation-panel.tsx` — Chat UI panel (proactive latch on panel-drawer)
 
 ### Clarification System
 - `lib/chat/clarification-offmenu.ts` — Deterministic detection (return signals, ordinals, repair)
@@ -386,6 +447,12 @@ From `clarification-qa-checklist.md` (13 tests, A1-E13):
 
 5. **Unified Retrieval Phase 2** adoption pending — infrastructure complete but broader integration not started.
 
+6. **Selection intent arbitration: feature flag gap in handleSelectOption.** The panel_drawer snapshot policy (absolute snapshot policy + `clearClarificationSnapshot()`) in `chat-navigation-panel.tsx` lines 890-922 runs unconditionally, not gated behind `NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1`. When flag is off, `setFocusLatch` calls are no-op (gated in context provider), but snapshot behavior changes.
+
+7. **Selection intent arbitration: integration race tests missing.** Plan specified `__tests__/integration/chat/selection-intent-arbitration-race.test.ts` with 3 red/green tests (pending latch race, command escape, flag-off). Only unit tests exist.
+
+8. **Levenshtein false positives in embedded parser.** Known bug: "anel layot" can normalize to "last" via fuzzy matching. With widget-first guards in place, this only affects the no-latch case (acceptable tradeoff).
+
 ---
 
 ## 11. Implementation Reports
@@ -414,7 +481,9 @@ From `clarification-qa-checklist.md` (13 tests, A1-E13):
 | 2026-01-30 | `reports/2026-01-30-suggestion-routing-unification-report.md` | Suggestion unification |
 | 2026-01-31 | `reports/2026-01-31-tier2-noun-interrupt-and-post-action-gate.md` | Noun interrupt + post-action gate |
 | 2026-02-01 | `reports/2026-02-01-grounding-set-fallback-implementation.md` | Grounding-set fallback |
-| 2026-02-02 | `reports/2026-02-02-panel-de-routing-fix.md` | **Panel D/E routing fix (latest)** |
+| 2026-02-02 | `reports/2026-02-02-panel-de-routing-fix.md` | Panel D/E routing fix |
+| 2026-02-06 | `reports/2026-02-06-selection-intent-arbitration-implementation-report.md` | Selection intent arbitration (focus latch phases 0-8) |
+| 2026-02-07 | `selection-intent-arbitration-widget-first-fix-plan.md` | **Widget-first latch fix (latest)** |
 
 ---
 
@@ -511,15 +580,13 @@ Also added `input` to the existing `sendMessage_error` log.
 
 ## 14. Next Steps
 
-### Immediate
-- [ ] Run `npm run type-check` to verify no type errors from 2026-02-02 fixes
-- [ ] Test verb-prefix stripping fix for deterministic resolution (verify debug logs show deterministic match, not LLM fallback)
-- [ ] Implement Widget Registry Phase 2: `lib/widgets/ui-snapshot-registry.ts` (Layer 1) + `lib/chat/ui-snapshot-builder.ts` (Layer 2)
-- [ ] Wire widget reporters (RecentPanel, QuickLinksWidget) into registry
-- [ ] Add `execute_widget_item` groundingAction in Tier 4.5 for widget registry items
+### Immediate (Selection Intent Arbitration)
+- [ ] **Fix feature flag gating** — `handleSelectOption` panel_drawer snapshot policy (lines 890-922) runs unconditionally; must gate behind `NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1`
+- [ ] **Integration race tests** — create `__tests__/integration/chat/selection-intent-arbitration-race.test.ts` (3 red/green tests: pending latch race, command escape, flag-off)
+- [ ] **Manual re-anchor test** — verify "back to options" restores chat options from `lastOptionsShown` after panel-drawer latch
 
 ### Ongoing
-- [ ] Reproduce the red error with `api_response_not_ok` debug log to confirm HTTP 504
+- [ ] Reproduce red error with `api_response_not_ok` debug log (HTTP 504 confirmation)
 - [ ] Implement action-verb stopword fix in `panel-command-matcher.ts` (per plan)
 - [ ] Investigate Gemini timeout issue (API key quota, model latency, or network)
 - [ ] Run remaining QA checklist tests (B7, B9, D11, E13)

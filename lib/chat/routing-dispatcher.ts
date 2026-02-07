@@ -2608,10 +2608,12 @@ export async function dispatchRouting(
     // else: no activeWidgetId → multi-list ambiguity handling fires normally
 
     // Pending latch + no activeWidgetId: widget hasn't registered yet.
-    // Per plan: show deterministic "Still loading" message on first turn, silently proceed on subsequent turns.
-    if (isLatchEnabled && ctx.focusLatch && ctx.focusLatch.kind === 'pending' && !activeWidgetId) {
+    // Per plan: only swallow selection-like inputs; let commands/questions fall through normally.
+    // The latchBlocksStaleChat invariant (in handleClarificationIntercept) still prevents stale-chat capture.
+    if (isLatchEnabled && ctx.focusLatch && ctx.focusLatch.kind === 'pending' && !activeWidgetId
+        && isSelectionLike(ctx.trimmedInput, { hasBadgeLetters: turnSnapshot.hasBadgeLetters })) {
       if (ctx.focusLatch.turnsSinceLatched === 0) {
-        // First turn with pending latch — show loading message
+        // First turn with pending latch + selection-like input — show loading message
         const loadingMsg: ChatMessage = {
           id: `assistant-${Date.now()}`,
           role: 'assistant',
