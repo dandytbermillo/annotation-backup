@@ -2,7 +2,7 @@ w# Full Project Knowledge — Chat Navigation & Annotation System
 
 **Purpose:** This document captures the complete understanding of the project so that any future session can immediately get up to speed without re-reading dozens of files. It covers architecture, the chat navigation system we are actively working on, the clarification/disambiguation subsystem in detail, every fix applied, and the current state of work.
 
-**Last Updated:** 2026-02-03
+**Last Updated:** 2026-02-07
 
 ---
 
@@ -18,7 +18,7 @@ w# Full Project Knowledge — Chat Navigation & Annotation System
 8. [The Routing Flow (Step by Step)](#8-the-routing-flow)
 9. [The Snapshot Lifecycle](#9-the-snapshot-lifecycle)
 10. [Three-Tier Return-Cue Detection](#10-three-tier-return-cue-detection)
-11. [All Fixes Applied (2026-01-31 → 2026-02-02)](#11-all-fixes-applied)
+11. [All Fixes Applied (2026-01-31 → 2026-02-07)](#11-all-fixes-applied)
 12. [Debug Logging & Telemetry](#12-debug-logging--telemetry)
 13. [Feature Flags](#13-feature-flags)
 14. [QA Checklist](#14-qa-checklist)
@@ -145,7 +145,9 @@ This is the subsystem we are actively building and iterating on. It lives primar
 
 - `components/chat/chat-navigation-panel.tsx` — UI orchestrator
 - `lib/chat/chat-routing.ts` — All routing handlers (~3800 lines)
-- `lib/chat/chat-navigation-context.tsx` — Shared state (messages, snapshots, clarification state)
+- `lib/chat/chat-navigation-context.tsx` — Shared state (messages, snapshots, clarification state, focus latch)
+- `lib/chat/input-classifiers.ts` — Shared parsers (isExplicitCommand, isSelectionOnly, normalizeOrdinalTypos)
+- `lib/chat/routing-dispatcher.ts` — Unified routing priority chain (Tiers 0-5)
 
 ### What It Does
 
@@ -436,9 +438,15 @@ portion of the unified routing chain.
 8. **Tier 3 confirm** — if LLM fails: "Do you want to go back to the previous options?"
 9. **Paused-snapshot repair guard** — absorb "not that" after interrupt
 
+### Phase 2b: Focus Latch Guards (Selection Intent Arbitration)
+- **Chat re-anchor** — "back to options" suspends latch, restores chat scope
+- **Focus latch bypass** — when latch active + selection-like input → skip intercept, defer to Tier 4.5 widget resolution
+- **Hard invariant** — `latchBlocksStaleChat` blocks ALL stale-chat ordinal paths when latch is active (resolved or pending)
+
 ### Phase 3: Post-Action Ordinal Window
 10. **Selection persistence** — ordinals resolve against active/paused snapshots
 11. **Stop-paused ordinal guard** — if `pausedReason === 'stop'`, block ordinals
+12. **Widget-first guard** — if focus latch active or pre-latch (focused widget exists), defer ordinal to Tier 4.5 instead of resolving against stale snapshot
 
 ### Phase 4: Stop Scope (No Active Clarification)
 12. **Exit phrases without active list** — pause snapshot, set suppression counter

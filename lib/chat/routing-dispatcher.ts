@@ -2624,8 +2624,12 @@ export async function dispatchRouting(
         void debugLog({ component: 'ChatNavigation', action: 'pending_latch_still_loading', metadata: { pendingPanelId: ctx.focusLatch.pendingPanelId, turnsSinceLatched: 0 } })
         return { ...defaultResult, handled: true }
       }
-      // Cooldown: turnsSinceLatched > 0 — silently proceed without activeWidgetId
-      void debugLog({ component: 'ChatNavigation', action: 'pending_latch_cooldown_proceed', metadata: { pendingPanelId: ctx.focusLatch.pendingPanelId, turnsSinceLatched: ctx.focusLatch.turnsSinceLatched } })
+      // Cooldown: turnsSinceLatched > 0 — return handled silently (no message, no fall-through
+      // to Tier 4.5 grounding) to prevent multi-list ambiguity from firing against unresolved pending latch.
+      // The latch will either resolve on the next validity check or expire at turnsSinceLatched >= 2.
+      void debugLog({ component: 'ChatNavigation', action: 'pending_latch_cooldown_silent', metadata: { pendingPanelId: ctx.focusLatch.pendingPanelId, turnsSinceLatched: ctx.focusLatch.turnsSinceLatched } })
+      ctx.setIsLoading(false)
+      return { ...defaultResult, handled: true }
     }
 
     // Run grounding-set fallback

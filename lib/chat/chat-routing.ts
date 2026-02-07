@@ -2042,6 +2042,7 @@ export async function handleClarificationIntercept(
           // entirely via the latch bypass block (line 2450+), avoiding stale snapshot re-entry.
           if (isLatchEnabled && !focusLatch && activeSnapshotWidgetId) {
             setFocusLatch({
+              kind: 'resolved',
               widgetId: activeSnapshotWidgetId,
               widgetLabel: activeSnapshotWidgetId, // Widget slug as label (human label resolved in dispatcher)
               latchedAt: Date.now(),

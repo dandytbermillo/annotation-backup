@@ -74,32 +74,82 @@ Fixed the intermittent ordinal hijack bug where ordinals ("open second one") res
 **File:** `__tests__/unit/chat/selection-intent-arbitration.test.ts` (NEW)
 - 28 tests covering: strict vs embedded mode, discriminated union, getLatchId, normalizeOrdinalTypos, command escape, isExplicitCommand
 
-## Files Modified (8 files)
+## Post-Implementation Fixes (2026-02-07, second pass)
+
+Three issues found during review and addressed:
+
+### Fix A: Missing `kind: 'resolved'` in prelatch promotion (HIGH)
+
+**File:** `lib/chat/chat-routing.ts:2044`
+**Bug:** The "post-action ordinal prelatch promotion" path called `setFocusLatch()` without the required `kind: 'resolved'` discriminant field. At runtime, `focusLatch.kind` would be `undefined`, causing both branches in the latch validity check (`routing-dispatcher.ts:956-983`) to miss — the latch survived but failed to scope Tier 4.5.
+**Fix:** Added `kind: 'resolved'` to the object literal.
+**Impact:** Edge case path (ordinal matches stale snapshot + active widget + no latch). Main happy paths (proactive latch from `chat-navigation-panel.tsx`, `trySetWidgetLatch`) were already correct.
+
+### Fix B: Pending cooldown contradiction (MEDIUM)
+
+**File:** `lib/chat/routing-dispatcher.ts:2627`
+**Bug:** Cooldown path (pending latch, `turnsSinceLatched > 0`, no `activeWidgetId`) fell through to Tier 4.5 `handleGroundingSetFallback` without `activeWidgetId`, which could trigger multi-list ambiguity — contradicting the plan's "do NOT produce multi-list ambiguity clarifier" rule.
+**Fix:** Changed cooldown path to return `{ handled: true }` silently (no message, no fall-through). Debug log action renamed from `pending_latch_cooldown_proceed` to `pending_latch_cooldown_silent`.
+**Cooldown tracking:** Uses existing `turnsSinceLatched` counter on `PendingFocusLatch` (incremented by `incrementFocusLatchTurn()`). `=== 0` shows "Still loading..." message, `> 0` returns silently, `>= 2` expires the latch.
+
+### Fix C: Missing integration race test file
+
+**File:** `__tests__/integration/chat/selection-intent-arbitration-race.test.ts` (NEW)
+**Bug:** Plan listed this file as a deliverable but it was never created during initial implementation. Only the unit test file existed.
+**Fix:** Created with 20 tests in 4 groups:
+- **Pending latch race** (7 tests): blocks stale chat, activeSnapshotWidgetId fallback, "Still loading" trigger, upgrade transition, 2-turn expiry, embedded ordinal detection, full race sequence
+- **Command escape** (6 tests): embedded vs strict mode, explicit command bypass, label-only selection, latch persistence after command
+- **Flag-off behavior** (4 tests): latchBlocksStaleChat false, no activeWidgetId, pure parsers unaffected, all 4 stale-chat paths pass through
+- **Pending cooldown** (3 tests): first turn message, silent handled on subsequent turns, expiry at 2 turns
+
+## Files Modified (9 files)
 
 | File | Changes |
 |------|---------|
 | `lib/chat/input-classifiers.ts` | Unified `isSelectionOnly(mode)` + moved `normalizeOrdinalTypos`, `ORDINAL_TARGETS`, `extractOrdinalFromPhrase` |
 | `lib/chat/chat-navigation-context.tsx` | Discriminated union `FocusLatchState` + `getLatchId()` + feature flag gating |
-| `lib/chat/routing-dispatcher.ts` | Import unified parser, latch validity with pending resolution, Tier 4.5 pending scoping, "Still loading" message, trySetWidgetLatch union update |
-| `lib/chat/chat-routing.ts` | Import unified parser, `latchBlocksStaleChat` invariant, interrupt-paused guard, console.log removal, union migration |
+| `lib/chat/routing-dispatcher.ts` | Import unified parser, latch validity with pending resolution, Tier 4.5 pending scoping, "Still loading" message + silent cooldown, trySetWidgetLatch union update |
+| `lib/chat/chat-routing.ts` | Import unified parser, `latchBlocksStaleChat` invariant, interrupt-paused guard, console.log removal, union migration, **`kind: 'resolved'` fix at line 2044** |
 | `components/chat/chat-navigation-panel.tsx` | Absolute snapshot policy for panel_drawer, proactive latch, stale snapshot cleanup |
 | `lib/chat/grounding-set.ts` | `panelId?: string` on `OpenWidgetState` |
 | `lib/chat/ui-snapshot-builder.ts` | Propagate `panelId` to openWidgets |
-| `__tests__/unit/chat/selection-intent-arbitration.test.ts` | NEW — 28 unit tests |
+| `__tests__/unit/chat/selection-intent-arbitration.test.ts` | 28 unit tests (created in initial pass) |
+| `__tests__/integration/chat/selection-intent-arbitration-race.test.ts` | **NEW — 20 integration race tests** (created in second pass) |
 
 ## Verification
 
 ```
 $ npx tsc --noEmit
 # Only pre-existing error: __tests__/unit/use-panel-close-handler.test.tsx(87,1): error TS1005
+# No new errors introduced.
 
-$ npx jest __tests__/unit/chat/ --no-coverage
+$ npx jest __tests__/unit/chat/ --no-coverage --runInBand
 # 4 suites, 172 tests, 0 failures
+
+$ npx jest __tests__/integration/chat/selection-intent-arbitration-race.test.ts --no-coverage --runInBand
+# 1 suite, 20 tests, 0 failures
 ```
+
+**Note:** `npx tsc --noEmit` has a pre-existing parse error at `__tests__/unit/use-panel-close-handler.test.tsx:87` (`TS1005: ')' expected`). This is unrelated to this work and existed before any changes.
+
+## Manual Test Results (Screenshots)
+
+Tested 3 scenarios (screenshots captured 2026-02-07):
+
+1. **Disambiguation → panel open → widget ordinal**:
+   `"links panel"` → disambiguation → `"second one pls"` → Opens Links Panel D → `"open the second one pls"` → Opens entry "summary 155 D" (widget item #2) → repeated → same result ✅
+
+2. **Cross-widget focus switch**:
+   `"open recent widget"` → Opens Recent → `"open the second one pls"` → Opens entry "sample2" (Recent item #2) → `"open links panel d"` → Opens Links Panel D (new latch) → `"open the first one pls"` → Opens entry "summary144 D" (Links Panel D item #1) ✅
+
+3. **Direct panel open → widget ordinal**:
+   `"open links panel d"` → Opens Links Panel D → `"open the first one pls"` → Opens entry "summary144 D" ✅
 
 ## Acceptance Checks
 
-1. `isSelectionOnly('open second one', 10, [], 'embedded').isSelection === true` — looksLikeNewCommand stays in selection flow
-2. Zero direct `focusLatch.widgetId` reads without `kind === 'resolved'` guard
-3. Both `ResolvedFocusLatch` and `PendingFocusLatch` satisfy `latchBlocksStaleChat` (blocking all 4 stale-chat paths)
-4. Feature flag `false` → all latch setters are no-ops, existing behavior unchanged
+1. `isSelectionOnly('open second one', 10, [], 'embedded').isSelection === true` — looksLikeNewCommand stays in selection flow ✅
+2. Zero direct `focusLatch.widgetId` reads without `kind === 'resolved'` guard ✅ (Fix A addressed the last violation)
+3. Both `ResolvedFocusLatch` and `PendingFocusLatch` satisfy `latchBlocksStaleChat` (blocking all 4 stale-chat paths) ✅
+4. Feature flag `NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1=false` → all latch setters are no-ops, existing behavior unchanged ✅
+5. Pending cooldown returns `handled: true` silently — no multi-list ambiguity on unresolved latch ✅
+6. Integration race tests pass (20/20) ✅
