@@ -291,6 +291,8 @@ export interface KnownNounRoutingContext {
   clearLastOptionsShown?: () => void
   /** Clear post-action snapshot memory */
   clearClarificationSnapshot?: () => void
+  /** Clear focus latch on panel switch (per selection-intent-arbitration-incubation-plan.md Rule 6e) */
+  clearFocusLatch?: () => void
 }
 
 export interface KnownNounRoutingResult {
@@ -506,6 +508,8 @@ export function handleKnownNounRouting(
     ctx.clearLastOptionsShown?.()
     ctx.clearClarificationSnapshot?.()
     ctx.clearWidgetSelectionContext?.()
+    // Clear focus latch — panel switch starts fresh scope (per incubation plan Rule 6e)
+    ctx.clearFocusLatch?.()
 
     // Execute: open the panel drawer using the real panel ID
     ctx.openPanelDrawer(realPanel.id, realPanel.title ?? match.title)

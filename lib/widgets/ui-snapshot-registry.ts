@@ -70,6 +70,8 @@ export interface WidgetSnapshot {
   widgetId: string
   /** Human-readable (e.g., "Recent") */
   title: string
+  /** Dashboard panel UUID — used to resolve activeWidgetId (UUID) → widgetId (slug) */
+  panelId?: string
   isVisible: boolean
   segments: SnapshotSegment[]
   /** Date.now() when registered */
@@ -207,6 +209,7 @@ function validateSnapshot(input: unknown): WidgetSnapshot | null {
     _version: 1,
     widgetId: truncateString(data.widgetId, MAX_STRING_LENGTH),
     title: truncateString(data.title, MAX_STRING_LENGTH),
+    panelId: typeof data.panelId === 'string' ? data.panelId : undefined,
     isVisible: data.isVisible,
     segments,
     registeredAt: data.registeredAt as number,

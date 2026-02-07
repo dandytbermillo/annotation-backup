@@ -217,6 +217,28 @@ export interface WidgetSelectionContext {
 export const WIDGET_SELECTION_TTL = 2
 
 /**
+ * Focus latch state for selection intent arbitration.
+ * Per selection-intent-arbitration-incubation-plan.md:
+ *   Tracks which widget the user is actively engaged with.
+ *   While latched, unspecific selection-like follow-ups resolve against this widget.
+ */
+export interface FocusLatchState {
+  /** Widget slug from registry (e.g., "w_links_d") */
+  widgetId: string
+  /** Human-readable widget label (e.g., "Quick Links D") */
+  widgetLabel: string
+  /** Timestamp when latch was set */
+  latchedAt: number
+  /** Turns since latch was set (for TTL expiry) */
+  turnsSinceLatched: number
+  /** True when scope switched to chat via re-anchor (latch not cleared, just suspended) */
+  suspended?: boolean
+}
+
+/** Focus latch TTL in turns */
+export const FOCUS_LATCH_TTL = 5
+
+/**
  * Doc retrieval conversation state for follow-ups and corrections.
  * Per general-doc-retrieval-routing-plan.md (v4)
  * Updated for v5 Hybrid Response Selection (lastChunkIdsShown for HS2)
@@ -367,6 +389,12 @@ interface ChatNavigationContextValue {
   setWidgetSelectionContext: (context: WidgetSelectionContext | null) => void
   incrementWidgetSelectionTurn: () => void
   clearWidgetSelectionContext: () => void
+  // Focus latch for selection intent arbitration (per selection-intent-arbitration-incubation-plan.md)
+  focusLatch: FocusLatchState | null
+  setFocusLatch: (latch: FocusLatchState | null) => void
+  suspendFocusLatch: () => void
+  incrementFocusLatchTurn: () => void
+  clearFocusLatch: () => void
 }
 
 // =============================================================================
@@ -1196,6 +1224,31 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     setWidgetSelectionContextInternal(null)
   }, [])
 
+  // Focus latch state for selection intent arbitration (per selection-intent-arbitration-incubation-plan.md)
+  const [focusLatch, setFocusLatchInternal] = useState<FocusLatchState | null>(null)
+
+  const setFocusLatch = useCallback((latch: FocusLatchState | null) => {
+    setFocusLatchInternal(latch)
+  }, [])
+
+  const suspendFocusLatch = useCallback(() => {
+    setFocusLatchInternal(prev => prev ? { ...prev, suspended: true } : null)
+  }, [])
+
+  const incrementFocusLatchTurn = useCallback(() => {
+    setFocusLatchInternal((prev) => {
+      if (!prev) return null
+      const newTurns = prev.turnsSinceLatched + 1
+      // Expire after FOCUS_LATCH_TTL full turns (> not >=, so TTL=5 allows turns 0-5)
+      if (newTurns > FOCUS_LATCH_TTL) return null
+      return { ...prev, turnsSinceLatched: newTurns }
+    })
+  }, [])
+
+  const clearFocusLatch = useCallback(() => {
+    setFocusLatchInternal(null)
+  }, [])
+
   return (
     <ChatNavigationContext.Provider
       value={{
@@ -1269,6 +1322,12 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         setWidgetSelectionContext,
         incrementWidgetSelectionTurn,
         clearWidgetSelectionContext,
+        // Focus latch for selection intent arbitration
+        focusLatch,
+        setFocusLatch,
+        suspendFocusLatch,
+        incrementFocusLatchTurn,
+        clearFocusLatch,
       }}
     >
       {children}

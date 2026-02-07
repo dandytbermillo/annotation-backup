@@ -143,6 +143,7 @@ export function QuickLinksWidget({
         _version: 1,
         widgetId,
         title: widgetTitle,
+        panelId: panel.id,
         isVisible: true,
         segments: [
           {

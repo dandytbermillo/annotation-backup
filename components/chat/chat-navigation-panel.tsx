@@ -518,6 +518,12 @@ function ChatNavigationPanelContent({
     setWidgetSelectionContext,
     incrementWidgetSelectionTurn,
     clearWidgetSelectionContext,
+    // Focus latch (per selection-intent-arbitration-incubation-plan.md)
+    focusLatch,
+    setFocusLatch,
+    suspendFocusLatch,
+    incrementFocusLatchTurn,
+    clearFocusLatch,
   } = useChatNavigationContext()
 
   const { executeAction, selectOption, openPanelDrawer: openPanelDrawerBase } = useChatNavigation({
@@ -1450,6 +1456,12 @@ function ChatNavigationPanelContent({
         setWidgetSelectionContext,
         incrementWidgetSelectionTurn,
         clearWidgetSelectionContext,
+        // Focus latch (per selection-intent-arbitration-incubation-plan.md)
+        focusLatch,
+        setFocusLatch,
+        suspendFocusLatch,
+        incrementFocusLatchTurn,
+        clearFocusLatch,
       })
       const { clarificationCleared, isNewQuestionOrCommandDetected } = routingResult
       // Extract classifier state for downstream telemetry

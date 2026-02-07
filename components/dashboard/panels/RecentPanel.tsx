@@ -94,6 +94,7 @@ export function RecentPanel({ panel, onClose, onTitleChange, onNavigate, onDelet
         _version: 1,
         widgetId: 'w_recent',
         title: 'Recent',
+        panelId: panel.id,
         isVisible: true,
         segments: [
           {

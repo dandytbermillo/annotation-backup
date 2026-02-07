@@ -137,6 +137,7 @@ export function RecentWidget({
         _version: 1,
         widgetId: 'w_recent_widget',
         title: 'Recent',
+        panelId: panel.id,
         isVisible: true,
         segments: [
           {

@@ -74,6 +74,30 @@ import {
   callReturnCueLLM,
   isLLMFallbackEnabledClient,
 } from '@/lib/chat/clarification-llm-fallback'
+import { isExplicitCommand } from '@/lib/chat/input-classifiers'
+import { isSelectionLike } from '@/lib/chat/grounding-set'
+import type { LastOptionsShown } from '@/lib/chat/chat-navigation-context'
+
+// =============================================================================
+// Recoverable Chat Options Helper
+// Per selection-intent-arbitration-incubation-plan Rule 3:
+// Re-anchor succeeds only when a recoverable chat option list exists.
+// =============================================================================
+
+/**
+ * Check all recoverable sources for chat options in priority order.
+ * Returns the first non-empty option list, or null if none found.
+ */
+function getRecoverableChatOptions(ctx: {
+  clarificationSnapshot: ClarificationSnapshot | null
+  lastOptionsShown: LastOptionsShown | null
+  lastClarification: LastClarificationState | null
+}): ClarificationOption[] | null {
+  if (ctx.clarificationSnapshot?.options?.length) return ctx.clarificationSnapshot.options
+  if (ctx.lastOptionsShown?.options?.length) return ctx.lastOptionsShown.options
+  if (ctx.lastClarification?.options?.length) return ctx.lastClarification.options
+  return null
+}
 
 // =============================================================================
 // Handler Result Type
@@ -1135,6 +1159,20 @@ export interface ClarificationInterceptContext {
   // Widget selection context (per universal-selection-resolver-plan.md)
   // When non-null, skip clarification-mode handling and defer to universal resolver
   widgetSelectionContext: import('@/lib/chat/chat-navigation-context').WidgetSelectionContext | null
+
+  // Focus latch (per selection-intent-arbitration-incubation-plan.md)
+  focusLatch: import('@/lib/chat/chat-navigation-context').FocusLatchState | null
+  setFocusLatch: (latch: import('@/lib/chat/chat-navigation-context').FocusLatchState) => void
+  suspendFocusLatch: () => void
+  clearFocusLatch: () => void
+  hasVisibleWidgetItems: boolean
+  /** Sum of listSegmentCount across all openWidgets (for Rule 12 segment-level counting) */
+  totalListSegmentCount: number
+  lastOptionsShown: import('@/lib/chat/chat-navigation-context').LastOptionsShown | null
+  /** Feature flag: when false, all latch/pre-latch behavior is disabled */
+  isLatchEnabled: boolean
+  /** Phase 0 resolved widget slug — identifies which widget has UI focus (null if none) */
+  activeSnapshotWidgetId: string | null
 }
 
 /**
@@ -1411,7 +1449,33 @@ export async function handleClarificationIntercept(
     saveLastOptionsShown,
     // Widget selection context (per universal-selection-resolver-plan.md Phase 5)
     widgetSelectionContext,
+    // Focus latch (per selection-intent-arbitration-incubation-plan.md)
+    focusLatch,
+    setFocusLatch,
+    suspendFocusLatch,
+    clearFocusLatch,
+    hasVisibleWidgetItems,
+    totalListSegmentCount,
+    lastOptionsShown,
+    isLatchEnabled,
+    activeSnapshotWidgetId,
   } = ctx
+
+  // DIAGNOSTIC: trace intercept entry state (remove after debugging)
+  console.log('[LATCH_DIAG] intercept_entry:', {
+    input: trimmedInput,
+    hasLastClarification: !!lastClarification,
+    lastClarificationCount: lastClarification?.options?.length ?? 0,
+    hasSnapshot: !!clarificationSnapshot,
+    snapshotPausedReason: clarificationSnapshot?.pausedReason ?? null,
+    snapshotCount: clarificationSnapshot?.options?.length ?? 0,
+    isLatchEnabled,
+    focusLatch: focusLatch ? { widgetId: focusLatch.widgetId, suspended: focusLatch.suspended } : null,
+    hasVisibleWidgetItems,
+    totalListSegmentCount,
+    activeSnapshotWidgetId,
+    pendingOptionsCount: pendingOptions.length,
+  })
 
   // TD-3: Check for bare noun new intent
   const bareNounKnownTerms = getKnownTermsSync()
@@ -1960,6 +2024,13 @@ export async function handleClarificationIntercept(
   if (!lastClarification &&
       clarificationSnapshot &&
       clarificationSnapshot.options.length > 0) {
+    // DIAGNOSTIC: confirm post-action ordinal window entry (remove after debugging)
+    console.log('[LATCH_DIAG] post_action_ordinal_window_entered:', {
+      input: trimmedInput,
+      snapshotPausedReason: clarificationSnapshot.pausedReason,
+      snapshotOptions: clarificationSnapshot.options.map(o => o.label),
+    })
+
     const snapshotSelection = isSelectionOnly(
       trimmedInput,
       clarificationSnapshot.options.length,
@@ -2109,35 +2180,89 @@ export async function handleClarificationIntercept(
 
       // Non-paused snapshot (active post-selection window) — allow ordinal binding
       if (!clarificationSnapshot.pausedReason) {
-        const selectedOption = clarificationSnapshot.options[snapshotSelection.index]
+        // Focus latch / pre-latch guard (per selection-intent-arbitration-incubation-plan.md):
+        // When latch is active or pre-latch conditions met (Rule 12: single widget list,
+        // no active chat), defer ordinal to Tier 4.5 widget resolution instead of resolving
+        // against stale snapshot options (which would bind "second" to old chat pills).
+        // Pre-latch focused: widget has UI focus (activeSnapshotWidgetId set by Phase 0).
+        // Uses focused widget instead of strict totalListSegmentCount === 1 because
+        // dashboards commonly have multiple list segments — the focus signal disambiguates.
+        const isLatchOrPreLatch = isLatchEnabled && (
+          (focusLatch && !focusLatch.suspended) ||  // Active latch
+          (!focusLatch && !!activeSnapshotWidgetId)  // Pre-latch: focused widget exists
+        )
 
-        void debugLog({
-          component: 'ChatNavigation',
-          action: 'post_action_ordinal_window',
-          metadata: {
-            userInput: trimmedInput,
-            selectedIndex: snapshotSelection.index,
-            selectedLabel: selectedOption.label,
-            selectedType: selectedOption.type,
-            snapshotTurnsSince: clarificationSnapshot.turnsSinceSet,
-            response_fit_intent: 'select',
-          },
+        // DIAGNOSTIC: trace post-action ordinal guard values (remove after debugging)
+        console.log('[LATCH_DIAG] post_action_ordinal_guard:', {
+          isLatchEnabled,
+          focusLatch: focusLatch ? { widgetId: focusLatch.widgetId, suspended: focusLatch.suspended } : null,
+          activeSnapshotWidgetId,
+          hasVisibleWidgetItems,
+          totalListSegmentCount,
+          isLatchOrPreLatch,
+          input: trimmedInput,
+          snapshotOptionsCount: clarificationSnapshot.options.length,
         })
 
-        const reconstructedData = reconstructSnapshotData(selectedOption)
+        if (isLatchOrPreLatch) {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'post_action_ordinal_deferred_to_widget',
+            metadata: {
+              userInput: trimmedInput,
+              detectedIndex: snapshotSelection.index,
+              snapshotLabel: clarificationSnapshot.options[snapshotSelection.index]?.label,
+              hasLatch: !!(focusLatch && !focusLatch.suspended),
+              isPreLatch: !focusLatch && !!activeSnapshotWidgetId,
+            },
+          })
+          // Fix target #1: Set focus latch on the active widget if pre-latch (no latch yet).
+          // This promotes pre-latch → latch so subsequent ordinals bypass the intercept
+          // entirely via the latch bypass block (line 2450+), avoiding stale snapshot re-entry.
+          if (isLatchEnabled && !focusLatch && activeSnapshotWidgetId) {
+            setFocusLatch({
+              widgetId: activeSnapshotWidgetId,
+              widgetLabel: activeSnapshotWidgetId, // Widget slug as label (human label resolved in dispatcher)
+              latchedAt: Date.now(),
+              turnsSinceLatched: 0,
+            })
+            void debugLog({ component: 'ChatNavigation', action: 'focus_latch_set', metadata: { widgetId: activeSnapshotWidgetId, trigger: 'post_action_ordinal_prelatch_promotion' } })
+          }
+          // Fix target #2: Demote competing chat disambiguation context.
+          // Clear the snapshot so it doesn't catch future ordinals — the latch now owns resolution.
+          clearClarificationSnapshot()
+          // Fall through — don't return, let Tier 4.5 resolve against widget
+        } else {
+          const selectedOption = clarificationSnapshot.options[snapshotSelection.index]
 
-        const optionToSelect: SelectionOption = {
-          type: selectedOption.type as SelectionOption['type'],
-          id: selectedOption.id,
-          label: selectedOption.label,
-          sublabel: selectedOption.sublabel,
-          data: reconstructedData,
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'post_action_ordinal_window',
+            metadata: {
+              userInput: trimmedInput,
+              selectedIndex: snapshotSelection.index,
+              selectedLabel: selectedOption.label,
+              selectedType: selectedOption.type,
+              snapshotTurnsSince: clarificationSnapshot.turnsSinceSet,
+              response_fit_intent: 'select',
+            },
+          })
+
+          const reconstructedData = reconstructSnapshotData(selectedOption)
+
+          const optionToSelect: SelectionOption = {
+            type: selectedOption.type as SelectionOption['type'],
+            id: selectedOption.id,
+            label: selectedOption.label,
+            sublabel: selectedOption.sublabel,
+            data: reconstructedData,
+          }
+
+          setRepairMemory(selectedOption.id, clarificationSnapshot.options)
+          setIsLoading(false)
+          handleSelectOption(optionToSelect)
+          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
         }
-
-        setRepairMemory(selectedOption.id, clarificationSnapshot.options)
-        setIsLoading(false)
-        handleSelectOption(optionToSelect)
-        return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
       }
       } // end else (post-action selection gate passed)
     }
@@ -2190,6 +2315,9 @@ export async function handleClarificationIntercept(
       pauseSnapshotWithReason('stop')
     }
 
+    // Latch-off: stop/start-over clears focus latch (Phase 6b)
+    clearFocusLatch()
+
     // Set suppression counter for next N=2 turns
     setStopSuppressionCount(STOP_SUPPRESSION_TURN_LIMIT)
 
@@ -2215,9 +2343,26 @@ export async function handleClarificationIntercept(
   //   - Skip if input is a command/question (let it reach Tier 4.5 widget resolution)
   //   - Skip if input is longer than 4 words (not a bare ordinal)
   //   - Skip if widgetSelectionContext exists (per universal-selection-resolver-plan.md)
+  //   - Skip if focusLatch active (Rule 6: ordinals resolve to latched widget)
+  //   - Skip if pre-latch single list (Rule 12: one list-segment + no chat → Tier 4.5)
   // ==========================================================================
   const bareOrdinalWordCount = trimmedInput.split(/\s+/).length
-  if (!lastClarification && !clarificationSnapshot && !widgetSelectionContext && !isNewQuestionOrCommandDetected && bareOrdinalWordCount <= 4) {
+
+  // Pre-latch check: focused widget exists OR exactly one list-segment group, no active chat
+  // Uses activeSnapshotWidgetId (Phase 0 resolved focus) as primary signal since dashboards
+  // commonly have totalListSegmentCount > 1. Falls back to strict Rule 12 when no focus signal.
+  // Gated by isLatchEnabled — when feature flag is off, this is always false
+  const isPreLatchSingleList = isLatchEnabled
+    && (!focusLatch || focusLatch.suspended)
+    && hasVisibleWidgetItems
+    && (!!activeSnapshotWidgetId || totalListSegmentCount === 1)
+    && !lastClarification
+
+  // focusLatch active (not suspended) → Rule 6: ordinals resolve to latched widget, skip guard
+  const hasActiveLatch = isLatchEnabled && focusLatch && !focusLatch.suspended
+  if (!lastClarification && !clarificationSnapshot && !widgetSelectionContext
+      && !hasActiveLatch && !isPreLatchSingleList
+      && !isNewQuestionOrCommandDetected && bareOrdinalWordCount <= 4) {
     const bareOrdinalCheck = isSelectionOnly(trimmedInput, 10, [])
     if (bareOrdinalCheck.isSelection) {
       void debugLog({
@@ -2271,6 +2416,75 @@ export async function handleClarificationIntercept(
     })
     // Return handled: false so universal resolver handles it
     return { handled: false, clarificationCleared: false, isNewQuestionOrCommandDetected }
+  }
+
+  // ==========================================================================
+  // FOCUS LATCH — Chat Re-Anchor (Rule 3)
+  // Per selection-intent-arbitration-incubation-plan.md:
+  //   "back to options" / "from earlier options" / "from chat options" while
+  //   latched → suspend latch and restore chat options if recoverable.
+  // ==========================================================================
+  const CHAT_REANCHOR_PATTERN = /\b(back to options|from earlier options|from chat options?)\b/i
+  const isLatchActive = focusLatch && !focusLatch.suspended
+
+  if (isLatchActive && CHAT_REANCHOR_PATTERN.test(trimmedInput)) {
+    const recoverable = getRecoverableChatOptions({ clarificationSnapshot, lastOptionsShown, lastClarification })
+    if (recoverable) {
+      suspendFocusLatch()
+      // Restore chat options as active lastClarification so subsequent ordinals execute against them.
+      // The restored options carry executable data (action + itemId/choiceId) from the original
+      // clarification source, not just display labels.
+      setLastClarification({
+        type: 'option_selection',
+        originalIntent: trimmedInput,
+        messageId: `reanchor-${Date.now()}`,
+        timestamp: Date.now(),
+        options: recoverable,
+      })
+      void debugLog({ component: 'ChatNavigation', action: 'focus_latch_suspended', metadata: { reason: 'chat_reanchor', widgetId: focusLatch.widgetId } })
+      return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+    } else {
+      addMessage({
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: 'No earlier options available.',
+        timestamp: new Date(),
+        isError: false,
+      })
+      setIsLoading(false)
+      return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+    }
+  }
+
+  // ==========================================================================
+  // FOCUS LATCH — Selection-Like Bypass (Rules 2, 4, 6)
+  // Per selection-intent-arbitration-incubation-plan.md:
+  //   When latch is active + input is selection-like (not command/question),
+  //   skip intercept and let Tier 4.5 resolve against latched widget.
+  //   Command/question bypass logs fire regardless of selection-like status
+  //   so that "open recent" (not selection-like) still logs the bypass.
+  // ==========================================================================
+  if (isLatchActive) {
+    const selectionClassified = isSelectionLike(trimmedInput, { hasBadgeLetters: false })
+    const commandDetected = isExplicitCommand(trimmedInput)
+    const questionDetected = hasQuestionIntent(trimmedInput)
+
+    // Log input classification for observability (per incubation plan §Observability)
+    void debugLog({ component: 'ChatNavigation', action: 'selection_input_classified', metadata: { input: trimmedInput, isSelectionLike: selectionClassified, isCommand: commandDetected, isQuestion: questionDetected, latchActive: true, widgetId: focusLatch.widgetId } })
+
+    if (commandDetected) {
+      // Rule 4: command bypasses latch — logged regardless of selection-like status
+      void debugLog({ component: 'ChatNavigation', action: 'focus_latch_bypassed_command', metadata: { widgetId: focusLatch.widgetId, input: trimmedInput } })
+    } else if (questionDetected) {
+      // Rule 4: question bypasses latch — logged regardless of selection-like status
+      void debugLog({ component: 'ChatNavigation', action: 'focus_latch_bypassed_question_intent', metadata: { widgetId: focusLatch.widgetId, input: trimmedInput } })
+    } else if (selectionClassified) {
+      // Pure selection-like with no command/question → latch applies (Rules 2, 6)
+      void debugLog({ component: 'ChatNavigation', action: 'focus_latch_applied', metadata: { widgetId: focusLatch.widgetId, input: trimmedInput } })
+      // Return handled: false so Tier 4.5 resolves against latched widget
+      return { handled: false, clarificationCleared: false, isNewQuestionOrCommandDetected }
+    }
+    // else: latch active but input is not selection-like, not command, not question → fall through
   }
 
   // Fallback guard: If all options are widget_option but no widgetSelectionContext
@@ -2628,6 +2842,7 @@ export async function handleClarificationIntercept(
         } else if (clarificationSnapshot) {
           pauseSnapshotWithReason('stop')
         }
+        clearFocusLatch() // Latch-off: stop clears focus latch (Phase 6b)
         setStopSuppressionCount(STOP_SUPPRESSION_TURN_LIMIT) // Per stop-scope-plan §40-48
         const exitMessage: ChatMessage = {
           id: `assistant-${Date.now()}`,
@@ -2702,6 +2917,7 @@ export async function handleClarificationIntercept(
         } else if (clarificationSnapshot) {
           pauseSnapshotWithReason('stop')
         }
+        clearFocusLatch() // Latch-off: stop clears focus latch (Phase 6b)
         setStopSuppressionCount(STOP_SUPPRESSION_TURN_LIMIT) // Per stop-scope-plan §40-48
         const exitMessage: ChatMessage = {
           id: `assistant-${Date.now()}`,
@@ -2773,6 +2989,7 @@ export async function handleClarificationIntercept(
       } else if (clarificationSnapshot) {
         pauseSnapshotWithReason('stop')
       }
+      clearFocusLatch() // Latch-off: stop clears focus latch (Phase 6b)
       setStopSuppressionCount(STOP_SUPPRESSION_TURN_LIMIT) // Per stop-scope-plan §40-48
       const exitMessage: ChatMessage = {
         id: `assistant-${Date.now()}`,

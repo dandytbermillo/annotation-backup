@@ -2,27 +2,134 @@
 
 **Status:** Incubation Draft
 **Owner:** Chat Navigation
-**Last updated:** 2026-02-05
+**Last updated:** 2026-02-06
 **Scope:** Planning-only. No implementation changes in this document.
 
 ## Why This Exists
-Current behavior can misbind follow-up ordinals when both chat options and widget lists are plausible.
-This incubation plan defines a safer arbitration model before merging into the main `universal-selection-resolver-plan.md`.
+Current behavior can over-clarify or bind to stale chat lists when users are clearly interacting with an open widget.
+This incubation plan defines a focus-latch-first policy to reduce friction while keeping execution safe.
 
 ## Core Principles
-1. Opening a widget does not imply selection intent.
-2. Selection resolution runs only for selection-like input.
+1. Opening a widget does not imply selection intent by itself.
+2. Once user engagement with a widget is confirmed, unspecific follow-ups default to that focused widget.
 3. Chat and widget contexts remain separate and source-aware.
-4. If both contexts are plausible, do not silently guess.
+4. Clarification is a last resort, not a default.
 5. Constrained LLM handles long-tail phrasing; deterministic handles strict high-confidence cases.
+
+## Prerequisite 0 (Required): Active Widget ID Mapping Integrity
+Focus-latch behavior depends on accurate active widget identity in turn snapshots.
+This prerequisite must be completed before latch rules are implemented.
+
+### Problem
+- `setActiveWidgetId(panel.id)` stores panel UUID from dashboard events.
+- Widget snapshots are keyed by `widgetId` slug.
+- If `activeSnapshotWidgetId` is populated from raw active id without mapping, latch can target wrong/no widget.
+
+### Required Fix
+1. Extend snapshot schema to carry panel linkage:
+- Add `panelId?: string` to widget snapshot registration contract.
+2. Ensure widgets register `panelId` with snapshot updates.
+3. Resolve active widget in snapshot builder:
+- First try direct `activeId === widgetId`.
+- If no direct match, resolve by `snapshot.panelId === activeId` and return that `snapshot.widgetId`.
+4. Use resolved `activeSnapshotWidgetId` for focus-latch and focused list selection.
+
+### Blocker Tests for Prerequisite 0
+- Opening a panel by UUID sets `activeSnapshotWidgetId` to the correct widget slug in turn snapshot.
+- Reordering/scoping by active widget uses resolved slug (not raw UUID).
+- If mapping fails, latch is not applied and system falls back safely (no wrong execution).
+
+## Focus Latch Model
+### Focus latch definition
+- Focus latch is the most recently engaged widget context.
+- While latched, unspecific selection-like follow-ups resolve against the focused widget first.
+
+### Latch-on signals (required)
+Set focus latch only on real engagement:
+- User clicks/selects an item in widget UI.
+- Selection is successfully resolved to a widget item (ordinal/label).
+- User provides explicit widget scope cue (`in Links Panel D`, `in this panel`).
+
+### Latch-off signals (required)
+Clear or switch focus latch on:
+- Focused widget closes.
+- Explicit switch command targets another widget/panel.
+- Explicit stop/start-over.
+- Optional TTL expiry (if product enables TTL).
+
+## Required Rules (Must)
+All rules in this section are required for implementation and release.
+
+1. Deterministic-first
+- Exact/unique deterministic matches execute immediately.
+- Do not call LLM before deterministic checks are exhausted.
+
+2. Focus-latch precedence
+- If focus latch is active and input is unspecific selection-like, resolve against focused widget first.
+- Do not route unspecific selection-like input to chat list by default while latch is active.
+- Pre-latch ambiguity handling must not override an active focus latch.
+
+3. Chat re-anchor only
+- Chat list resolution while latch is active requires explicit chat cue:
+  - `back to options`
+  - `from earlier options`
+  - `from chat options`
+- Re-anchor succeeds only when a recoverable chat option list exists.
+- If no recoverable chat options exist, respond clearly (for example: `No earlier options available.`) and keep current latch scope.
+
+4. Command and question bypass
+- Known commands (`open recent`, `open links panel d`, `home`, etc.) must bypass latch-based selection binding and execute normally.
+- Question-intent input (`what`, `why`, `how`, `explain`) must route to normal answer paths, not selection execution.
+- Classifier order is required: evaluate question-intent before selection-like classification.
+
+5. Label-like behavior while latched
+- Label-like input (`summary155`, `panel d`) resolves directly when uniquely matched in focused widget.
+- If multiple matches exist inside focused widget, ask focused-widget clarifier.
+
+6. Ordinal behavior while latched
+- Unspecific ordinals (`first`, `second`, `2`) resolve to focused widget items by default.
+- Do not ask chat-vs-widget clarifier while latch is active unless user explicitly re-anchors to chat.
+
+7. Focused-widget miss fallback ladder
+If focused-widget resolution fails:
+- Step A: check explicit chat re-anchor and resolve chat if present.
+- Step B: constrained LLM over safe candidates (`focused widget + any explicitly scoped candidates`).
+- Step C: if unresolved, ask one grounded clarifier.
+- Step C clarifier should include targeted chat hint when applicable:
+  - If focused widget has zero matches and chat has a unique match, offer it as an `or` option without auto-switching scope.
+  - Example: `I don't see that in Links Panel D. Did you mean summary155 in chat options, or something in Links Panel D?`
+
+8. Clarifier text ownership
+- App decides clarification type and allowed choices; LLM generates final question wording.
+- LLM clarifier output must be constrained (`question`, `choices[]`) and mapped to app-provided ids/labels only.
+- If LLM clarification generation fails/timeout, app uses deterministic template wording.
+
+9. Safety
+- Never execute without validated candidate id.
+- Never allow free-form command generation from LLM picker.
+- LLM picker output is constrained to `select(choiceId)` or `need_more_info`.
+
+10. No clarifier loops
+- Same candidate set + repeated unresolved input must not repeat the same vague clarifier.
+- Must execute (if unique), ask targeted clarifier, or provide a concrete next-step prompt.
+
+11. Intercept wiring
+- `handleClarificationIntercept` must apply the same focus-latch policy or fall through to shared dispatcher resolver.
+- Generic `unclear` handling before latch/arbitration is not allowed.
+
+12. Pre-latch ordinal default
+- If no latch is active, exactly one fresh visible widget list exists, and no active chat option set exists, ordinals default to that visible widget list without clarifying.
+- If active chat options also exist, treat as real ambiguity and follow required ambiguity handling (pure ordinal -> grounded clarifier).
+- “Exactly one fresh visible widget list” means exactly one visible list-segment candidate group.
+- If multiple list segments exist (within one widget or across widgets), pre-latch ordinal default must not trigger; use ambiguity handling.
 
 ## Input Classification Gate
 ### Selection-like input
 Examples:
 - `first option`
 - `the second one`
-- `panel d`
-- `open the second option`
+- `open this`
+- `summary155`
 
 ### Non-selection input
 Examples:
@@ -34,54 +141,22 @@ Rule:
 - If input is non-selection, bypass selection arbitration and continue normal routing.
 
 ## Context Model
-### Chat selection context
+### Widget context
+- Source: widget registry snapshots (`openWidgets`, focused widget id, visible list items).
+- Focused widget is authoritative for unspecific selection-like follow-ups while latch is active.
+
+### Chat context
 - Source: chat-created clarifiers/options.
-- Includes execution refs for chat options.
+- Chat list is available but not default while widget focus latch is active.
+- Chat list becomes default only with explicit chat re-anchor cues.
 
-### Widget selection context
-- Source: widget list clarifiers/registry-backed widget options.
-- Includes `{ widgetId, segmentId, itemId }` execution refs.
+## Focused Widget Definition
+A widget is considered focused/visible when all are true:
+1. It appears in the current turn snapshot as a list segment with items.
+2. Snapshot is fresh (`capturedAtMs` within freshness threshold).
+3. It matches `activeSnapshotWidgetId` when an active widget id exists.
 
-### Context lifecycle
-- Contexts are not cleared on unrelated commands by default.
-- Contexts are replaced only by explicit list replacement, stop/cancel, start-over, or TTL expiry.
-- A context may be suspended when another interaction starts, then re-anchored explicitly.
-
-### Post-Execution Demotion Rule
-- After a chat option is executed (user picked from the chat list), that chat list is demoted from "active" to "recoverable."
-- Demoted lists stop auto-binding ordinals. Future ordinals do not resolve against a demoted list.
-- The demoted list remains available only via explicit chat scope cues (`back to options`, `from earlier options`, `from that list`).
-- Rationale: once the user has already acted on a chat list, that list should not silently hijack future ordinals that likely target a different surface (e.g., a newly opened widget).
-
-## Arbitration Rules (Selection-like Only)
-1. Build candidate groups by source:
-- `chatCandidates` from active/recoverable chat context.
-- `widgetCandidates` from active widget selection context or focused visible widget list.
-2. Apply explicit scope cues first:
-- Chat cues: `back to options`, `from that list`, `from earlier options`.
-- Widget cues: `in this panel`, `in links panel d`, `here in recent`.
-3. If exactly one source has candidates, resolve against that source.
-4. If both sources have candidates and no scope cue:
-- **Label-like input** (`panel d`, `links panel e`, `summary144`): if the label matches exactly one candidate across the combined candidate pool (chat + widget), resolve that candidate directly. If multiple candidates match across both sources, do not guess.
-- **Pure ordinal** (`first`, `second`, `2`, `a`): ask the dual-source clarifier immediately — the system already knows "pick item N" but not from which list. LLM adds no value here.
-- **Messy long-tail phrasing** (`pls open the initial choice now`): run constrained LLM with source-tagged candidates. If LLM returns `select(choiceId)` with valid id, execute. If `need_more_info`, ask one grounded clarifier naming both sources.
-
-### Recoverable Chat Tightening
-- Active chat list (visible pills) can compete with widget list candidates.
-- If a focused/visible widget list and chat list are both plausible: generic ordinals must use dual-source clarification (no LLM in this branch), while label-like input should resolve directly only when there is exactly one match across both sources.
-- Recoverable chat list (not currently visible) does not compete when a focused visible widget list exists.
-- Exception: recoverable chat can re-enter competition when user provides explicit chat scope cue:
-  - `back to options`
-  - `from earlier options`
-  - `from that list`
-- Goal: prevent stale list competition while preserving intentional re-anchor to prior chat list.
-
-### Focused Visible Widget List Definition
-- A widget list is considered focused/visible only when all are true:
-  1) It appears in the current turn snapshot as a list segment with items.
-  2) Its snapshot is fresh (`capturedAtMs` within the freshness TTL/threshold).
-  3) It matches `activeSnapshotWidgetId` when an active widget id exists.
-- `uiSnapshotId` is used for traceability and correlation only, not as the focus decision signal.
+`uiSnapshotId` is for traceability/correlation, not focus decision.
 
 ## Deterministic vs LLM Split
 ### Deterministic-first (strict)
@@ -89,7 +164,7 @@ Rule:
 - Exact label matches.
 
 ### LLM fallback (long tail)
-- Messy phrasing not matched deterministically:
+- Messy selection-like phrasing not matched deterministically:
   - `pls open the initial choice now`
   - `can you pick the one after that`
 
@@ -97,65 +172,55 @@ Rule:
 - Do not aggressively expand synonym dictionaries as primary strategy.
 - Prefer constrained LLM for long-tail phrasing.
 
-## Safety Contract
-1. LLM receives only explicit candidate lists.
-2. Allowed outputs:
-- `select(choiceId)`
-- `need_more_info`
-3. Never execute without a validated `choiceId`.
-4. Never invent labels, options, or commands.
-
-## Model Tiering (Constrained Picker)
-- Default: use small fast model for constrained candidate picking.
-- Escalate to larger model only when:
-  - small model returns `need_more_info`,
-  - confidence is below threshold,
-  - or input is unusually long/noisy.
-- Keep the same constrained output contract at all model sizes.
-
-## Integration Wiring Requirement (Must)
-- `handleClarificationIntercept` in `chat-routing.ts` runs before dispatcher arbitration.
-- This is a merge gate: selection-intent arbitration must be wired so one of these is always true:
-  1) `handleClarificationIntercept` invokes the shared arbitration helper directly, or
-  2) `handleClarificationIntercept` returns unhandled for selection-like dual-source cases so dispatcher arbitration executes.
-- Deterministic failure inside intercept (Tier 1b.3 / 1b.3a) must not terminate in generic `unclear` handling before arbitration is attempted.
-- Any fallback classifier in intercept that lacks selection-source arbitration is not a valid substitute for this requirement.
-
 ## Explicit Command Escape
-When input is a known command (for example `open links panel d`) and not a source-scoped selection reference:
+When input is known command and not explicit chat re-anchor:
 - Do not trap it in selection retry logic.
 - Route to known-noun/command execution tiers.
 
-## Grounded Clarifier Format (Dual-source)
-When both contexts are plausible and unresolved:
-- Ask one short source clarifier:
-  - `Do you mean the 2nd item in Links Panel D, or the 2nd choice from earlier options?`
-- Present source-specific pills where available.
+## Grounded Clarifier Format
+When clarification is required:
+- Ask one short targeted clarifier with wording generated by constrained LLM.
+- App provides choices/ids; LLM may only phrase question text.
+- Prefer source-specific clarifier over generic unclear prompts.
 
 ## Observability Requirements
 Add logs for:
+- `focus_latch_set`
+- `focus_latch_cleared`
+- `focus_latch_applied`
+- `focus_latch_bypassed_command`
+- `focus_latch_bypassed_question_intent`
 - `selection_input_classified`
 - `selection_context_candidates_built`
-- `selection_scope_cue_applied`
 - `selection_dual_source_llm_attempt`
 - `selection_dual_source_llm_result`
-- `selection_grounded_source_clarifier`
-- `selection_command_escape`
+- `selection_clarifier_llm_generated`
+- `selection_clarifier_llm_fallback_template`
 
-## Acceptance Tests
-1. Chat list active -> open widget command -> ordinal follow-up can still target chat list with explicit re-anchor.
-2. Widget list active -> unrelated question -> later ordinal still resolves widget list if still in TTL.
-3. Both contexts plausible + pure ordinal -> dual-source clarifier immediately (no LLM), never silent wrong action.
-4. Explicit command with active contexts (`open links panel d`) executes command, not selection retry.
-5. Long-tail phrasing (`pls open the initial choice now`) resolves via constrained LLM when deterministic misses.
-6. Non-selection question never triggers selection execution.
+## Acceptance Tests (Required Blockers)
+0. Prerequisite mapping: panel UUID focus maps to correct `activeSnapshotWidgetId` widget slug before latch behavior is enabled.
+1. Open widget -> engage widget -> `second one` resolves to focused widget item without chat-vs-widget clarifier.
+2. Open widget -> engage widget -> `summary155` resolves directly when unique in focused widget.
+3. While latched, `back to options` switches resolution to chat list.
+3a. While latched, if no recoverable chat options exist, `back to options` returns `No earlier options available.` and does not switch scope.
+4. While latched, explicit command (`open recent`) executes command, not widget item selection.
+5. While latched, question-intent (`what does summary144 mean?`) routes to normal answer path.
+6. Focused-widget miss uses fallback ladder (re-anchor check -> constrained LLM -> targeted clarifier).
+7. No repeated vague clarifier loop for unchanged candidate set.
+8. Clarifier wording generated by LLM; fallback template used on LLM failure with same choices.
+9. If latch is active, `second one` resolves to latched widget even when multiple list-segment groups are visible; no pre-latch dual-source clarifier is shown.
 
 ## Rollout Plan
 1. Keep this as separate incubation plan until behavior is stable in QA.
 2. Implement behind feature flag:
 - `SELECTION_INTENT_ARBITRATION_V1=true`
-3. Validate with scripted chat scenarios and manual panel/widget mixed flows.
-4. Merge into `universal-selection-resolver-plan.md` only after acceptance tests pass.
+3. Validate with scripted mixed flows (chat list -> widget engagement -> unspecific follow-ups).
+4. Merge into `universal-selection-resolver-plan.md` only after blocker tests pass.
+
+## Plan Alignment
+- Widget snapshot/registry contract remains defined by `widget-ui-snapshot-plan.md`.
+- Universal selection resolver integration remains tracked in `universal-selection-resolver-plan.md`.
+- For selection routing behavior, this incubation plan is source of truth until merged.
 
 ## Pre-Read Compliance
 - `codex/codex_needs_to_avoid/isolation-reactivity-anti-patterns.md` reviewed.

@@ -220,6 +220,13 @@ export interface RoutingDispatcherContext {
   setWidgetSelectionContext: (context: import('@/lib/chat/chat-navigation-context').WidgetSelectionContext | null) => void
   incrementWidgetSelectionTurn: () => void
   clearWidgetSelectionContext: () => void
+
+  // --- Focus Latch (per selection-intent-arbitration-incubation-plan.md) ---
+  focusLatch: import('@/lib/chat/chat-navigation-context').FocusLatchState | null
+  setFocusLatch: (latch: import('@/lib/chat/chat-navigation-context').FocusLatchState | null) => void
+  suspendFocusLatch: () => void
+  incrementFocusLatchTurn: () => void
+  clearFocusLatch: () => void
 }
 
 // =============================================================================
@@ -278,30 +285,13 @@ export interface RoutingDispatcherResult {
 export type GroundingAction = NonNullable<RoutingDispatcherResult['groundingAction']>
 
 // =============================================================================
-// Explicit Command Detection (moved from chat-navigation-panel.tsx)
+// Explicit Command Detection (extracted to shared utility for import safety)
 // =============================================================================
 
-/**
- * Check if input is an explicit command (has action verb).
- * Used by Tier 2 to clear pending options before executing new commands.
- */
-export function isExplicitCommand(input: string): boolean {
-  const normalized = input.toLowerCase()
-
-  // Phase 2b: Ordinal/number language bypass
-  const hasOrdinal = /\b(first|second|third|fourth|fifth|last|[1-9])\b/i.test(normalized)
-  if (hasOrdinal) {
-    return false
-  }
-
-  // Action verbs that indicate a new command
-  const actionVerbs = [
-    'open', 'show', 'list', 'view', 'go', 'back', 'home',
-    'create', 'rename', 'delete', 'remove',
-  ]
-
-  return actionVerbs.some(verb => normalized.includes(verb))
-}
+// Import from shared utility (extracted to avoid circular dependency with chat-routing.ts)
+import { isExplicitCommand } from '@/lib/chat/input-classifiers'
+// Re-export to avoid breaking existing imports from this file
+export { isExplicitCommand }
 
 // =============================================================================
 // Selection Helpers (moved from chat-navigation-panel.tsx)
@@ -954,6 +944,31 @@ function bindGroundingClarifierOptions(
 }
 
 // =============================================================================
+// Pre-Latch Guard (Rule 12)
+// =============================================================================
+
+/**
+ * Per selection-intent-arbitration-incubation-plan Rule 12:
+ * If no latch is active, exactly one fresh visible list-segment candidate group
+ * exists, and no active chat option set exists, ordinals default to that visible
+ * widget list without clarifying.
+ */
+function isPreLatchDefault(
+  turnSnapshot: import('@/lib/chat/ui-snapshot-builder').TurnSnapshotResult,
+  ctx: RoutingDispatcherContext
+): boolean {
+  // Rule 12: all three conditions must hold
+  // 1. No latch (caller already checked)
+  // 2. Exactly one fresh visible list-segment candidate group
+  const totalListSegments = turnSnapshot.openWidgets.reduce((sum, w) => sum + w.listSegmentCount, 0)
+  if (totalListSegments !== 1) return false
+  // 3. No active chat option set
+  const chatActive = !!(ctx.lastClarification?.options?.length)
+  if (chatActive) return false
+  return true
+}
+
+// =============================================================================
 // Unified Routing Dispatcher
 // =============================================================================
 
@@ -997,9 +1012,71 @@ export async function dispatchRouting(
     isFollowUp: false,
   }
 
+  // Feature flag: selection intent arbitration (focus latch model)
+  const isLatchEnabled = process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1 === 'true'
+
   // NOTE: lastOptionsShown turn increment is deferred to AFTER Tier 4.5
   // so the soft-active check can read the state before it expires on the same turn.
   // See increment call after the Tier 4.5 block below.
+
+  // =========================================================================
+  // BUILD TURN SNAPSHOT — used by ALL tiers (moved early for latch/intercept)
+  // Per selection-intent-arbitration-incubation-plan.md: snapshot must be
+  // available before intercept for focus-latch validity check.
+  // =========================================================================
+  const turnSnapshot = buildTurnSnapshot({})
+  const hasVisibleWidgetItems = turnSnapshot.openWidgets.length > 0
+
+  // DIAGNOSTIC: Log openWidgets state
+  void debugLog({
+    component: 'ChatNavigation',
+    action: 'turn_snapshot_built',
+    metadata: {
+      openWidgetsCount: turnSnapshot.openWidgets.length,
+      widgetLabels: turnSnapshot.openWidgets.map(w => w.label),
+      widgetIds: turnSnapshot.openWidgets.map(w => w.id),
+      widgetOptionCounts: turnSnapshot.openWidgets.map(w => w.options.length),
+      hasBadgeLetters: turnSnapshot.hasBadgeLetters,
+      activeSnapshotWidgetId: turnSnapshot.activeSnapshotWidgetId,
+      input: ctx.trimmedInput,
+    },
+  })
+
+  // Helper: set focus latch when a widget item is successfully resolved.
+  // Called at ALL widget resolution return paths (Phase 5a completeness).
+  const trySetWidgetLatch = (opts: { widgetId?: string; itemId?: string; trigger: string }) => {
+    if (!isLatchEnabled) return
+    let sourceWidget: typeof turnSnapshot.openWidgets[0] | undefined
+    if (opts.widgetId) {
+      sourceWidget = turnSnapshot.openWidgets.find(w => w.id === opts.widgetId)
+    } else if (opts.itemId) {
+      sourceWidget = turnSnapshot.openWidgets.find(w =>
+        w.options.some(opt => opt.id === opts.itemId)
+      )
+    }
+    if (sourceWidget) {
+      ctx.setFocusLatch({
+        widgetId: sourceWidget.id,
+        widgetLabel: sourceWidget.label,
+        latchedAt: Date.now(),
+        turnsSinceLatched: 0,
+      })
+      void debugLog({ component: 'ChatNavigation', action: 'focus_latch_set', metadata: { widgetId: sourceWidget.id, widgetLabel: sourceWidget.label, trigger: opts.trigger } })
+    }
+  }
+
+  // Latch-off: latched widget no longer visible in registry
+  if (isLatchEnabled && ctx.focusLatch) {
+    const stillOpen = turnSnapshot.openWidgets.some(w => w.id === ctx.focusLatch!.widgetId)
+    if (!stillOpen) {
+      ctx.clearFocusLatch()
+      void debugLog({ component: 'ChatNavigation', action: 'focus_latch_cleared', metadata: { reason: 'widget_gone', widgetId: ctx.focusLatch.widgetId } })
+    }
+  }
+
+  // Wrap all tier routing in try/finally to guarantee focus latch TTL increment
+  // on ALL return paths (per selection-intent-arbitration-incubation-plan Phase 2c)
+  try {
 
   // =========================================================================
   // TIERS 0, 1, 3 — Clarification Intercept
@@ -1039,6 +1116,17 @@ export async function dispatchRouting(
     saveLastOptionsShown: ctx.saveLastOptionsShown,
     // Widget selection context (per universal-selection-resolver-plan.md)
     widgetSelectionContext: ctx.widgetSelectionContext,
+    // Focus latch (per selection-intent-arbitration-incubation-plan.md)
+    // When feature flag is off, pass null/no-ops so latch checks are inactive
+    focusLatch: isLatchEnabled ? ctx.focusLatch : null,
+    setFocusLatch: isLatchEnabled ? ctx.setFocusLatch : () => {},
+    suspendFocusLatch: isLatchEnabled ? ctx.suspendFocusLatch : () => {},
+    clearFocusLatch: isLatchEnabled ? ctx.clearFocusLatch : () => {},
+    hasVisibleWidgetItems,
+    totalListSegmentCount: turnSnapshot.openWidgets.reduce((sum, w) => sum + w.listSegmentCount, 0),
+    lastOptionsShown: ctx.lastOptionsShown,
+    isLatchEnabled,
+    activeSnapshotWidgetId: isLatchEnabled ? (turnSnapshot.activeSnapshotWidgetId ?? null) : null,
   })
 
   const { clarificationCleared, isNewQuestionOrCommandDetected } = clarificationResult
@@ -1103,9 +1191,27 @@ export async function dispatchRouting(
   // and input is selection-like and not a question, skip cross-corpus retrieval
   // so the universal resolver (Tier 3.5) can handle it.
   // ==========================================================================
-  const skipCrossCorpusForWidgetSelection = ctx.widgetSelectionContext !== null
+  // Focus latch / pre-latch skip: when a widget has focus (latch active or
+  // pre-latch focused via activeSnapshotWidgetId) and input is selection-like,
+  // skip cross-corpus so Tier 4.5 resolves against widget items.
+  // Note: ctx.focusLatch may be stale (React state from previous render) when
+  // the intercept just set it via setFocusLatch. Use turnSnapshot.activeSnapshotWidgetId
+  // as the reliable synchronous signal.
+  const skipCrossCorpusForFocusLatch = isLatchEnabled
     && isSelectionLike(ctx.trimmedInput)
     && !hasQuestionIntent(ctx.trimmedInput)
+    && !isExplicitCommand(ctx.trimmedInput)
+    && (
+      (ctx.focusLatch && !ctx.focusLatch.suspended)  // Active latch
+      || ((!ctx.focusLatch || ctx.focusLatch.suspended)  // Pre-latch
+        && !!turnSnapshot.activeSnapshotWidgetId
+        && !ctx.lastClarification?.options?.length)
+    )
+
+  const skipCrossCorpusForWidgetSelection = (ctx.widgetSelectionContext !== null
+    && isSelectionLike(ctx.trimmedInput)
+    && !hasQuestionIntent(ctx.trimmedInput))
+    || skipCrossCorpusForFocusLatch
 
   if (skipCrossCorpusForWidgetSelection) {
     void debugLog({
@@ -1114,7 +1220,9 @@ export async function dispatchRouting(
       metadata: {
         input: ctx.trimmedInput,
         widgetId: ctx.widgetSelectionContext?.widgetId,
-        reason: 'widget_selection_context_active_and_selection_like',
+        reason: skipCrossCorpusForFocusLatch
+          ? 'focus_latch_or_prelatch_active_and_selection_like'
+          : 'widget_selection_context_active_and_selection_like',
       },
     })
     // Fall through to Tier 2c, 3.5, etc.
@@ -1513,7 +1621,18 @@ export async function dispatchRouting(
   // Question intent override: questions like "what is X?" should never bind to active list
   // Widget context bypass (per universal-selection-resolver-plan.md Phase 5.2):
   // If widgetSelectionContext is active, skip this guard and defer to universal resolver
-  if (ctx.pendingOptions.length > 0 && ctx.activeOptionSetId !== null && !hasQuestionIntent(ctx.trimmedInput) && !ctx.widgetSelectionContext) {
+  // Focus latch bypass (per selection-intent-arbitration-incubation-plan.md Rule 2, 6):
+  // When latch is active, selection-like input must resolve against the latched widget
+  // in Tier 4.5, NOT against stale/recoverable chat options here.
+  const hasActiveFocusLatch = isLatchEnabled && ctx.focusLatch && !ctx.focusLatch.suspended
+  // Pre-latch bypass (per incubation plan Rule 12, relaxed with Phase 0 focus signal):
+  // When a focused widget exists (activeSnapshotWidgetId) or exactly one list-segment visible,
+  // no active chat, and input is selection-like → skip Tier 3a so Tier 4.5 resolves against widget.
+  const isPreLatchWidgetScope = isLatchEnabled
+    && (!ctx.focusLatch || ctx.focusLatch.suspended)
+    && (isPreLatchDefault(turnSnapshot, ctx) || (!!turnSnapshot.activeSnapshotWidgetId && !ctx.lastClarification?.options?.length))
+    && isSelectionLike(ctx.trimmedInput)
+  if (ctx.pendingOptions.length > 0 && ctx.activeOptionSetId !== null && !hasQuestionIntent(ctx.trimmedInput) && !ctx.widgetSelectionContext && !hasActiveFocusLatch && !isPreLatchWidgetScope) {
     const optionLabels = ctx.pendingOptions.map(opt => opt.label)
     const selectionResult = isSelectionOnly(ctx.trimmedInput, ctx.pendingOptions.length, optionLabels)
 
@@ -1544,6 +1663,7 @@ export async function dispatchRouting(
       if (selectedOption.type === 'widget_option') {
         const widgetInfo = resolveWidgetItemFromSnapshots(ctx.getVisibleSnapshots, selectedOption.id)
         if (widgetInfo) {
+          trySetWidgetLatch({ widgetId: widgetInfo.widgetId, trigger: 'selection_only_widget_option' })
           ctx.setIsLoading(false)
           return {
             ...defaultResult,
@@ -1623,6 +1743,7 @@ export async function dispatchRouting(
       if (labelMatch.type === 'widget_option') {
         const widgetInfo = resolveWidgetItemFromSnapshots(ctx.getVisibleSnapshots, labelMatch.id)
         if (widgetInfo) {
+          trySetWidgetLatch({ widgetId: widgetInfo.widgetId, trigger: 'label_match_widget_option' })
           ctx.setIsLoading(false)
           return {
             ...defaultResult,
@@ -1795,7 +1916,9 @@ export async function dispatchRouting(
 
   // Tier 3a (cont.): Fallback Selection — use message-derived options when pendingOptions is empty
   // but activeOptionSetId is still set (options were presented recently and not yet cleared)
-  if (ctx.pendingOptions.length === 0 && ctx.activeOptionSetId !== null && !hasQuestionIntent(ctx.trimmedInput)) {
+  // Focus latch + pre-latch bypass: same guards as primary Tier 3a — when latch is active or
+  // pre-latch conditions met (Rule 12), skip message-derived selection to let Tier 4.5 resolve.
+  if (ctx.pendingOptions.length === 0 && ctx.activeOptionSetId !== null && !hasQuestionIntent(ctx.trimmedInput) && !hasActiveFocusLatch && !isPreLatchWidgetScope) {
     const now = Date.now()
     const lastOptionsMessage = ctx.findLastOptionsMessage(ctx.messages)
     const messageAge = lastOptionsMessage ? now - lastOptionsMessage.timestamp.getTime() : null
@@ -2080,6 +2203,9 @@ export async function dispatchRouting(
       ctx.setIsLoading(false)
       // Clear widget selection context after successful resolution
       ctx.clearWidgetSelectionContext()
+      if (selectionResult.groundingAction?.type === 'execute_widget_item') {
+        trySetWidgetLatch({ widgetId: selectionResult.groundingAction.widgetId, trigger: 'universal_resolver_widget' })
+      }
       return {
         ...defaultResult,
         handled: true,
@@ -2116,6 +2242,7 @@ export async function dispatchRouting(
       if (selectionResult.matchedChatOption.type === 'widget_option') {
         const widgetInfo = resolveWidgetItemFromSnapshots(ctx.getVisibleSnapshots, selectionResult.matchedChatOption.id)
         if (widgetInfo) {
+          trySetWidgetLatch({ widgetId: widgetInfo.widgetId, trigger: 'universal_resolver_chat_widget_option' })
           return {
             ...defaultResult,
             handled: true,
@@ -2357,6 +2484,7 @@ export async function dispatchRouting(
                     action: 'tier3_6_llm_chat_widget_option_select',
                     metadata: { choiceId, label: validChoice.label, widgetId: widgetInfo.widgetId },
                   })
+                  trySetWidgetLatch({ widgetId: widgetInfo.widgetId, trigger: 'tier3_6_llm_chat_widget_option' })
                   ctx.setIsLoading(false)
                   return {
                     ...defaultResult,
@@ -2439,32 +2567,14 @@ export async function dispatchRouting(
   // the snapshot remains paused (no implicit resume).
   // =========================================================================
 
-  // Build widget registry snapshot early so Tier 4 can check for visible widget lists.
-  // This allows "open summary144" to bypass Tier 4's unknown-noun fallback when a
-  // widget list is visible (let Tier 4.5 handle it instead).
-  const turnSnapshot = buildTurnSnapshot({})
-
-  // DIAGNOSTIC: Log openWidgets state to debug single-widget-list matching
-  void debugLog({
-    component: 'ChatNavigation',
-    action: 'turn_snapshot_built',
-    metadata: {
-      openWidgetsCount: turnSnapshot.openWidgets.length,
-      widgetLabels: turnSnapshot.openWidgets.map(w => w.label),
-      widgetIds: turnSnapshot.openWidgets.map(w => w.id),
-      widgetOptionCounts: turnSnapshot.openWidgets.map(w => w.options.length),
-      hasBadgeLetters: turnSnapshot.hasBadgeLetters,
-      input: ctx.trimmedInput,
-    },
-  })
+  // turnSnapshot already built before intercept (see above)
 
   const hasSoftActiveSelectionLike = ctx.activeOptionSetId === null
     && !!ctx.lastOptionsShown
     && ctx.lastOptionsShown.options.length > 0
     && isSelectionLike(ctx.trimmedInput, { hasBadgeLetters: turnSnapshot.hasBadgeLetters })
 
-  // Check if there's a visible widget list that could match the input
-  const hasVisibleWidgetList = turnSnapshot.openWidgets.length > 0
+  // hasVisibleWidgetItems already computed with turnSnapshot above
 
   const knownNounResult = handleKnownNounRouting({
     trimmedInput: ctx.trimmedInput,
@@ -2480,11 +2590,12 @@ export async function dispatchRouting(
     handleSelectOption: ctx.handleSelectOption,
     hasActiveOptionSet: ctx.pendingOptions.length > 0 && ctx.activeOptionSetId !== null,
     hasSoftActiveSelectionLike,
-    hasVisibleWidgetList,
+    hasVisibleWidgetList: hasVisibleWidgetItems,
     saveLastOptionsShown: ctx.saveLastOptionsShown,
     clearWidgetSelectionContext: ctx.clearWidgetSelectionContext,
     clearLastOptionsShown: ctx.clearLastOptionsShown,
     clearClarificationSnapshot: ctx.clearClarificationSnapshot,
+    clearFocusLatch: isLatchEnabled ? ctx.clearFocusLatch : undefined,
   })
   if (knownNounResult.handled) {
     return {
@@ -2560,9 +2671,32 @@ export async function dispatchRouting(
       openWidgets: turnSnapshot.openWidgets,
     })
 
+    // Determine activeWidgetId with correct pre-latch guard
+    // Per selection-intent-arbitration-incubation-plan Rules 2, 6, 12:
+    let activeWidgetId: string | undefined
+    if (isLatchEnabled && ctx.focusLatch && !ctx.focusLatch.suspended) {
+      // Latch active → always scope to latched widget (Rule 2, 6, Test 9)
+      activeWidgetId = ctx.focusLatch.widgetId
+    } else if (isLatchEnabled && (!ctx.focusLatch || ctx.focusLatch.suspended) && isPreLatchDefault(turnSnapshot, ctx)) {
+      // Pre-latch Rule 12 (strict): exactly one fresh visible list-segment, no active chat
+      // activeSnapshotWidgetId may be null (no panel focused), so fall back to sole visible widget
+      activeWidgetId = turnSnapshot.activeSnapshotWidgetId
+        ?? turnSnapshot.openWidgets.find(w => w.listSegmentCount > 0)?.id
+    } else if (isLatchEnabled && (!ctx.focusLatch || ctx.focusLatch.suspended)
+        && turnSnapshot.activeSnapshotWidgetId
+        && !ctx.lastClarification?.options?.length
+        && isSelectionLike(ctx.trimmedInput)) {
+      // Pre-latch focused (relaxed): widget has UI focus + no active chat + selection-like input.
+      // Handles dashboards with multiple list segments (totalListSegmentCount > 1) where
+      // the focus signal from Phase 0 disambiguates which widget the ordinal targets.
+      activeWidgetId = turnSnapshot.activeSnapshotWidgetId
+    }
+    // else: no activeWidgetId → multi-list ambiguity handling fires normally
+
     // Run grounding-set fallback
     const groundingResult = handleGroundingSetFallback(ctx.trimmedInput, groundingCtx, {
       hasBadgeLetters: turnSnapshot.hasBadgeLetters,
+      activeWidgetId,
     })
 
     // Handle multi-list ambiguity
@@ -2618,6 +2752,9 @@ export async function dispatchRouting(
         ))
 
         if (matchingOption && 'type' in matchingOption && 'data' in matchingOption) {
+          if (groundingResult.selectedCandidate!.type === 'widget_option') {
+            trySetWidgetLatch({ itemId: groundingResult.selectedCandidate!.id, trigger: 'grounding_deterministic_select' })
+          }
           ctx.handleSelectOption(matchingOption as unknown as SelectionOption)
           ctx.setIsLoading(false)
           return {
@@ -2647,6 +2784,9 @@ export async function dispatchRouting(
           : null
 
         if (messageOption) {
+          if (groundingResult.selectedCandidate!.type === 'widget_option') {
+            trySetWidgetLatch({ itemId: groundingResult.selectedCandidate!.id, trigger: 'grounding_deterministic_select_message_fallback' })
+          }
           const optionToSelect: SelectionOption = {
             type: messageOption.type as SelectionOption['type'],
             id: messageOption.id,
@@ -2690,6 +2830,9 @@ export async function dispatchRouting(
           },
         })
 
+        // Latch-on: successful widget item resolution (Phase 5a)
+        trySetWidgetLatch({ widgetId: sourceWidget?.id, trigger: 'grounding_widget_item_execute' })
+
         return {
           ...defaultResult,
           handled: true,
@@ -2730,6 +2873,9 @@ export async function dispatchRouting(
     if (groundingResult.needsLLM && groundingResult.llmCandidates && groundingResult.llmCandidates.length > 0) {
       if (isGroundingLLMEnabled()) {
         try {
+          // Per incubation plan §Observability: log LLM attempt
+          void debugLog({ component: 'ChatNavigation', action: 'selection_dual_source_llm_attempt', metadata: { input: ctx.trimmedInput, candidateCount: groundingResult.llmCandidates.length, activeWidgetId } })
+
           const llmResult = await callGroundingLLM({
             userInput: ctx.trimmedInput,
             candidates: groundingResult.llmCandidates.map(c => ({
@@ -2754,6 +2900,9 @@ export async function dispatchRouting(
             },
           })
 
+          // Per incubation plan §Observability: log LLM result
+          void debugLog({ component: 'ChatNavigation', action: 'selection_dual_source_llm_result', metadata: { success: llmResult.success, decision: llmResult.response?.decision, choiceId: llmResult.response?.choiceId, latencyMs: llmResult.latencyMs } })
+
           if (llmResult.success && llmResult.response) {
             if (llmResult.response.decision === 'select' && llmResult.response.choiceId) {
               // LLM selected a candidate — find and execute
@@ -2777,6 +2926,9 @@ export async function dispatchRouting(
                   || (ctx.clarificationSnapshot?.options.find(opt => opt.id === selected.id))
 
                 if (matchingOption && 'type' in matchingOption && 'data' in matchingOption) {
+                  if (selected.type === 'widget_option') {
+                    trySetWidgetLatch({ itemId: selected.id, trigger: 'grounding_llm_select' })
+                  }
                   ctx.handleSelectOption(matchingOption as unknown as SelectionOption)
                   ctx.setIsLoading(false)
                   return {
@@ -2806,6 +2958,9 @@ export async function dispatchRouting(
                   : null
 
                 if (messageOption) {
+                  if (selected.type === 'widget_option') {
+                    trySetWidgetLatch({ itemId: selected.id, trigger: 'grounding_llm_select_message_fallback' })
+                  }
                   const optionToSelect: SelectionOption = {
                     type: messageOption.type as SelectionOption['type'],
                     id: messageOption.id,
@@ -2890,6 +3045,8 @@ export async function dispatchRouting(
                     },
                   })
 
+                  trySetWidgetLatch({ widgetId: sourceWidget?.id, trigger: 'grounding_llm_widget_item_execute' })
+
                   return {
                     ...defaultResult,
                     handled: true,
@@ -2943,6 +3100,9 @@ export async function dispatchRouting(
               ctx.addMessage(clarifierMsg)
               ctx.setIsLoading(false)
 
+              // Per incubation plan §Observability: LLM generated clarifier wording
+              void debugLog({ component: 'ChatNavigation', action: 'selection_clarifier_llm_generated', metadata: { candidateCount: groundingResult.llmCandidates.length, input: ctx.trimmedInput } })
+
               return {
                 ...defaultResult,
                 handled: true,
@@ -2986,6 +3146,9 @@ export async function dispatchRouting(
             }
             ctx.addMessage(clarifierMsg)
             ctx.setIsLoading(false)
+
+            // Per incubation plan §Observability: template fallback used on LLM failure
+            void debugLog({ component: 'ChatNavigation', action: 'selection_clarifier_llm_fallback_template', metadata: { reason: 'llm_timeout', candidateCount: groundingResult.llmCandidates.length, input: ctx.trimmedInput } })
 
             return {
               ...defaultResult,
@@ -3041,6 +3204,9 @@ export async function dispatchRouting(
         }
         ctx.addMessage(clarifierMsg)
         ctx.setIsLoading(false)
+
+        // Per incubation plan §Observability: template fallback (LLM disabled)
+        void debugLog({ component: 'ChatNavigation', action: 'selection_clarifier_llm_fallback_template', metadata: { reason: 'llm_disabled', candidateCount: groundingResult.llmCandidates.length, input: ctx.trimmedInput } })
 
         return {
           ...defaultResult,
@@ -3212,5 +3378,14 @@ export async function dispatchRouting(
     classifierLatencyMs,
     classifierError,
     isFollowUp,
+  }
+
+  } finally {
+    // Per selection-intent-arbitration-incubation-plan Phase 2c:
+    // Increment focus latch turn counter at end of EVERY turn, regardless of which
+    // tier handled the input. This prevents TTL drift across different return paths.
+    if (isLatchEnabled) {
+      ctx.incrementFocusLatchTurn()
+    }
   }
 }

@@ -88,19 +88,40 @@ export function buildTurnSnapshot(params?: {
       continue // No list items → not useful for grounding selection
     }
 
+    // Count list segments for Rule 12 segment-level ambiguity detection
+    const listSegmentCount = snapshot.segments.filter(s => s.segmentType === 'list').length
+
     openWidgets.push({
       id: snapshot.widgetId,
       label: snapshot.title,
       options,
+      listSegmentCount,
     })
   }
 
   snapshotRevisionCounter++
   const uiSnapshotId = `snap_${now.toString(36)}_${Math.random().toString(36).slice(2, 6)}`
 
+  // Resolve activeWidgetId (may be panel UUID) → widget slug
+  const rawActiveId = getActiveWidgetId()
+  let resolvedActiveWidgetId: string | null = null
+  if (rawActiveId) {
+    // Try direct match (widgetId === rawActiveId)
+    const directMatch = allVisible.find(s => s.widgetId === rawActiveId)
+    if (directMatch) {
+      resolvedActiveWidgetId = directMatch.widgetId
+    } else {
+      // Try panelId match (dashboard stores panel UUID as active)
+      const panelMatch = allVisible.find(s => s.panelId === rawActiveId)
+      if (panelMatch) {
+        resolvedActiveWidgetId = panelMatch.widgetId
+      }
+    }
+  }
+
   return {
     openWidgets,
-    activeSnapshotWidgetId: getActiveWidgetId(),
+    activeSnapshotWidgetId: resolvedActiveWidgetId,
     uiSnapshotId,
     revisionId: snapshotRevisionCounter,
     capturedAtMs: now,

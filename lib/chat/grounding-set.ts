@@ -70,6 +70,8 @@ export interface OpenWidgetState {
   id: string
   label: string
   options: ClarificationOption[]
+  /** Number of list segments in this widget (for Rule 12 segment-level counting) */
+  listSegmentCount: number
 }
 
 /** Recent referent for non-list grounding */
@@ -570,7 +572,7 @@ export function checkPausedReAnchor(params: {
 export function handleGroundingSetFallback(
   input: string,
   ctx: GroundingSetBuildContext,
-  options?: { hasBadgeLetters?: boolean }
+  options?: { hasBadgeLetters?: boolean; activeWidgetId?: string }
 ): GroundingSetResult {
   const trimmed = input.trim()
 
@@ -586,14 +588,31 @@ export function handleGroundingSetFallback(
     },
   })
 
+  // Per incubation plan §Observability: log candidate context for latch-aware resolution
+  if (options?.activeWidgetId) {
+    const widgetSet = groundingSets.find(s => s.widgetId === options.activeWidgetId)
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'selection_context_candidates_built',
+      metadata: {
+        activeWidgetId: options.activeWidgetId,
+        widgetCandidateCount: widgetSet?.candidates.length ?? 0,
+        totalSets: groundingSets.length,
+        input: trimmed,
+      },
+    })
+  }
+
   // Filter to non-empty sets (capability set is always present but may not be useful)
   const nonCapabilitySets = groundingSets.filter(s => s.type !== 'capability')
 
   // Step 2: Multi-list early guard
-  // NOTE: openWidgets is always [] until the UI supports multiple visible widget lists.
-  // When multi-widget support is added, pass actual open widgets via buildGroundingContext().
-  // Until then, this guard is a no-op. See grounding-set-fallback-plan.md §E.
-  const multiListCheck = checkMultiListAmbiguity(trimmed, ctx.openWidgets, options)
+  // Per selection-intent-arbitration-incubation-plan Rule 2 + Test 9:
+  // When activeWidgetId is set (latch active or pre-latch single list),
+  // skip multi-list ambiguity — the active widget is authoritative.
+  const multiListCheck = options?.activeWidgetId
+    ? { isAmbiguous: false as const }
+    : checkMultiListAmbiguity(trimmed, ctx.openWidgets, options)
   if (multiListCheck.isAmbiguous) {
     void debugLog({
       component: 'ChatNavigation',
@@ -665,10 +684,12 @@ export function handleGroundingSetFallback(
   // Priority: (1) activeWidgetId's list, (2) any list with unique match
   const widgetListSets = groundingSets.filter(s => s.type === 'widget_list')
   if (widgetListSets.length > 0) {
-    // (1) If activeWidgetId is set, prioritize that widget's list
-    const activeWidgetList = ctx.openWidgets.length > 0
-      ? widgetListSets.find(s => s.widgetId === ctx.openWidgets[0]?.id) // First widget is active (reordered by dispatcher)
-      : undefined
+    // (1) If activeWidgetId is set (focus latch or pre-latch default), scope to that widget
+    const activeWidgetList = options?.activeWidgetId
+      ? widgetListSets.find(s => s.widgetId === options.activeWidgetId)
+      : (ctx.openWidgets.length > 0
+        ? widgetListSets.find(s => s.widgetId === ctx.openWidgets[0]?.id)
+        : undefined)
 
     if (activeWidgetList) {
       const matchResult = resolveUniqueDeterministic(trimmed, activeWidgetList.candidates)
