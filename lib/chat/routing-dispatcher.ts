@@ -210,6 +210,10 @@ export interface RoutingDispatcherContext {
   /** Per universal-selection-resolver-plan.md: clear soft-active window when registering widget context */
   clearLastOptionsShown?: () => void
 
+  // --- Scope-Cue Recovery Memory (explicit-only, per scope-cue-recovery-plan) ---
+  scopeCueRecoveryMemory: import('@/lib/chat/chat-navigation-context').ScopeCueRecoveryMemory | null
+  clearScopeCueRecoveryMemory: () => void
+
   // --- Widget Registry (Tier 4.5, per widget-registry-implementation-plan.md) ---
   getVisibleSnapshots: () => import('@/lib/widgets/ui-snapshot-registry').WidgetSnapshot[]
   getActiveWidgetId: () => string | null
@@ -1025,6 +1029,8 @@ export async function dispatchRouting(
     saveLastOptionsShown: ctx.saveLastOptionsShown,
     // Widget selection context (per universal-selection-resolver-plan.md)
     widgetSelectionContext: ctx.widgetSelectionContext,
+    clearWidgetSelectionContext: ctx.clearWidgetSelectionContext,
+    setActiveOptionSetId: ctx.setActiveOptionSetId,
     // Focus latch (per selection-intent-arbitration-incubation-plan.md)
     // When feature flag is off, pass null/no-ops so latch checks are inactive
     focusLatch: isLatchEnabled ? ctx.focusLatch : null,
@@ -1036,6 +1042,9 @@ export async function dispatchRouting(
     lastOptionsShown: ctx.lastOptionsShown,
     isLatchEnabled,
     activeSnapshotWidgetId: isLatchEnabled ? (turnSnapshot.activeSnapshotWidgetId ?? null) : null,
+    // Scope-cue recovery memory (explicit-only, per scope-cue-recovery-plan)
+    scopeCueRecoveryMemory: ctx.scopeCueRecoveryMemory,
+    clearScopeCueRecoveryMemory: ctx.clearScopeCueRecoveryMemory,
   })
 
   const { clarificationCleared, isNewQuestionOrCommandDetected } = clarificationResult

@@ -513,6 +513,10 @@ function ChatNavigationPanelContent({
     saveLastOptionsShown,
     incrementLastOptionsShownTurn,
     clearLastOptionsShown,
+    // Scope-cue recovery memory (explicit-only, per scope-cue-recovery-plan)
+    scopeCueRecoveryMemory,
+    saveScopeCueRecoveryMemory,
+    clearScopeCueRecoveryMemory,
     // Widget selection context (per universal-selection-resolver-plan.md)
     widgetSelectionContext,
     setWidgetSelectionContext,
@@ -887,6 +891,14 @@ function ChatNavigationPanelContent({
       // never write to clarificationSnapshot (prevents stale-chat ordinal capture).
       // Save to lastOptionsShown only (for re-anchor recovery).
       if (lastClarification?.options && lastClarification.options.length > 0 && option.type !== 'exit') {
+        // Durable recovery for explicit scope cues ("from chat", "in chat").
+        // ONLY save chat-origin option lists — exclude widget-only clarifiers (widget_option).
+        // "from chat" means "from the chat disambiguation", not "from a widget clarifier".
+        const isChatOriginList = lastClarification.options.every(o => o.type !== 'widget_option')
+        if (isChatOriginList) {
+          saveScopeCueRecoveryMemory(lastClarification.options, lastClarification.messageId)
+        }
+
         if (option.type === 'panel_drawer') {
           // Absolute snapshot policy: save to lastOptionsShown for re-anchor, not clarificationSnapshot
           saveLastOptionsShown(lastClarification.options, lastClarification.messageId)
@@ -941,6 +953,8 @@ function ChatNavigationPanelContent({
         setPendingOptions([])
         setPendingOptionsMessageId(null)
         setPendingOptionsGraceCount(0)
+        // Session boundary: user explicitly exited — clear durable recovery memory
+        clearScopeCueRecoveryMemory()
 
         // Show appropriate message based on exit type
         const exitMessage: ChatMessage = {
@@ -1483,6 +1497,9 @@ function ChatNavigationPanelContent({
         incrementLastOptionsShownTurn,
         saveLastOptionsShown,
         clearLastOptionsShown,
+        // Scope-cue recovery memory (explicit-only, per scope-cue-recovery-plan)
+        scopeCueRecoveryMemory,
+        clearScopeCueRecoveryMemory,
         // Widget registry (Tier 4.5)
         getVisibleSnapshots: () => getAllVisibleSnapshots(),
         getActiveWidgetId: () => getActiveWidgetId(),
@@ -2616,7 +2633,8 @@ function ChatNavigationPanelContent({
 
   const clearChat = useCallback(() => {
     clearMessages()
-  }, [clearMessages])
+    clearScopeCueRecoveryMemory()
+  }, [clearMessages, clearScopeCueRecoveryMemory])
 
   // ---------------------------------------------------------------------------
   // Render

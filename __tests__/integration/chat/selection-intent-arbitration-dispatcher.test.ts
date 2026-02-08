@@ -71,7 +71,7 @@ global.fetch = jest.fn().mockResolvedValue({
 // ============================================================================
 
 import { dispatchRouting, type RoutingDispatcherContext, type RoutingDispatcherResult } from '@/lib/chat/routing-dispatcher'
-import type { ResolvedFocusLatch, PendingFocusLatch, ClarificationSnapshot, ClarificationOption } from '@/lib/chat/chat-navigation-context'
+import type { ResolvedFocusLatch, PendingFocusLatch, ClarificationSnapshot, ClarificationOption, ScopeCueRecoveryMemory } from '@/lib/chat/chat-navigation-context'
 import type { OpenWidgetState } from '@/lib/chat/grounding-set'
 
 // ============================================================================
@@ -249,6 +249,10 @@ function createMockDispatchContext(overrides?: Partial<RoutingDispatcherContext>
     incrementFocusLatchTurn: jest.fn(),
     clearFocusLatch: jest.fn(),
 
+    // Scope-cue recovery memory (explicit-only, per scope-cue-recovery-plan)
+    scopeCueRecoveryMemory: null,
+    clearScopeCueRecoveryMemory: jest.fn(),
+
     ...overrides,
   }
 }
@@ -373,5 +377,325 @@ describe('dispatchRouting: selection-intent-arbitration race conditions', () => 
 
     // Widget grounding action should NOT be set (command bypassed latch)
     expect(result.groundingAction).toBeUndefined()
+  })
+
+  // ==========================================================================
+  // Scope-cue tests (per scope-cues-addendum-plan.md)
+  // ==========================================================================
+
+  it('Test 5: resolved latch + "in chat" scope cue + ordinal → chat option (NOT widget)', async () => {
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'open the first one in chat',
+      focusLatch: makeResolvedLatch(),
+      clarificationSnapshot: makeStaleClarificationSnapshot(),
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    // Scope cue should have routed to chat option #1
+    expect(result.handled).toBe(true)
+    expect(ctx.handleSelectOption).toHaveBeenCalled()
+    const selectCall = (ctx.handleSelectOption as jest.Mock).mock.calls[0][0]
+    expect(selectCall.label).toBe('Links Panels')
+
+    // Latch should have been suspended
+    expect(ctx.suspendFocusLatch).toHaveBeenCalled()
+    // Widget selection context should have been cleared
+    expect(ctx.clearWidgetSelectionContext).toHaveBeenCalled()
+
+    // Widget grounding action should NOT be set
+    expect(result.groundingAction).toBeUndefined()
+
+    // Pending options must be CLEARED after single-turn execution (not left stale).
+    // Bug fix: restoreFullChatState was setting pendingOptions which persisted after
+    // handleSelectOption, causing subsequent inputs to resolve against stale chat options
+    // instead of widget items.
+    expect(ctx.setPendingOptions).toHaveBeenCalledWith([])
+    expect(ctx.setPendingOptionsMessageId).toHaveBeenCalledWith(null)
+    expect(ctx.setActiveOptionSetId).toHaveBeenCalledWith(null)
+  })
+
+  it('Test 6: resolved latch + "from chat" scope cue + no ordinal → restore only', async () => {
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'from chat',
+      focusLatch: makeResolvedLatch(),
+      clarificationSnapshot: makeStaleClarificationSnapshot(),
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    // Should restore chat options without selection
+    expect(result.handled).toBe(true)
+    expect(ctx.handleSelectOption).not.toHaveBeenCalled()
+
+    // Latch should have been suspended
+    expect(ctx.suspendFocusLatch).toHaveBeenCalled()
+
+    // Full chat state should be restored
+    expect(ctx.setLastClarification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'option_selection',
+        options: STALE_DISAMBIGUATION_OPTIONS,
+      })
+    )
+    expect(ctx.setPendingOptions).toHaveBeenCalled()
+    expect(ctx.setActiveOptionSetId).toHaveBeenCalled()
+  })
+
+  it('Test 7: resolved latch + "from chat" + no recoverable options → "No earlier options"', async () => {
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'from chat',
+      focusLatch: makeResolvedLatch(),
+      clarificationSnapshot: null,
+      lastOptionsShown: null,
+      lastClarification: null,
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    expect(result.handled).toBe(true)
+    expect(ctx.addMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: 'No earlier options available.',
+      })
+    )
+    expect(ctx.handleSelectOption).not.toHaveBeenCalled()
+  })
+
+  it('Test 8: no latch + "in chat" scope cue + ordinal + recoverable → chat option', async () => {
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'open the first one in chat',
+      focusLatch: null,
+      clarificationSnapshot: makeStaleClarificationSnapshot(),
+    })
+    // No widget in snapshot for this test
+    mockBuildTurnSnapshot.mockReturnValue(makeTurnSnapshot({
+      openWidgets: [],
+      activeSnapshotWidgetId: null,
+    }))
+
+    const result = await dispatchRouting(ctx)
+
+    // Should resolve against chat options even without latch
+    expect(result.handled).toBe(true)
+    expect(ctx.handleSelectOption).toHaveBeenCalled()
+    const selectCall = (ctx.handleSelectOption as jest.Mock).mock.calls[0][0]
+    expect(selectCall.label).toBe('Links Panels')
+
+    // No latch to suspend
+    expect(ctx.suspendFocusLatch).not.toHaveBeenCalled()
+
+    // Note: With no latch, latchBlocksStaleChat is false, so the interrupt-paused
+    // ordinal window (line 1957-2005) handles the input before the scope-cue block.
+    // The post-action ordinal window calls handleSelectOption directly without
+    // setting/clearing pendingOptions. The scope-cue block is not reached.
+  })
+
+  it('Test 9: resolved latch + "open recent in chat" (command + scope cue) → falls through without restore', async () => {
+    // Mock known-noun to handle "open recent"
+    mockHandleKnownNounRouting.mockReturnValue({
+      handled: true,
+      handledByTier: 4,
+      tierLabel: 'known_noun_panel_command',
+    })
+
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'open recent in chat',
+      focusLatch: makeResolvedLatch(),
+      clarificationSnapshot: makeStaleClarificationSnapshot(),
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    // Latch should have been suspended (scope cue respected)
+    expect(ctx.suspendFocusLatch).toHaveBeenCalled()
+    expect(ctx.clearWidgetSelectionContext).toHaveBeenCalled()
+
+    // Chat state should NOT have been restored (command fallthrough)
+    expect(ctx.setPendingOptions).not.toHaveBeenCalled()
+    expect(ctx.setActiveOptionSetId).not.toHaveBeenCalled()
+
+    // handleSelectOption should NOT have been called
+    expect(ctx.handleSelectOption).not.toHaveBeenCalled()
+
+    // Known-noun should have handled the command
+    expect(result.handled).toBe(true)
+    expect(result.tierLabel).toContain('known_noun')
+  })
+
+  // ==========================================================================
+  // Tests 10-14: Scope-Cue Recovery Memory (per scope-cue-recovery-plan)
+  // ==========================================================================
+
+  it('Test 10: resolved latch + "in chat" + ordinal + ONLY recoveryMemory → chat option', async () => {
+    // All TTL-based sources are gone — only recovery memory survives
+    const recoveryMemory: ScopeCueRecoveryMemory = {
+      options: STALE_DISAMBIGUATION_OPTIONS,
+      messageId: 'recovery-123',
+      timestamp: Date.now() - 60000,
+    }
+
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'open the first one in chat',
+      focusLatch: makeResolvedLatch(),
+      clarificationSnapshot: null,
+      lastOptionsShown: null,
+      lastClarification: null,
+      scopeCueRecoveryMemory: recoveryMemory,
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    // Should resolve chat option #1 from recovery memory
+    expect(result.handled).toBe(true)
+    expect(ctx.handleSelectOption).toHaveBeenCalledTimes(1)
+    expect(ctx.handleSelectOption).toHaveBeenCalledWith(
+      expect.objectContaining({ label: 'Links Panels' })
+    )
+
+    // Latch should have been suspended
+    expect(ctx.suspendFocusLatch).toHaveBeenCalled()
+    expect(ctx.clearWidgetSelectionContext).toHaveBeenCalled()
+
+    // Pending options should be cleared after single-turn execution (not left stale)
+    expect(ctx.setPendingOptions).toHaveBeenCalledWith([])
+    expect(ctx.setPendingOptionsMessageId).toHaveBeenCalledWith(null)
+    expect(ctx.setActiveOptionSetId).toHaveBeenCalledWith(null)
+  })
+
+  it('Test 11: resolved latch + "from chat" + ONLY recoveryMemory → standalone restore', async () => {
+    const recoveryMemory: ScopeCueRecoveryMemory = {
+      options: STALE_DISAMBIGUATION_OPTIONS,
+      messageId: 'recovery-456',
+      timestamp: Date.now() - 60000,
+    }
+
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'from chat',
+      focusLatch: makeResolvedLatch(),
+      clarificationSnapshot: null,
+      lastOptionsShown: null,
+      lastClarification: null,
+      scopeCueRecoveryMemory: recoveryMemory,
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    // Should restore chat state without selection
+    expect(result.handled).toBe(true)
+    expect(ctx.handleSelectOption).not.toHaveBeenCalled()
+
+    // Full state should have been restored
+    expect(ctx.setPendingOptions).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ label: 'Links Panels', index: 1 }),
+        expect.objectContaining({ label: 'Links Panel D', index: 2 }),
+        expect.objectContaining({ label: 'Links Panel E', index: 3 }),
+      ])
+    )
+    expect(ctx.setActiveOptionSetId).toHaveBeenCalledWith('recovery-456')
+    expect(ctx.setLastClarification).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'option_selection' })
+    )
+
+    // Latch should have been suspended
+    expect(ctx.suspendFocusLatch).toHaveBeenCalled()
+  })
+
+  it('Test 12 (Blocker): plain "open the second one" must NEVER read recovery memory', async () => {
+    // Recovery memory is present but input has NO scope cue
+    const recoveryMemory: ScopeCueRecoveryMemory = {
+      options: STALE_DISAMBIGUATION_OPTIONS,
+      messageId: 'recovery-789',
+      timestamp: Date.now() - 60000,
+    }
+
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'open the second one',
+      focusLatch: makeResolvedLatch(),
+      clarificationSnapshot: null,
+      lastOptionsShown: null,
+      lastClarification: null,
+      scopeCueRecoveryMemory: recoveryMemory,
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    // Should NOT have resolved chat option — no scope cue means recovery memory is never accessed
+    // Widget latch should handle this instead via Tier 4.5 grounding
+    expect(result.handled).toBe(true)
+
+    // If handleSelectOption was called, it should NOT be with a chat option
+    if ((ctx.handleSelectOption as jest.Mock).mock.calls.length > 0) {
+      const calledWith = (ctx.handleSelectOption as jest.Mock).mock.calls[0][0]
+      // Must NOT be a chat disambiguation option (panel_drawer from STALE_DISAMBIGUATION_OPTIONS)
+      expect(calledWith.label).not.toBe('Links Panels')
+      expect(calledWith.label).not.toBe('Links Panel D')
+      expect(calledWith.label).not.toBe('Links Panel E')
+    }
+
+    // setPendingOptions should NOT have been called with chat options
+    const setPendingCalls = (ctx.setPendingOptions as jest.Mock).mock.calls
+    for (const call of setPendingCalls) {
+      const options = call[0]
+      if (Array.isArray(options) && options.length > 0) {
+        // Any non-empty pending options should NOT be from recovery memory
+        expect(options[0]).not.toEqual(
+          expect.objectContaining({ label: 'Links Panels' })
+        )
+      }
+    }
+  })
+
+  it('Test 13 (Blocker): "from chat" after known-noun clear + TTL expiry → restores from recovery memory', async () => {
+    // Simulates: known-noun cleared lastOptionsShown, TTL expired it too — only recovery memory survives
+    const recoveryMemory: ScopeCueRecoveryMemory = {
+      options: STALE_DISAMBIGUATION_OPTIONS,
+      messageId: 'recovery-durable',
+      timestamp: Date.now() - 120000, // 2 minutes old — well past any TTL
+    }
+
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'from chat',
+      focusLatch: makeResolvedLatch(),
+      clarificationSnapshot: null,
+      lastOptionsShown: null, // cleared by known-noun + TTL expired
+      lastClarification: null,
+      scopeCueRecoveryMemory: recoveryMemory,
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    // Should restore from recovery memory
+    expect(result.handled).toBe(true)
+    expect(ctx.setPendingOptions).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ label: 'Links Panels' }),
+      ])
+    )
+    expect(ctx.setActiveOptionSetId).toHaveBeenCalledWith('recovery-durable')
+  })
+
+  it('Test 14 (Blocker): "from chat" after session reset → "No earlier options available."', async () => {
+    // Simulates: session clear wiped everything including recovery memory
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'from chat',
+      focusLatch: makeResolvedLatch(),
+      clarificationSnapshot: null,
+      lastOptionsShown: null,
+      lastClarification: null,
+      scopeCueRecoveryMemory: null, // cleared by session reset
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    // Should return "No earlier options" message
+    expect(result.handled).toBe(true)
+    expect(ctx.addMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('No earlier options'),
+      })
+    )
+    expect(ctx.handleSelectOption).not.toHaveBeenCalled()
   })
 })

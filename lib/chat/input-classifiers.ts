@@ -331,3 +331,44 @@ function isSelectionOnlyEmbedded(
 
   return { isSelection: false }
 }
+
+// =============================================================================
+// Scope-Cue Classifier
+// =============================================================================
+
+/**
+ * Result of scope-cue classification.
+ * scope: 'chat' means user explicitly wants to target chat options.
+ * scope: 'widget' is reserved for phase 2 (named widget cues).
+ * scope: 'none' means no explicit scope cue detected.
+ */
+export interface ScopeCueResult {
+  scope: 'chat' | 'widget' | 'none'
+  cueText: string | null
+  confidence: 'high' | 'none'
+}
+
+/**
+ * Detect explicit scope cues in user input.
+ * Per scope-cues-addendum-plan.md: deterministic normalization for chat cues.
+ * Widget cues (named) deferred to phase 2.
+ *
+ * Chat cue families (longest match first to avoid partial matches):
+ * - "back to options", "from earlier options", "from chat options"
+ * - "from the chat", "from chat", "in chat"
+ */
+export function resolveScopeCue(input: string): ScopeCueResult {
+  const normalized = input.toLowerCase().trim()
+
+  // Chat cues — longest match first to avoid partial matches
+  const CHAT_CUE_PATTERN = /\b(back to options|from earlier options|from chat options?|from the chat|from chat|in chat)\b/i
+  const chatMatch = normalized.match(CHAT_CUE_PATTERN)
+  if (chatMatch) {
+    return { scope: 'chat', cueText: chatMatch[0], confidence: 'high' }
+  }
+
+  // Widget cues — deferred to phase 2
+  // (would need widget labels passed in for "from <widget label>" matching)
+
+  return { scope: 'none', cueText: null, confidence: 'none' }
+}

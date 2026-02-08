@@ -12,6 +12,7 @@ import {
   isSelectionOnly,
   normalizeOrdinalTypos,
   isExplicitCommand,
+  resolveScopeCue,
   ORDINAL_TARGETS,
 } from '@/lib/chat/input-classifiers'
 import { getLatchId } from '@/lib/chat/chat-navigation-context'
@@ -276,5 +277,147 @@ describe('isExplicitCommand', () => {
     expect(isExplicitCommand('hello')).toBe(false)
     expect(isExplicitCommand('second')).toBe(false)
     expect(isExplicitCommand('what is this')).toBe(false)
+  })
+})
+
+// =============================================================================
+// resolveScopeCue: scope-cue classification
+// =============================================================================
+
+describe('resolveScopeCue', () => {
+  describe('chat cues', () => {
+    it('detects "in chat"', () => {
+      expect(resolveScopeCue('open the first one in chat')).toEqual({ scope: 'chat', cueText: 'in chat', confidence: 'high' })
+    })
+
+    it('detects "from chat"', () => {
+      expect(resolveScopeCue('from chat')).toEqual({ scope: 'chat', cueText: 'from chat', confidence: 'high' })
+    })
+
+    it('detects "from chat" in longer phrase', () => {
+      expect(resolveScopeCue('open the first one from chat')).toEqual({ scope: 'chat', cueText: 'from chat', confidence: 'high' })
+    })
+
+    it('detects "back to options"', () => {
+      expect(resolveScopeCue('back to options')).toEqual({ scope: 'chat', cueText: 'back to options', confidence: 'high' })
+    })
+
+    it('detects "from earlier options"', () => {
+      expect(resolveScopeCue('from earlier options')).toEqual({ scope: 'chat', cueText: 'from earlier options', confidence: 'high' })
+    })
+
+    it('detects "from chat options"', () => {
+      expect(resolveScopeCue('from chat options')).toEqual({ scope: 'chat', cueText: 'from chat options', confidence: 'high' })
+    })
+
+    it('detects "from the chat"', () => {
+      expect(resolveScopeCue('from the chat')).toEqual({ scope: 'chat', cueText: 'from the chat', confidence: 'high' })
+    })
+  })
+
+  describe('non-chat (scope: none)', () => {
+    it('returns none for ordinal-only input', () => {
+      expect(resolveScopeCue('open the second one')).toEqual({ scope: 'none', cueText: null, confidence: 'none' })
+    })
+
+    it('returns none for commands', () => {
+      expect(resolveScopeCue('open recent')).toEqual({ scope: 'none', cueText: null, confidence: 'none' })
+    })
+
+    it('returns none for plain selection', () => {
+      expect(resolveScopeCue('second one pls')).toEqual({ scope: 'none', cueText: null, confidence: 'none' })
+    })
+
+    it('returns none for questions', () => {
+      expect(resolveScopeCue('what is this')).toEqual({ scope: 'none', cueText: null, confidence: 'none' })
+    })
+  })
+
+  describe('edge cases — word boundary', () => {
+    it('does not match "chat" as part of "chatbot"', () => {
+      expect(resolveScopeCue('chatbot help')).toEqual({ scope: 'none', cueText: null, confidence: 'none' })
+    })
+
+    it('returns none for empty string', () => {
+      expect(resolveScopeCue('')).toEqual({ scope: 'none', cueText: null, confidence: 'none' })
+    })
+
+    it('does not match "chat" as part of "chatter"', () => {
+      expect(resolveScopeCue('from chatter')).toEqual({ scope: 'none', cueText: null, confidence: 'none' })
+    })
+
+    it('does not match "chat" as part of "chatroom"', () => {
+      expect(resolveScopeCue('podcast in chatroom')).toEqual({ scope: 'none', cueText: null, confidence: 'none' })
+    })
+  })
+})
+
+// =============================================================================
+// Scope-cue + isSelectionOnly interaction (command precedence)
+// =============================================================================
+
+describe('scope-cue + isSelectionOnly interaction (command precedence)', () => {
+  const MOCK_OPTIONS = ['Links Panels', 'Links Panel D', 'Links Panel E']
+
+  it('selection wins over command when ordinal is present: "open the first one in chat"', () => {
+    const scopeResult = resolveScopeCue('open the first one in chat')
+    expect(scopeResult.scope).toBe('chat')
+    const selectionResult = isSelectionOnly('open the first one in chat', 3, MOCK_OPTIONS, 'embedded')
+    expect(selectionResult.isSelection).toBe(true)
+    expect(selectionResult.index).toBe(0)
+  })
+
+  it('selection wins over command when ordinal is present: "show the second one in chat"', () => {
+    const scopeResult = resolveScopeCue('show the second one in chat')
+    expect(scopeResult.scope).toBe('chat')
+    const selectionResult = isSelectionOnly('show the second one in chat', 3, MOCK_OPTIONS, 'embedded')
+    expect(selectionResult.isSelection).toBe(true)
+    expect(selectionResult.index).toBe(1)
+  })
+
+  it('command wins when no ordinal: "open recent in chat"', () => {
+    const scopeResult = resolveScopeCue('open recent in chat')
+    expect(scopeResult.scope).toBe('chat')
+    const selectionResult = isSelectionOnly('open recent in chat', 3, MOCK_OPTIONS, 'embedded')
+    expect(selectionResult.isSelection).toBe(false)
+  })
+
+  it('question with fuzzy ordinal "this"→"third": embedded mode detects selection (pre-existing)', () => {
+    // "this" fuzzy-matches "third" via levenshtein distance 2 in embedded mode.
+    // This is pre-existing embedded parser behavior, not scope-cue specific.
+    const scopeResult = resolveScopeCue('what is this in chat')
+    expect(scopeResult.scope).toBe('chat')
+    const selectionResult = isSelectionOnly('what is this in chat', 3, MOCK_OPTIONS, 'embedded')
+    expect(selectionResult.isSelection).toBe(true)
+    expect(selectionResult.index).toBe(2) // "this" → "third" → index 2
+  })
+
+  it('question without ordinal-like words falls through: "how does it work in chat"', () => {
+    const scopeResult = resolveScopeCue('how does it work in chat')
+    expect(scopeResult.scope).toBe('chat')
+    const selectionResult = isSelectionOnly('how does it work in chat', 3, MOCK_OPTIONS, 'embedded')
+    expect(selectionResult.isSelection).toBe(false)
+  })
+
+  it('question with ordinal — edge case: selection wins (matches existing behavior)', () => {
+    const scopeResult = resolveScopeCue('what is the first one in chat')
+    expect(scopeResult.scope).toBe('chat')
+    const selectionResult = isSelectionOnly('what is the first one in chat', 3, MOCK_OPTIONS, 'embedded')
+    expect(selectionResult.isSelection).toBe(true)
+    expect(selectionResult.index).toBe(0)
+  })
+
+  it('standalone scope cue: "from chat" is not a selection', () => {
+    const scopeResult = resolveScopeCue('from chat')
+    expect(scopeResult.scope).toBe('chat')
+    const selectionResult = isSelectionOnly('from chat', 3, MOCK_OPTIONS, 'embedded')
+    expect(selectionResult.isSelection).toBe(false)
+  })
+
+  it('standalone scope cue: "back to options" is not a selection', () => {
+    const scopeResult = resolveScopeCue('back to options')
+    expect(scopeResult.scope).toBe('chat')
+    const selectionResult = isSelectionOnly('back to options', 3, MOCK_OPTIONS, 'embedded')
+    expect(selectionResult.isSelection).toBe(false)
   })
 })

@@ -73,7 +73,7 @@ import {
   callReturnCueLLM,
   isLLMFallbackEnabledClient,
 } from '@/lib/chat/clarification-llm-fallback'
-import { isExplicitCommand, isSelectionOnly } from '@/lib/chat/input-classifiers'
+import { isExplicitCommand, isSelectionOnly, resolveScopeCue } from '@/lib/chat/input-classifiers'
 import { isSelectionLike } from '@/lib/chat/grounding-set'
 import type { LastOptionsShown } from '@/lib/chat/chat-navigation-context'
 
@@ -1158,6 +1158,10 @@ export interface ClarificationInterceptContext {
   // Widget selection context (per universal-selection-resolver-plan.md)
   // When non-null, skip clarification-mode handling and defer to universal resolver
   widgetSelectionContext: import('@/lib/chat/chat-navigation-context').WidgetSelectionContext | null
+  // Scope-cue source separation (per scope-cues-addendum-plan.md §Step B line 134)
+  clearWidgetSelectionContext: () => void
+  // Option-set identity for shorthand matching (per scope-cues-addendum-plan.md §Step B line 132)
+  setActiveOptionSetId: (id: string | null) => void
 
   // Focus latch (per selection-intent-arbitration-incubation-plan.md)
   focusLatch: import('@/lib/chat/chat-navigation-context').FocusLatchState | null
@@ -1172,6 +1176,9 @@ export interface ClarificationInterceptContext {
   isLatchEnabled: boolean
   /** Phase 0 resolved widget slug — identifies which widget has UI focus (null if none) */
   activeSnapshotWidgetId: string | null
+  // Scope-cue recovery memory (explicit-only, per scope-cue-recovery-plan)
+  scopeCueRecoveryMemory: import('@/lib/chat/chat-navigation-context').ScopeCueRecoveryMemory | null
+  clearScopeCueRecoveryMemory: () => void
 }
 
 /**
@@ -1264,6 +1271,8 @@ export async function handleClarificationIntercept(
     saveLastOptionsShown,
     // Widget selection context (per universal-selection-resolver-plan.md Phase 5)
     widgetSelectionContext,
+    clearWidgetSelectionContext,
+    setActiveOptionSetId,
     // Focus latch (per selection-intent-arbitration-incubation-plan.md)
     focusLatch,
     setFocusLatch,
@@ -1274,6 +1283,8 @@ export async function handleClarificationIntercept(
     lastOptionsShown,
     isLatchEnabled,
     activeSnapshotWidgetId,
+    scopeCueRecoveryMemory,
+    clearScopeCueRecoveryMemory,
   } = ctx
 
   void debugLog({
@@ -2139,6 +2150,8 @@ export async function handleClarificationIntercept(
 
     // Latch-off: stop/start-over clears focus latch (Phase 6b)
     clearFocusLatch()
+    // Session boundary: stop-confirmed clears durable recovery memory (per scope-cue-recovery-plan)
+    clearScopeCueRecoveryMemory()
 
     // Set suppression counter for next N=2 turns
     setStopSuppressionCount(STOP_SUPPRESSION_TURN_LIMIT)
@@ -2241,31 +2254,140 @@ export async function handleClarificationIntercept(
   }
 
   // ==========================================================================
-  // FOCUS LATCH — Chat Re-Anchor (Rule 3)
-  // Per selection-intent-arbitration-incubation-plan.md:
-  //   "back to options" / "from earlier options" / "from chat options" while
-  //   latched → suspend latch and restore chat options if recoverable.
+  // FOCUS LATCH — Scope-Cue Normalization (per scope-cues-addendum-plan.md)
+  // Explicit scope cues override latch default. Runs before latch bypass.
+  // Gated on isLatchEnabled (feature flag), NOT on isLatchActive.
+  // "from chat" works even when no latch is active, as long as the flag is on.
   // ==========================================================================
-  const CHAT_REANCHOR_PATTERN = /\b(back to options|from earlier options|from chat options?)\b/i
   const isLatchActive = focusLatch && !focusLatch.suspended
+  const scopeCue = isLatchEnabled ? resolveScopeCue(trimmedInput) : { scope: 'none' as const, cueText: null, confidence: 'none' as const }
 
-  if (isLatchActive && CHAT_REANCHOR_PATTERN.test(trimmedInput)) {
-    const recoverable = getRecoverableChatOptions({ clarificationSnapshot, lastOptionsShown, lastClarification })
-    if (recoverable) {
-      suspendFocusLatch()
-      // Restore chat options as active lastClarification so subsequent ordinals execute against them.
-      // The restored options carry executable data (action + itemId/choiceId) from the original
-      // clarification source, not just display labels.
+  if (scopeCue.scope === 'chat') {
+    /** Recoverable result with original message identity for option-set linkage. */
+    interface RecoverableResult {
+      options: ClarificationOption[]
+      messageId: string
+      source: 'snapshot' | 'lastOptionsShown' | 'lastClarification' | 'recoveryMemory'
+    }
+
+    function getRecoverableChatOptionsWithIdentity(): RecoverableResult | null {
+      if (clarificationSnapshot?.options?.length) {
+        return {
+          options: clarificationSnapshot.options,
+          messageId: `snapshot-${clarificationSnapshot.timestamp}`,
+          source: 'snapshot',
+        }
+      }
+      if (lastOptionsShown?.options?.length) {
+        return {
+          options: lastOptionsShown.options,
+          messageId: lastOptionsShown.messageId,
+          source: 'lastOptionsShown',
+        }
+      }
+      if (lastClarification?.options?.length) {
+        return {
+          options: lastClarification.options,
+          messageId: lastClarification.messageId,
+          source: 'lastClarification',
+        }
+      }
+      // Durable fallback: explicit-only recovery memory (no TTL, per scope-cue-recovery-plan)
+      if (scopeCueRecoveryMemory?.options?.length) {
+        return {
+          options: scopeCueRecoveryMemory.options,
+          messageId: scopeCueRecoveryMemory.messageId,
+          source: 'recoveryMemory',
+        }
+      }
+      return null
+    }
+
+    /** Restore full chat-active state so subsequent ordinal turns execute against chat options. */
+    function restoreFullChatState(options: ClarificationOption[], messageId: string) {
+      const pendingOpts: PendingOptionState[] = options.map((o, idx) => ({
+        index: idx + 1,
+        id: o.id,
+        label: o.label,
+        sublabel: o.sublabel,
+        type: o.type,
+        data: reconstructSnapshotData(o),
+      }))
+      setPendingOptions(pendingOpts)
+      setPendingOptionsMessageId(messageId)
+      setPendingOptionsGraceCount(0)
+      setActiveOptionSetId(messageId)
       setLastClarification({
         type: 'option_selection',
         originalIntent: trimmedInput,
-        messageId: `reanchor-${Date.now()}`,
+        messageId,
         timestamp: Date.now(),
-        options: recoverable,
+        options,
       })
-      void debugLog({ component: 'ChatNavigation', action: 'focus_latch_suspended', metadata: { reason: 'chat_reanchor', latchId: getLatchId(focusLatch) } })
+    }
+
+    const recoverable = getRecoverableChatOptionsWithIdentity()
+
+    // --- Phase 1: Suspend latch if active (respect scope intent) ---
+    if (isLatchActive) {
+      suspendFocusLatch()
+      clearWidgetSelectionContext()
+      void debugLog({ component: 'ChatNavigation', action: 'scope_cue_applied_chat', metadata: { cueText: scopeCue.cueText, latchId: getLatchId(focusLatch), optionCount: recoverable?.options.length ?? 0, source: recoverable?.source } })
+    } else {
+      void debugLog({ component: 'ChatNavigation', action: 'scope_cue_applied_chat_no_latch', metadata: { cueText: scopeCue.cueText, optionCount: recoverable?.options.length ?? 0, source: recoverable?.source } })
+    }
+
+    if (recoverable) {
+      const { options: recoverableOptions, messageId: originalMessageId } = recoverable
+
+      // --- Phase 2: Check for selection in input ---
+      const optionLabels = recoverableOptions.map(o => o.label)
+      const selectionResult = isSelectionOnly(trimmedInput, recoverableOptions.length, optionLabels, 'embedded')
+
+      if (selectionResult.isSelection && selectionResult.index !== undefined) {
+        // Single-turn execution: scope cue + ordinal → execute against chat options.
+        // Do NOT call restoreFullChatState here — it sets pendingOptions which persist
+        // after handleSelectOption (which only clears lastClarification, not pending).
+        // Stale pending options cause subsequent inputs to resolve against chat options
+        // instead of widget items. We have all data from recoverableOptions directly.
+        const selectedOption = recoverableOptions[selectionResult.index]
+        const optionToSelect: SelectionOption = {
+          type: selectedOption.type as SelectionOption['type'],
+          id: selectedOption.id,
+          label: selectedOption.label,
+          sublabel: selectedOption.sublabel,
+          data: reconstructSnapshotData(selectedOption),
+        }
+        void debugLog({ component: 'ChatNavigation', action: 'scope_cue_chat_single_turn_select', metadata: { index: selectionResult.index, label: selectedOption.label } })
+        // Clear any stale pending options before executing (follows pattern at lines 3261, 4242, 4286)
+        setPendingOptions([])
+        setPendingOptionsMessageId(null)
+        setPendingOptionsGraceCount(0)
+        setActiveOptionSetId(null)
+        setIsLoading(false)
+        handleSelectOption(optionToSelect)
+        return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+      }
+
+      // --- Phase 3: No selection detected — check command/question guard ---
+      if (isNewQuestionOrCommandDetected) {
+        // Input like "open recent in chat" — scope cue intent is respected (latch
+        // already suspended above), but the command portion must fall through to
+        // downstream routing (Tier 2/4 known-noun). Do NOT restore full chat state
+        // here — options stay dormant for a future explicit "from chat" re-anchor.
+        void debugLog({ component: 'ChatNavigation', action: 'scope_cue_chat_command_fallthrough', metadata: { cueText: scopeCue.cueText } })
+        return { handled: false, clarificationCleared: false, isNewQuestionOrCommandDetected }
+      }
+
+      // --- Phase 4: Standalone re-anchor (e.g., "from chat") ---
+      restoreFullChatState(recoverableOptions, originalMessageId)
       return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
     } else {
+      // No recoverable options
+      if (isNewQuestionOrCommandDetected) {
+        // "open recent in chat" with no chat options — just fall through
+        return { handled: false, clarificationCleared: false, isNewQuestionOrCommandDetected }
+      }
       addMessage({
         id: `assistant-${Date.now()}`,
         role: 'assistant',

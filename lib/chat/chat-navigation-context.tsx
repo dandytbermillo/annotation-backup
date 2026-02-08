@@ -193,6 +193,19 @@ export interface LastOptionsShown {
 export const SOFT_ACTIVE_TURN_LIMIT = 2
 
 /**
+ * Durable recovery memory for explicit scope-cue resolution ("from chat", "in chat").
+ * Unlike clarificationSnapshot (panel_drawer-excluded) and lastOptionsShown (2-turn TTL),
+ * this has no TTL and is ONLY consumed by explicit scope cues in the scope-cue block.
+ * Never read by automatic ordinal routing (post-action window, Tier 3.5, stale-chat guards).
+ * Per scope-cue-recovery-plan.
+ */
+export interface ScopeCueRecoveryMemory {
+  options: ClarificationOption[]
+  messageId: string
+  timestamp: number
+}
+
+/**
  * Widget selection context for universal selection resolver.
  * Per universal-selection-resolver-plan.md:
  *   Stores widget options separately from chat options (pendingOptions).
@@ -401,6 +414,10 @@ interface ChatNavigationContextValue {
   saveLastOptionsShown: (options: ClarificationOption[], messageId: string) => void
   incrementLastOptionsShownTurn: () => void
   clearLastOptionsShown: () => void
+  // Scope-cue recovery memory (explicit-only, no TTL, per scope-cue-recovery-plan)
+  scopeCueRecoveryMemory: ScopeCueRecoveryMemory | null
+  saveScopeCueRecoveryMemory: (options: ClarificationOption[], messageId: string) => void
+  clearScopeCueRecoveryMemory: () => void
   // Widget selection context for universal selection resolver (per universal-selection-resolver-plan.md)
   widgetSelectionContext: WidgetSelectionContext | null
   setWidgetSelectionContext: (context: WidgetSelectionContext | null) => void
@@ -1220,6 +1237,19 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     setLastOptionsShownInternal(null)
   }, [])
 
+  // Scope-cue recovery memory state (explicit-only, no TTL, per scope-cue-recovery-plan)
+  const [scopeCueRecoveryMemory, setScopeCueRecoveryMemoryInternal] = useState<ScopeCueRecoveryMemory | null>(null)
+
+  const saveScopeCueRecoveryMemory = useCallback((options: ClarificationOption[], messageId: string) => {
+    if (options.length > 0) {
+      setScopeCueRecoveryMemoryInternal({ options, messageId, timestamp: Date.now() })
+    }
+  }, [])
+
+  const clearScopeCueRecoveryMemory = useCallback(() => {
+    setScopeCueRecoveryMemoryInternal(null)
+  }, [])
+
   // Widget selection context state for universal selection resolver (per universal-selection-resolver-plan.md)
   const [widgetSelectionContext, setWidgetSelectionContextInternal] = useState<WidgetSelectionContext | null>(null)
 
@@ -1340,6 +1370,10 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         saveLastOptionsShown,
         incrementLastOptionsShownTurn,
         clearLastOptionsShown,
+        // Scope-cue recovery memory (explicit-only, per scope-cue-recovery-plan)
+        scopeCueRecoveryMemory,
+        saveScopeCueRecoveryMemory,
+        clearScopeCueRecoveryMemory,
         // Widget selection context for universal selection resolver
         widgetSelectionContext,
         setWidgetSelectionContext,
