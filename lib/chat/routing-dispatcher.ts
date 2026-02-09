@@ -38,7 +38,7 @@ import type { ChatMessage, SelectionOption, ViewPanelContent } from '@/lib/chat'
 import type { UIContext } from '@/lib/chat/intent-prompt'
 import type { LastClarificationState } from '@/lib/chat/chat-navigation-context'
 import type { DocRetrievalState } from '@/lib/docs/doc-retrieval-state'
-import type { VisibleWidget } from '@/lib/chat/panel-command-matcher'
+import { matchVisiblePanelCommand, type VisibleWidget } from '@/lib/chat/panel-command-matcher'
 import type { RepairMemoryState, ClarificationSnapshot, ClarificationOption, LastSuggestionState, SuggestionCandidate, ChatSuggestions, WidgetSelectionContext } from '@/lib/chat/chat-navigation-context'
 import { WIDGET_SELECTION_TTL, SOFT_ACTIVE_TURN_LIMIT } from '@/lib/chat/chat-navigation-context'
 import type {
@@ -1172,7 +1172,24 @@ export async function dispatchRouting(
   // Tier 2c: Panel Disambiguation (deterministic, pre-LLM)
   // Question intent override: "what is links panel?" should route to docs (Tier 5),
   // not get caught by token-subset matching in panel disambiguation.
-  if (hasQuestionIntent(ctx.trimmedInput)) {
+  // Exception: polite commands like "can you open links panel" have question intent
+  // (^can) but should still reach Tier 2c when they match visible panels.
+  const questionIntentBlocks = (() => {
+    if (!hasQuestionIntent(ctx.trimmedInput)) return false
+    // Check if this is actually a polite command that matches visible panels
+    const dw = ctx.uiContext?.mode === 'dashboard' ? ctx.uiContext?.dashboard?.visibleWidgets : undefined
+    const pe = dw?.length ? matchVisiblePanelCommand(ctx.trimmedInput, dw) : null
+    if (pe && pe.type !== 'none') {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'question_intent_overridden_by_panel_evidence',
+        metadata: { input: ctx.trimmedInput, matchType: pe.type, matchCount: pe.matches.length, tier: '2c' },
+      })
+      return false // Polite command — don't block Tier 2c
+    }
+    return true // Genuine question — block Tier 2c
+  })()
+  if (questionIntentBlocks) {
     void debugLog({
       component: 'ChatNavigation',
       action: 'skip_panel_disambiguation_question_intent',
@@ -1186,10 +1203,11 @@ export async function dispatchRouting(
       addMessage: ctx.addMessage,
       setIsLoading: ctx.setIsLoading,
       setPendingOptions: ctx.setPendingOptions,
-      setPendingOptionsMessageId: ctx.setPendingOptionsMessageId as (messageId: string) => void,
+      setPendingOptionsMessageId: ctx.setPendingOptionsMessageId,
       setLastClarification: ctx.setLastClarification,
       saveLastOptionsShown: ctx.saveLastOptionsShown,
       clearWidgetSelectionContext: ctx.clearWidgetSelectionContext,
+      openPanelDrawer: ctx.openPanelDrawer,
     })
     if (panelDisambiguationResult.handled) {
       return {
@@ -2821,7 +2839,25 @@ export async function dispatchRouting(
 
     // LLM fallback needed
     if (groundingResult.needsLLM && groundingResult.llmCandidates && groundingResult.llmCandidates.length > 0) {
-      if (isGroundingLLMEnabled()) {
+      // Narrow gate: skip LLM only for command-like panel intents
+      // (explicit command + matches visible panel). Other non-selection inputs still get LLM.
+      const isCommandPanelIntent =
+        isExplicitCommand(ctx.trimmedInput) &&
+        matchVisiblePanelCommand(ctx.trimmedInput, ctx.uiContext?.dashboard?.visibleWidgets).type !== 'none'
+
+      if (isCommandPanelIntent) {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'grounding_llm_skipped_command_panel_intent',
+          metadata: {
+            input: ctx.trimmedInput,
+            candidateCount: groundingResult.llmCandidates.length,
+            reason: 'routing_continues_to_panel_command_path',
+          },
+        })
+        // Fall through — panel command should be handled by Tier 2c, not grounding LLM.
+        // Routing continues to subsequent tiers.
+      } else if (isGroundingLLMEnabled()) {
         try {
           // Per incubation plan §Observability: log LLM attempt
           void debugLog({ component: 'ChatNavigation', action: 'selection_dual_source_llm_attempt', metadata: { input: ctx.trimmedInput, candidateCount: groundingResult.llmCandidates.length, activeWidgetId } })

@@ -4162,6 +4162,20 @@ export async function handleClarificationIntercept(
     // If input resembles a pending option but triggered isNewQuestionOrCommandDetected,
     // it's likely a typo - re-show options instead of escaping to cross-corpus.
     if (lastClarification?.options && lastClarification.options.length > 0 && isNewQuestionOrCommandDetected) {
+      // Guard: skip fuzzy re-show if input matches visible panels (command-like panel intent).
+      // Only check on dashboard mode where visibleWidgets exist.
+      // "can you open links panel pls" should NOT re-show stale Recent options —
+      // it should fall through to Tier 2c panel disambiguation.
+      const dashboardWidgets = uiContext?.mode === 'dashboard' ? uiContext?.dashboard?.visibleWidgets : undefined
+      const panelMatch = dashboardWidgets?.length ? matchVisiblePanelCommand(trimmedInput, dashboardWidgets) : null
+      if (panelMatch && panelMatch.type !== 'none') {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'tier1b4_skip_panel_command_intent',
+          metadata: { input: trimmedInput, matchType: panelMatch.type, matchCount: panelMatch.matches.length },
+        })
+        // Fall through to normal routing — don't re-show stale options
+      } else {
       const normalizedInputForFuzzy = trimmedInput.toLowerCase().trim()
       const inputResemblesOption = lastClarification.options.some(opt => {
         const normalizedLabel = opt.label.toLowerCase()
@@ -4247,6 +4261,7 @@ export async function handleClarificationIntercept(
         setIsLoading(false)
         return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
       }
+      } // end else (no panel-match guard)
     }
 
     // Tier 1b.5: New intent escape
@@ -4413,12 +4428,14 @@ export interface PanelDisambiguationHandlerContext {
   addMessage: (message: ChatMessage) => void
   setIsLoading: (loading: boolean) => void
   setPendingOptions: (options: PendingOptionState[]) => void
-  setPendingOptionsMessageId: (messageId: string) => void
+  setPendingOptionsMessageId: (messageId: string | null) => void
   setLastClarification: (state: LastClarificationState | null) => void
   // Soft-active window (per grounding-set-fallback-plan.md §Soft-Active)
   saveLastOptionsShown?: (options: ClarificationOption[], messageId: string) => void
   // Per universal-selection-resolver-plan.md: clear widget context when registering chat context
   clearWidgetSelectionContext?: () => void
+  // Single-match direct open (Step 1b — deterministic panel open when 1 match found)
+  openPanelDrawer?: (panelId: string, panelTitle?: string) => void
 }
 
 export interface PanelDisambiguationHandlerResult extends HandlerResult {
@@ -4451,6 +4468,7 @@ export function handlePanelDisambiguation(
     setLastClarification,
     saveLastOptionsShown,
     clearWidgetSelectionContext,
+    openPanelDrawer,
   } = context
 
   const matchResult = matchVisiblePanelCommand(trimmedInput, visibleWidgets)
@@ -4537,6 +4555,48 @@ export function handlePanelDisambiguation(
     return { handled: true, matchType: matchResult.type, matchCount: matchResult.matches.length }
   }
 
-  // Let LLM handle other cases (exact match, no match)
+  // Single high-confidence panel match → open directly (deterministic, Rule 1)
+  // Handles both partial ("open links panel" → 1 Links Panel D) and
+  // exact ("open links panels" → 1 "Links Panels") single-match cases.
+  // With token canonicalization (panels→panel), some single-panel cases produce exact, not partial.
+  const isSingleMatch =
+    matchResult.matches.length === 1 &&
+    (matchResult.type === 'partial' || matchResult.type === 'exact')
+
+  if (isSingleMatch && openPanelDrawer) {
+    const singleMatch = matchResult.matches[0]
+
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'panel_disambiguation_single_match_open',
+      metadata: {
+        input: trimmedInput,
+        matchType: matchResult.type,
+        matchedTitle: singleMatch.title,
+      },
+    })
+
+    // Clear stale selection state
+    setPendingOptions([])
+    setPendingOptionsMessageId(null)
+    setLastClarification(null)
+    clearWidgetSelectionContext?.()
+
+    // Direct open
+    openPanelDrawer(singleMatch.id, singleMatch.title)
+
+    const assistantMessage: ChatMessage = {
+      id: `assistant-${Date.now()}`,
+      role: 'assistant',
+      content: `Opening ${singleMatch.title}.`,
+      timestamp: new Date(),
+      isError: false,
+    }
+    addMessage(assistantMessage)
+    setIsLoading(false)
+    return { handled: true, matchType: matchResult.type, matchCount: 1 }
+  }
+
+  // Let LLM handle other cases (no match, or openPanelDrawer unavailable)
   return { handled: false, matchType: matchResult.type, matchCount: matchResult.matches.length }
 }

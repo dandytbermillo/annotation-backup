@@ -40,6 +40,69 @@ export function isExplicitCommand(input: string): boolean {
 }
 
 // =============================================================================
+// Command Canonicalization (shared by Tier 2c + Tier 4)
+// =============================================================================
+
+/**
+ * Canonicalize user input for command/noun matching.
+ * Strips polite prefixes, leading articles, and trailing filler words.
+ * Shared by Tier 2c (panel-command-matcher) and Tier 4 (known-noun-routing)
+ * to prevent normalization drift across tiers.
+ *
+ * Design: minimal and deterministic — only strips known prefixes, articles,
+ * and trailing filler. No broad conversational parsing.
+ */
+export function canonicalizeCommandInput(input: string): string {
+  let normalized = input.toLowerCase().trim()
+
+  // Strip trailing punctuation
+  normalized = normalized.replace(/[?!.]+$/, '')
+
+  // Strip polite/verb prefixes (longest first to avoid partial matches)
+  const prefixes = [
+    'hey can you please open ', 'hey can you please show ',
+    'hey can you pls open ', 'hey can you pls show ',
+    'hey can you open ', 'hey can you show ',
+    'hey could you please open ', 'hey could you please show ',
+    'hey could you pls open ', 'hey could you pls show ',
+    'hey could you open ', 'hey could you show ',
+    'hey can you please ', 'hey can you pls ',
+    'hey could you please ', 'hey could you pls ',
+    'can you please open ', 'can you please show ',
+    'can you pls open ', 'can you pls show ',
+    'can you please ', 'can you pls ',
+    'could you please open ', 'could you please show ',
+    'could you pls open ', 'could you pls show ',
+    'could you please ', 'could you pls ',
+    'would you please open ', 'would you please show ',
+    'would you pls open ', 'would you pls show ',
+    'would you please ', 'would you pls ',
+    'can you open ', 'can you show ',
+    'could you open ', 'could you show ',
+    'would you open ', 'would you show ',
+    'please open ', 'pls open ',
+    'please show ', 'pls show ',
+    'hey open ', 'hey show ', 'hey ',
+    'open ', 'show ', 'view ', 'go to ', 'launch ',
+  ]
+  for (const prefix of prefixes) {
+    if (normalized.startsWith(prefix)) {
+      normalized = normalized.slice(prefix.length).trim()
+      break
+    }
+  }
+
+  // Strip leading articles
+  normalized = normalized.replace(/^(the|a|an)\s+/i, '').trim()
+
+  // Strip trailing politeness/filler
+  normalized = normalized.replace(/\s+(pls|please|plz|thanks|thx|now)$/i, '').trim()
+
+  // Normalize whitespace
+  return normalized.replace(/\s+/g, ' ').trim()
+}
+
+// =============================================================================
 // Ordinal Normalization
 // =============================================================================
 

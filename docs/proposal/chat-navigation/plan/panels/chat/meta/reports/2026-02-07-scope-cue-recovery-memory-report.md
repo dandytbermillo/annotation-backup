@@ -2,17 +2,17 @@
 
 **Date:** 2026-02-07
 **Feature flag:** `NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1=true`
-**Plan file:** `/Users/dandy/.claude/plans/wiggly-juggling-haven.md`
-**Parent report:** `2026-02-07-scope-cue-normalization-chat-scope-report.md`
+**Parent plan:** `selection-intent-arbitration-scope-cues-addendum-plan.md`
+**Parent report:** `2026-02-07-scope-cue-normalization-chat-scope-report.md` (follow-up fix to scope-cue normalization)
 
 ## Summary
 
 Added a durable, explicit-only chat recovery memory (`ScopeCueRecoveryMemory`) to fix intermittent failures where "from chat" / "in chat" scope cues found 0 recoverable options after `lastOptionsShown` expired or was cleared by known-noun navigation.
 
 **Root cause of intermittency:** All three recoverable sources were fragile for panel_drawer selections:
-- `clarificationSnapshot` — Always null (absolute snapshot policy, `chat-navigation-panel.tsx:886-894`)
+- `clarificationSnapshot` — Always null (absolute snapshot policy, `chat-navigation-panel.tsx:890-892`)
 - `lastOptionsShown` — 2-turn TTL (`SOFT_ACTIVE_TURN_LIMIT = 2`) + cleared by known-noun commands (`known-noun-routing.ts:508`)
-- `lastClarification` — Always null (cleared by `handleSelectOption` at line 927)
+- `lastClarification` — Always null (cleared by `handleSelectOption` at `chat-navigation-panel.tsx:939`)
 
 **Fix:** New `ScopeCueRecoveryMemory` state with no TTL, only consumed by explicit scope cues, never by automatic ordinal routing.
 
@@ -20,7 +20,7 @@ Added a durable, explicit-only chat recovery memory (`ScopeCueRecoveryMemory`) t
 
 1. **Never read by automatic ordinal routing** — post-action ordinal window, Tier 3.5 universal resolver, and stale-chat guards do NOT access this state
 2. **No turn-based TTL** — stays until replaced by newer chat-origin options or hard-cleared
-3. **Only consumed in the scope-cue block** (`chat-routing.ts:2263`, `getRecoverableChatOptionsWithIdentity`)
+3. **Only consumed in the scope-cue block** (`chat-routing.ts:2265`, `getRecoverableChatOptionsWithIdentity` at line 2273)
 4. **Chat-origin only** — widget_option lists are excluded (`options.every(o => o.type !== 'widget_option')`)
 5. **Last-resort priority** — `clarificationSnapshot > lastOptionsShown > lastClarification > scopeCueRecoveryMemory`
 
@@ -84,15 +84,18 @@ Updated `RecoverableResult.source` type to include `'recoveryMemory'`.
 
 ## Files Modified (5 files)
 
+Line counts are recovery-memory-specific additions (verified via `git diff HEAD~1`).
+The commit `8a4d8fd1` bundles both scope-cue normalization and recovery memory changes.
+
 | File | Lines Changed | Changes |
 |------|--------------|---------|
-| `lib/chat/chat-navigation-context.tsx` | +25 | `ScopeCueRecoveryMemory` interface + state + save/clear methods + context value |
-| `components/chat/chat-navigation-panel.tsx` | +14 | Save (chat-origin guard), clear (exit pill + clearChat), pass to `dispatchRouting` |
-| `lib/chat/routing-dispatcher.ts` | +6 | `RoutingDispatcherContext` fields + intercept passthrough |
-| `lib/chat/chat-routing.ts` | +13 | `ClarificationInterceptContext` fields + destructure + 4th source + Tier 0 clear |
-| `__tests__/integration/chat/selection-intent-arbitration-dispatcher.test.ts` | +131 | Tests 10-14 (5 new tests) |
+| `lib/chat/chat-navigation-context.tsx` | +34 | `ScopeCueRecoveryMemory` interface + state + save/clear methods + context value (all recovery-memory) |
+| `components/chat/chat-navigation-panel.tsx` | +18 net (+19/-1) | Save (chat-origin guard), clear (exit pill + clearChat), pass to `dispatchRouting` (all recovery-memory) |
+| `lib/chat/routing-dispatcher.ts` | +7 | `RoutingDispatcherContext` fields + intercept passthrough (7 of 9 total additions; 2 are scope-cue normalization) |
+| `lib/chat/chat-routing.ts` | ~+14 | `ClarificationInterceptContext` fields + destructure + 4th source + Tier 0 clear (14 of 138 total additions; rest is scope-cue normalization) |
+| `__tests__/integration/chat/selection-intent-arbitration-dispatcher.test.ts` | ~+181 | Import, mock context fields, Tests 10-14 (181 of 325 total additions; rest is Tests 5-9 from scope-cue normalization) |
 
-**Total: +189 lines**
+**Recovery-memory total: ~254 lines**
 
 ## Test Results
 
@@ -106,11 +109,11 @@ $ npx tsc --noEmit
 $ npx jest __tests__/unit/chat/ __tests__/integration/chat/ --no-coverage --runInBand
 # 6 suites, 229 tests, 0 failures
 #   - selection-intent-arbitration-dispatcher.test.ts: 14 tests (9 existing + 5 new)
-#   - selection-intent-arbitration.test.ts: 51 tests (existing)
-#   - selection-intent-arbitration-race.test.ts: 20 tests (existing)
-#   - clarification-offmenu.test.ts: existing
-#   - clarification-llm-fallback.test.ts: existing
-#   - panel-command-matcher.test.ts: existing
+#   - selection-intent-arbitration.test.ts: 51 tests
+#   - selection-intent-arbitration-race.test.ts: 20 tests
+#   - clarification-offmenu.test.ts: 75 tests
+#   - clarification-llm-fallback.test.ts: 65 tests
+#   - panel-command-matcher.test.ts: 4 tests
 ```
 
 ### New Tests

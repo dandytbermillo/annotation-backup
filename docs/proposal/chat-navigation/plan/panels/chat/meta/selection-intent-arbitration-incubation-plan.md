@@ -7,6 +7,7 @@
 **Implementation addenda:**
 - `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-intent-arbitration-widget-first-fix-plan.md`
 - `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-intent-arbitration-scope-cues-addendum-plan.md`
+- `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-vs-command-arbitration-rule-plan.md`
 
 ## Why This Exists
 Current behavior can over-clarify or bind to stale chat lists when users are clearly interacting with an open widget.
@@ -220,6 +221,7 @@ Add logs for:
 3. For implementation sequencing and race-condition fixes, follow addenda:
 - `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-intent-arbitration-widget-first-fix-plan.md`
 - `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-intent-arbitration-scope-cues-addendum-plan.md`
+ - `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-vs-command-arbitration-rule-plan.md`
 4. Validate with scripted mixed flows (chat list -> widget engagement -> unspecific follow-ups).
 5. Merge into `universal-selection-resolver-plan.md` only after blocker tests pass.
 
@@ -229,7 +231,8 @@ Add logs for:
 - For selection routing behavior, this incubation plan is source of truth until merged.
 - For concrete implementation details, use addenda:
   - `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-intent-arbitration-widget-first-fix-plan.md`
-  - `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-intent-arbitration-scope-cues-addendum-plan.md`.
+  - `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-intent-arbitration-scope-cues-addendum-plan.md`
+  - `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-vs-command-arbitration-rule-plan.md`.
 
 ## Pre-Read Compliance
 - `codex/codex_needs_to_avoid/isolation-reactivity-anti-patterns.md` reviewed.

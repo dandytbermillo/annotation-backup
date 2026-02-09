@@ -16,6 +16,8 @@ import type { ChatMessage, SelectionOption, ViewPanelContent } from '@/lib/chat'
 import type { PendingOptionState } from '@/lib/chat/chat-routing'
 import type { LastClarificationState } from '@/lib/chat/chat-navigation-context'
 import { hasQuestionIntent } from '@/lib/chat/query-patterns'
+import { matchVisiblePanelCommand } from '@/lib/chat/panel-command-matcher'
+import { canonicalizeCommandInput } from '@/lib/chat/input-classifiers'
 
 // =============================================================================
 // Known-Noun Allowlist
@@ -85,28 +87,7 @@ const KNOWN_NOUN_KEYS = new Set(Object.keys(KNOWN_NOUN_MAP))
  * Strips action verbs, punctuation, and normalizes whitespace.
  */
 function normalizeForNounMatch(input: string): string {
-  let normalized = input.toLowerCase().trim()
-
-  // Strip trailing punctuation (?, !, .)
-  normalized = normalized.replace(/[?!.]+$/, '')
-
-  // Strip leading action verbs that may have been missed by earlier tiers
-  const verbPrefixes = [
-    'open ', 'show ', 'view ', 'go to ', 'launch ',
-    'can you open ', 'can you show ', 'please open ', 'pls open ',
-    'please show ', 'pls show ',
-  ]
-  for (const prefix of verbPrefixes) {
-    if (normalized.startsWith(prefix)) {
-      normalized = normalized.slice(prefix.length).trim()
-      break
-    }
-  }
-
-  // Normalize whitespace
-  normalized = normalized.replace(/\s+/g, ' ').trim()
-
-  return normalized
+  return canonicalizeCommandInput(input)
 }
 
 /**
@@ -462,7 +443,29 @@ export function handleKnownNounRouting(
     // Resolve to actual visible panel (need real DB ID for DashboardView)
     const realPanel = resolveToVisiblePanel(match, ctx.visibleWidgets)
     if (!realPanel) {
-      // Panel exists in allowlist but not on the current dashboard — can't open
+      // Rule 4: Do not hard-stop with handled: true when there is viable
+      // downstream disambiguation evidence. Check if visible panels show
+      // ambiguous partial-match evidence (multiple family members) for this input.
+      const visibleMatch = matchVisiblePanelCommand(ctx.trimmedInput, ctx.visibleWidgets)
+      const hasAmbiguousEvidence =
+        visibleMatch.type === 'partial' && visibleMatch.matches.length > 1
+
+      if (hasAmbiguousEvidence) {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'known_noun_fallthrough_ambiguous_evidence',
+          metadata: {
+            input: ctx.trimmedInput,
+            panelId: match.panelId,
+            title: match.title,
+            visibleMatchCount: visibleMatch.matches.length,
+            tier: 4,
+          },
+        })
+        return { handled: false }
+      }
+
+      // No ambiguous evidence — panel genuinely not available
       void debugLog({
         component: 'ChatNavigation',
         action: 'known_noun_panel_not_visible',

@@ -1,6 +1,6 @@
 # Chat Navigation Plans — Index
 
-**Last Updated:** 2026-01-31
+**Last Updated:** 2026-02-09
 
 This index documents plan timelines for chat navigation: doc retrieval and clarification/disambiguation.
 
@@ -192,6 +192,14 @@ This index documents plan timelines for chat navigation: doc retrieval and clari
 
 ---
 
+### 15. Selection-vs-Command Arbitration Rule Plan
+**File:** `selection-vs-command-arbitration-rule-plan.md`
+**Purpose:** Deterministic guardrail for active-option selection vs new-command intent conflicts
+
+**Status:** 📝 Draft (governance guardrail)
+
+---
+
 ## Implementation Reports
 
 | Date | Report | Plan |
@@ -247,6 +255,7 @@ docs/proposal/chat-navigation/plan/panels/chat/meta/
 ├── clarification-qa-checklist.md                     ← Manual QA checklist
 ├── clarification-interrupt-resume-plan.md            ← Addendum: interrupt/resume
 ├── clarification-stop-scope-plan.md                  ← Addendum: stop/cancel scope
+├── selection-vs-command-arbitration-rule-plan.md     ← Plan 15 (Selection vs command guardrail)
 ├── cursor-style-doc-retrieval-plan.md               ← Plan 1 (Foundation)
 ├── general-doc-retrieval-routing-plan.md            ← Plan 2 (Routing v5)
 ├── 2026-01-14-doc-retrieval-routing-debt-paydown-plan.md  ← Plan 3 (Debt)

@@ -15,6 +15,7 @@
  */
 
 import { levenshteinDistance } from './typo-suggestions'
+import { canonicalizeCommandInput } from './input-classifiers'
 
 // =============================================================================
 // Types
@@ -160,6 +161,23 @@ function isSubset(setA: Set<string>, setB: Set<string>): boolean {
 }
 
 // =============================================================================
+// Verb Prefix Stripping
+// =============================================================================
+
+/**
+ * Strip leading action verb prefixes from user input before panel token matching.
+ * Same verb set as known-noun-routing.ts normalizeForNounMatch.
+ * Applied to input only (not panel titles) so Tier 2c sees the same tokens
+ * regardless of whether the user typed "links panel" or "open links panel".
+ *
+ * Exported as a shared utility — both panel-command-matcher (Tier 2c) and
+ * known-noun-routing (Tier 4) import from here to prevent drift.
+ */
+export function stripVerbPrefix(input: string): string {
+  return canonicalizeCommandInput(input)
+}
+
+// =============================================================================
 // Main Matcher
 // =============================================================================
 
@@ -182,7 +200,7 @@ export function matchVisiblePanelCommand(
     return { type: 'none', matches: [] }
   }
 
-  const inputTokens = normalizeToTokenSet(input)
+  const inputTokens = normalizeToTokenSet(canonicalizeCommandInput(input))
   if (inputTokens.size === 0) {
     return { type: 'none', matches: [] }
   }
