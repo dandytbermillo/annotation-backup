@@ -73,7 +73,7 @@ import {
   callReturnCueLLM,
   isLLMFallbackEnabledClient,
 } from '@/lib/chat/clarification-llm-fallback'
-import { isExplicitCommand, isSelectionOnly, resolveScopeCue } from '@/lib/chat/input-classifiers'
+import { isExplicitCommand, isSelectionOnly, resolveScopeCue, canonicalizeCommandInput } from '@/lib/chat/input-classifiers'
 import { isSelectionLike } from '@/lib/chat/grounding-set'
 import type { LastOptionsShown } from '@/lib/chat/chat-navigation-context'
 
@@ -3157,12 +3157,134 @@ export async function handleClarificationIntercept(
       return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
     }
 
+    // ==========================================================================
+    // Hoisted Tier 1b.3 matching helpers (pure functions — safe to hoist)
+    // Used by both the pre-gate (selection-vs-command arbitration) and
+    // label matching below. Single source of truth to prevent semantic drift.
+    // ==========================================================================
+
+    // Helper: Check if label matches in input with word boundary
+    // e.g., "workspace 2" in "workspace 2 please" → true (followed by space)
+    // e.g., "workspace 2" in "workspace 22" → false (followed by digit, not word boundary)
+    const matchesWithWordBoundary = (input: string, label: string): boolean => {
+      if (!input.includes(label)) return false
+      const index = input.indexOf(label)
+      const endIndex = index + label.length
+      // Label must end at word boundary (end of string or followed by space/punctuation)
+      if (endIndex === input.length) return true
+      const charAfter = input[endIndex]
+      return /[\s,!?.]/.test(charAfter)
+    }
+
+    // Helper: Canonical token matching for singular/plural handling
+    // e.g., "links panels d" → tokens {links, panel, d} matches "Links Panel D" → {links, panel, d}
+    // e.g., "link panels d" → tokens {links, panel, d} matches "Links Panel D"
+    const canonicalTokens: Record<string, string> = {
+      panel: 'panel', panels: 'panel',
+      widget: 'widget', widgets: 'widget',
+      link: 'links', links: 'links',
+    }
+    // Note: this intentionally shadows the import from clarification-offmenu
+    // which has different semantics (stopwords + micro-alias). This version
+    // uses panel/widget singular-plural normalization for label matching.
+    const toCanonicalTokens = (s: string): Set<string> => {
+      const tokens = s.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean)
+      return new Set(tokens.map(t => canonicalTokens[t] ?? t))
+    }
+    const tokensMatch = (inputTokens: Set<string>, labelTokens: Set<string>): boolean => {
+      // Exact token match: all label tokens in input AND all input tokens in label
+      if (inputTokens.size !== labelTokens.size) return false
+      for (const t of inputTokens) {
+        if (!labelTokens.has(t)) return false
+      }
+      return true
+    }
+
+    /**
+     * Shared label matcher: checks if a candidate string matches ANY active option.
+     * Used by both the pre-gate (candidate-aware exception) and Tier 1b.3 label matching.
+     * Single definition prevents semantic drift between the two call sites.
+     *
+     * Returns matching options (empty array = no match).
+     */
+    const findMatchingOptions = (
+      candidate: string,
+      options: ClarificationOption[],
+    ): ClarificationOption[] => {
+      const normalizedCandidate = candidate.toLowerCase().trim()
+      if (!normalizedCandidate) return []
+      return options.filter(opt => {
+        const label = opt.label.toLowerCase().trim()
+        // 1. Exact / substring / word-boundary match
+        if (label === normalizedCandidate ||
+            label.includes(normalizedCandidate) ||
+            matchesWithWordBoundary(normalizedCandidate, label)) {
+          return true
+        }
+        // 2. Canonical token matching (handles singular/plural)
+        const inputTokens = toCanonicalTokens(normalizedCandidate)
+        const labelTokens = toCanonicalTokens(label)
+        return tokensMatch(inputTokens, labelTokens)
+      })
+    }
+
+    // ==========================================================================
+    // Selection-vs-Command Arbitration Pre-gate
+    // Per selection-vs-command-arbitration-rule-plan.md:
+    // When command-like input doesn't target any active option, bypass
+    // label matching and let it reach Tier 2c/Tier 4 command routing.
+    // ==========================================================================
+    const inputIsExplicitCommand = isExplicitCommand(trimmedInput)
+    const inputIsSelectionLike = isSelectionLike(trimmedInput)
+
+    // Candidate-aware label check: does the canonicalized input match ANY active option?
+    // Uses the SAME matching semantics as Tier 1b.3 via findMatchingOptions.
+    const inputTargetsActiveOption = (() => {
+      if (!lastClarification?.options?.length) return false
+      if (!inputIsExplicitCommand && !isNewQuestionOrCommandDetected) return false
+      const canonicalized = canonicalizeCommandInput(trimmedInput)
+      if (!canonicalized) return false
+      return findMatchingOptions(canonicalized, lastClarification.options).length > 0
+    })()
+
+    const commandBypassesLabelMatching =
+      (isNewQuestionOrCommandDetected || inputIsExplicitCommand)
+      && !inputIsSelectionLike
+      && !inputTargetsActiveOption  // ANY match keeps in selection flow
+
     // Tier 1b.3: Label matching for option selection (BEFORE new-intent escape)
     // Per pending-options-resilience-fix.md: "links panel e" should match "Links Panel E" option
     // even if it looks like a new command. Selection takes priority over new-intent escape.
     // IMPORTANT: If input matches MULTIPLE options (e.g., "links panel" matches both D and E),
     // do NOT auto-select - fall through to re-show options instead.
-    if (lastClarification?.options && lastClarification.options.length > 0) {
+    if (commandBypassesLabelMatching) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'clarification_selection_bypassed_command_intent',
+        metadata: {
+          input: trimmedInput,
+          activeOptionsCount: lastClarification?.options?.length ?? 0,
+          isSelectionLike: inputIsSelectionLike,
+          isExplicitCommand: inputIsExplicitCommand,
+          isNewQuestionOrCommandDetected,
+          inputTargetsActiveOption,
+        },
+      })
+      // Fall through — skip label matching, let command reach Tier 2c/Tier 4
+      // Tier 3.5/3.6 resolver flow and downstream tiers remain reachable.
+    } else if (lastClarification?.options && lastClarification.options.length > 0) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'clarification_selection_allowed_selection_like',
+        metadata: {
+          input: trimmedInput,
+          activeOptionsCount: lastClarification.options.length,
+          isSelectionLike: inputIsSelectionLike,
+          isExplicitCommand: inputIsExplicitCommand,
+          inputTargetsActiveOption,
+        },
+      })
+
       // ==========================================================================
       // Clarification-Mode Command Normalization (per plan §215-227)
       // Strip command verbs, normalize typos, enable badge-aware selection
@@ -3291,40 +3413,6 @@ export async function handleClarificationIntercept(
       // Also prepare verb-stripped version for matching (per plan §215-218)
       const inputForMatching = inputWithoutVerb.toLowerCase().trim()
 
-      // Helper: Check if label matches in input with word boundary
-      // e.g., "workspace 2" in "workspace 2 please" → true (followed by space)
-      // e.g., "workspace 2" in "workspace 22" → false (followed by digit, not word boundary)
-      const matchesWithWordBoundary = (input: string, label: string): boolean => {
-        if (!input.includes(label)) return false
-        const index = input.indexOf(label)
-        const endIndex = index + label.length
-        // Label must end at word boundary (end of string or followed by space/punctuation)
-        if (endIndex === input.length) return true
-        const charAfter = input[endIndex]
-        return /[\s,!?.]/.test(charAfter)
-      }
-
-      // Helper: Canonical token matching for singular/plural handling
-      // e.g., "links panels d" → tokens {links, panel, d} matches "Links Panel D" → {links, panel, d}
-      // e.g., "link panels d" → tokens {links, panel, d} matches "Links Panel D"
-      const canonicalTokens: Record<string, string> = {
-        panel: 'panel', panels: 'panel',
-        widget: 'widget', widgets: 'widget',
-        link: 'links', links: 'links',
-      }
-      const toCanonicalTokens = (s: string): Set<string> => {
-        const tokens = s.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean)
-        return new Set(tokens.map(t => canonicalTokens[t] ?? t))
-      }
-      const tokensMatch = (inputTokens: Set<string>, labelTokens: Set<string>): boolean => {
-        // Exact token match: all label tokens in input AND all input tokens in label
-        if (inputTokens.size !== labelTokens.size) return false
-        for (const t of inputTokens) {
-          if (!labelTokens.has(t)) return false
-        }
-        return true
-      }
-
       // ==========================================================================
       // Badge-aware Selection (per plan §220-222)
       // If input has a badge suffix (d, e, 1, 2), match against option labels
@@ -3374,31 +3462,21 @@ export async function handleClarificationIntercept(
         }
       }
 
-      // Find ALL matching options, not just the first one
-      // Use both original input AND verb-stripped input for matching
-      const matchingOptions = lastClarification.options.filter(opt => {
-        const normalizedLabel = opt.label.toLowerCase()
-        // 1. Exact string match, or input is contained in label, or label is contained in input WITH word boundary
-        // Try both normalizedInput (original) and inputForMatching (verb-stripped)
-        if (normalizedLabel === normalizedInput ||
-            normalizedLabel === inputForMatching ||
-            normalizedLabel.includes(normalizedInput) ||
-            normalizedLabel.includes(inputForMatching) ||
-            matchesWithWordBoundary(normalizedInput, normalizedLabel) ||
-            matchesWithWordBoundary(inputForMatching, normalizedLabel)) {
-          return true
-        }
-        // 2. Canonical token matching (handles "links panels d" → "Links Panel D")
-        // Try with verb-stripped input first
-        const inputTokens = toCanonicalTokens(inputForMatching)
-        const labelTokens = toCanonicalTokens(normalizedLabel)
-        if (tokensMatch(inputTokens, labelTokens)) {
-          return true
-        }
-        // Also try with original input
-        const originalInputTokens = toCanonicalTokens(normalizedInput)
-        return tokensMatch(originalInputTokens, labelTokens)
-      })
+      // Find ALL matching options using shared findMatchingOptions helper.
+      // Try both original input AND verb-stripped input for matching (union results).
+      const matchesOriginal = findMatchingOptions(normalizedInput, lastClarification.options)
+      const matchesVerbStripped = findMatchingOptions(inputForMatching, lastClarification.options)
+      // Dedupe by option id
+      const matchedIds = new Set(matchesOriginal.map(o => o.id))
+      for (const m of matchesVerbStripped) {
+        if (!matchedIds.has(m.id)) matchesOriginal.push(m)
+      }
+      const matchingOptions = matchesOriginal
+
+      // Note: findMatchingOptions uses the same matching semantics as the original
+      // inline code (exact/substring/word-boundary + canonical token matching).
+      // Trying both normalizedInput and inputForMatching preserves the original
+      // dual-path behavior.
 
       // Only auto-select if EXACTLY ONE option matches
       // If multiple match (e.g., "links panel" matches both D and E), fall through to re-show

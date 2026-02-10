@@ -481,3 +481,144 @@ describe('dispatchRouting: polite panel command with active stale options from p
     expect(ctx.openPanelDrawer).not.toHaveBeenCalled()
   })
 })
+
+// ============================================================================
+// Selection-vs-Command Arbitration: Full routing with active options
+// Per selection-vs-command-arbitration-rule-plan.md
+// ============================================================================
+
+describe('dispatchRouting: selection-vs-command arbitration with active options', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+    mockBuildTurnSnapshot.mockReturnValue({
+      openWidgets: [],
+      activeSnapshotWidgetId: null,
+      uiSnapshotId: 'test-snap-arb',
+      revisionId: 1,
+      capturedAtMs: Date.now(),
+      hasBadgeLetters: false,
+    })
+    mockHandleKnownNounRouting.mockReturnValue({ handled: false })
+  })
+
+  // Helper to create stale workspace options (non-panel)
+  function createStaleWorkspaceContext(input: string, visibleWidgets: Array<{ id: string; title: string; type: string }> = []) {
+    const staleMessageId = 'assistant-stale-ws'
+    const staleOptions = [
+      { index: 1, label: 'sample2 F', sublabel: 'Recent workspace', type: 'workspace_list', id: 'ws-sample2f', data: { workspaceId: 'ws-1' } },
+      { index: 2, label: 'sample2', sublabel: 'Recent workspace', type: 'workspace_list', id: 'ws-sample2', data: { workspaceId: 'ws-2' } },
+      { index: 3, label: 'Workspace 4', sublabel: 'Recent workspace', type: 'workspace_list', id: 'ws-4', data: { workspaceId: 'ws-4' } },
+    ]
+    return createMockDispatchContext({
+      trimmedInput: input,
+      lastClarification: {
+        type: 'option_selection' as const,
+        originalIntent: 'recent_workspaces',
+        messageId: staleMessageId,
+        timestamp: Date.now() - 5000,
+        clarificationQuestion: 'Which workspace?',
+        options: staleOptions.map(o => ({ id: o.id, label: o.label, sublabel: o.sublabel, type: o.type })),
+        metaCount: 0,
+      },
+      pendingOptions: staleOptions,
+      activeOptionSetId: staleMessageId,
+      uiContext: {
+        mode: 'dashboard',
+        dashboard: {
+          entryName: 'Test Entry',
+          visibleWidgets,
+        },
+      },
+    })
+  }
+
+  it('command escape: "open links panel" with stale non-matching options → Tier 2c panel disambiguation', async () => {
+    const ctx = createStaleWorkspaceContext('open links panel', [
+      { id: 'links-panels', title: 'Links Panels', type: 'links_note_tiptap' },
+      { id: 'links-panel-d', title: 'Links Panel D', type: 'links_note_tiptap' },
+      { id: 'links-panel-e', title: 'Links Panel E', type: 'links_note_tiptap' },
+    ])
+
+    const result = await dispatchRouting(ctx)
+
+    // Pre-gate bypasses label matching → falls through to Tier 2c
+    expect(result.handled).toBe(true)
+    expect(result.handledByTier).toBe(2)
+    expect(result.tierLabel).toBe('panel_disambiguation')
+
+    // Response should be about multiple panels, NOT "Which workspace?"
+    expect(ctx.addMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('Multiple'),
+      })
+    )
+  })
+
+  it('selection stays: "open links panel" with MATCHING active panel options → Tier 0 intercept (selection flow)', async () => {
+    // Options include "Links Panel D", "Links Panel E" — "links panel" matches both
+    const staleMessageId = 'assistant-panel-disambig'
+    const panelOptions = [
+      { index: 1, label: 'Links Panels', sublabel: 'Panel', type: 'panel_drawer', id: 'links-panels', data: { panelId: 'links-panels', panelTitle: 'Links Panels', panelType: 'default' } },
+      { index: 2, label: 'Links Panel D', sublabel: 'Panel', type: 'panel_drawer', id: 'links-panel-d', data: { panelId: 'links-panel-d', panelTitle: 'Links Panel D', panelType: 'default' } },
+      { index: 3, label: 'Links Panel E', sublabel: 'Panel', type: 'panel_drawer', id: 'links-panel-e', data: { panelId: 'links-panel-e', panelTitle: 'Links Panel E', panelType: 'default' } },
+    ]
+
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'open links panel',
+      lastClarification: {
+        type: 'panel_disambiguation' as const,
+        originalIntent: 'open links panel',
+        messageId: staleMessageId,
+        timestamp: Date.now() - 2000,
+        options: panelOptions.map(o => ({ id: o.id, label: o.label, sublabel: o.sublabel, type: o.type })),
+        metaCount: 0,
+      },
+      pendingOptions: panelOptions,
+      activeOptionSetId: staleMessageId,
+      uiContext: {
+        mode: 'dashboard',
+        dashboard: {
+          entryName: 'Test Entry',
+          visibleWidgets: [
+            { id: 'links-panels', title: 'Links Panels', type: 'links_note_tiptap' },
+            { id: 'links-panel-d', title: 'Links Panel D', type: 'links_note_tiptap' },
+            { id: 'links-panel-e', title: 'Links Panel E', type: 'links_note_tiptap' },
+          ],
+        },
+      },
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    // Candidate-aware check: "links panel" matches options → stays in selection flow (Tier 0 intercept)
+    expect(result.handled).toBe(true)
+    expect(result.handledByTier).toBe(0) // clarification intercept handles it
+  })
+
+  it('safety: "the second one" with active options → Tier 0 ordinal selection', async () => {
+    const ctx = createStaleWorkspaceContext('the second one')
+
+    const result = await dispatchRouting(ctx)
+
+    expect(result.handled).toBe(true)
+    expect(result.handledByTier).toBe(0)
+    expect(ctx.handleSelectOption).toHaveBeenCalled()
+  })
+
+  it('downstream preservation: "open recent" with stale non-matching options → reaches Tier 4 known-noun', async () => {
+    // Mock Tier 4 to handle the input
+    mockHandleKnownNounRouting.mockReturnValueOnce({ handled: true, handledByTier: 4, tierLabel: 'known_noun' })
+
+    const ctx = createStaleWorkspaceContext('open recent')
+
+    const result = await dispatchRouting(ctx)
+
+    // Pre-gate bypasses label matching → falls through past Tier 0/1
+    // "open recent" reaches Tier 4 known-noun routing
+    expect(result.handled).toBe(true)
+    expect(result.handledByTier).toBe(4)
+
+    // Proves downstream tiers (3.5/3.6/4) remain reachable after pre-gate bypass
+    expect(mockHandleKnownNounRouting).toHaveBeenCalled()
+  })
+})

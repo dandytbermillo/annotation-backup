@@ -72,12 +72,35 @@ If a behavior gap exists, update these shared utilities and their tests; do not 
 ## Required Behavior Matrix
 
 1. Active options + `the second one` -> selection.
-2. Active options + `open links panel` -> command path (Tier 2c/Tier 4), not clarification re-show.
+2. Active options + `open links panel`:
+   - if exact normalized active-option label match exists -> selection (no loop re-show).
+   - else command path (Tier 2c/Tier 4), not stale-options re-show.
 3. Active options + `panel d`:
    - if selection-like unique inside active options -> selection.
    - else command path.
 4. Active options + truly ambiguous selection-like match -> ask clarifier in current context.
 5. No active options + command-like -> command path.
+
+## Addendum - Intra-Selection Precedence (Exact-First)
+
+This addendum removes re-clarify loops when selection flow is already active.
+
+When routing is already in selection flow, apply this deterministic order:
+
+1. Exact normalized label match (including singular/plural normalization).
+2. Unique badge/ordinal match.
+3. Broad token/substring match.
+4. Clarifier only if still multi-match.
+
+Required outcomes with active options `[Links Panels, Links Panel D, Links Panel E]`:
+- `open links panel` -> select `Links Panels` (no re-show loop).
+- `open links panel d` -> select `Links Panel D`.
+- `open links` -> clarifier (ambiguous).
+
+Normalization contract:
+- Canonicalize both input and option labels before exact comparison.
+- Reuse existing shared canonicalization/matching utilities; do not introduce parallel one-off matchers.
+- Do not auto-switch scope as part of this precedence.
 
 ## Implementation Plan
 
@@ -133,10 +156,13 @@ Each log should include:
 
 ### Unit
 
-1. Active options + `open links panel` -> Tier 1b.3 skipped.
+1. Active options + `open links panel`:
+   - with exact normalized label winner -> selected in selection flow.
+   - with no active-option winner -> Tier 1b.3 skipped, command path.
 2. Active options + `the second one` -> Tier 1b.3a ordinal selection still works.
 3. Active options + `panel d` unique label -> selection allowed.
 4. Active options + non-selection command-like phrase -> command path.
+5. Active options + `open links` -> clarifier (multi-match), not command escape.
 
 ### Integration
 
@@ -144,9 +170,11 @@ Each log should include:
    - active stale options (`sample2 F`, `sample2`, `Workspace 4`)
    - input `can you open links panel pls`
    - expected: panel disambiguation (`Links Panels`, `Links Panel D`, `Links Panel E`), no stale-options re-show.
-2. Safety:
+2. Active options (`Links Panels`, `Links Panel D`, `Links Panel E`) + `open links panel`:
+   - expected: select `Links Panels` (no repeated re-show loop).
+3. Safety:
    - `the second one` with same active options still selects second option.
-3. Explicit scope cue:
+4. Explicit scope cue:
    - `open the first one from chat` resolves in the same turn (same routing call), not next-turn restore.
 
 ## Regression Guardrails for Future Implementers
