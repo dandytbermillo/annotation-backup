@@ -200,6 +200,14 @@ This index documents plan timelines for chat navigation: doc retrieval and clari
 
 ---
 
+### 16. Deterministic -> LLM Ladder Enforcement Addendum
+**File:** `deterministic-llm-ladder-enforcement-addendum-plan.md`
+**Purpose:** Enforce a single deterministic->LLM->safe-fallback ladder for active-option ambiguity paths and prevent premature command escapes (e.g., typo command collisions)
+
+**Status:** 📝 Draft addendum (implementation guidance)
+
+---
+
 ## Implementation Reports
 
 | Date | Report | Plan |

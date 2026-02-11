@@ -40,7 +40,7 @@ export interface ClarificationLLMResult {
 // =============================================================================
 
 const LLM_TIMEOUT_MS = 800
-const MIN_CONFIDENCE_SELECT = 0.6
+export const MIN_CONFIDENCE_SELECT = 0.6
 const MIN_CONFIDENCE_ASK = 0.4
 
 // Feature flag check (server-side)

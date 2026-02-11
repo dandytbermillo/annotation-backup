@@ -24,7 +24,10 @@ jest.mock('@/lib/chat/ui-snapshot-builder', () => ({
 
 jest.mock('@/lib/chat/clarification-llm-fallback', () => ({
   callClarificationLLMClient: jest.fn().mockResolvedValue({ success: false }),
+  callReturnCueLLM: jest.fn().mockResolvedValue({ isReturn: false }),
   isLLMFallbackEnabledClient: jest.fn().mockReturnValue(false),
+  shouldCallLLMFallback: jest.fn().mockReturnValue(false),
+  MIN_CONFIDENCE_SELECT: 0.6,
 }))
 
 jest.mock('@/lib/chat/grounding-llm-fallback', () => ({
@@ -64,6 +67,9 @@ global.fetch = jest.fn().mockResolvedValue({
 // ============================================================================
 
 import { dispatchRouting, type RoutingDispatcherContext } from '@/lib/chat/routing-dispatcher'
+import { resetLLMArbitrationGuard } from '@/lib/chat/chat-routing'
+import { callClarificationLLMClient, isLLMFallbackEnabledClient } from '@/lib/chat/clarification-llm-fallback'
+import { debugLog } from '@/lib/utils/debug-logger'
 
 // ============================================================================
 // Mock Context Factory
@@ -554,8 +560,9 @@ describe('dispatchRouting: selection-vs-command arbitration with active options'
     )
   })
 
-  it('selection stays: "open links panel" with MATCHING active panel options → Tier 0 intercept (selection flow)', async () => {
-    // Options include "Links Panel D", "Links Panel E" — "links panel" matches both
+  it('exact-first: "open links panel" with MATCHING active panel options → Tier 0 selects Links Panels (exact match)', async () => {
+    // Options include "Links Panels", "Links Panel D", "Links Panel E"
+    // "links panel" tokens = {links, panel} exactly matches "Links Panels" = {links, panel}
     const staleMessageId = 'assistant-panel-disambig'
     const panelOptions = [
       { index: 1, label: 'Links Panels', sublabel: 'Panel', type: 'panel_drawer', id: 'links-panels', data: { panelId: 'links-panels', panelTitle: 'Links Panels', panelType: 'default' } },
@@ -590,9 +597,64 @@ describe('dispatchRouting: selection-vs-command arbitration with active options'
 
     const result = await dispatchRouting(ctx)
 
-    // Candidate-aware check: "links panel" matches options → stays in selection flow (Tier 0 intercept)
+    // Exact-first: selects Links Panels (Tier 0 intercept)
     expect(result.handled).toBe(true)
-    expect(result.handledByTier).toBe(0) // clarification intercept handles it
+    expect(result.handledByTier).toBe(0)
+    // Must have selected Links Panels, not re-shown options
+    expect(ctx.handleSelectOption).toHaveBeenCalledWith(
+      expect.objectContaining({ label: 'Links Panels' })
+    )
+  })
+
+  it('no re-show loop: "open links panel" does not loop when Links Panels is present', async () => {
+    // This is the regression test: repeated "open links panel" must not
+    // trigger the generic "Which one do you mean" re-show when an exact match exists.
+    const staleMessageId = 'assistant-panel-disambig'
+    const panelOptions = [
+      { index: 1, label: 'Links Panels', sublabel: 'Panel', type: 'panel_drawer', id: 'links-panels', data: { panelId: 'links-panels', panelTitle: 'Links Panels', panelType: 'default' } },
+      { index: 2, label: 'Links Panel D', sublabel: 'Panel', type: 'panel_drawer', id: 'links-panel-d', data: { panelId: 'links-panel-d', panelTitle: 'Links Panel D', panelType: 'default' } },
+      { index: 3, label: 'Links Panel E', sublabel: 'Panel', type: 'panel_drawer', id: 'links-panel-e', data: { panelId: 'links-panel-e', panelTitle: 'Links Panel E', panelType: 'default' } },
+    ]
+
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'open links panel',
+      lastClarification: {
+        type: 'panel_disambiguation' as const,
+        originalIntent: 'open links panel',
+        messageId: staleMessageId,
+        timestamp: Date.now() - 2000,
+        options: panelOptions.map(o => ({ id: o.id, label: o.label, sublabel: o.sublabel, type: o.type })),
+        metaCount: 0,
+      },
+      pendingOptions: panelOptions,
+      activeOptionSetId: staleMessageId,
+      uiContext: {
+        mode: 'dashboard',
+        dashboard: {
+          entryName: 'Test Entry',
+          visibleWidgets: [
+            { id: 'links-panels', title: 'Links Panels', type: 'links_note_tiptap' },
+            { id: 'links-panel-d', title: 'Links Panel D', type: 'links_note_tiptap' },
+            { id: 'links-panel-e', title: 'Links Panel E', type: 'links_note_tiptap' },
+          ],
+        },
+      },
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    expect(result.handled).toBe(true)
+    // Must select — clarification should be cleared (not re-shown)
+    expect(ctx.handleSelectOption).toHaveBeenCalledTimes(1)
+
+    // The response must NOT contain the generic re-show prompt
+    const addMessageCalls = (ctx.addMessage as jest.Mock).mock.calls
+    for (const [msg] of addMessageCalls) {
+      if (msg.content) {
+        expect(msg.content).not.toContain('Which one do you mean')
+        expect(msg.content).not.toContain('none of these')
+      }
+    }
   })
 
   it('safety: "the second one" with active options → Tier 0 ordinal selection', async () => {
@@ -620,5 +682,677 @@ describe('dispatchRouting: selection-vs-command arbitration with active options'
 
     // Proves downstream tiers (3.5/3.6/4) remain reachable after pre-gate bypass
     expect(mockHandleKnownNounRouting).toHaveBeenCalled()
+  })
+})
+
+// ============================================================================
+// LLM Arbitration Integration: Full routing with multi-match + LLM
+// Per deterministic-llm-arbitration-fallback-plan.md
+// ============================================================================
+
+describe('dispatchRouting: LLM arbitration integration (clarify-only)', () => {
+  const panelOptions = [
+    { index: 1, label: 'Links Panels', sublabel: 'Panel', type: 'panel_drawer', id: 'opt-0', data: { panelId: 'links-panels', panelTitle: 'Links Panels', panelType: 'default' } },
+    { index: 2, label: 'Links Panel D', sublabel: 'Panel', type: 'panel_drawer', id: 'opt-1', data: { panelId: 'links-panel-d', panelTitle: 'Links Panel D', panelType: 'default' } },
+    { index: 3, label: 'Links Panel E', sublabel: 'Panel', type: 'panel_drawer', id: 'opt-2', data: { panelId: 'links-panel-e', panelTitle: 'Links Panel E', panelType: 'default' } },
+  ]
+  const disambigMessageId = 'assistant-panel-disambig'
+  const panelClarification = {
+    type: 'panel_disambiguation' as const,
+    originalIntent: 'open links panel',
+    messageId: disambigMessageId,
+    timestamp: Date.now() - 2000,
+    options: panelOptions.map(o => ({ id: o.id, label: o.label, sublabel: o.sublabel, type: o.type })),
+    metaCount: 0,
+  }
+  const visibleWidgets = [
+    { id: 'links-panels', title: 'Links Panels', type: 'links_note_tiptap' },
+    { id: 'links-panel-d', title: 'Links Panel D', type: 'links_note_tiptap' },
+    { id: 'links-panel-e', title: 'Links Panel E', type: 'links_note_tiptap' },
+  ]
+
+  beforeEach(() => {
+    jest.clearAllMocks()
+    resetLLMArbitrationGuard()
+    mockBuildTurnSnapshot.mockReturnValue({
+      openWidgets: [],
+      activeSnapshotWidgetId: null,
+      uiSnapshotId: 'test-snap-llm',
+      revisionId: 1,
+      capturedAtMs: Date.now(),
+      hasBadgeLetters: false,
+    })
+    mockHandleKnownNounRouting.mockReturnValue({ handled: false })
+  })
+
+  function createLLMTestContext(input: string) {
+    return createMockDispatchContext({
+      trimmedInput: input,
+      lastClarification: panelClarification,
+      pendingOptions: panelOptions,
+      activeOptionSetId: disambigMessageId,
+      uiContext: {
+        mode: 'dashboard',
+        dashboard: { entryName: 'Test Entry', visibleWidgets },
+      },
+    })
+  }
+
+  it('LLM narrows multi-match: re-shows clarifier with LLM pick first, NOT auto-executed', async () => {
+    ;(isLLMFallbackEnabledClient as jest.Mock).mockReturnValue(true)
+    ;(callClarificationLLMClient as jest.Mock).mockResolvedValue({
+      success: true,
+      response: { decision: 'select', choiceId: 'opt-0', confidence: 0.9, reason: 'best match' },
+      latencyMs: 200,
+    })
+
+    const ctx = createLLMTestContext('open links')
+    const result = await dispatchRouting(ctx)
+
+    // Handled at Tier 0 (clarification intercept)
+    expect(result.handled).toBe(true)
+    expect(result.handledByTier).toBe(0)
+
+    // Clarify-only: MUST NOT auto-execute
+    expect(ctx.handleSelectOption).not.toHaveBeenCalled()
+
+    // Must re-show clarifier with LLM's pick first
+    expect(ctx.addMessage).toHaveBeenCalledTimes(1)
+    const addedMsg = (ctx.addMessage as jest.Mock).mock.calls[0][0]
+    expect(addedMsg.options[0].id).toBe('opt-0') // LLM's pick reordered first
+
+    // LLM arbitration log emitted
+    expect(debugLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'llm_arbitration_called',
+        metadata: expect.objectContaining({
+          finalResolution: 'clarifier',
+        }),
+      })
+    )
+  })
+
+  it('LLM failure → safe clarifier, no execution', async () => {
+    ;(isLLMFallbackEnabledClient as jest.Mock).mockReturnValue(true)
+    ;(callClarificationLLMClient as jest.Mock).mockResolvedValue({
+      success: false,
+      error: 'Timeout',
+      latencyMs: 800,
+    })
+
+    const ctx = createLLMTestContext('open links')
+    const result = await dispatchRouting(ctx)
+
+    expect(result.handled).toBe(true)
+    expect(result.handledByTier).toBe(0)
+
+    // No execution on failure
+    expect(ctx.handleSelectOption).not.toHaveBeenCalled()
+
+    // Clarifier re-shown with original order
+    expect(ctx.addMessage).toHaveBeenCalledTimes(1)
+
+    // Failure log emitted
+    expect(debugLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'llm_arbitration_failed_fallback_clarifier',
+        metadata: expect.objectContaining({
+          fallback_reason: 'timeout',
+        }),
+      })
+    )
+  })
+
+  it('LLM 429 → safe clarifier, fallback_reason: transport_error', async () => {
+    ;(isLLMFallbackEnabledClient as jest.Mock).mockReturnValue(true)
+    ;(callClarificationLLMClient as jest.Mock).mockResolvedValue({
+      success: false,
+      error: 'API error: 429',
+      latencyMs: 300,
+    })
+
+    const ctx = createLLMTestContext('open links')
+    const result = await dispatchRouting(ctx)
+
+    expect(result.handled).toBe(true)
+    expect(ctx.handleSelectOption).not.toHaveBeenCalled()
+    expect(ctx.addMessage).toHaveBeenCalledTimes(1)
+
+    expect(debugLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'llm_arbitration_failed_fallback_clarifier',
+        metadata: expect.objectContaining({
+          fallback_reason: '429',
+        }),
+      })
+    )
+  })
+
+  it('deterministic exact winner skips LLM: "open links panel" → exact-first selects, LLM never called', async () => {
+    ;(isLLMFallbackEnabledClient as jest.Mock).mockReturnValue(true)
+
+    const ctx = createLLMTestContext('open links panel')
+    const result = await dispatchRouting(ctx)
+
+    // Exact-first selects Links Panels deterministically
+    expect(result.handled).toBe(true)
+    expect(result.handledByTier).toBe(0)
+    expect(ctx.handleSelectOption).toHaveBeenCalledWith(
+      expect.objectContaining({ label: 'Links Panels' })
+    )
+
+    // LLM was never called — deterministic fast path
+    expect(callClarificationLLMClient).not.toHaveBeenCalled()
+  })
+})
+
+// ============================================================================
+// Scope-cue Phase 2b: label matching routes to chat options, not widget disambiguation
+// ============================================================================
+
+describe('dispatchRouting: scope-cue Phase 2b label matching routes to chat options', () => {
+  const chatOptions = [
+    { id: 'opt-0', label: 'Links Panels', sublabel: 'Panel', type: 'panel_drawer' },
+    { id: 'opt-1', label: 'Links Panel D', sublabel: 'Panel', type: 'panel_drawer' },
+    { id: 'opt-2', label: 'Links Panel E', sublabel: 'Panel', type: 'panel_drawer' },
+  ]
+
+  let savedEnv: string | undefined
+
+  beforeEach(() => {
+    jest.clearAllMocks()
+    resetLLMArbitrationGuard()
+    // Enable latch feature flag so scope-cue path activates
+    savedEnv = process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1
+    process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1 = 'true'
+    mockBuildTurnSnapshot.mockReturnValue({
+      openWidgets: [],
+      activeSnapshotWidgetId: null,
+      uiSnapshotId: 'test-snap-scope-cue',
+      revisionId: 1,
+      capturedAtMs: Date.now(),
+      hasBadgeLetters: false,
+    })
+    mockHandleKnownNounRouting.mockReturnValue({ handled: false })
+  })
+
+  afterEach(() => {
+    // Restore env
+    if (savedEnv === undefined) {
+      delete process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1
+    } else {
+      process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1 = savedEnv
+    }
+  })
+
+  it('"open the panel d from chat" with active widget items → resolves to chat option, not widget disambiguation', async () => {
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'open the panel d from chat',
+      clarificationSnapshot: {
+        options: chatOptions,
+        originalIntent: 'open links panel',
+        type: 'panel_disambiguation',
+        turnsSinceSet: 0,
+        timestamp: Date.now(),
+      },
+      uiContext: {
+        mode: 'dashboard',
+        dashboard: {
+          entryName: 'Test Entry',
+          visibleWidgets: [
+            { id: 'summary144', title: 'Summary 144', type: 'summary_tiptap' },
+            { id: 'summary155', title: 'Summary 155', type: 'summary_tiptap' },
+          ],
+        },
+      },
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    // Handled by scope-cue Phase 2b label matching at Tier 0
+    expect(result.handled).toBe(true)
+    expect(result.handledByTier).toBe(0)
+
+    // Must have selected Links Panel D (chat option), NOT widget disambiguation
+    expect(ctx.handleSelectOption).toHaveBeenCalledTimes(1)
+    expect(ctx.handleSelectOption).toHaveBeenCalledWith(
+      expect.objectContaining({ label: 'Links Panel D' })
+    )
+
+    // Tier 4 known-noun should never be reached
+    expect(mockHandleKnownNounRouting).not.toHaveBeenCalled()
+  })
+
+  it('"open links from chat" with active widget items → shows chat clarifier, not widget routing', async () => {
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'open links from chat',
+      clarificationSnapshot: {
+        options: chatOptions,
+        originalIntent: 'open links panel',
+        type: 'panel_disambiguation',
+        turnsSinceSet: 0,
+        timestamp: Date.now(),
+      },
+      uiContext: {
+        mode: 'dashboard',
+        dashboard: {
+          entryName: 'Test Entry',
+          visibleWidgets: [
+            { id: 'summary144', title: 'Summary 144', type: 'summary_tiptap' },
+          ],
+        },
+      },
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    // Handled by scope-cue Phase 2b multi-match → clarifier at Tier 0
+    expect(result.handled).toBe(true)
+    expect(result.handledByTier).toBe(0)
+
+    // Must NOT auto-execute — should show chat clarifier
+    expect(ctx.handleSelectOption).not.toHaveBeenCalled()
+
+    // Clarifier shown as visible message with options (not just setPendingOptions)
+    expect(ctx.addMessage).toHaveBeenCalledTimes(1)
+    const msg = (ctx.addMessage as jest.Mock).mock.calls[0][0]
+    expect(msg.content).toContain('Which one do you mean')
+    expect(msg.options).toHaveLength(3)
+    // Pending options set with the new message's ID
+    expect(ctx.setPendingOptions).toHaveBeenCalled()
+
+    // Tier 4 known-noun should never be reached
+    expect(mockHandleKnownNounRouting).not.toHaveBeenCalled()
+  })
+
+  it('"open second option from chat" with active widget items → resolves to chat option #2', async () => {
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'open second option from chat',
+      clarificationSnapshot: {
+        options: chatOptions,
+        originalIntent: 'open links panel',
+        type: 'panel_disambiguation',
+        turnsSinceSet: 0,
+        timestamp: Date.now(),
+      },
+      uiContext: {
+        mode: 'dashboard',
+        dashboard: {
+          entryName: 'Test Entry',
+          visibleWidgets: [
+            { id: 'summary144', title: 'Summary 144', type: 'summary_tiptap' },
+            { id: 'summary155', title: 'Summary 155', type: 'summary_tiptap' },
+          ],
+        },
+      },
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    expect(result.handled).toBe(true)
+    expect(result.handledByTier).toBe(0)
+    expect(ctx.handleSelectOption).toHaveBeenCalledWith(
+      expect.objectContaining({ label: 'Links Panel D' })
+    )
+    expect(mockHandleKnownNounRouting).not.toHaveBeenCalled()
+  })
+})
+
+// ============================================================================
+// Decision ladder enforcement: typo verb handling
+// Phase A (canonicalization) + Phase B (LLM ladder enforcement)
+// Per deterministic-llm-ladder-enforcement-addendum-plan.md
+// ============================================================================
+
+describe('dispatchRouting: typo verb handling (ladder enforcement Phase A + B)', () => {
+  const panelOptions = [
+    { index: 1, label: 'Links Panels', sublabel: 'Panel', type: 'panel_drawer', id: 'opt-0', data: { panelId: 'links-panels', panelTitle: 'Links Panels', panelType: 'default' } },
+    { index: 2, label: 'Links Panel D', sublabel: 'Panel', type: 'panel_drawer', id: 'opt-1', data: { panelId: 'links-panel-d', panelTitle: 'Links Panel D', panelType: 'default' } },
+    { index: 3, label: 'Links Panel E', sublabel: 'Panel', type: 'panel_drawer', id: 'opt-2', data: { panelId: 'links-panel-e', panelTitle: 'Links Panel E', panelType: 'default' } },
+  ]
+  const disambigMessageId = 'assistant-panel-disambig-typo'
+  const panelClarification = {
+    type: 'panel_disambiguation' as const,
+    originalIntent: 'open links panel',
+    messageId: disambigMessageId,
+    timestamp: Date.now() - 2000,
+    options: panelOptions.map(o => ({ id: o.id, label: o.label, sublabel: o.sublabel, type: o.type })),
+    metaCount: 0,
+  }
+  const visibleWidgets = [
+    { id: 'links-panels', title: 'Links Panels', type: 'links_note_tiptap' },
+    { id: 'links-panel-d', title: 'Links Panel D', type: 'links_note_tiptap' },
+    { id: 'links-panel-e', title: 'Links Panel E', type: 'links_note_tiptap' },
+  ]
+
+  beforeEach(() => {
+    jest.clearAllMocks()
+    resetLLMArbitrationGuard()
+    mockBuildTurnSnapshot.mockReturnValue({
+      openWidgets: [],
+      activeSnapshotWidgetId: null,
+      uiSnapshotId: 'test-snap-typo',
+      revisionId: 1,
+      capturedAtMs: Date.now(),
+      hasBadgeLetters: false,
+    })
+    mockHandleKnownNounRouting.mockReturnValue({ handled: false })
+  })
+
+  it('"ope panel d" with active panel options → Tier 0 resolves via badge-aware selection, NOT widget disambiguation', async () => {
+    // Phase B: canonicalizeCommandInput no longer strips "ope " (typo prefixes reverted)
+    // But "ope panel d" is not isExplicitCommand or isNewQuestionOrCommand → bypasses pre-gate
+    // → enters Tier 1b.3 label matching directly
+    // → normalizeCommandVerbs corrects "ope" → "open" → strip verb → "panel d"
+    // → badge extraction: "d" → badge match "Links Panel D"
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'ope panel d',
+      lastClarification: panelClarification,
+      pendingOptions: panelOptions,
+      activeOptionSetId: disambigMessageId,
+      uiContext: {
+        mode: 'dashboard',
+        dashboard: { entryName: 'Test Entry', visibleWidgets },
+      },
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    // Resolved by clarification intercept (Tier 0), not downstream
+    expect(result.handled).toBe(true)
+    expect(result.handledByTier).toBe(0)
+
+    // Must have selected Links Panel D
+    expect(ctx.handleSelectOption).toHaveBeenCalledTimes(1)
+    expect(ctx.handleSelectOption).toHaveBeenCalledWith(
+      expect.objectContaining({ label: 'Links Panel D' })
+    )
+
+    // Tier 4 known-noun must NOT be reached (no widget disambiguation takeover)
+    expect(mockHandleKnownNounRouting).not.toHaveBeenCalled()
+  })
+
+  it('"open recent" with active panel options → command escape preserved, reaches Tier 4', async () => {
+    // "open recent" doesn't match any panel option → pre-gate bypasses → downstream
+    mockHandleKnownNounRouting.mockReturnValueOnce({ handled: true, handledByTier: 4, tierLabel: 'known_noun' })
+
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'open recent',
+      lastClarification: panelClarification,
+      pendingOptions: panelOptions,
+      activeOptionSetId: disambigMessageId,
+      uiContext: {
+        mode: 'dashboard',
+        dashboard: { entryName: 'Test Entry', visibleWidgets },
+      },
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    // Command escape preserved: reaches Tier 4
+    expect(result.handled).toBe(true)
+    expect(result.handledByTier).toBe(4)
+    expect(mockHandleKnownNounRouting).toHaveBeenCalled()
+  })
+
+  it('"opn links panel" with active panel options → Tier 0 selects Links Panels (exact-first)', async () => {
+    // Phase B: canonicalizeCommandInput no longer strips "opn " (typo prefixes reverted)
+    // But "opn links panel" not isExplicitCommand/isNewQuestionOrCommand → bypasses pre-gate
+    // → enters label matching → normalizeCommandVerbs corrects "opn" → "open" → strip → "links panel"
+    // → exact-first: {links, panel} matches "Links Panels" → selects
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'opn links panel',
+      lastClarification: panelClarification,
+      pendingOptions: panelOptions,
+      activeOptionSetId: disambigMessageId,
+      uiContext: {
+        mode: 'dashboard',
+        dashboard: { entryName: 'Test Entry', visibleWidgets },
+      },
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    expect(result.handled).toBe(true)
+    expect(result.handledByTier).toBe(0)
+    expect(ctx.handleSelectOption).toHaveBeenCalledWith(
+      expect.objectContaining({ label: 'Links Panels' })
+    )
+    expect(mockHandleKnownNounRouting).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    'second',
+    'open second option',
+    'open that second option',
+    'open secone one',
+  ])('"%s" with active panel options → Tier 0 selects Links Panel D', async (input) => {
+    const ctx = createMockDispatchContext({
+      trimmedInput: input,
+      lastClarification: panelClarification,
+      pendingOptions: panelOptions,
+      activeOptionSetId: disambigMessageId,
+      uiContext: {
+        mode: 'dashboard',
+        dashboard: { entryName: 'Test Entry', visibleWidgets },
+      },
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    expect(result.handled).toBe(true)
+    expect(result.handledByTier).toBe(0)
+    expect(ctx.handleSelectOption).toHaveBeenCalledWith(
+      expect.objectContaining({ label: 'Links Panel D' })
+    )
+    expect(mockHandleKnownNounRouting).not.toHaveBeenCalled()
+  })
+})
+
+// ============================================================================
+// Decision ladder enforcement Phase B: LLM safe clarifier in active-option flows
+// Per deterministic-llm-ladder-enforcement-addendum-plan.md
+// ============================================================================
+
+describe('dispatchRouting: Phase B LLM ladder enforcement (active-option flows)', () => {
+  // "can you ope panel d pls" triggers PANEL_SELECTION → isSelectionLike=true
+  // → commandBypassesLabelMatching=false → enters label matching
+  // → extractBadge: last token "pls" (not single letter) → no badge
+  // → findMatchingOptions: 0 matches → unresolved hook (unified hook in Phase B v2).
+  const phaseBOptions = [
+    { index: 1, label: 'Links Panels', sublabel: 'Panel', type: 'panel_drawer', id: 'opt-0', data: { panelId: 'links-panels', panelTitle: 'Links Panels', panelType: 'default' } },
+    { index: 2, label: 'Links Panel D', sublabel: 'Panel', type: 'panel_drawer', id: 'opt-1', data: { panelId: 'links-panel-d', panelTitle: 'Links Panel D', panelType: 'default' } },
+    { index: 3, label: 'Links Panel E', sublabel: 'Panel', type: 'panel_drawer', id: 'opt-2', data: { panelId: 'links-panel-e', panelTitle: 'Links Panel E', panelType: 'default' } },
+  ]
+
+  function createPhaseBContext(input: string, messageId = 'assistant-disambig-b') {
+    return createMockDispatchContext({
+      trimmedInput: input,
+      lastClarification: {
+        type: 'option_selection' as const,
+        originalIntent: 'test',
+        messageId,
+        timestamp: Date.now() - 2000,
+        options: phaseBOptions.map(o => ({ id: o.id, label: o.label, sublabel: o.sublabel, type: o.type })),
+        metaCount: 0,
+      },
+      pendingOptions: phaseBOptions,
+      activeOptionSetId: messageId,
+      uiContext: {
+        mode: 'dashboard',
+        dashboard: { entryName: 'Test Entry', visibleWidgets: [] },
+      },
+    })
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks()
+    resetLLMArbitrationGuard()
+    mockBuildTurnSnapshot.mockReturnValue({
+      openWidgets: [],
+      activeSnapshotWidgetId: null,
+      uiSnapshotId: 'test-snap-phase-b',
+      revisionId: 1,
+      capturedAtMs: Date.now(),
+      hasBadgeLetters: false,
+    })
+    mockHandleKnownNounRouting.mockReturnValue({ handled: false })
+  })
+
+  it('"can you ope panel d pls" + active options + LLM → safe clarifier with LLM suggestion first (BLOCKER)', async () => {
+    // "panel d" triggers PANEL_SELECTION → isSelectionLike=true → enters label matching
+    // → extractBadge: last token "pls" (not single letter) → no badge
+    // → findMatchingOptions: 0 matches → unresolved hook → LLM called
+    ;(isLLMFallbackEnabledClient as jest.Mock).mockReturnValue(true)
+    ;(callClarificationLLMClient as jest.Mock).mockResolvedValue({
+      success: true,
+      response: { decision: 'select', choiceId: 'opt-1', confidence: 0.85, reason: 'best match' },
+      latencyMs: 200,
+    })
+
+    const ctx = createPhaseBContext('can you ope panel d pls')
+    const result = await dispatchRouting(ctx)
+
+    // Handled at Tier 0 (clarification intercept) — unresolved hook safe clarifier
+    expect(result.handled).toBe(true)
+    expect(result.handledByTier).toBe(0)
+
+    // Clarify-only: MUST NOT auto-execute
+    expect(ctx.handleSelectOption).not.toHaveBeenCalled()
+
+    // Re-show with LLM's pick first
+    expect(ctx.addMessage).toHaveBeenCalledTimes(1)
+    const addedMsg = (ctx.addMessage as jest.Mock).mock.calls[0][0]
+    expect(addedMsg.options[0].id).toBe('opt-1') // LLM's pick first
+
+    // LLM was called with tier1b3_unresolved context
+    expect(callClarificationLLMClient).toHaveBeenCalledTimes(1)
+
+    // mockHandleKnownNounRouting must NOT be called (no escape)
+    expect(mockHandleKnownNounRouting).not.toHaveBeenCalled()
+  })
+
+  it('"can you ope panel d pls" + active options + LLM disabled → safe clarifier (no escape)', async () => {
+    ;(isLLMFallbackEnabledClient as jest.Mock).mockReturnValue(false)
+
+    const ctx = createPhaseBContext('can you ope panel d pls')
+    const result = await dispatchRouting(ctx)
+
+    // Safe clarifier — NO escape
+    expect(result.handled).toBe(true)
+    expect(result.handledByTier).toBe(0)
+    expect(ctx.handleSelectOption).not.toHaveBeenCalled()
+
+    // Options re-shown in original order
+    expect(ctx.addMessage).toHaveBeenCalledTimes(1)
+    const addedMsg = (ctx.addMessage as jest.Mock).mock.calls[0][0]
+    expect(addedMsg.options[0].id).toBe('opt-0') // Original order
+
+    // NO escape to downstream
+    expect(mockHandleKnownNounRouting).not.toHaveBeenCalled()
+  })
+
+  it('"can you ope panel d pls" + active options + LLM timeout → safe clarifier', async () => {
+    ;(isLLMFallbackEnabledClient as jest.Mock).mockReturnValue(true)
+    ;(callClarificationLLMClient as jest.Mock).mockResolvedValue({
+      success: false,
+      error: 'Timeout',
+      latencyMs: 800,
+    })
+
+    const ctx = createPhaseBContext('can you ope panel d pls')
+    const result = await dispatchRouting(ctx)
+
+    // Safe clarifier
+    expect(result.handled).toBe(true)
+    expect(result.handledByTier).toBe(0)
+    expect(ctx.handleSelectOption).not.toHaveBeenCalled()
+    expect(ctx.addMessage).toHaveBeenCalledTimes(1)
+    expect(mockHandleKnownNounRouting).not.toHaveBeenCalled()
+  })
+
+  it('"where is panel d located" + active options → question intent escape via unresolved hook', async () => {
+    // "panel d" triggers PANEL_SELECTION → isSelectionLike=true → enters label matching
+    // "where" → hasQuestionIntent=true → unresolved hook detects question → escape
+    const ctx = createPhaseBContext('where is panel d located')
+    const result = await dispatchRouting(ctx)
+
+    // Question → escapes clarifier (not trapped)
+    expect(ctx.handleSelectOption).not.toHaveBeenCalled()
+
+    // Unresolved hook detects question intent and escapes
+    expect(debugLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'clarification_unresolved_hook_question_escape',
+      })
+    )
+  })
+
+  it('"open recent" with active options → explicit command → command escape → Tier 4', async () => {
+    mockHandleKnownNounRouting.mockReturnValueOnce({ handled: true, handledByTier: 4, tierLabel: 'known_noun' })
+
+    const ctx = createPhaseBContext('open recent')
+    const result = await dispatchRouting(ctx)
+
+    // Explicit command escape → Tier 4
+    expect(result.handled).toBe(true)
+    expect(result.handledByTier).toBe(4)
+    expect(mockHandleKnownNounRouting).toHaveBeenCalled()
+  })
+
+  it('loop guard reset: different messageId → LLM called again (BLOCKER)', async () => {
+    ;(isLLMFallbackEnabledClient as jest.Mock).mockReturnValue(true)
+    ;(callClarificationLLMClient as jest.Mock).mockResolvedValue({
+      success: false,
+      error: 'Timeout',
+      latencyMs: 800,
+    })
+
+    // --- Turn 1: messageId "msg-1" → LLM called ---
+    const ctx1 = createPhaseBContext('can you ope panel d pls', 'msg-1')
+    await dispatchRouting(ctx1)
+    expect(callClarificationLLMClient).toHaveBeenCalledTimes(1)
+
+    // --- Turn 2: SAME messageId "msg-1" → loop guard → LLM NOT called ---
+    jest.clearAllMocks()
+    ;(isLLMFallbackEnabledClient as jest.Mock).mockReturnValue(true)
+    ;(callClarificationLLMClient as jest.Mock).mockResolvedValue({
+      success: false,
+      error: 'Timeout',
+      latencyMs: 800,
+    })
+    mockBuildTurnSnapshot.mockReturnValue({
+      openWidgets: [],
+      activeSnapshotWidgetId: null,
+      uiSnapshotId: 'test-snap-phase-b-2',
+      revisionId: 1,
+      capturedAtMs: Date.now(),
+      hasBadgeLetters: false,
+    })
+    mockHandleKnownNounRouting.mockReturnValue({ handled: false })
+    const ctx2 = createPhaseBContext('can you ope panel d pls', 'msg-1')
+    await dispatchRouting(ctx2)
+    expect(callClarificationLLMClient).not.toHaveBeenCalled()
+
+    // --- Turn 3: DIFFERENT messageId "msg-2" → guard resets → LLM called again ---
+    jest.clearAllMocks()
+    ;(isLLMFallbackEnabledClient as jest.Mock).mockReturnValue(true)
+    ;(callClarificationLLMClient as jest.Mock).mockResolvedValue({
+      success: false,
+      error: 'Timeout',
+      latencyMs: 800,
+    })
+    mockBuildTurnSnapshot.mockReturnValue({
+      openWidgets: [],
+      activeSnapshotWidgetId: null,
+      uiSnapshotId: 'test-snap-phase-b-3',
+      revisionId: 1,
+      capturedAtMs: Date.now(),
+      hasBadgeLetters: false,
+    })
+    mockHandleKnownNounRouting.mockReturnValue({ handled: false })
+    const ctx3 = createPhaseBContext('can you ope panel d pls', 'msg-2')
+    await dispatchRouting(ctx3)
+    expect(callClarificationLLMClient).toHaveBeenCalledTimes(1)
   })
 })

@@ -28,6 +28,7 @@ import {
   isNewQuestionOrCommand,
   hasFuzzyMatch,
   hasQuestionIntent,
+  isPoliteImperativeRequest,
 } from '@/lib/chat/query-patterns'
 import { isBareNounQuery, maybeFormatSnippetWithHs3, dedupeHeaderPath, stripMarkdownHeadersForUI } from '@/lib/chat/doc-routing'
 import type { UIContext } from '@/lib/chat/intent-prompt'
@@ -72,8 +73,9 @@ import {
   callClarificationLLMClient,
   callReturnCueLLM,
   isLLMFallbackEnabledClient,
+  MIN_CONFIDENCE_SELECT,
 } from '@/lib/chat/clarification-llm-fallback'
-import { isExplicitCommand, isSelectionOnly, resolveScopeCue, canonicalizeCommandInput } from '@/lib/chat/input-classifiers'
+import { isExplicitCommand, isSelectionOnly, resolveScopeCue, canonicalizeCommandInput, classifyArbitrationConfidence } from '@/lib/chat/input-classifiers'
 import { isSelectionLike } from '@/lib/chat/grounding-set'
 import type { LastOptionsShown } from '@/lib/chat/chat-navigation-context'
 
@@ -1110,6 +1112,156 @@ export interface ClarificationInterceptResult extends HandlerResult {
   isNewQuestionOrCommandDetected: boolean
 }
 
+// Loop guard for LLM arbitration: prevent repeated LLM calls for same input+options.
+// Module-level singleton — reset when input or option set changes.
+let lastLLMArbitration: {
+  normalizedInput: string
+  candidateIds: string
+  clarificationMessageId: string
+  suggestedId: string | null  // Rule F — loop-guard continuity
+} | null = null
+
+/** Reset the LLM arbitration loop guard. Called on cycle boundary (clarification resolved) and chat clear. */
+export function resetLLMArbitrationGuard(): void {
+  lastLLMArbitration = null
+}
+
+/**
+ * LLM last-chance arbitration for unresolved active-option flows.
+ * Per ladder-enforcement-addendum: bounded candidates, clarify-only, safe fallback.
+ *
+ * Rule E: Single post-deterministic hook — shared by Tier 1b.3 unresolved hook
+ * and scope-cue Phase 2b to prevent drift.
+ * Rule F: Loop-guard continuity — reuses prior suggestedId when guard fires.
+ * Uses classifyArbitrationConfidence with hasActiveOptionContext=true (Rule A).
+ * Uses hasQuestionIntent from query-patterns.ts (no local reimplementation).
+ */
+async function tryLLMLastChance(params: {
+  trimmedInput: string
+  candidates: { id: string; label: string; sublabel?: string }[]
+  context: 'tier1b3_unresolved' | 'scope_cue_unresolved'
+  clarificationMessageId: string
+  inputIsExplicitCommand: boolean
+  isNewQuestionOrCommandDetected: boolean
+  matchCount?: number       // deterministic match count (default 0)
+  exactMatchCount?: number  // exact match count (default 0)
+}): Promise<{
+  attempted: boolean
+  suggestedId: string | null
+  fallbackReason: string | null
+}> {
+  const { trimmedInput, candidates, context, clarificationMessageId,
+    inputIsExplicitCommand, isNewQuestionOrCommandDetected,
+    matchCount = 0, exactMatchCount = 0 } = params
+
+  // --- Question-intent exclusion (hard exclusion per Rule G) ---
+  // Both utilities from query-patterns.ts — zero local regex
+  const isQuestion = hasQuestionIntent(trimmedInput) && !isPoliteImperativeRequest(trimmedInput)
+  if (isQuestion) {
+    return { attempted: false, suggestedId: null, fallbackReason: 'question_intent' }
+  }
+
+  // --- Shared classifier (Rule A: single confidence/arbitration signal) ---
+  const confidence = classifyArbitrationConfidence({
+    matchCount,
+    exactMatchCount,
+    inputIsExplicitCommand,
+    isNewQuestionOrCommandDetected,
+    candidates,
+    hasActiveOptionContext: true,
+  })
+  if (confidence.bucket !== 'low_confidence_llm_eligible') {
+    return { attempted: false, suggestedId: null, fallbackReason: 'classifier_not_eligible' }
+  }
+
+  // --- Feature flag ---
+  if (!isLLMFallbackEnabledClient()) {
+    return { attempted: false, suggestedId: null, fallbackReason: 'feature_disabled' }
+  }
+
+  // --- Loop guard (Rule F: continuity) ---
+  const normalizedInput = canonicalizeCommandInput(trimmedInput) ?? trimmedInput
+  const candidateIds = candidates.map(c => c.id).sort().join(',')
+  const isRepeat =
+    lastLLMArbitration?.normalizedInput === normalizedInput
+    && lastLLMArbitration?.candidateIds === candidateIds
+    && lastLLMArbitration?.clarificationMessageId === clarificationMessageId
+  if (isRepeat) {
+    // Rule F: reuse prior suggestion ordering for continuity
+    if (lastLLMArbitration?.suggestedId) {
+      return { attempted: false, suggestedId: lastLLMArbitration.suggestedId, fallbackReason: 'loop_guard_continuity' }
+    }
+    return { attempted: false, suggestedId: null, fallbackReason: 'loop_guard' }
+  }
+
+  // --- LLM call (bounded to active options only — Rule C clarify-only) ---
+  const llmStartTime = Date.now()
+  const llmResult = await callClarificationLLMClient({
+    userInput: trimmedInput,
+    options: candidates,
+    context,
+  })
+  const llmElapsedMs = Date.now() - llmStartTime
+
+  // Confidence floor: MIN_CONFIDENCE_SELECT (0.6) from clarification-llm-fallback.ts:43
+  const llmConfidence = llmResult.response?.confidence ?? 0
+  const llmAbstainsOnConfidence = llmConfidence < MIN_CONFIDENCE_SELECT
+
+  if (llmResult.success
+    && llmResult.response?.decision === 'select'
+    && llmResult.response.choiceId
+    && !llmAbstainsOnConfidence) {
+    // LLM picked a winner — store suggestedId for Rule F continuity
+    const suggestedId = llmResult.response.choiceId
+    lastLLMArbitration = { normalizedInput, candidateIds, clarificationMessageId, suggestedId }
+
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'llm_arbitration_called',
+      metadata: {
+        input: trimmedInput, context,
+        suggestedId,
+        suggestedLabel: candidates.find(c => c.id === suggestedId)?.label,
+        candidateCount: candidates.length,
+        ambiguityReason: confidence.ambiguityReason,
+        finalResolution: 'clarifier',
+        llm_timeout_ms: llmElapsedMs,
+        fallback_reason: null,
+        llmConfidence,
+      },
+    })
+    return { attempted: true, suggestedId, fallbackReason: null }
+  }
+
+  // LLM failed/abstained/low-confidence → safe fallback (Rule D)
+  // Store suggestedId: null for Rule F (no suggestion to reuse)
+  lastLLMArbitration = { normalizedInput, candidateIds, clarificationMessageId, suggestedId: null }
+
+  const fallbackReason: string =
+    !llmResult.success
+      ? (llmResult.error === 'Timeout' ? 'timeout'
+        : llmResult.error?.includes('429') ? '429' : 'transport_error')
+      : llmAbstainsOnConfidence ? 'abstain'
+      : llmResult.response?.decision === 'ask_clarify' ? 'abstain'
+      : llmResult.response?.decision === 'reroute' ? 'reroute'
+      : llmResult.response?.decision === 'none' ? 'none_match'
+      : 'low_confidence'
+
+  void debugLog({
+    component: 'ChatNavigation',
+    action: 'llm_arbitration_failed_fallback_clarifier',
+    metadata: {
+      input: trimmedInput, context,
+      candidateCount: candidates.length,
+      ambiguityReason: confidence.ambiguityReason,
+      finalResolution: 'clarifier',
+      llm_timeout_ms: llmElapsedMs,
+      fallback_reason: fallbackReason,
+    },
+  })
+  return { attempted: true, suggestedId: null, fallbackReason }
+}
+
 /**
  * Context for clarification intercept handler
  */
@@ -1300,6 +1452,13 @@ export async function handleClarificationIntercept(
       pendingOptionsCount: pendingOptions.length,
     },
   })
+
+  // Clear stale LLM arbitration loop guard when previous clarification cycle has ended.
+  // After any resolution (option selection, exit, new intent), lastClarification is set to null.
+  // The guard must not persist across clarification cycles.
+  if (!lastClarification) {
+    lastLLMArbitration = null
+  }
 
   // Hard invariant: when latch is resolved or pending, stale-chat ordinal paths are blocked
   const latchBlocksStaleChat = isLatchEnabled && !!focusLatch && !focusLatch.suspended
@@ -2254,6 +2413,101 @@ export async function handleClarificationIntercept(
   }
 
   // ==========================================================================
+  // Hoisted Tier 1b.3 matching helpers (pure functions — safe to hoist)
+  // Used by scope-cue Phase 2b, the pre-gate (selection-vs-command arbitration),
+  // and Tier 1b.3 label matching. Single source of truth to prevent semantic drift.
+  // ==========================================================================
+
+  // Helper: Check if label matches in input with word boundary
+  // e.g., "workspace 2" in "workspace 2 please" → true (followed by space)
+  // e.g., "workspace 2" in "workspace 22" → false (followed by digit, not word boundary)
+  const matchesWithWordBoundary = (input: string, label: string): boolean => {
+    if (!input.includes(label)) return false
+    const index = input.indexOf(label)
+    const endIndex = index + label.length
+    // Label must end at word boundary (end of string or followed by space/punctuation)
+    if (endIndex === input.length) return true
+    const charAfter = input[endIndex]
+    return /[\s,!?.]/.test(charAfter)
+  }
+
+  // Helper: Canonical token matching for singular/plural handling
+  // e.g., "links panels d" → tokens {links, panel, d} matches "Links Panel D" → {links, panel, d}
+  // e.g., "link panels d" → tokens {links, panel, d} matches "Links Panel D"
+  const canonicalTokens: Record<string, string> = {
+    panel: 'panel', panels: 'panel',
+    widget: 'widget', widgets: 'widget',
+    link: 'links', links: 'links',
+  }
+  // Note: this intentionally shadows the import from clarification-offmenu
+  // which has different semantics (stopwords + micro-alias). This version
+  // uses panel/widget singular-plural normalization for label matching.
+  const toCanonicalTokens = (s: string): Set<string> => {
+    const tokens = s.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean)
+    return new Set(tokens.map(t => canonicalTokens[t] ?? t))
+  }
+  const tokensMatch = (inputTokens: Set<string>, labelTokens: Set<string>): boolean => {
+    // Exact token match: all label tokens in input AND all input tokens in label
+    if (inputTokens.size !== labelTokens.size) return false
+    for (const t of inputTokens) {
+      if (!labelTokens.has(t)) return false
+    }
+    return true
+  }
+
+  /**
+   * Shared label matcher: checks if a candidate string matches ANY active option.
+   * Used by scope-cue Phase 2b, the pre-gate (candidate-aware exception),
+   * and Tier 1b.3 label matching. Single definition prevents semantic drift.
+   *
+   * Returns matching options (empty array = no match).
+   */
+  const findMatchingOptions = (
+    candidate: string,
+    options: ClarificationOption[],
+  ): ClarificationOption[] => {
+    const normalizedCandidate = candidate.toLowerCase().trim()
+    if (!normalizedCandidate) return []
+    return options.filter(opt => {
+      const label = opt.label.toLowerCase().trim()
+      // 1. Exact / substring / word-boundary match
+      if (label === normalizedCandidate ||
+          label.includes(normalizedCandidate) ||
+          matchesWithWordBoundary(normalizedCandidate, label)) {
+        return true
+      }
+      // 2. Canonical token matching (handles singular/plural)
+      const inputTokens = toCanonicalTokens(normalizedCandidate)
+      const labelTokens = toCanonicalTokens(label)
+      return tokensMatch(inputTokens, labelTokens)
+    })
+  }
+
+  /**
+   * Exact-normalized matcher: finds options whose canonical tokens match the
+   * candidate EXACTLY (same token set, no superset/subset).
+   *
+   * Per intra-selection precedence (exact-first) rule:
+   * "open links panel" → {links, panel} matches "Links Panels" → {links, panel} exactly,
+   * but NOT "Links Panel D" → {links, panel, d} (superset).
+   *
+   * Reuses toCanonicalTokens + tokensMatch — no new matching logic.
+   */
+  const findExactNormalizedMatches = (
+    candidate: string,
+    options: ClarificationOption[],
+  ): ClarificationOption[] => {
+    const normalizedCandidate = candidate.toLowerCase().trim()
+    if (!normalizedCandidate) return []
+    const inputTokens = toCanonicalTokens(normalizedCandidate)
+    if (inputTokens.size === 0) return []
+    return options.filter(opt => {
+      const labelTokens = toCanonicalTokens(opt.label)
+      return tokensMatch(inputTokens, labelTokens)
+    })
+  }
+
+  // ==========================================================================
   // FOCUS LATCH — Scope-Cue Normalization (per scope-cues-addendum-plan.md)
   // Explicit scope cues override latch default. Runs before latch bypass.
   // Gated on isLatchEnabled (feature flag), NOT on isLatchActive.
@@ -2367,6 +2621,168 @@ export async function handleClarificationIntercept(
         setIsLoading(false)
         handleSelectOption(optionToSelect)
         return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+      }
+
+      // --- Phase 2b: Label/shorthand matching against recovered chat options ---
+      // Strip scope-cue text from input, then canonicalize for label matching.
+      // e.g., "open the panel d from chat" → strip "from chat" → "open the panel d"
+      //        → canonicalize → "panel d" → findMatchingOptions → "Links Panel D"
+      const cueText = scopeCue.cueText! // guaranteed non-null inside scope === 'chat'
+      const lowerInput = trimmedInput.toLowerCase()
+      const cueIdx = lowerInput.indexOf(cueText)
+      const scopeCueStripped = cueIdx >= 0
+        ? (trimmedInput.slice(0, cueIdx) + trimmedInput.slice(cueIdx + cueText.length)).trim()
+        : trimmedInput
+      const candidateForLabelMatch = canonicalizeCommandInput(scopeCueStripped)
+
+      if (candidateForLabelMatch) {
+        // Reuse Tier 1b.3 matching: substring + word-boundary + canonical token matching
+        const labelMatches = findMatchingOptions(candidateForLabelMatch, recoverableOptions)
+
+        if (labelMatches.length === 1) {
+          // Unique match → execute (same pattern as ordinal selection above)
+          const selectedOption = labelMatches[0]
+          const optionToSelect: SelectionOption = {
+            type: selectedOption.type as SelectionOption['type'],
+            id: selectedOption.id,
+            label: selectedOption.label,
+            sublabel: selectedOption.sublabel,
+            data: reconstructSnapshotData(selectedOption),
+          }
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'scope_cue_chat_label_match_select',
+            metadata: { label: selectedOption.label, candidate: candidateForLabelMatch, source: recoverable.source },
+          })
+          setPendingOptions([])
+          setPendingOptionsMessageId(null)
+          setPendingOptionsGraceCount(0)
+          setActiveOptionSetId(null)
+          setIsLoading(false)
+          handleSelectOption(optionToSelect)
+          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+        }
+
+        if (labelMatches.length > 1) {
+          // Multi-match → try exact-first (same findExactNormalizedMatches as Tier 1b.3)
+          const exactMatches = findExactNormalizedMatches(candidateForLabelMatch, labelMatches)
+
+          if (exactMatches.length === 1) {
+            // Exact-first winner → execute
+            const selectedOption = exactMatches[0]
+            const optionToSelect: SelectionOption = {
+              type: selectedOption.type as SelectionOption['type'],
+              id: selectedOption.id,
+              label: selectedOption.label,
+              sublabel: selectedOption.sublabel,
+              data: reconstructSnapshotData(selectedOption),
+            }
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'scope_cue_chat_label_exact_first_select',
+              metadata: { label: selectedOption.label, candidate: candidateForLabelMatch, totalMatches: labelMatches.length },
+            })
+            setPendingOptions([])
+            setPendingOptionsMessageId(null)
+            setPendingOptionsGraceCount(0)
+            setActiveOptionSetId(null)
+            setIsLoading(false)
+            handleSelectOption(optionToSelect)
+            return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+          }
+
+          // No exact winner → fall through to unified hook below
+        }
+
+        // =================================================================
+        // UNIFIED HOOK (scope-cue parity — Rule G: no explicit-command bypass)
+        // If recoverable options exist and deterministic didn't resolve,
+        // LLM is mandatory. Only question-intent escapes.
+        // Handles both multi-match-no-winner AND 0-match cases.
+        // =================================================================
+        if (recoverableOptions.length > 0) {
+          const llmResult = await tryLLMLastChance({
+            trimmedInput,
+            candidates: recoverableOptions.map(o => ({
+              id: o.id, label: o.label, sublabel: o.sublabel,
+            })),
+            context: 'scope_cue_unresolved',
+            clarificationMessageId: originalMessageId,
+            inputIsExplicitCommand: isExplicitCommand(trimmedInput),
+            isNewQuestionOrCommandDetected,
+            matchCount: labelMatches.length,
+            exactMatchCount: 0,
+          })
+
+          if (llmResult.fallbackReason === 'question_intent') {
+            // Question → fall through to Phase 3
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'scope_cue_unresolved_hook_question_escape',
+              metadata: { input: trimmedInput, matchCount: labelMatches.length, source: recoverable.source },
+            })
+          } else {
+            // Safe clarifier — reorder if LLM suggested (Rules C, D, F)
+            const reorderSource = llmResult.suggestedId
+              ? [
+                  ...recoverableOptions.filter(o => o.id === llmResult.suggestedId),
+                  ...recoverableOptions.filter(o => o.id !== llmResult.suggestedId),
+                ]
+              : recoverableOptions
+
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'scope_cue_unresolved_hook_safe_clarifier',
+              metadata: {
+                input: trimmedInput,
+                llmAttempted: llmResult.attempted,
+                llmSuggestedId: llmResult.suggestedId,
+                fallbackReason: llmResult.fallbackReason,
+                source: recoverable.source,
+                matchCount: labelMatches.length,
+              },
+            })
+
+            const clarifierMessageId = `assistant-${Date.now()}`
+            const clarifierMessage: ChatMessage = {
+              id: clarifierMessageId,
+              role: 'assistant',
+              content: getBasePrompt(),
+              timestamp: new Date(),
+              isError: false,
+              options: reorderSource.map(opt => ({
+                type: opt.type as SelectionOption['type'],
+                id: opt.id,
+                label: opt.label,
+                sublabel: opt.sublabel,
+                data: reconstructSnapshotData(opt),
+              })),
+            }
+            addMessage(clarifierMessage)
+            // CRITICAL: Use reorderSource so ordinal follow-ups match displayed order
+            setPendingOptions(reorderSource.map((o, idx) => ({
+              index: idx + 1,
+              id: o.id,
+              label: o.label,
+              sublabel: o.sublabel,
+              type: o.type,
+              data: reconstructSnapshotData(o),
+            })))
+            setPendingOptionsMessageId(clarifierMessageId)
+            setPendingOptionsGraceCount(0)
+            setActiveOptionSetId(clarifierMessageId)
+            setLastClarification({
+              type: 'option_selection',
+              originalIntent: trimmedInput,
+              messageId: clarifierMessageId,
+              timestamp: Date.now(),
+              options: reorderSource,
+            })
+            setIsLoading(false)
+            return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+          }
+        }
+        // No recoverable options or question-intent → fall through to Phase 3
       }
 
       // --- Phase 3: No selection detected — check command/question guard ---
@@ -3157,76 +3573,8 @@ export async function handleClarificationIntercept(
       return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
     }
 
-    // ==========================================================================
-    // Hoisted Tier 1b.3 matching helpers (pure functions — safe to hoist)
-    // Used by both the pre-gate (selection-vs-command arbitration) and
-    // label matching below. Single source of truth to prevent semantic drift.
-    // ==========================================================================
-
-    // Helper: Check if label matches in input with word boundary
-    // e.g., "workspace 2" in "workspace 2 please" → true (followed by space)
-    // e.g., "workspace 2" in "workspace 22" → false (followed by digit, not word boundary)
-    const matchesWithWordBoundary = (input: string, label: string): boolean => {
-      if (!input.includes(label)) return false
-      const index = input.indexOf(label)
-      const endIndex = index + label.length
-      // Label must end at word boundary (end of string or followed by space/punctuation)
-      if (endIndex === input.length) return true
-      const charAfter = input[endIndex]
-      return /[\s,!?.]/.test(charAfter)
-    }
-
-    // Helper: Canonical token matching for singular/plural handling
-    // e.g., "links panels d" → tokens {links, panel, d} matches "Links Panel D" → {links, panel, d}
-    // e.g., "link panels d" → tokens {links, panel, d} matches "Links Panel D"
-    const canonicalTokens: Record<string, string> = {
-      panel: 'panel', panels: 'panel',
-      widget: 'widget', widgets: 'widget',
-      link: 'links', links: 'links',
-    }
-    // Note: this intentionally shadows the import from clarification-offmenu
-    // which has different semantics (stopwords + micro-alias). This version
-    // uses panel/widget singular-plural normalization for label matching.
-    const toCanonicalTokens = (s: string): Set<string> => {
-      const tokens = s.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean)
-      return new Set(tokens.map(t => canonicalTokens[t] ?? t))
-    }
-    const tokensMatch = (inputTokens: Set<string>, labelTokens: Set<string>): boolean => {
-      // Exact token match: all label tokens in input AND all input tokens in label
-      if (inputTokens.size !== labelTokens.size) return false
-      for (const t of inputTokens) {
-        if (!labelTokens.has(t)) return false
-      }
-      return true
-    }
-
-    /**
-     * Shared label matcher: checks if a candidate string matches ANY active option.
-     * Used by both the pre-gate (candidate-aware exception) and Tier 1b.3 label matching.
-     * Single definition prevents semantic drift between the two call sites.
-     *
-     * Returns matching options (empty array = no match).
-     */
-    const findMatchingOptions = (
-      candidate: string,
-      options: ClarificationOption[],
-    ): ClarificationOption[] => {
-      const normalizedCandidate = candidate.toLowerCase().trim()
-      if (!normalizedCandidate) return []
-      return options.filter(opt => {
-        const label = opt.label.toLowerCase().trim()
-        // 1. Exact / substring / word-boundary match
-        if (label === normalizedCandidate ||
-            label.includes(normalizedCandidate) ||
-            matchesWithWordBoundary(normalizedCandidate, label)) {
-          return true
-        }
-        // 2. Canonical token matching (handles singular/plural)
-        const inputTokens = toCanonicalTokens(normalizedCandidate)
-        const labelTokens = toCanonicalTokens(label)
-        return tokensMatch(inputTokens, labelTokens)
-      })
-    }
+    // Tier 1b.3 matching helpers hoisted above scope-cue block.
+    // See findMatchingOptions / findExactNormalizedMatches defined after widget context bypass.
 
     // ==========================================================================
     // Selection-vs-Command Arbitration Pre-gate
@@ -3258,20 +3606,24 @@ export async function handleClarificationIntercept(
     // IMPORTANT: If input matches MULTIPLE options (e.g., "links panel" matches both D and E),
     // do NOT auto-select - fall through to re-show options instead.
     if (commandBypassesLabelMatching) {
+      // Pre-gate: escape-only (Rule E — no LLM here)
+      // commandBypassesLabelMatching = !isSelectionLike && !inputTargetsActiveOption
+      // → input genuinely isn't about active options, so escape is correct.
       void debugLog({
         component: 'ChatNavigation',
         action: 'clarification_selection_bypassed_command_intent',
         metadata: {
           input: trimmedInput,
           activeOptionsCount: lastClarification?.options?.length ?? 0,
-          isSelectionLike: inputIsSelectionLike,
           isExplicitCommand: inputIsExplicitCommand,
           isNewQuestionOrCommandDetected,
           inputTargetsActiveOption,
+          escapeReason: inputIsExplicitCommand ? 'explicit_command_priority'
+            : !lastClarification?.options?.length ? 'no_active_options'
+            : 'command_bypass_not_selection_like',
         },
       })
-      // Fall through — skip label matching, let command reach Tier 2c/Tier 4
-      // Tier 3.5/3.6 resolver flow and downstream tiers remain reachable.
+      // Fall through to downstream tiers
     } else if (lastClarification?.options && lastClarification.options.length > 0) {
       void debugLog({
         component: 'ChatNavigation',
@@ -3462,6 +3814,9 @@ export async function handleClarificationIntercept(
         }
       }
 
+      // Track exact match count for unresolved hook (hoisted for Step 4)
+      let lastExactMatchCount = 0
+
       // Find ALL matching options using shared findMatchingOptions helper.
       // Try both original input AND verb-stripped input for matching (union results).
       const matchesOriginal = findMatchingOptions(normalizedInput, lastClarification.options)
@@ -3529,45 +3884,190 @@ export async function handleClarificationIntercept(
         }
       } else if (matchingOptions.length > 1) {
         // Multiple options match (e.g., "links panel" matches both D and E)
-        // EXPLICITLY re-show options - don't fall through to new-intent escape or LLM
-        void debugLog({
-          component: 'ChatNavigation',
-          action: 'clarification_tier1b3_multi_match_reshow',
-          metadata: {
-            input: trimmedInput,
-            matchCount: matchingOptions.length,
-            matchedLabels: matchingOptions.map(o => o.label),
-          },
+        // =================================================================
+        // Intra-Selection Precedence: Exact-First
+        // Per selection-vs-command-arbitration-rule-plan.md addendum:
+        // Before re-showing, check if ONE option matches EXACTLY on
+        // canonical tokens. If so, auto-select the exact winner.
+        // e.g., "open links panel" → {links,panel} matches "Links Panels"
+        //        exactly but NOT "Links Panel D" (superset).
+        // =================================================================
+        const exactOriginal = findExactNormalizedMatches(normalizedInput, matchingOptions)
+        const exactVerbStripped = findExactNormalizedMatches(inputForMatching, matchingOptions)
+        // Dedupe
+        const exactIds = new Set(exactOriginal.map(o => o.id))
+        for (const m of exactVerbStripped) {
+          if (!exactIds.has(m.id)) exactOriginal.push(m)
+        }
+        const exactMatches = exactOriginal
+
+        if (exactMatches.length === 1) {
+          // Exact-first winner: one option matches exactly
+          const matchedOption = exactMatches[0]
+          const fullOption = pendingOptions.find(opt => opt.id === matchedOption.id)
+
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'clarification_exact_normalized_match_selected',
+            metadata: {
+              input: trimmedInput,
+              matchedLabel: matchedOption.label,
+              hasFullOption: !!fullOption,
+              broadMatchCount: matchingOptions.length,
+              exactMatchCount: 1,
+              activeOptionsCount: lastClarification.options.length,
+              isExplicitCommand: inputIsExplicitCommand,
+              isSelectionLike: inputIsSelectionLike,
+            },
+          })
+
+          // Save clarification snapshot for post-action repair window
+          saveClarificationSnapshot(lastClarification)
+          setRepairMemory(matchedOption.id, lastClarification.options)
+          setLastClarification(null)
+          setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+
+          const optionToSelect: SelectionOption = {
+            type: (fullOption?.type ?? matchedOption.type) as SelectionOption['type'],
+            id: matchedOption.id,
+            label: matchedOption.label,
+            sublabel: matchedOption.sublabel,
+            data: fullOption?.data as SelectionOption['data'] ??
+              reconstructSnapshotData(matchedOption),
+          }
+          setIsLoading(false)
+          handleSelectOption(optionToSelect)
+          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+        }
+
+        // No exact winner — hoist count for unresolved hook, then fall through
+        // (Rule E: LLM arbitration moved to single unresolved hook below)
+        lastExactMatchCount = exactMatches.length
+      }
+
+      // =================================================================
+      // Ordinal guard — skip hook for ordinal inputs
+      // Ordinals like "first", "2", "the second one" should be handled
+      // by Tier 1b.3a (deterministic), not by LLM.
+      // =================================================================
+      const ordinalCheck = isSelectionOnly(
+        trimmedInput,
+        lastClarification.options.length,
+        lastClarification.options.map(o => o.label),
+        'embedded'
+      )
+
+      if (!ordinalCheck.isSelection) {
+        // =================================================================
+        // UNRESOLVED HOOK (Rule E: single post-deterministic arbitration)
+        // Reached when:
+        //   - matchingOptions.length === 0 (no deterministic match), OR
+        //   - matchingOptions.length > 1 with no single exact winner
+        // Both mean: the app is NOT 100% sure → call LLM, don't force action.
+        //
+        // Rule G: NO inputIsExplicitCommand bypass here.
+        // If we're inside label matching, input IS related to active options
+        // (isSelectionLike=true OR inputTargetsActiveOption=true).
+        // Deterministic failed. LLM is mandatory.
+        // Hard exclusions (Rule G): question-intent only (handled inside
+        // tryLLMLastChance). Pre-gate already handles "nothing to do with
+        // active options" escapes via commandBypassesLabelMatching.
+        // =================================================================
+        const llmResult = await tryLLMLastChance({
+          trimmedInput,
+          candidates: lastClarification.options.map(o => ({
+            id: o.id, label: o.label, sublabel: o.sublabel,
+          })),
+          context: 'tier1b3_unresolved',
+          clarificationMessageId: lastClarification.messageId ?? '',
+          inputIsExplicitCommand,
+          isNewQuestionOrCommandDetected,
+          matchCount: matchingOptions.length,
+          exactMatchCount: lastExactMatchCount,
         })
 
-        // Re-show the disambiguation options directly, using pendingOptions for full data
-        // Per clarification-offmenu-handling-plan.md: Use consistent base prompt
-        const messageId = `assistant-${Date.now()}`
-        const reaskMessage: ChatMessage = {
-          id: messageId,
-          role: 'assistant',
-          content: getBasePrompt(),
-          timestamp: new Date(),
-          isError: false,
-          options: lastClarification.options.map(opt => {
-            // Try to get full option data from pendingOptions
-            const fullOpt = pendingOptions.find(p => p.id === opt.id)
+        if (llmResult.fallbackReason === 'question_intent') {
+          // Question → fall through to downstream (hard exclusion per Rule G)
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'clarification_unresolved_hook_question_escape',
+            metadata: {
+              input: trimmedInput,
+              matchCount: matchingOptions.length,
+              exactMatchCount: lastExactMatchCount,
+              activeOptionsCount: lastClarification.options.length,
+            },
+          })
+          // Fall through to downstream tiers
+        } else {
+          // Safe clarifier — reorder if LLM suggested (Rules C, D, F)
+          const reorderSource = llmResult.suggestedId
+            ? [
+                ...lastClarification.options.filter(o => o.id === llmResult.suggestedId),
+                ...lastClarification.options.filter(o => o.id !== llmResult.suggestedId),
+              ]
+            : lastClarification.options
+
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'clarification_unresolved_hook_safe_clarifier',
+            metadata: {
+              input: trimmedInput,
+              matchCount: matchingOptions.length,
+              exactMatchCount: lastExactMatchCount,
+              llmAttempted: llmResult.attempted,
+              llmSuggestedId: llmResult.suggestedId,
+              fallbackReason: llmResult.fallbackReason,
+              activeOptionsCount: lastClarification.options.length,
+            },
+          })
+
+          const messageId = `assistant-${Date.now()}`
+          const reshowMessage: ChatMessage = {
+            id: messageId,
+            role: 'assistant',
+            content: getBasePrompt(),
+            timestamp: new Date(),
+            isError: false,
+            options: reorderSource.map(opt => {
+              const fullOpt = pendingOptions.find(p => p.id === opt.id)
+              return {
+                type: opt.type as SelectionOption['type'],
+                id: opt.id,
+                label: opt.label,
+                sublabel: opt.sublabel,
+                data: fullOpt?.data as SelectionOption['data'] ?? reconstructSnapshotData(opt),
+              }
+            }),
+          }
+          addMessage(reshowMessage)
+          // Full state rebinding — prevents desync between displayed options and ordinal follow-ups
+          setPendingOptions(reorderSource.map((o, idx) => {
+            const fullOpt = pendingOptions.find(p => p.id === o.id)
             return {
-              type: opt.type as SelectionOption['type'],
-              id: opt.id,
-              label: opt.label,
-              sublabel: opt.sublabel,
-              data: fullOpt?.data as SelectionOption['data'] ?? reconstructSnapshotData(opt),
+              index: idx + 1,
+              id: o.id,
+              label: o.label,
+              sublabel: o.sublabel,
+              type: o.type,
+              data: fullOpt?.data as SelectionOption['data'] ?? reconstructSnapshotData(o),
             }
-          }),
+          }))
+          setPendingOptionsMessageId(messageId)
+          setPendingOptionsGraceCount(0)
+          setActiveOptionSetId(messageId)
+          setLastClarification({
+            type: 'option_selection',
+            originalIntent: trimmedInput,
+            messageId,
+            timestamp: Date.now(),
+            options: reorderSource,
+          })
+          setIsLoading(false)
+          return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
         }
-        addMessage(reaskMessage)
-        // Sync message ID for proper state tracking
-        setPendingOptionsMessageId(messageId)
-        setIsLoading(false)
-        // Return handled=true to prevent fall-through to LLM intent resolution
-        return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
       }
+      // ordinal → skip hook, Tier 1b.3a handles it
     }
 
     // Tier 1b.3a: Ordinal selection (BEFORE off-menu mapping)

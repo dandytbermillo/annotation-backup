@@ -435,3 +435,86 @@ export function resolveScopeCue(input: string): ScopeCueResult {
 
   return { scope: 'none', cueText: null, confidence: 'none' }
 }
+
+// =============================================================================
+// Arbitration Confidence Classification
+// Per deterministic-llm-arbitration-fallback-plan.md §18-38 (Confidence Contract):
+// Define confidence once in one shared function — no per-tier reinterpretation.
+// =============================================================================
+
+export type ConfidenceBucket =
+  | 'high_confidence_execute'
+  | 'low_confidence_llm_eligible'
+  | 'low_confidence_clarifier_only'
+
+export type AmbiguityReason =
+  | 'multi_match_no_exact_winner'
+  | 'cross_source_tie'
+  | 'typo_ambiguous'
+  | 'command_selection_collision'
+  | 'no_candidate'
+  | 'no_deterministic_match'
+
+export interface ArbitrationConfidence {
+  bucket: ConfidenceBucket
+  ambiguityReason: AmbiguityReason | null
+  candidates: { id: string; label: string; sublabel?: string }[]
+}
+
+/**
+ * Classify the confidence of a deterministic arbitration result.
+ * Single source of truth — all callers use the same classification logic.
+ *
+ * Returns a bucket (high/low-llm/low-clarifier) and an ambiguity reason.
+ */
+export function classifyArbitrationConfidence(params: {
+  matchCount: number
+  exactMatchCount: number
+  inputIsExplicitCommand: boolean
+  isNewQuestionOrCommandDetected: boolean
+  candidates: { id: string; label: string; sublabel?: string }[]
+  hasActiveOptionContext?: boolean
+}): ArbitrationConfidence {
+  const {
+    matchCount, exactMatchCount,
+    inputIsExplicitCommand, isNewQuestionOrCommandDetected,
+    candidates,
+    hasActiveOptionContext = false,
+  } = params
+
+  // No candidates at all → clarifier only (nothing to resolve)
+  if (matchCount === 0) {
+    // Scoped: only LLM-eligible when caller explicitly signals active-option context
+    if (hasActiveOptionContext && candidates.length > 0) {
+      return { bucket: 'low_confidence_llm_eligible', ambiguityReason: 'no_deterministic_match', candidates }
+    }
+    return { bucket: 'low_confidence_clarifier_only', ambiguityReason: 'no_candidate', candidates }
+  }
+
+  // Unique match → high confidence
+  if (matchCount === 1) {
+    return { bucket: 'high_confidence_execute', ambiguityReason: null, candidates }
+  }
+
+  // Exact winner among multi-match → high confidence
+  if (exactMatchCount === 1) {
+    return { bucket: 'high_confidence_execute', ambiguityReason: null, candidates }
+  }
+
+  // Multi-match with no exact winner:
+  // Selection-vs-command collision: command intent + active options without unique winner
+  if (inputIsExplicitCommand || isNewQuestionOrCommandDetected) {
+    return {
+      bucket: 'low_confidence_llm_eligible',
+      ambiguityReason: 'command_selection_collision',
+      candidates,
+    }
+  }
+
+  // General multi-match without exact winner
+  return {
+    bucket: 'low_confidence_llm_eligible',
+    ambiguityReason: 'multi_match_no_exact_winner',
+    candidates,
+  }
+}

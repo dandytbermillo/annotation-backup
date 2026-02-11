@@ -47,7 +47,7 @@ import {
 import { fetchKnownTerms, isKnownTermsCacheValid, getKnownTermsFetchStatus } from '@/lib/docs/known-terms-client'
 import type { RoutingTelemetryEvent } from '@/lib/chat/routing-telemetry'
 // Step 3 refactor: Routing handlers
-import { type PendingOptionState } from '@/lib/chat/chat-routing'
+import { type PendingOptionState, resetLLMArbitrationGuard } from '@/lib/chat/chat-routing'
 // Unified routing dispatcher (per routing-order-priority-plan.md)
 import { dispatchRouting, isExplicitCommand, type LastPreviewState } from '@/lib/chat/routing-dispatcher'
 import { getAllVisibleSnapshots, getActiveWidgetId, type SnapshotListSegment } from '@/lib/widgets/ui-snapshot-registry'
@@ -2634,6 +2634,7 @@ function ChatNavigationPanelContent({
   const clearChat = useCallback(() => {
     clearMessages()
     clearScopeCueRecoveryMemory()
+    resetLLMArbitrationGuard()
   }, [clearMessages, clearScopeCueRecoveryMemory])
 
   // ---------------------------------------------------------------------------

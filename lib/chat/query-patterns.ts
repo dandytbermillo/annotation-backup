@@ -355,6 +355,16 @@ export function hasQuestionIntent(input: string): boolean {
 }
 
 /**
+ * Check if input is a polite imperative request (not a genuine question).
+ * "can you open ..." / "could you show ..." / "would you ..." → imperative, not question.
+ * Used by tryLLMLastChance to exclude genuine questions from selection LLM
+ * while preserving polite request forms.
+ */
+export function isPoliteImperativeRequest(input: string): boolean {
+  return /^(can|could|would|will|shall|may)\s+(you|we)\b/i.test(input.trim())
+}
+
+/**
  * Check if input contains action verbs.
  */
 export function hasActionVerb(input: string): boolean {
