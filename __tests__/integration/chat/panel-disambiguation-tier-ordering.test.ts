@@ -26,8 +26,11 @@ jest.mock('@/lib/chat/clarification-llm-fallback', () => ({
   callClarificationLLMClient: jest.fn().mockResolvedValue({ success: false }),
   callReturnCueLLM: jest.fn().mockResolvedValue({ isReturn: false }),
   isLLMFallbackEnabledClient: jest.fn().mockReturnValue(false),
+  isLLMAutoExecuteEnabledClient: jest.fn().mockReturnValue(false),
   shouldCallLLMFallback: jest.fn().mockReturnValue(false),
   MIN_CONFIDENCE_SELECT: 0.6,
+  AUTO_EXECUTE_CONFIDENCE: 0.85,
+  AUTO_EXECUTE_ALLOWED_REASONS: new Set(['no_deterministic_match']),
 }))
 
 jest.mock('@/lib/chat/grounding-llm-fallback', () => ({
@@ -68,7 +71,7 @@ global.fetch = jest.fn().mockResolvedValue({
 
 import { dispatchRouting, type RoutingDispatcherContext } from '@/lib/chat/routing-dispatcher'
 import { resetLLMArbitrationGuard } from '@/lib/chat/chat-routing'
-import { callClarificationLLMClient, isLLMFallbackEnabledClient } from '@/lib/chat/clarification-llm-fallback'
+import { callClarificationLLMClient, isLLMFallbackEnabledClient, isLLMAutoExecuteEnabledClient } from '@/lib/chat/clarification-llm-fallback'
 import { debugLog } from '@/lib/utils/debug-logger'
 
 // ============================================================================
@@ -1028,6 +1031,8 @@ describe('dispatchRouting: typo verb handling (ladder enforcement Phase A + B)',
   beforeEach(() => {
     jest.clearAllMocks()
     resetLLMArbitrationGuard()
+    // Reset Phase C kill switch to OFF (default)
+    ;(isLLMAutoExecuteEnabledClient as jest.Mock).mockReturnValue(false)
     mockBuildTurnSnapshot.mockReturnValue({
       openWidgets: [],
       activeSnapshotWidgetId: null,
@@ -1040,11 +1045,9 @@ describe('dispatchRouting: typo verb handling (ladder enforcement Phase A + B)',
   })
 
   it('"ope panel d" with active panel options → Tier 0 resolves via badge-aware selection, NOT widget disambiguation', async () => {
-    // Phase B: canonicalizeCommandInput no longer strips "ope " (typo prefixes reverted)
-    // But "ope panel d" is not isExplicitCommand or isNewQuestionOrCommand → bypasses pre-gate
+    // "ope" not in COMMAND_VERBS → no verb correction or stripping
     // → enters Tier 1b.3 label matching directly
-    // → normalizeCommandVerbs corrects "ope" → "open" → strip verb → "panel d"
-    // → badge extraction: "d" → badge match "Links Panel D"
+    // → extractBadge("ope panel d") → last token "d" → badge match "Links Panel D"
     const ctx = createMockDispatchContext({
       trimmedInput: 'ope panel d',
       lastClarification: panelClarification,
@@ -1095,11 +1098,17 @@ describe('dispatchRouting: typo verb handling (ladder enforcement Phase A + B)',
     expect(mockHandleKnownNounRouting).toHaveBeenCalled()
   })
 
-  it('"opn links panel" with active panel options → Tier 0 selects Links Panels (exact-first)', async () => {
-    // Phase B: canonicalizeCommandInput no longer strips "opn " (typo prefixes reverted)
-    // But "opn links panel" not isExplicitCommand/isNewQuestionOrCommand → bypasses pre-gate
-    // → enters label matching → normalizeCommandVerbs corrects "opn" → "open" → strip → "links panel"
-    // → exact-first: {links, panel} matches "Links Panels" → selects
+  it('"opn links panel" + LLM confidence 0.85 + auto-execute ON → auto-executes Links Panels (Phase C)', async () => {
+    // "opn" not in COMMAND_VERBS → no verb correction or stripping
+    // → 0 matches → unresolved hook → LLM → auto-execute (all gates pass)
+    ;(isLLMFallbackEnabledClient as jest.Mock).mockReturnValue(true)
+    ;(isLLMAutoExecuteEnabledClient as jest.Mock).mockReturnValue(true)
+    ;(callClarificationLLMClient as jest.Mock).mockResolvedValue({
+      success: true,
+      response: { decision: 'select', choiceId: 'opt-0', confidence: 0.85, reason: 'best match for links panel' },
+      latencyMs: 200,
+    })
+
     const ctx = createMockDispatchContext({
       trimmedInput: 'opn links panel',
       lastClarification: panelClarification,
@@ -1113,11 +1122,53 @@ describe('dispatchRouting: typo verb handling (ladder enforcement Phase A + B)',
 
     const result = await dispatchRouting(ctx)
 
+    // Phase C: auto-executed at Tier 0
     expect(result.handled).toBe(true)
     expect(result.handledByTier).toBe(0)
+
+    // Auto-execute: handleSelectOption IS called
+    expect(ctx.handleSelectOption).toHaveBeenCalledTimes(1)
     expect(ctx.handleSelectOption).toHaveBeenCalledWith(
-      expect.objectContaining({ label: 'Links Panels' })
+      expect.objectContaining({ id: 'opt-0', label: 'Links Panels' })
     )
+
+    // No safe clarifier shown
+    expect(ctx.addMessage).not.toHaveBeenCalled()
+
+    // Must NOT escape to downstream
+    expect(mockHandleKnownNounRouting).not.toHaveBeenCalled()
+  })
+
+  it('"opn links panel" + LLM confidence 0.7 + auto-execute ON → safe clarifier with reorder (below threshold)', async () => {
+    // Same as above but LLM returns medium confidence → safe clarifier
+    ;(isLLMFallbackEnabledClient as jest.Mock).mockReturnValue(true)
+    ;(isLLMAutoExecuteEnabledClient as jest.Mock).mockReturnValue(true)
+    ;(callClarificationLLMClient as jest.Mock).mockResolvedValue({
+      success: true,
+      response: { decision: 'select', choiceId: 'opt-0', confidence: 0.7, reason: 'decent match' },
+      latencyMs: 200,
+    })
+
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'opn links panel',
+      lastClarification: panelClarification,
+      pendingOptions: panelOptions,
+      activeOptionSetId: disambigMessageId,
+      uiContext: {
+        mode: 'dashboard',
+        dashboard: { entryName: 'Test Entry', visibleWidgets },
+      },
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    // Medium confidence → safe clarifier, NOT auto-executed
+    expect(result.handled).toBe(true)
+    expect(result.handledByTier).toBe(0)
+    expect(ctx.handleSelectOption).not.toHaveBeenCalled()
+
+    // Safe clarifier shown with LLM's pick first
+    expect(ctx.addMessage).toHaveBeenCalledTimes(1)
     expect(mockHandleKnownNounRouting).not.toHaveBeenCalled()
   })
 
@@ -1188,6 +1239,8 @@ describe('dispatchRouting: Phase B LLM ladder enforcement (active-option flows)'
   beforeEach(() => {
     jest.clearAllMocks()
     resetLLMArbitrationGuard()
+    // Reset Phase C kill switch to OFF (default)
+    ;(isLLMAutoExecuteEnabledClient as jest.Mock).mockReturnValue(false)
     mockBuildTurnSnapshot.mockReturnValue({
       openWidgets: [],
       activeSnapshotWidgetId: null,

@@ -74,6 +74,9 @@ import {
   callReturnCueLLM,
   isLLMFallbackEnabledClient,
   MIN_CONFIDENCE_SELECT,
+  AUTO_EXECUTE_CONFIDENCE,
+  AUTO_EXECUTE_ALLOWED_REASONS,
+  isLLMAutoExecuteEnabledClient,
 } from '@/lib/chat/clarification-llm-fallback'
 import { isExplicitCommand, isSelectionOnly, resolveScopeCue, canonicalizeCommandInput, classifyArbitrationConfidence } from '@/lib/chat/input-classifiers'
 import { isSelectionLike } from '@/lib/chat/grounding-set'
@@ -1149,16 +1152,20 @@ async function tryLLMLastChance(params: {
   attempted: boolean
   suggestedId: string | null
   fallbackReason: string | null
+  autoExecute: boolean  // Phase C: true when all gates pass (kill switch + confidence + allowlisted reason)
 }> {
   const { trimmedInput, candidates, context, clarificationMessageId,
     inputIsExplicitCommand, isNewQuestionOrCommandDetected,
     matchCount = 0, exactMatchCount = 0 } = params
 
   // --- Question-intent exclusion (hard exclusion per Rule G) ---
-  // Both utilities from query-patterns.ts — zero local regex
-  const isQuestion = hasQuestionIntent(trimmedInput) && !isPoliteImperativeRequest(trimmedInput)
+  // Strip trailing punctuation before check: "ope panel d pls?" is a polite command,
+  // not a question. Genuine questions are caught by QUESTION_INTENT_PATTERN (starts with
+  // what/how/where/is/etc.), not by trailing '?' alone.
+  const inputForQuestionCheck = trimmedInput.replace(/[?!.]+$/, '').trim()
+  const isQuestion = hasQuestionIntent(inputForQuestionCheck) && !isPoliteImperativeRequest(trimmedInput)
   if (isQuestion) {
-    return { attempted: false, suggestedId: null, fallbackReason: 'question_intent' }
+    return { attempted: false, suggestedId: null, fallbackReason: 'question_intent', autoExecute: false }
   }
 
   // --- Shared classifier (Rule A: single confidence/arbitration signal) ---
@@ -1171,12 +1178,12 @@ async function tryLLMLastChance(params: {
     hasActiveOptionContext: true,
   })
   if (confidence.bucket !== 'low_confidence_llm_eligible') {
-    return { attempted: false, suggestedId: null, fallbackReason: 'classifier_not_eligible' }
+    return { attempted: false, suggestedId: null, fallbackReason: 'classifier_not_eligible', autoExecute: false }
   }
 
   // --- Feature flag ---
   if (!isLLMFallbackEnabledClient()) {
-    return { attempted: false, suggestedId: null, fallbackReason: 'feature_disabled' }
+    return { attempted: false, suggestedId: null, fallbackReason: 'feature_disabled', autoExecute: false }
   }
 
   // --- Loop guard (Rule F: continuity) ---
@@ -1187,11 +1194,11 @@ async function tryLLMLastChance(params: {
     && lastLLMArbitration?.candidateIds === candidateIds
     && lastLLMArbitration?.clarificationMessageId === clarificationMessageId
   if (isRepeat) {
-    // Rule F: reuse prior suggestion ordering for continuity
+    // Rule F: reuse prior suggestion ordering for continuity — never auto-execute on repeat
     if (lastLLMArbitration?.suggestedId) {
-      return { attempted: false, suggestedId: lastLLMArbitration.suggestedId, fallbackReason: 'loop_guard_continuity' }
+      return { attempted: false, suggestedId: lastLLMArbitration.suggestedId, fallbackReason: 'loop_guard_continuity', autoExecute: false }
     }
-    return { attempted: false, suggestedId: null, fallbackReason: 'loop_guard' }
+    return { attempted: false, suggestedId: null, fallbackReason: 'loop_guard', autoExecute: false }
   }
 
   // --- LLM call (bounded to active options only — Rule C clarify-only) ---
@@ -1215,6 +1222,15 @@ async function tryLLMLastChance(params: {
     const suggestedId = llmResult.response.choiceId
     lastLLMArbitration = { normalizedInput, candidateIds, clarificationMessageId, suggestedId }
 
+    // Phase C: 3-gate auto-execute check
+    // Gate 1: Kill switch enabled (NEXT_PUBLIC_LLM_AUTO_EXECUTE_ENABLED=true)
+    // Gate 2: Confidence >= AUTO_EXECUTE_CONFIDENCE (0.85)
+    // Gate 3: Ambiguity reason in typed allowlist (only 'no_deterministic_match')
+    const autoExecute =
+      isLLMAutoExecuteEnabledClient()
+      && llmConfidence >= AUTO_EXECUTE_CONFIDENCE
+      && AUTO_EXECUTE_ALLOWED_REASONS.has(confidence.ambiguityReason ?? '' as never)
+
     void debugLog({
       component: 'ChatNavigation',
       action: 'llm_arbitration_called',
@@ -1224,13 +1240,14 @@ async function tryLLMLastChance(params: {
         suggestedLabel: candidates.find(c => c.id === suggestedId)?.label,
         candidateCount: candidates.length,
         ambiguityReason: confidence.ambiguityReason,
-        finalResolution: 'clarifier',
+        finalResolution: autoExecute ? 'auto_execute' : 'clarifier',
         llm_timeout_ms: llmElapsedMs,
         fallback_reason: null,
         llmConfidence,
+        autoExecute,
       },
     })
-    return { attempted: true, suggestedId, fallbackReason: null }
+    return { attempted: true, suggestedId, fallbackReason: null, autoExecute }
   }
 
   // LLM failed/abstained/low-confidence → safe fallback (Rule D)
@@ -1259,7 +1276,7 @@ async function tryLLMLastChance(params: {
       fallback_reason: fallbackReason,
     },
   })
-  return { attempted: true, suggestedId: null, fallbackReason }
+  return { attempted: true, suggestedId: null, fallbackReason, autoExecute: false }
 }
 
 /**
@@ -2721,6 +2738,47 @@ export async function handleClarificationIntercept(
               action: 'scope_cue_unresolved_hook_question_escape',
               metadata: { input: trimmedInput, matchCount: labelMatches.length, source: recoverable.source },
             })
+          } else if (llmResult.autoExecute && llmResult.suggestedId) {
+            // ===== Phase C: LLM high-confidence auto-execute (scope-cue parity) =====
+            // All 3 gates passed in tryLLMLastChance (kill switch + confidence + allowlisted reason).
+            const selectedOption = recoverableOptions.find(o => o.id === llmResult.suggestedId)
+            if (selectedOption) {
+              void debugLog({
+                component: 'ChatNavigation',
+                action: 'scope_cue_unresolved_hook_llm_auto_execute',
+                metadata: {
+                  input: trimmedInput,
+                  selectedLabel: selectedOption.label,
+                  suggestedId: llmResult.suggestedId,
+                  source: recoverable.source,
+                },
+              })
+
+              // Full state cleanup — SAME pattern as Tier 1b.3 auto-execute (scope-cue parity)
+              saveClarificationSnapshot(lastClarification ?? {
+                type: 'option_selection' as const,
+                originalIntent: trimmedInput,
+                messageId: originalMessageId,
+                timestamp: Date.now(),
+                options: recoverableOptions,
+              })
+              setRepairMemory(selectedOption.id, recoverableOptions)
+              setLastClarification(null)
+              setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+              setActiveOptionSetId(null)
+
+              const optionToSelect: SelectionOption = {
+                type: selectedOption.type as SelectionOption['type'],
+                id: selectedOption.id,
+                label: selectedOption.label,
+                sublabel: selectedOption.sublabel,
+                data: reconstructSnapshotData(selectedOption),
+              }
+              setIsLoading(false)
+              handleSelectOption(optionToSelect)
+              return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+            }
+            // suggestedId not found in options → fall through to safe clarifier
           } else {
             // Safe clarifier — reorder if LLM suggested (Rules C, D, F)
             const reorderSource = llmResult.suggestedId
@@ -3645,13 +3703,6 @@ export async function handleClarificationIntercept(
       // Command verbs to strip from input before matching
       const COMMAND_VERBS = new Set(['open', 'show', 'go', 'view', 'close'])
 
-      // Common command verb typos and their corrections
-      const COMMAND_VERB_TYPOS: Record<string, string> = {
-        opn: 'open', opne: 'open', ope: 'open', oepn: 'open',
-        shw: 'show', sho: 'show', shwo: 'show',
-        clse: 'close', clos: 'close', colse: 'close',
-        viw: 'view', veiw: 'view',
-      }
 
       // Normalize command verb typos in input
       const normalizeCommandVerbs = (input: string): { normalized: string, hadVerb: boolean, originalVerb: string | null } => {
@@ -3668,12 +3719,6 @@ export async function handleClarificationIntercept(
               originalVerb = token
               return token
             }
-            // Check for typo correction
-            if (COMMAND_VERB_TYPOS[token]) {
-              hadVerb = true
-              originalVerb = COMMAND_VERB_TYPOS[token]
-              return COMMAND_VERB_TYPOS[token]
-            }
           }
           return token
         })
@@ -3689,10 +3734,6 @@ export async function handleClarificationIntercept(
       const stripCommandVerb = (input: string): string => {
         const tokens = input.toLowerCase().split(/\s+/)
         if (tokens.length > 1 && COMMAND_VERBS.has(tokens[0])) {
-          return tokens.slice(1).join(' ')
-        }
-        // Also strip corrected typos
-        if (tokens.length > 1 && COMMAND_VERB_TYPOS[tokens[0]]) {
           return tokens.slice(1).join(' ')
         }
         return input
@@ -3722,9 +3763,10 @@ export async function handleClarificationIntercept(
       const { badge: extractedBadge, inputWithoutBadge } = extractBadge(inputWithoutVerb)
 
       // ==========================================================================
-      // Command Typo Escape (per plan §224-226)
-      // If normalized input forms a clear command, allow new-topic escape
-      // e.g., "opn recent" → "open recent" → escape to new topic
+      // Command Verb Escape (per plan §224-226)
+      // If input starts with an exact command verb and targets a non-option,
+      // allow new-topic escape. Only fires for exact COMMAND_VERBS.
+      // e.g., "open recent" → escape to new topic
       // ==========================================================================
       if (verbNormResult.hadVerb && verbNormResult.originalVerb) {
         // Check if the rest of the input (after verb) does NOT match any current option
@@ -3999,6 +4041,42 @@ export async function handleClarificationIntercept(
             },
           })
           // Fall through to downstream tiers
+        } else if (llmResult.autoExecute && llmResult.suggestedId) {
+          // ===== Phase C: LLM high-confidence auto-execute =====
+          // All 3 gates passed in tryLLMLastChance (kill switch + confidence + allowlisted reason).
+          const selectedOption = lastClarification.options.find(o => o.id === llmResult.suggestedId)
+          if (selectedOption) {
+            const fullOption = pendingOptions.find(opt => opt.id === selectedOption.id)
+
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'clarification_unresolved_hook_llm_auto_execute',
+              metadata: {
+                input: trimmedInput,
+                selectedLabel: selectedOption.label,
+                suggestedId: llmResult.suggestedId,
+                matchCount: matchingOptions.length,
+              },
+            })
+
+            // Full state cleanup — same pattern as badge-aware selection (lines 3798-3802)
+            saveClarificationSnapshot(lastClarification)
+            setRepairMemory(selectedOption.id, lastClarification.options)
+            setLastClarification(null)
+            setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+
+            const optionToSelect: SelectionOption = {
+              type: (fullOption?.type ?? selectedOption.type) as SelectionOption['type'],
+              id: selectedOption.id,
+              label: selectedOption.label,
+              sublabel: selectedOption.sublabel,
+              data: fullOption?.data as SelectionOption['data'] ?? reconstructSnapshotData(selectedOption),
+            }
+            setIsLoading(false)
+            handleSelectOption(optionToSelect)
+            return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+          }
+          // suggestedId not found in options → fall through to safe clarifier
         } else {
           // Safe clarifier — reorder if LLM suggested (Rules C, D, F)
           const reorderSource = llmResult.suggestedId

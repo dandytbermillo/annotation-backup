@@ -234,3 +234,61 @@ Reference: `codex/codex_needs_to_avoid/isolation-reactivity-anti-patterns.md`
 Applicability: **Not applicable**.
 
 Reason: This addendum changes chat routing/arbitration logic only and does not change isolation provider APIs, `useSyncExternalStore` contracts, or minimap/control-panel reactivity behavior.
+
+---
+
+## Phase C: LLM Auto-Execute for High-Confidence Results
+
+### Policy Change
+
+Rule C is revised: LLM may auto-execute when **all** of the following gates pass:
+
+1. **Kill switch ON**: `NEXT_PUBLIC_LLM_AUTO_EXECUTE_ENABLED=true` (default OFF — users opt in via `.env.local`)
+2. **Confidence threshold**: LLM confidence >= `AUTO_EXECUTE_CONFIDENCE` (0.85)
+3. **Reason allowlist**: Ambiguity reason is in `AUTO_EXECUTE_ALLOWED_REASONS` (typed `Set<AmbiguityReason>`)
+
+If any gate fails, behavior falls back to safe clarifier (with reorder if LLM suggested).
+
+### Auto-Execute Allowlist
+
+Typed `Set<AmbiguityReason>` — only:
+- `no_deterministic_match` (typo/filler inputs where deterministic fails entirely)
+
+NOT allowlisted (too ambiguous for auto-execute):
+- `command_selection_collision`
+- `multi_match_no_exact_winner`
+- `cross_source_tie`
+- `typo_ambiguous`
+- `no_candidate`
+
+### Auto-Execute Blocklist (Hard)
+
+- Loop guard repeat input: never auto-execute on repeat (Rule F continuity returns `autoExecute: false`)
+- LLM fail/timeout/429: safe clarifier (Rule D unchanged)
+- Question intent: falls through to downstream (Rule G unchanged)
+
+### Kill Switch
+
+- Flag: `NEXT_PUBLIC_LLM_AUTO_EXECUTE_ENABLED`
+- Default: OFF (auto-execute disabled)
+- When OFF: all LLM results produce safe clarifier (existing behavior)
+- When ON + all gates pass: auto-execute fires
+- Instant rollback: set flag to `false` → all auto-execute stops, falls back to clarifier
+
+### Implementation
+
+- Constants in `lib/chat/clarification-llm-fallback.ts`: `AUTO_EXECUTE_CONFIDENCE`, `AUTO_EXECUTE_ALLOWED_REASONS`, `isLLMAutoExecuteEnabledClient()`
+- 3-gate check in `tryLLMLastChance` success path (returns `autoExecute: boolean`)
+- Auto-execute branches in both unresolved hooks (Tier 1b.3 + scope-cue) with full state/snapshot/repair cleanup
+- All non-success return paths set `autoExecute: false`
+
+### Safety Summary
+
+| Gate | Check | Fail → |
+|------|-------|--------|
+| Kill switch | `isLLMAutoExecuteEnabledClient()` | Safe clarifier |
+| Confidence | >= 0.85 | Safe clarifier with reorder |
+| Reason allowlist | `no_deterministic_match` only | Safe clarifier with reorder |
+| Loop guard | Not repeat input | Safe clarifier with stored ordering |
+| LLM fail/timeout | Not success | Safe clarifier, original order |
+| Question intent | Excluded before LLM | Falls through to downstream |

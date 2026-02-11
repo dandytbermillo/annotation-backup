@@ -7,6 +7,7 @@
  */
 
 import { debugLog } from '@/lib/utils/debug-logger'
+import type { AmbiguityReason } from '@/lib/chat/input-classifiers'
 
 // =============================================================================
 // Types
@@ -41,7 +42,21 @@ export interface ClarificationLLMResult {
 
 const LLM_TIMEOUT_MS = 800
 export const MIN_CONFIDENCE_SELECT = 0.6
+export const AUTO_EXECUTE_CONFIDENCE = 0.85  // Phase C: threshold for LLM auto-execute
 const MIN_CONFIDENCE_ASK = 0.4
+
+// Phase C: Ambiguity reasons that permit auto-execute.
+// Conservative: only no_deterministic_match (typo/filler inputs where deterministic fails entirely).
+// NOT allowlisted: command_selection_collision, multi_match_no_exact_winner (too ambiguous).
+export const AUTO_EXECUTE_ALLOWED_REASONS: ReadonlySet<AmbiguityReason> = new Set<AmbiguityReason>([
+  'no_deterministic_match',
+])
+
+// Phase C kill switch for LLM auto-execute. Default OFF — users opt in via .env.local:
+// NEXT_PUBLIC_LLM_AUTO_EXECUTE_ENABLED=true
+export function isLLMAutoExecuteEnabledClient(): boolean {
+  return process.env.NEXT_PUBLIC_LLM_AUTO_EXECUTE_ENABLED === 'true'
+}
 
 // Feature flag check (server-side)
 export function isLLMFallbackEnabled(): boolean {

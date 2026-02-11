@@ -29,8 +29,11 @@ jest.mock('@/lib/chat/clarification-llm-fallback', () => ({
   callClarificationLLMClient: jest.fn().mockResolvedValue({ success: false }),
   callReturnCueLLM: jest.fn().mockResolvedValue({ isReturn: false }),
   isLLMFallbackEnabledClient: jest.fn().mockReturnValue(false),
+  isLLMAutoExecuteEnabledClient: jest.fn().mockReturnValue(false),
   shouldCallLLMFallback: jest.fn().mockReturnValue(false),
   MIN_CONFIDENCE_SELECT: 0.6,
+  AUTO_EXECUTE_CONFIDENCE: 0.85,
+  AUTO_EXECUTE_ALLOWED_REASONS: new Set(['no_deterministic_match']),
 }))
 
 jest.mock('@/lib/chat/grounding-llm-fallback', () => ({
@@ -73,7 +76,7 @@ global.fetch = jest.fn().mockResolvedValue({
 import { handleClarificationIntercept, resetLLMArbitrationGuard, type ClarificationInterceptContext, type PendingOptionState } from '@/lib/chat/chat-routing'
 import type { ClarificationOption, LastClarificationState } from '@/lib/chat/chat-navigation-context'
 import { debugLog } from '@/lib/utils/debug-logger'
-import { callClarificationLLMClient, isLLMFallbackEnabledClient } from '@/lib/chat/clarification-llm-fallback'
+import { callClarificationLLMClient, isLLMFallbackEnabledClient, isLLMAutoExecuteEnabledClient } from '@/lib/chat/clarification-llm-fallback'
 import { classifyArbitrationConfidence, canonicalizeCommandInput } from '@/lib/chat/input-classifiers'
 
 // ============================================================================
@@ -987,8 +990,9 @@ describe('Selection-vs-Command Arbitration Pre-gate', () => {
       // → ordinal guard: not ordinal → UNRESOLVED HOOK fires
       const linksPanelLabels = ['Links Panels', 'Links Panel D', 'Links Panel E']
 
-      it('"can you ope panel d pls" + active options + LLM enabled → safe clarifier with LLM suggestion', async () => {
+      it('"can you ope panel d pls" + LLM enabled + auto-execute ON + confidence 0.85 → auto-executes Links Panel D', async () => {
         ;(isLLMFallbackEnabledClient as jest.Mock).mockReturnValue(true)
+        ;(isLLMAutoExecuteEnabledClient as jest.Mock).mockReturnValue(true)
         ;(callClarificationLLMClient as jest.Mock).mockResolvedValue({
           success: true,
           response: { decision: 'select', choiceId: 'opt-1', confidence: 0.85, reason: 'best match' },
@@ -1003,28 +1007,77 @@ describe('Selection-vs-Command Arbitration Pre-gate', () => {
 
         const result = await handleClarificationIntercept(ctx)
 
-        // Safe clarifier — handled, NOT auto-executed
+        // Phase C: auto-executed — clarification cleared
+        expect(result.handled).toBe(true)
+        expect(result.clarificationCleared).toBe(true)
+        expect(ctx.handleSelectOption).toHaveBeenCalledTimes(1)
+        expect(ctx.handleSelectOption).toHaveBeenCalledWith(
+          expect.objectContaining({ id: 'opt-1', label: 'Links Panel D' })
+        )
+
+        // No safe clarifier shown
+        expect(ctx.addMessage).not.toHaveBeenCalled()
+
+        // State cleanup: snapshot saved, repair memory set, clarification cleared
+        expect(ctx.saveClarificationSnapshot).toHaveBeenCalled()
+        expect(ctx.setRepairMemory).toHaveBeenCalled()
+        expect(ctx.setLastClarification).toHaveBeenCalledWith(null)
+      })
+
+      it('"can you ope panel d pls" + LLM enabled + auto-execute OFF → safe clarifier with LLM reorder', async () => {
+        ;(isLLMFallbackEnabledClient as jest.Mock).mockReturnValue(true)
+        ;(isLLMAutoExecuteEnabledClient as jest.Mock).mockReturnValue(false)
+        ;(callClarificationLLMClient as jest.Mock).mockResolvedValue({
+          success: true,
+          response: { decision: 'select', choiceId: 'opt-1', confidence: 0.85, reason: 'best match' },
+          latencyMs: 200,
+        })
+
+        const ctx = createMockInterceptContext({
+          trimmedInput: 'can you ope panel d pls',
+          lastClarification: makeClarification(linksPanelLabels, 'option_selection'),
+          pendingOptions: makePendingOptions(linksPanelLabels),
+        })
+
+        const result = await handleClarificationIntercept(ctx)
+
+        // Kill switch OFF → safe clarifier, NOT auto-executed
         expect(result.handled).toBe(true)
         expect(result.clarificationCleared).toBe(false)
         expect(ctx.handleSelectOption).not.toHaveBeenCalled()
-
-        // LLM was called with tier1b3_unresolved context
-        expect(callClarificationLLMClient).toHaveBeenCalledTimes(1)
-        expect(callClarificationLLMClient).toHaveBeenCalledWith(
-          expect.objectContaining({
-            context: 'tier1b3_unresolved',
-          })
-        )
 
         // Re-show with LLM's pick first
         expect(ctx.addMessage).toHaveBeenCalledTimes(1)
         const addedMessage = (ctx.addMessage as jest.Mock).mock.calls[0][0]
         expect(addedMessage.options[0].id).toBe('opt-1') // LLM's pick first
+      })
 
-        // Full state rebinding
-        expect(ctx.setPendingOptions).toHaveBeenCalled()
-        expect(ctx.setActiveOptionSetId).toHaveBeenCalled()
-        expect(ctx.setLastClarification).toHaveBeenCalled()
+      it('"can you ope panel d pls" + LLM confidence 0.7 + auto-execute ON → safe clarifier (below threshold)', async () => {
+        ;(isLLMFallbackEnabledClient as jest.Mock).mockReturnValue(true)
+        ;(isLLMAutoExecuteEnabledClient as jest.Mock).mockReturnValue(true)
+        ;(callClarificationLLMClient as jest.Mock).mockResolvedValue({
+          success: true,
+          response: { decision: 'select', choiceId: 'opt-1', confidence: 0.7, reason: 'decent match' },
+          latencyMs: 200,
+        })
+
+        const ctx = createMockInterceptContext({
+          trimmedInput: 'can you ope panel d pls',
+          lastClarification: makeClarification(linksPanelLabels, 'option_selection'),
+          pendingOptions: makePendingOptions(linksPanelLabels),
+        })
+
+        const result = await handleClarificationIntercept(ctx)
+
+        // Medium confidence → safe clarifier, NOT auto-executed
+        expect(result.handled).toBe(true)
+        expect(result.clarificationCleared).toBe(false)
+        expect(ctx.handleSelectOption).not.toHaveBeenCalled()
+
+        // Still shows clarifier with LLM's pick first
+        expect(ctx.addMessage).toHaveBeenCalledTimes(1)
+        const addedMessage = (ctx.addMessage as jest.Mock).mock.calls[0][0]
+        expect(addedMessage.options[0].id).toBe('opt-1')
       })
 
       it('"can you ope panel d pls" + active options + LLM disabled → safe clarifier (original order, no escape)', async () => {
@@ -1190,6 +1243,66 @@ describe('Selection-vs-Command Arbitration Pre-gate', () => {
         })
         await handleClarificationIntercept(ctx3)
         expect(callClarificationLLMClient).toHaveBeenCalledTimes(1)
+      })
+
+      it('loop guard blocks auto-execute on repeat: Turn 1 auto-executes → Turn 2 same input → safe clarifier (NOT auto-execute)', async () => {
+        // Turn 1: LLM returns high confidence → auto-executes
+        ;(isLLMFallbackEnabledClient as jest.Mock).mockReturnValue(true)
+        ;(isLLMAutoExecuteEnabledClient as jest.Mock).mockReturnValue(true)
+        ;(callClarificationLLMClient as jest.Mock).mockResolvedValue({
+          success: true,
+          response: { decision: 'select', choiceId: 'opt-1', confidence: 0.90, reason: 'confident match' },
+          latencyMs: 150,
+        })
+
+        const ctx1 = createMockInterceptContext({
+          trimmedInput: 'can you ope panel d pls',
+          lastClarification: {
+            ...makeClarification(linksPanelLabels1, 'option_selection'),
+            messageId: 'msg-loop-1',
+          },
+          pendingOptions: makePendingOptions(linksPanelLabels1),
+        })
+
+        const result1 = await handleClarificationIntercept(ctx1)
+
+        // Turn 1: auto-executed
+        expect(result1.handled).toBe(true)
+        expect(result1.clarificationCleared).toBe(true)
+        expect(ctx1.handleSelectOption).toHaveBeenCalledTimes(1)
+        expect(callClarificationLLMClient).toHaveBeenCalledTimes(1)
+
+        // Turn 2: same input + same clarification cycle (same messageId) → loop guard fires
+        jest.clearAllMocks()
+        ;(isLLMFallbackEnabledClient as jest.Mock).mockReturnValue(true)
+        ;(isLLMAutoExecuteEnabledClient as jest.Mock).mockReturnValue(true)
+        ;(callClarificationLLMClient as jest.Mock).mockResolvedValue({
+          success: true,
+          response: { decision: 'select', choiceId: 'opt-1', confidence: 0.90, reason: 'confident match' },
+          latencyMs: 150,
+        })
+
+        const ctx2 = createMockInterceptContext({
+          trimmedInput: 'can you ope panel d pls',
+          lastClarification: {
+            ...makeClarification(linksPanelLabels1, 'option_selection'),
+            messageId: 'msg-loop-1',
+          },
+          pendingOptions: makePendingOptions(linksPanelLabels1),
+        })
+
+        const result2 = await handleClarificationIntercept(ctx2)
+
+        // Turn 2: loop guard fires → safe clarifier (NOT auto-execute)
+        expect(result2.handled).toBe(true)
+        expect(result2.clarificationCleared).toBe(false)
+        expect(ctx2.handleSelectOption).not.toHaveBeenCalled()
+        // LLM NOT called (loop guard skips LLM call entirely)
+        expect(callClarificationLLMClient).not.toHaveBeenCalled()
+        // Safe clarifier shown with LLM's prior suggestion first (continuity)
+        expect(ctx2.addMessage).toHaveBeenCalledTimes(1)
+        const addedMessage = (ctx2.addMessage as jest.Mock).mock.calls[0][0]
+        expect(addedMessage.options[0].id).toBe('opt-1') // Prior LLM pick reused for ordering
       })
     })
   })
