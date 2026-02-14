@@ -26,8 +26,34 @@ export interface ClarificationLLMResponse {
   choiceIndex: number
   confidence: number
   reason: string
-  decision: 'select' | 'none' | 'ask_clarify' | 'reroute' | 'repair' | 'reject_list'
+  decision: 'select' | 'none' | 'ask_clarify' | 'reroute' | 'repair' | 'reject_list' | 'request_context'
+  /** Contract version — set by server boundary, required for request_context validation */
+  contractVersion?: string
+  /** Needed context types — only set when decision === 'request_context' */
+  neededContext?: NeededContextType[]
 }
+
+// =============================================================================
+// Context-Enrichment Retry Loop Contract
+// Per context-enrichment-retry-loop-plan.md §LLM Contract Extension
+// =============================================================================
+
+export type NeededContextType =
+  | 'chat_active_options'
+  | 'chat_recoverable_options'
+  | 'active_widget_items'
+  | 'active_dashboard_items'
+  | 'active_workspace_items'
+  | 'scope_disambiguation_hint'
+
+export const NEEDED_CONTEXT_ALLOWLIST: ReadonlySet<NeededContextType> = new Set<NeededContextType>([
+  'chat_active_options', 'chat_recoverable_options',
+  'active_widget_items', 'active_dashboard_items',
+  'active_workspace_items', 'scope_disambiguation_hint',
+])
+
+export const MAX_NEEDED_CONTEXT_ITEMS = 2
+export const CLARIFICATION_LLM_CONTRACT_VERSION = '2.0'
 
 export interface ClarificationLLMResult {
   success: boolean
@@ -66,6 +92,25 @@ export function isLLMFallbackEnabled(): boolean {
 // Feature flag check (client-side) - uses NEXT_PUBLIC_ prefix
 export function isLLMFallbackEnabledClient(): boolean {
   return process.env.NEXT_PUBLIC_CLARIFICATION_LLM_FALLBACK === 'true'
+}
+
+// Context-enrichment retry loop kill switch. Default OFF.
+// NEXT_PUBLIC_LLM_CONTEXT_RETRY_ENABLED=true to enable.
+export function isContextRetryEnabledClient(): boolean {
+  return process.env.NEXT_PUBLIC_LLM_CONTEXT_RETRY_ENABLED === 'true'
+}
+
+/**
+ * Validate neededContext from LLM response against the allowlist.
+ * Exported for server-side use only — client trusts pre-validated responses.
+ * Filters to valid types and enforces hard cap of MAX_NEEDED_CONTEXT_ITEMS.
+ */
+export function validateNeededContext(neededContext: unknown): NeededContextType[] {
+  if (!Array.isArray(neededContext)) return []
+  return neededContext
+    .filter((item): item is NeededContextType =>
+      typeof item === 'string' && NEEDED_CONTEXT_ALLOWLIST.has(item as NeededContextType))
+    .slice(0, MAX_NEEDED_CONTEXT_ITEMS)
 }
 
 // =============================================================================

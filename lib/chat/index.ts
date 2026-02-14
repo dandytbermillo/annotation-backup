@@ -47,9 +47,10 @@ export { useChatNavigationListener } from './use-chat-navigation-listener'
 export type { UseChatNavigationListenerOptions } from './use-chat-navigation-listener'
 
 // Context (for shared state across mode switches)
-export { ChatNavigationProvider, useChatNavigationContext } from './chat-navigation-context'
+export { ChatNavigationProvider, useChatNavigationContext, isProvenanceDebugEnabled } from './chat-navigation-context'
 export type {
   ChatMessage,
+  ChatProvenance,
   SelectionOption,
   SessionState,
   LastAction,
@@ -91,9 +92,24 @@ export {
   hasClearNaturalChoiceCue,
   isLLMFallbackEnabled,
   isLLMFallbackEnabledClient,
+  isContextRetryEnabledClient,
+  validateNeededContext,
+  NEEDED_CONTEXT_ALLOWLIST,
+  MAX_NEEDED_CONTEXT_ITEMS,
+  CLARIFICATION_LLM_CONTRACT_VERSION,
 } from './clarification-llm-fallback'
 export type {
   ClarificationLLMRequest,
   ClarificationLLMResponse,
   ClarificationLLMResult,
+  NeededContextType,
 } from './clarification-llm-fallback'
+
+// Context-Enrichment Retry Loop Orchestrator
+export {
+  runBoundedArbitrationLoop,
+  resetLLMArbitrationGuard,
+} from './chat-routing'
+export type {
+  ArbitrationFallbackReason,
+} from './chat-routing'

@@ -31,6 +31,7 @@ jest.mock('@/lib/chat/ui-snapshot-builder', () => ({
 jest.mock('@/lib/chat/clarification-llm-fallback', () => ({
   callClarificationLLMClient: jest.fn().mockResolvedValue({ success: false }),
   isLLMFallbackEnabledClient: jest.fn().mockReturnValue(false),
+  isContextRetryEnabledClient: jest.fn().mockReturnValue(false),
 }))
 
 jest.mock('@/lib/chat/grounding-llm-fallback', () => ({

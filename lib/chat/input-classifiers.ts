@@ -402,19 +402,24 @@ function isSelectionOnlyEmbedded(
 /**
  * Result of scope-cue classification.
  * scope: 'chat' means user explicitly wants to target chat options.
- * scope: 'widget' is reserved for phase 2 (named widget cues).
+ * scope: 'widget' means user explicitly wants to target a widget context.
+ * scope: 'dashboard' means user explicitly wants to target dashboard context.
+ * scope: 'workspace' means user explicitly wants to target workspace context.
  * scope: 'none' means no explicit scope cue detected.
  */
 export interface ScopeCueResult {
-  scope: 'chat' | 'widget' | 'none'
+  scope: 'chat' | 'widget' | 'dashboard' | 'workspace' | 'none'
   cueText: string | null
   confidence: 'high' | 'none'
 }
 
 /**
  * Detect explicit scope cues in user input.
- * Per scope-cues-addendum-plan.md: deterministic normalization for chat cues.
- * Widget cues (named) deferred to phase 2.
+ * Per scope-cues-addendum-plan.md + context-enrichment-retry-loop-plan.md §Explicit Scope Cue Matrix.
+ *
+ * Multi-cue precedence: chat → widget → dashboard → workspace.
+ * If input contains multiple cues, first match in evaluation order wins
+ * (sequential early-returns). This is deterministic regardless of cue position in the string.
  *
  * Chat cue families (longest match first to avoid partial matches):
  * - "back to options", "from earlier options", "from chat options"
@@ -423,15 +428,33 @@ export interface ScopeCueResult {
 export function resolveScopeCue(input: string): ScopeCueResult {
   const normalized = input.toLowerCase().trim()
 
-  // Chat cues — longest match first to avoid partial matches
+  // --- Chat cues (highest precedence) — longest match first ---
   const CHAT_CUE_PATTERN = /\b(back to options|from earlier options|from chat options?|from the chat|from chat|in chat)\b/i
   const chatMatch = normalized.match(CHAT_CUE_PATTERN)
   if (chatMatch) {
     return { scope: 'chat', cueText: chatMatch[0], confidence: 'high' }
   }
 
-  // Widget cues — deferred to phase 2
-  // (would need widget labels passed in for "from <widget label>" matching)
+  // --- Widget cues ---
+  const WIDGET_CUE_PATTERN = /\b(from links panel\s*[a-z]?|from recent|from active widget|from the widget)\b/i
+  const widgetMatch = normalized.match(WIDGET_CUE_PATTERN)
+  if (widgetMatch) {
+    return { scope: 'widget', cueText: widgetMatch[0], confidence: 'high' }
+  }
+
+  // --- Dashboard cues ---
+  const DASHBOARD_CUE_PATTERN = /\b(from dashboard|in dashboard|from active dashboard|from the dashboard)\b/i
+  const dashboardMatch = normalized.match(DASHBOARD_CUE_PATTERN)
+  if (dashboardMatch) {
+    return { scope: 'dashboard', cueText: dashboardMatch[0], confidence: 'high' }
+  }
+
+  // --- Workspace cues ---
+  const WORKSPACE_CUE_PATTERN = /\b(from workspace|in workspace|from active workspace|from the workspace)\b/i
+  const workspaceMatch = normalized.match(WORKSPACE_CUE_PATTERN)
+  if (workspaceMatch) {
+    return { scope: 'workspace', cueText: workspaceMatch[0], confidence: 'high' }
+  }
 
   return { scope: 'none', cueText: null, confidence: 'none' }
 }

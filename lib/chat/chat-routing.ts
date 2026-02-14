@@ -33,7 +33,7 @@ import {
 import { isBareNounQuery, maybeFormatSnippetWithHs3, dedupeHeaderPath, stripMarkdownHeadersForUI } from '@/lib/chat/doc-routing'
 import type { UIContext } from '@/lib/chat/intent-prompt'
 import type { ChatMessage, DocRetrievalState, SelectionOption, LastClarificationState, WorkspaceMatch, NoteMatch } from '@/lib/chat'
-import type { ClarificationOption, RepairMemoryState, ClarificationSnapshot, PanelDrawerData, DocData } from '@/lib/chat/chat-navigation-context'
+import type { ClarificationOption, RepairMemoryState, ClarificationSnapshot, PanelDrawerData, DocData, ChatProvenance } from '@/lib/chat/chat-navigation-context'
 import { REPAIR_MEMORY_TURN_LIMIT, STOP_SUPPRESSION_TURN_LIMIT, getLatchId } from '@/lib/chat/chat-navigation-context'
 import type { EntryMatch } from '@/lib/chat/resolution-types'
 import { matchVisiblePanelCommand, type VisibleWidget } from '@/lib/chat/panel-command-matcher'
@@ -73,10 +73,12 @@ import {
   callClarificationLLMClient,
   callReturnCueLLM,
   isLLMFallbackEnabledClient,
+  isContextRetryEnabledClient,
   MIN_CONFIDENCE_SELECT,
   AUTO_EXECUTE_CONFIDENCE,
   AUTO_EXECUTE_ALLOWED_REASONS,
   isLLMAutoExecuteEnabledClient,
+  type NeededContextType,
 } from '@/lib/chat/clarification-llm-fallback'
 import { isExplicitCommand, isSelectionOnly, resolveScopeCue, canonicalizeCommandInput, classifyArbitrationConfidence } from '@/lib/chat/input-classifiers'
 import { isSelectionLike } from '@/lib/chat/grounding-set'
@@ -1113,6 +1115,8 @@ export interface ClarificationInterceptResult extends HandlerResult {
   clarificationCleared: boolean
   /** Whether new question/command was detected */
   isNewQuestionOrCommandDetected: boolean
+  /** Dev-only: routing provenance hint for debug overlay (undefined = deterministic) */
+  _devProvenanceHint?: ChatProvenance
 }
 
 // Loop guard for LLM arbitration: prevent repeated LLM calls for same input+options.
@@ -1122,6 +1126,8 @@ let lastLLMArbitration: {
   candidateIds: string
   clarificationMessageId: string
   suggestedId: string | null  // Rule F — loop-guard continuity
+  enrichmentFingerprint?: string  // Context-enrichment retry loop
+  retryAttempted?: boolean        // Context-enrichment retry loop — budget tracking
 } | null = null
 
 /** Reset the LLM arbitration loop guard. Called on cycle boundary (clarification resolved) and chat clear. */
@@ -1148,15 +1154,18 @@ async function tryLLMLastChance(params: {
   isNewQuestionOrCommandDetected: boolean
   matchCount?: number       // deterministic match count (default 0)
   exactMatchCount?: number  // exact match count (default 0)
+  enrichedContext?: string  // Retry-only: enriched evidence from context-enrichment loop
 }): Promise<{
   attempted: boolean
   suggestedId: string | null
   fallbackReason: string | null
   autoExecute: boolean  // Phase C: true when all gates pass (kill switch + confidence + allowlisted reason)
+  rawDecision?: 'request_context'  // Only set for request_context decision — typed narrowly
+  rawNeededContext?: NeededContextType[]  // Context types requested by LLM
 }> {
   const { trimmedInput, candidates, context, clarificationMessageId,
     inputIsExplicitCommand, isNewQuestionOrCommandDetected,
-    matchCount = 0, exactMatchCount = 0 } = params
+    matchCount = 0, exactMatchCount = 0, enrichedContext } = params
 
   // --- Question-intent exclusion (hard exclusion per Rule G) ---
   // Strip trailing punctuation before check: "ope panel d pls?" is a polite command,
@@ -1203,10 +1212,11 @@ async function tryLLMLastChance(params: {
 
   // --- LLM call (bounded to active options only — Rule C clarify-only) ---
   const llmStartTime = Date.now()
+  const llmContext = enrichedContext ? `${context}; enriched_evidence: ${enrichedContext}` : context
   const llmResult = await callClarificationLLMClient({
     userInput: trimmedInput,
     options: candidates,
-    context,
+    context: llmContext,
   })
   const llmElapsedMs = Date.now() - llmStartTime
 
@@ -1250,14 +1260,49 @@ async function tryLLMLastChance(params: {
     return { attempted: true, suggestedId, fallbackReason: null, autoExecute }
   }
 
+  // --- request_context: first-class branch (per context-enrichment-retry-loop-plan) ---
+  // Must be handled BEFORE generic fallback mapping to prevent collapse into 'abstain'.
+  // Server validates contractVersion + neededContext at boundary; client trusts the result.
+  if (llmResult.success && llmResult.response?.decision === 'request_context') {
+    lastLLMArbitration = { normalizedInput, candidateIds, clarificationMessageId, suggestedId: null }
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'llm_arbitration_request_context',
+      metadata: {
+        input: trimmedInput, context,
+        neededContext: llmResult.response.neededContext,
+        llm_timeout_ms: llmElapsedMs,
+      },
+    })
+    return {
+      attempted: true,
+      suggestedId: null,
+      fallbackReason: null,  // Not a failure — structured request for more context
+      autoExecute: false,
+      rawDecision: 'request_context',
+      rawNeededContext: llmResult.response.neededContext ?? [],
+    }
+  }
+
   // LLM failed/abstained/low-confidence → safe fallback (Rule D)
   // Store suggestedId: null for Rule F (no suggestion to reuse)
   lastLLMArbitration = { normalizedInput, candidateIds, clarificationMessageId, suggestedId: null }
 
-  const fallbackReason: string =
+  // Extract server downgrade reason if present (e.g., 'Downgraded: contract_version_mismatch').
+  // Server downgrade reasons take precedence over generic confidence/decision mapping because
+  // they carry typed provenance from the validation boundary (single-source-of-truth).
+  const serverReason = llmResult.response?.reason ?? ''
+  const serverDowngradeReason: ArbitrationFallbackReason | null =
+    serverReason === 'Downgraded: contract_version_mismatch' ? 'contract_version_mismatch'
+    : serverReason === 'Downgraded: invalid_needed_context' ? 'invalid_needed_context'
+    : null
+
+  const fallbackReason: ArbitrationFallbackReason =
     !llmResult.success
       ? (llmResult.error === 'Timeout' ? 'timeout'
-        : llmResult.error?.includes('429') ? '429' : 'transport_error')
+        : llmResult.error?.includes('429') ? 'rate_limited' : 'transport_error')
+      : serverDowngradeReason  // Server downgrade reason takes precedence (typed provenance)
+        ? serverDowngradeReason
       : llmAbstainsOnConfidence ? 'abstain'
       : llmResult.response?.decision === 'ask_clarify' ? 'abstain'
       : llmResult.response?.decision === 'reroute' ? 'reroute'
@@ -1277,6 +1322,412 @@ async function tryLLMLastChance(params: {
     },
   })
   return { attempted: true, suggestedId: null, fallbackReason, autoExecute: false }
+}
+
+// =============================================================================
+// Context-Enrichment Retry Loop Orchestrator
+// Per context-enrichment-retry-loop-plan.md
+// Single bounded loop: deterministic → LLM (attempt 1) → optional enrichment retry → safe clarifier
+// =============================================================================
+
+/** Single shared union for all arbitration fallback reasons.
+ *  Used in result types, telemetry, and logs. No ad-hoc reason strings. */
+export type ArbitrationFallbackReason =
+  // Existing reasons (must match tryLLMLastChance exactly)
+  | 'question_intent'
+  | 'classifier_not_eligible'
+  | 'feature_disabled'
+  | 'loop_guard'
+  | 'loop_guard_continuity'
+  // Retry-loop additions
+  | 'enrichment_unavailable'
+  | 'scope_not_available'
+  | 'no_new_evidence'
+  | 'retry_feature_disabled'
+  | 'timeout'
+  | 'rate_limited'
+  | 'transport_error'
+  | 'abstain'
+  | 'low_confidence'
+  | 'contract_version_mismatch'
+  | 'invalid_needed_context'
+  // Passthrough from tryLLMLastChance generic fallback
+  | 'reroute'
+  | 'none_match'
+
+/** Enrichment returns metadata/evidence only — NOT new candidates.
+ *  In active-option flows, the candidate set is frozen at loop entry. */
+type ContextEnrichmentCallback = (
+  neededContext: NeededContextType[]
+) => { enrichedMetadata: Record<string, unknown> } | null
+
+interface BoundedArbitrationResult {
+  attempted: boolean
+  suggestedId: string | null
+  fallbackReason: ArbitrationFallbackReason | null
+  autoExecute: boolean
+  retryAttempted: boolean
+}
+
+/** Fingerprint includes frozen candidate IDs + scope + metadata keys+values.
+ *  Since candidates are frozen, fingerprint change means metadata actually changed. */
+function computeEvidenceFingerprint(
+  frozenCandidateIds: string[],
+  scope: string,
+  metadata: Record<string, unknown>
+): string {
+  const ids = [...frozenCandidateIds].sort().join(',')
+  const metaEntries = Object.entries(metadata)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+    .join(';')
+  return `${ids}|${scope}|${metaEntries}`
+}
+
+/**
+ * Bounded arbitration loop with optional enrichment retry.
+ * Entry points: Tier 1b.3 unresolved hook + scope-cue Phase 2b.
+ * When retry flag is OFF, delegates directly to tryLLMLastChance (near-zero behavior change).
+ */
+export async function runBoundedArbitrationLoop(params: {
+  trimmedInput: string
+  initialCandidates: { id: string; label: string; sublabel?: string }[]
+  context: 'tier1b3_unresolved' | 'scope_cue_unresolved'
+  clarificationMessageId: string
+  inputIsExplicitCommand: boolean
+  isNewQuestionOrCommandDetected: boolean
+  matchCount?: number
+  exactMatchCount?: number
+  scope: import('@/lib/chat/input-classifiers').ScopeCueResult['scope']
+  enrichmentCallback: ContextEnrichmentCallback
+}): Promise<BoundedArbitrationResult> {
+  const { trimmedInput, initialCandidates, context, clarificationMessageId,
+    inputIsExplicitCommand, isNewQuestionOrCommandDetected,
+    matchCount, exactMatchCount, scope, enrichmentCallback } = params
+
+  const loopStartTime = Date.now()
+  const frozenCandidateIds = initialCandidates.map(c => c.id)
+
+  void debugLog({
+    component: 'ChatNavigation',
+    action: 'arbitration_loop_started',
+    metadata: { input: trimmedInput, scope, candidateCount: initialCandidates.length, context },
+  })
+
+  // --- Step 1: Delegate to tryLLMLastChance (attempt 1) ---
+  const attempt1 = await tryLLMLastChance({
+    trimmedInput,
+    candidates: initialCandidates,
+    context,
+    clarificationMessageId,
+    inputIsExplicitCommand,
+    isNewQuestionOrCommandDetected,
+    matchCount,
+    exactMatchCount,
+  })
+
+  // --- Step 2: Handle attempt-1 result with explicit reason branching ---
+
+  // Resolved — return as-is
+  if (attempt1.suggestedId !== null) {
+    return {
+      attempted: attempt1.attempted,
+      suggestedId: attempt1.suggestedId,
+      fallbackReason: (attempt1.fallbackReason as ArbitrationFallbackReason) ?? null,
+      autoExecute: attempt1.autoExecute,
+      retryAttempted: false,
+    }
+  }
+
+  // attempted=false — explicit reason branching (no silent pass-through)
+  if (!attempt1.attempted) {
+    return {
+      attempted: false,
+      suggestedId: attempt1.suggestedId,
+      fallbackReason: (attempt1.fallbackReason as ArbitrationFallbackReason) ?? null,
+      autoExecute: false,
+      retryAttempted: false,
+    }
+  }
+
+  // --- Step 3: Check for request_context ---
+  // attempted=true, suggestedId=null — LLM was called but didn't resolve
+
+  // If retry flag is OFF, normalize request_context to safe clarifier
+  if (!isContextRetryEnabledClient()) {
+    if (attempt1.rawDecision === 'request_context') {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'arbitration_retry_fallback',
+        metadata: { input: trimmedInput, scope, fallbackReason: 'retry_feature_disabled', totalLatencyMs: Date.now() - loopStartTime },
+      })
+      return {
+        attempted: true,
+        suggestedId: null,
+        fallbackReason: 'retry_feature_disabled',
+        autoExecute: false,
+        retryAttempted: false,
+      }
+    }
+    // Not request_context — pass through existing fallback reason
+    return {
+      attempted: true,
+      suggestedId: null,
+      fallbackReason: (attempt1.fallbackReason as ArbitrationFallbackReason) ?? 'abstain',
+      autoExecute: false,
+      retryAttempted: false,
+    }
+  }
+
+  // Retry flag is ON — check if LLM requested context
+  if (attempt1.rawDecision !== 'request_context') {
+    // LLM didn't request context — return existing fallback
+    return {
+      attempted: true,
+      suggestedId: null,
+      fallbackReason: (attempt1.fallbackReason as ArbitrationFallbackReason) ?? 'abstain',
+      autoExecute: false,
+      retryAttempted: false,
+    }
+  }
+
+  // --- Step 4: request_context path — bounded enrichment retry ---
+  void debugLog({
+    component: 'ChatNavigation',
+    action: 'arbitration_request_context',
+    metadata: {
+      input: trimmedInput, scope,
+      neededContext: attempt1.rawNeededContext,
+      candidateCount: initialCandidates.length,
+    },
+  })
+
+  // Check retry budget (single retry per cycle)
+  if (lastLLMArbitration?.retryAttempted) {
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'arbitration_retry_fallback',
+      metadata: { input: trimmedInput, scope, fallbackReason: 'loop_guard', totalLatencyMs: Date.now() - loopStartTime },
+    })
+    return {
+      attempted: true,
+      suggestedId: null,
+      fallbackReason: 'loop_guard',
+      autoExecute: false,
+      retryAttempted: false,
+    }
+  }
+
+  // Fetch enrichment
+  const enrichmentResult = enrichmentCallback(attempt1.rawNeededContext ?? [])
+  if (!enrichmentResult) {
+    // Distinguish unsupported scope (dashboard/workspace) from generic unavailability.
+    // Callers check scope_not_available to show scope-specific messages.
+    const reason: ArbitrationFallbackReason =
+      (scope === 'dashboard' || scope === 'workspace') ? 'scope_not_available' : 'enrichment_unavailable'
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'arbitration_retry_fallback',
+      metadata: { input: trimmedInput, scope, fallbackReason: reason, totalLatencyMs: Date.now() - loopStartTime },
+    })
+    return {
+      attempted: true,
+      suggestedId: null,
+      fallbackReason: reason,
+      autoExecute: false,
+      retryAttempted: false,
+    }
+  }
+
+  // Compute evidence fingerprints
+  const fingerprintBefore = computeEvidenceFingerprint(frozenCandidateIds, scope, {})
+  const fingerprintAfter = computeEvidenceFingerprint(frozenCandidateIds, scope, enrichmentResult.enrichedMetadata)
+
+  if (fingerprintBefore === fingerprintAfter) {
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'arbitration_retry_fallback',
+      metadata: { input: trimmedInput, scope, fallbackReason: 'no_new_evidence', evidenceFingerprint: fingerprintAfter, totalLatencyMs: Date.now() - loopStartTime },
+    })
+    return {
+      attempted: true,
+      suggestedId: null,
+      fallbackReason: 'no_new_evidence',
+      autoExecute: false,
+      retryAttempted: true,
+    }
+  }
+
+  // --- Step 5: Evidence changed — retry with enriched metadata ---
+  void debugLog({
+    component: 'ChatNavigation',
+    action: 'arbitration_retry_called',
+    metadata: {
+      input: trimmedInput, scope,
+      candidateCount: initialCandidates.length,
+      evidenceFingerprintBefore: fingerprintBefore,
+      evidenceFingerprintAfter: fingerprintAfter,
+    },
+  })
+
+  // Build enriched context string from metadata
+  const enrichedContextStr = Object.entries(enrichmentResult.enrichedMetadata)
+    .map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)
+    .join('; ')
+
+  // Temporarily clear loop guard so the retry call doesn't hit it.
+  // tryLLMLastChance stores guard state after attempt 1 — the retry is an
+  // intentional second call within the same orchestration loop, not a user repeat.
+  // We'll restore/update guard state after attempt 2.
+  const guardStateBeforeRetry = lastLLMArbitration
+  lastLLMArbitration = null
+
+  const attempt2 = await tryLLMLastChance({
+    trimmedInput,
+    candidates: initialCandidates,  // Candidate freeze invariant: same frozen candidates
+    context,
+    clarificationMessageId,
+    inputIsExplicitCommand,
+    isNewQuestionOrCommandDetected,
+    matchCount,
+    exactMatchCount,
+    enrichedContext: enrichedContextStr,  // Pass enriched evidence to retry LLM call
+  })
+
+  // Update loop guard with retry state.
+  // tryLLMLastChance stores a new guard entry from attempt 2.
+  // We mark it as retryAttempted so future same-input calls know the budget is spent.
+  if (lastLLMArbitration) {
+    lastLLMArbitration.retryAttempted = true
+    lastLLMArbitration.enrichmentFingerprint = fingerprintAfter
+  } else if (guardStateBeforeRetry) {
+    // If attempt 2 didn't store guard state (e.g., classifier not eligible),
+    // restore the original guard state with retry flag set.
+    lastLLMArbitration = { ...guardStateBeforeRetry, retryAttempted: true, enrichmentFingerprint: fingerprintAfter }
+  }
+
+  const totalLatencyMs = Date.now() - loopStartTime
+
+  if (attempt2.suggestedId !== null) {
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'arbitration_retry_resolved',
+      metadata: {
+        input: trimmedInput, scope,
+        suggestedId: attempt2.suggestedId,
+        attempts: 2,
+        evidenceFingerprint: fingerprintAfter,
+        resolution_source: 'llm',
+        totalLatencyMs,
+      },
+    })
+    return {
+      attempted: true,
+      suggestedId: attempt2.suggestedId,
+      fallbackReason: null,
+      autoExecute: attempt2.autoExecute,
+      retryAttempted: true,
+    }
+  }
+
+  // Retry didn't resolve — safe clarifier
+  void debugLog({
+    component: 'ChatNavigation',
+    action: 'arbitration_retry_fallback',
+    metadata: {
+      input: trimmedInput, scope,
+      attempts: 2,
+      evidenceFingerprint: fingerprintAfter,
+      fallbackReason: attempt2.fallbackReason ?? 'abstain',
+      totalLatencyMs,
+    },
+  })
+  return {
+    attempted: true,
+    suggestedId: null,
+    fallbackReason: (attempt2.fallbackReason as ArbitrationFallbackReason) ?? 'abstain',
+    autoExecute: false,
+    retryAttempted: true,
+  }
+}
+
+// =============================================================================
+// Scope-Bound Enrichment Fetchers
+// Per context-enrichment-retry-loop-plan.md §Step 5
+// =============================================================================
+
+/** Returns enriched metadata for chat-scoped evidence (not new candidates). */
+function enrichChatEvidence(ctx: ClarificationInterceptContext): { enrichedMetadata: Record<string, unknown> } | null {
+  const metadata: Record<string, unknown> = {}
+
+  // Aggregate metadata from recoverable sources
+  if (ctx.lastClarification?.options?.length) {
+    metadata['lastClarification_labels'] = ctx.lastClarification.options.map(o => `${o.label}${o.sublabel ? ` (${o.sublabel})` : ''}`).join(', ')
+    metadata['lastClarification_source'] = 'lastClarification'
+  }
+  if (ctx.clarificationSnapshot?.options?.length) {
+    metadata['snapshot_labels'] = ctx.clarificationSnapshot.options.map(o => `${o.label}${o.sublabel ? ` (${o.sublabel})` : ''}`).join(', ')
+    metadata['snapshot_source'] = 'clarificationSnapshot'
+  }
+  if (ctx.lastOptionsShown?.options?.length) {
+    metadata['lastOptionsShown_labels'] = ctx.lastOptionsShown.options.map(o => `${o.label}${o.sublabel ? ` (${o.sublabel})` : ''}`).join(', ')
+  }
+  if (ctx.scopeCueRecoveryMemory?.options?.length) {
+    metadata['recoveryMemory_labels'] = ctx.scopeCueRecoveryMemory.options.map(o => `${o.label}${o.sublabel ? ` (${o.sublabel})` : ''}`).join(', ')
+  }
+
+  // Return null if no evidence found
+  if (Object.keys(metadata).length === 0) return null
+  return { enrichedMetadata: metadata }
+}
+
+/** Returns enriched metadata for widget-scoped evidence (not new candidates). */
+function enrichWidgetEvidence(ctx: ClarificationInterceptContext): { enrichedMetadata: Record<string, unknown> } | null {
+  const metadata: Record<string, unknown> = {}
+
+  if (ctx.widgetSelectionContext) {
+    metadata['widget_context'] = 'active'
+    metadata['widget_panelId'] = ctx.widgetSelectionContext.panelId ?? 'unknown'
+  }
+
+  if (Object.keys(metadata).length === 0) return null
+  return { enrichedMetadata: metadata }
+}
+
+/** Factory: returns the appropriate enrichment fetcher based on resolved scope.
+ *  Returns null for unsupported scopes (dashboard/workspace) → orchestrator emits scope_not_available. */
+function createEnrichmentCallback(
+  scope: import('@/lib/chat/input-classifiers').ScopeCueResult['scope'],
+  orchContext: 'tier1b3_unresolved' | 'scope_cue_unresolved',
+  ctx: ClarificationInterceptContext
+): ContextEnrichmentCallback {
+  return (_neededContext: NeededContextType[]) => {
+    switch (scope) {
+      case 'chat':
+        return enrichChatEvidence(ctx)
+      case 'widget':
+        return enrichWidgetEvidence(ctx)
+      case 'dashboard':
+      case 'workspace':
+        // Unsupported scope — return null (orchestrator emits scope_not_available)
+        return null
+      case 'none':
+        // Follow current resolved source: Tier 1b.3 = chat; scope-cue depends on widget state
+        if (orchContext === 'tier1b3_unresolved') {
+          return enrichChatEvidence(ctx)
+        }
+        // Scope-cue Phase 2b with no explicit scope — use widget if active, else chat
+        if (ctx.widgetSelectionContext) {
+          return enrichWidgetEvidence(ctx)
+        }
+        return enrichChatEvidence(ctx)
+      default: {
+        // Exhaustiveness check — TypeScript will error if a scope value is unhandled
+        const _exhaustive: never = scope
+        return null
+      }
+    }
+  }
 }
 
 /**
@@ -2326,6 +2777,7 @@ export async function handleClarificationIntercept(
 
     // Latch-off: stop/start-over clears focus latch (Phase 6b)
     clearFocusLatch()
+    clearWidgetSelectionContext() // Phase 6: stop/exit clears widget selection context
     // Session boundary: stop-confirmed clears durable recovery memory (per scope-cue-recovery-plan)
     clearScopeCueRecoveryMemory()
 
@@ -2718,18 +3170,35 @@ export async function handleClarificationIntercept(
         // Handles both multi-match-no-winner AND 0-match cases.
         // =================================================================
         if (recoverableOptions.length > 0) {
-          const llmResult = await tryLLMLastChance({
+          const scopeCueCandidates = recoverableOptions.map(o => ({
+            id: o.id, label: o.label, sublabel: o.sublabel,
+          }))
+          const llmResult = await runBoundedArbitrationLoop({
             trimmedInput,
-            candidates: recoverableOptions.map(o => ({
-              id: o.id, label: o.label, sublabel: o.sublabel,
-            })),
+            initialCandidates: scopeCueCandidates,
             context: 'scope_cue_unresolved',
             clarificationMessageId: originalMessageId,
             inputIsExplicitCommand: isExplicitCommand(trimmedInput),
             isNewQuestionOrCommandDetected,
             matchCount: labelMatches.length,
             exactMatchCount: 0,
+            scope: scopeCue.scope,
+            enrichmentCallback: createEnrichmentCallback(scopeCue.scope, 'scope_cue_unresolved', ctx),
           })
+
+          // Scope-specific fallback (per context-enrichment-retry-loop-plan §Binding Hardening)
+          if (llmResult.fallbackReason === 'scope_not_available') {
+            const scopeLabel = scopeCue.scope === 'dashboard' ? 'Dashboard' : scopeCue.scope === 'workspace' ? 'Workspace' : 'This scope'
+            addMessage({
+              id: `assistant-${Date.now()}`,
+              role: 'assistant',
+              content: `${scopeLabel}-scoped selection is not yet available. Please select from the active options shown above.`,
+              timestamp: new Date(),
+              isError: false,
+            })
+            setIsLoading(false)
+            return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+          }
 
           if (llmResult.fallbackReason === 'question_intent') {
             // Question → fall through to Phase 3
@@ -2776,7 +3245,7 @@ export async function handleClarificationIntercept(
               }
               setIsLoading(false)
               handleSelectOption(optionToSelect)
-              return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+              return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'llm_executed' }
             }
             // suggestedId not found in options → fall through to safe clarifier
           } else {
@@ -2837,7 +3306,7 @@ export async function handleClarificationIntercept(
               options: reorderSource,
             })
             setIsLoading(false)
-            return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+            return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected, _devProvenanceHint: llmResult.suggestedId ? 'llm_influenced' : undefined }
           }
         }
         // No recoverable options or question-intent → fall through to Phase 3
@@ -2872,7 +3341,34 @@ export async function handleClarificationIntercept(
       setIsLoading(false)
       return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
     }
+  } else if (scopeCue.scope === 'dashboard') {
+    // Scope-specific need_more_info: dashboard scope is not yet available.
+    // Per context-enrichment-retry-loop-plan.md §Binding Hardening Rule 2:
+    // unhandled scope must return scope-specific need_more_info, never default to mixed pools.
+    void debugLog({ component: 'ChatNavigation', action: 'scope_cue_dashboard_not_available', metadata: { cueText: scopeCue.cueText, input: trimmedInput } })
+    addMessage({
+      id: `assistant-${Date.now()}`,
+      role: 'assistant',
+      content: 'Dashboard-scoped selection is not yet available. Please select from the active options shown above.',
+      timestamp: new Date(),
+      isError: false,
+    })
+    setIsLoading(false)
+    return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+  } else if (scopeCue.scope === 'workspace') {
+    // Scope-specific need_more_info: workspace scope is not yet available.
+    void debugLog({ component: 'ChatNavigation', action: 'scope_cue_workspace_not_available', metadata: { cueText: scopeCue.cueText, input: trimmedInput } })
+    addMessage({
+      id: `assistant-${Date.now()}`,
+      role: 'assistant',
+      content: 'Workspace-scoped selection is not yet available. Please select from the active options shown above.',
+      timestamp: new Date(),
+      isError: false,
+    })
+    setIsLoading(false)
+    return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
   }
+  // scopeCue.scope === 'widget' or 'none' falls through to latch/bypass logic below
 
   // ==========================================================================
   // FOCUS LATCH — Selection-Like Bypass (Rules 2, 4, 6)
@@ -3261,6 +3757,7 @@ export async function handleClarificationIntercept(
           pauseSnapshotWithReason('stop')
         }
         clearFocusLatch() // Latch-off: stop clears focus latch (Phase 6b)
+        clearWidgetSelectionContext() // Phase 6: stop/exit clears widget selection context
         setStopSuppressionCount(STOP_SUPPRESSION_TURN_LIMIT) // Per stop-scope-plan §40-48
         const exitMessage: ChatMessage = {
           id: `assistant-${Date.now()}`,
@@ -3336,6 +3833,7 @@ export async function handleClarificationIntercept(
           pauseSnapshotWithReason('stop')
         }
         clearFocusLatch() // Latch-off: stop clears focus latch (Phase 6b)
+        clearWidgetSelectionContext() // Phase 6: stop/exit clears widget selection context
         setStopSuppressionCount(STOP_SUPPRESSION_TURN_LIMIT) // Per stop-scope-plan §40-48
         const exitMessage: ChatMessage = {
           id: `assistant-${Date.now()}`,
@@ -3408,6 +3906,7 @@ export async function handleClarificationIntercept(
         pauseSnapshotWithReason('stop')
       }
       clearFocusLatch() // Latch-off: stop clears focus latch (Phase 6b)
+      clearWidgetSelectionContext() // Phase 6: stop/exit clears widget selection context
       setStopSuppressionCount(STOP_SUPPRESSION_TURN_LIMIT) // Per stop-scope-plan §40-48
       const exitMessage: ChatMessage = {
         id: `assistant-${Date.now()}`,
@@ -4015,18 +4514,35 @@ export async function handleClarificationIntercept(
         // tryLLMLastChance). Pre-gate already handles "nothing to do with
         // active options" escapes via commandBypassesLabelMatching.
         // =================================================================
-        const llmResult = await tryLLMLastChance({
+        const tier1b3Candidates = lastClarification.options.map(o => ({
+          id: o.id, label: o.label, sublabel: o.sublabel,
+        }))
+        const llmResult = await runBoundedArbitrationLoop({
           trimmedInput,
-          candidates: lastClarification.options.map(o => ({
-            id: o.id, label: o.label, sublabel: o.sublabel,
-          })),
+          initialCandidates: tier1b3Candidates,
           context: 'tier1b3_unresolved',
           clarificationMessageId: lastClarification.messageId ?? '',
           inputIsExplicitCommand,
           isNewQuestionOrCommandDetected,
           matchCount: matchingOptions.length,
           exactMatchCount: lastExactMatchCount,
+          scope: scopeCue.scope,
+          enrichmentCallback: createEnrichmentCallback(scopeCue.scope, 'tier1b3_unresolved', ctx),
         })
+
+        // Scope-specific fallback (per context-enrichment-retry-loop-plan §Binding Hardening)
+        if (llmResult.fallbackReason === 'scope_not_available') {
+          const scopeLabel = scopeCue.scope === 'dashboard' ? 'Dashboard' : scopeCue.scope === 'workspace' ? 'Workspace' : 'This scope'
+          addMessage({
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: `${scopeLabel}-scoped selection is not yet available. Please select from the active options shown above.`,
+            timestamp: new Date(),
+            isError: false,
+          })
+          setIsLoading(false)
+          return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+        }
 
         if (llmResult.fallbackReason === 'question_intent') {
           // Question → fall through to downstream (hard exclusion per Rule G)
@@ -4074,7 +4590,7 @@ export async function handleClarificationIntercept(
             }
             setIsLoading(false)
             handleSelectOption(optionToSelect)
-            return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+            return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'llm_executed' }
           }
           // suggestedId not found in options → fall through to safe clarifier
         } else {
@@ -4142,7 +4658,7 @@ export async function handleClarificationIntercept(
             options: reorderSource,
           })
           setIsLoading(false)
-          return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+          return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected, _devProvenanceHint: llmResult.suggestedId ? 'llm_influenced' : undefined }
         }
       }
       // ordinal → skip hook, Tier 1b.3a handles it

@@ -1,6 +1,6 @@
 # Chat Navigation Plans — Index
 
-**Last Updated:** 2026-02-13
+**Last Updated:** 2026-02-09
 
 This index documents plan timelines for chat navigation: doc retrieval and clarification/disambiguation.
 
@@ -204,23 +204,7 @@ This index documents plan timelines for chat navigation: doc retrieval and clari
 **File:** `deterministic-llm-ladder-enforcement-addendum-plan.md`
 **Purpose:** Enforce a single deterministic->LLM->safe-fallback ladder for active-option ambiguity paths and prevent premature command escapes (e.g., typo command collisions)
 
-**Status:** 🔄 Active governing addendum (Rules A-I; includes Phase C gated auto-execute policy)
-
----
-
-### 17. Context-Enrichment Retry Loop Plan
-**File:** `context-enrichment-retry-loop-plan.md`
-**Purpose:** Add one bounded `request_context` retry before user clarifier to reduce unnecessary prompts while preserving scope safety and fallback guarantees
-
-**Status:** 📝 Draft (Phase D follow-up)
-
----
-
-### 18. Universal Selection Resolver Plan
-**File:** `universal-selection-resolver-plan.md`
-**Purpose:** Unify source/scope/latch arbitration across chat options, widget lists, dashboard/workspace contexts, and follow-up selection turns
-
-**Status:** 🔄 Active / Iterating (gap-fix reports landed; additional scope-cue parser expansion pending)
+**Status:** 📝 Draft addendum (implementation guidance)
 
 ---
 
@@ -244,14 +228,6 @@ This index documents plan timelines for chat navigation: doc retrieval and clari
 | 2026-01-20 | `reports/2026-01-20-prereq4-cross-corpus-ambiguity-implementation-report.md` | Unified Retrieval Prereq 4 |
 | 2026-01-20 | `reports/2026-01-20-prereq5-safety-fallback-implementation-report.md` | Unified Retrieval Prereq 5 |
 | 2026-01-25 | `clarification-offmenu-handling-implementation-report.md` | Clarification off-menu |
-| 2026-02-06 | `reports/2026-02-06-selection-intent-arbitration-implementation-report.md` | Selection intent arbitration (focus latch) |
-| 2026-02-07 | `reports/2026-02-07-selection-intent-arbitration-widget-first-fix-report.md` | Widget-first latch fix |
-| 2026-02-07 | `reports/2026-02-07-scope-cue-normalization-chat-scope-report.md` | Scope-cue normalization (chat scope) |
-| 2026-02-07 | `reports/2026-02-07-scope-cue-recovery-memory-report.md` | Scope-cue recovery memory |
-| 2026-02-10 | `reports/2026-02-10-deterministic-llm-arbitration-fallback-implementation-report.md` | Deterministic->LLM ladder enforcement |
-| 2026-02-11 | `reports/2026-02-11-phase-c-llm-auto-execute-implementation-report.md` | Phase C gated auto-execute |
-| 2026-02-11 | `reports/2026-02-11-provenance-debug-overlay-implementation-report.md` | Dev-only provenance overlay |
-| 2026-02-11 | `reports/2026-02-11-universal-selection-resolver-gaps-fix-report.md` | Universal selection resolver gap fixes |
 
 ---
 
@@ -288,9 +264,6 @@ docs/proposal/chat-navigation/plan/panels/chat/meta/
 ├── clarification-interrupt-resume-plan.md            ← Addendum: interrupt/resume
 ├── clarification-stop-scope-plan.md                  ← Addendum: stop/cancel scope
 ├── selection-vs-command-arbitration-rule-plan.md     ← Plan 15 (Selection vs command guardrail)
-├── deterministic-llm-ladder-enforcement-addendum-plan.md ← Plan 16 (Active-option ladder contract)
-├── context-enrichment-retry-loop-plan.md             ← Plan 17 (Draft bounded retry loop)
-├── universal-selection-resolver-plan.md              ← Plan 18 (Scope/source/latch resolver)
 ├── cursor-style-doc-retrieval-plan.md               ← Plan 1 (Foundation)
 ├── general-doc-retrieval-routing-plan.md            ← Plan 2 (Routing v5)
 ├── 2026-01-14-doc-retrieval-routing-debt-paydown-plan.md  ← Plan 3 (Debt)

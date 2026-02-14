@@ -293,6 +293,15 @@ export interface DocRetrievalState {
   lastResourceId?: string
 }
 
+// Dev-only provenance for routing debug overlay (per provenance-debug-overlay plan)
+export type ChatProvenance = 'deterministic' | 'llm_executed' | 'llm_influenced'
+
+/** Dev-only: requires flag ON + non-production environment. Zero cost when disabled. */
+export function isProvenanceDebugEnabled(): boolean {
+  return process.env.NEXT_PUBLIC_CHAT_PROVENANCE_DEBUG === 'true'
+    && process.env.NODE_ENV !== 'production'
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
@@ -429,6 +438,11 @@ interface ChatNavigationContextValue {
   suspendFocusLatch: () => void
   incrementFocusLatchTurn: () => void
   clearFocusLatch: () => void
+  // Dev-only provenance debug overlay (per provenance-debug-overlay plan)
+  provenanceMap: Map<string, ChatProvenance>
+  setProvenance: (messageId: string, provenance: ChatProvenance) => void
+  clearProvenanceMap: () => void
+  lastAddedAssistantIdRef: React.MutableRefObject<string | null>
 }
 
 // =============================================================================
@@ -781,6 +795,10 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
   // Add message with persistence
   const addMessage = useCallback(
     async (message: ChatMessage) => {
+      // Dev provenance: track last assistant message ID for post-hoc tagging
+      if (isProvenanceDebugEnabled() && message.role === 'assistant') {
+        lastAddedAssistantIdRef.current = message.id
+      }
       // Add to local state immediately for responsiveness
       setMessages((prev) => [...prev, message])
 
@@ -802,6 +820,24 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
           setMessages((prev) =>
             prev.map((m) => (m.id === message.id ? { ...m, id: persisted.id } : m))
           )
+
+          // Dev provenance: migrate map entry from original ID to persisted ID
+          if (isProvenanceDebugEnabled()) {
+            setProvenanceMap(prev => {
+              const provenance = prev.get(message.id)
+              if (provenance && message.id !== persisted.id) {
+                const next = new Map(prev)
+                next.delete(message.id)
+                next.set(persisted.id, provenance)
+                return next
+              }
+              return prev
+            })
+            // Also update the ref in case tagging hasn't happened yet
+            if (lastAddedAssistantIdRef.current === message.id) {
+              lastAddedAssistantIdRef.current = persisted.id
+            }
+          }
 
           // Trigger async summarization after assistant responses (non-blocking)
           if (message.role === 'assistant') {
@@ -1302,6 +1338,17 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     setFocusLatchInternal(null)
   }, [isLatchEnabled])
 
+  // Dev-only provenance debug overlay (per provenance-debug-overlay plan)
+  const [provenanceMap, setProvenanceMap] = useState<Map<string, ChatProvenance>>(new Map())
+  const setProvenance = useCallback((messageId: string, provenance: ChatProvenance) => {
+    setProvenanceMap(prev => { const next = new Map(prev); next.set(messageId, provenance); return next })
+  }, [])
+  const clearProvenanceMap = useCallback(() => setProvenanceMap(new Map()), [])
+  // Context-level ref: tracks the ID of the last assistant message added via addMessage.
+  // handleSelectOption calls addMessage from its closure (the context's addMessage),
+  // so tracking must live here to catch auto-execute paths.
+  const lastAddedAssistantIdRef = useRef<string | null>(null)
+
   return (
     <ChatNavigationContext.Provider
       value={{
@@ -1385,6 +1432,11 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         suspendFocusLatch,
         incrementFocusLatchTurn,
         clearFocusLatch,
+        // Dev-only provenance debug overlay
+        provenanceMap,
+        setProvenance,
+        clearProvenanceMap,
+        lastAddedAssistantIdRef,
       }}
     >
       {children}

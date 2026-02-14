@@ -10,13 +10,32 @@
 
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
-import type { ChatMessage, SelectionOption, ChatSuggestions } from '@/lib/chat'
+import type { ChatMessage, SelectionOption, ChatSuggestions, ChatProvenance } from '@/lib/chat'
 import { MessageResultPreview } from './message-result-preview'
 import { SelectionPills } from './SelectionPills'
 import { SuggestionPills } from './SuggestionPills'
 import { ShowMoreButton } from './ShowMoreButton'
 import { DateHeader } from './DateHeader'
 import { SessionDivider } from './SessionDivider'
+
+// =============================================================================
+// Dev-only Provenance Badge (per provenance-debug-overlay plan)
+// =============================================================================
+
+const PROVENANCE_STYLES: Record<ChatProvenance, { emoji: string; label: string; className: string }> = {
+  deterministic: { emoji: '\u2705', label: 'Deterministic', className: 'bg-green-900/50 text-green-300 border-green-600/30' },
+  llm_executed: { emoji: '\uD83E\uDDE0', label: 'Auto-Executed', className: 'bg-blue-900/50 text-blue-300 border-blue-600/30' },
+  llm_influenced: { emoji: '\u2705\uD83E\uDDE0', label: 'LLM-Influenced', className: 'bg-yellow-900/50 text-yellow-300 border-yellow-600/30' },
+}
+
+function ProvenanceBadge({ provenance }: { provenance: ChatProvenance }) {
+  const style = PROVENANCE_STYLES[provenance]
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono border ${style.className} mt-1`}>
+      {style.emoji} {style.label}
+    </span>
+  )
+}
 
 // =============================================================================
 // Date Helper Functions
@@ -86,6 +105,8 @@ export interface ChatMessageListProps {
   viewPanelDocSlug?: string
   /** The itemId currently displayed in ViewPanel (hides "Show more" for that note only) */
   viewPanelItemId?: string
+  /** Dev-only: routing provenance per assistant message ID */
+  provenanceMap?: Map<string, ChatProvenance>
 }
 
 // =============================================================================
@@ -106,6 +127,7 @@ export function ChatMessageList({
   onShowMore,
   viewPanelDocSlug,
   viewPanelItemId,
+  provenanceMap,
 }: ChatMessageListProps) {
   return (
     <>
@@ -157,6 +179,11 @@ export function ChatMessageList({
                   ? renderSimpleMarkdown(message.content)
                   : message.content}
               </div>
+
+              {/* Dev-only: Provenance debug badge */}
+              {provenanceMap && message.role === 'assistant' && provenanceMap.has(message.id) && (
+                <ProvenanceBadge provenance={provenanceMap.get(message.id)!} />
+              )}
 
               {/* Message Result Preview (for "Show all" view panel content) */}
               {message.previewItems && message.previewItems.length > 0 && message.viewPanelContent && (

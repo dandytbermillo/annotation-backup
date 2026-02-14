@@ -454,8 +454,12 @@ export function isCommandLike(input: string): boolean {
   // Index-like selection should be action
   if (looksIndexLikeReference(normalized)) return true
 
-  // Imperative: action verb without question intent
-  if (hasActionVerb(normalized) && !hasQuestionIntent(normalized)) return true
+  // Imperative: action verb + no question-word prefix = command
+  // Trailing ? alone does not negate action verbs:
+  //   "open that summary144 now plssss?" → "open" verb, no question word → command ✓
+  //   "what does summary144 mean?" → "what" question word → NOT command ✓
+  const hasQuestionWordPrefix = QUESTION_INTENT_PATTERN.test(normalized)
+  if (hasActionVerb(normalized) && !hasQuestionWordPrefix && !containsDocInstructionCue(normalized)) return true
 
   // Polite command: prefix + action verb, unless it's doc instruction
   const hasPolitePrefix = POLITE_COMMAND_PREFIXES.some(p => normalized.startsWith(p))

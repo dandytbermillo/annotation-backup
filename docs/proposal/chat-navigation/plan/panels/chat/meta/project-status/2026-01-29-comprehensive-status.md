@@ -1,6 +1,6 @@
 # Chat Navigation — Comprehensive Project Status
 
-**Date:** 2026-02-07
+**Date:** 2026-02-13
 **Scope:** Full status of chat navigation subsystem — plans, implementations, fixes, and current state.
 
 ---
@@ -15,6 +15,13 @@ The chat navigation system is a subsystem of a **Dual-Mode Annotation System** b
 - **Cross-corpus retrieval** — unified retrieval across docs and notes corpora
 
 The system is currently running in **Option A** (offline, single-user, no Yjs). Option B (multi-user/live collaboration) is a future phase.
+
+### 1.1 Status Delta (2026-02-13)
+
+- Ladder governance is now anchored by `deterministic-llm-ladder-enforcement-addendum-plan.md` (Rules A-I, unresolved-before-escape, scope precedence, scope-bound candidate pools).
+- Phase C policy is documented in the addendum: LLM auto-execute is gate-controlled (kill switch + confidence + allowlist), with safe clarifier fallback when gates fail.
+- `context-enrichment-retry-loop-plan.md` was added as a **draft** follow-up (one bounded retry, `request_context` allowlist, evidence-fingerprint gate, `no_new_evidence` fallback).
+- Project-level gap remains explicit: multi-source scope cue parsing (widget/dashboard/workspace cues) is planned but not fully implemented yet; current resolver behavior is still chat-cue first in `resolveScopeCue`.
 
 ---
 
@@ -55,7 +62,10 @@ Suggestion Routing
 └── suggestion-routing-unification-plan.md        ← Suggestion reject/affirm unified in dispatcher
 Selection Intent Arbitration
 ├── selection-intent-arbitration-incubation-plan.md    ← Focus latch model (8 phases)
-└── selection-intent-arbitration-widget-first-fix-plan.md ← Widget-first fix (6 steps)
+├── selection-intent-arbitration-widget-first-fix-plan.md ← Widget-first fix (6 steps)
+├── deterministic-llm-ladder-enforcement-addendum-plan.md ← Active-option ladder contract (Rules A-I + Phase C policy)
+├── universal-selection-resolver-plan.md                 ← Scope/latch/source arbitration contract
+└── context-enrichment-retry-loop-plan.md                ← Draft Phase D bounded context-retry loop
 ```
 
 ---
@@ -121,6 +131,17 @@ Selection Intent Arbitration
 | Unified ordinal parser | **Implemented** (`isSelectionOnly(mode: 'strict' \| 'embedded')` in input-classifiers.ts) |
 | Feature flag gating in handleSelectOption | **Open issue** — snapshot policy runs unconditionally for panel_drawer |
 | Integration race tests | **Not implemented** — plan specified 3 red/green tests |
+
+### 3.6 Ladder Enforcement + Context Retry (2026-02-11 → 2026-02-13)
+
+| Area | Status |
+|------|--------|
+| Deterministic→LLM ladder addendum (Rules A-I) | **Active governing contract** |
+| Phase C gated auto-execute policy | **Documented + in use where gates pass** |
+| Universal selection resolver alignment | **Active / Iterating** |
+| Context-enrichment retry loop plan | **Draft (not implemented)** |
+| Multi-source explicit scope cue expansion (`widget`/`dashboard`/`workspace`) | **Planned (Step 2a), not fully implemented** |
+| Evidence-fingerprint retry gate (`no_new_evidence`) | **Planned (draft), not implemented** |
 
 ---
 
@@ -453,6 +474,8 @@ From `clarification-qa-checklist.md` (13 tests, A1-E13):
 
 8. **Levenshtein false positives in embedded parser.** Known bug: "anel layot" can normalize to "last" via fuzzy matching. With widget-first guards in place, this only affects the no-latch case (acceptable tradeoff).
 
+9. **Scope cue parser coverage is incomplete for multi-source explicit cues.** Current deterministic parser is chat-cue centric; explicit widget/dashboard/workspace cue handling is planned in resolver expansion work (Step 2a in context-enrichment retry plan).
+
 ---
 
 ## 11. Implementation Reports
@@ -484,6 +507,13 @@ From `clarification-qa-checklist.md` (13 tests, A1-E13):
 | 2026-02-02 | `reports/2026-02-02-panel-de-routing-fix.md` | Panel D/E routing fix |
 | 2026-02-06 | `reports/2026-02-06-selection-intent-arbitration-implementation-report.md` | Selection intent arbitration (focus latch phases 0-8) |
 | 2026-02-07 | `selection-intent-arbitration-widget-first-fix-plan.md` | **Widget-first latch fix (latest)** |
+| 2026-02-07 | `reports/2026-02-07-selection-intent-arbitration-widget-first-fix-report.md` | Widget-first latch fix report |
+| 2026-02-07 | `reports/2026-02-07-scope-cue-normalization-chat-scope-report.md` | Scope-cue normalization (chat scope) |
+| 2026-02-07 | `reports/2026-02-07-scope-cue-recovery-memory-report.md` | Scope-cue recovery memory |
+| 2026-02-10 | `reports/2026-02-10-deterministic-llm-arbitration-fallback-implementation-report.md` | Deterministic→LLM ladder enforcement |
+| 2026-02-11 | `reports/2026-02-11-phase-c-llm-auto-execute-implementation-report.md` | Phase C gated auto-execute |
+| 2026-02-11 | `reports/2026-02-11-provenance-debug-overlay-implementation-report.md` | Dev-only provenance overlay |
+| 2026-02-11 | `reports/2026-02-11-universal-selection-resolver-gaps-fix-report.md` | Universal selection resolver gap fixes |
 
 ---
 
@@ -584,6 +614,8 @@ Also added `input` to the existing `sendMessage_error` log.
 - [ ] **Fix feature flag gating** — `handleSelectOption` panel_drawer snapshot policy (lines 890-922) runs unconditionally; must gate behind `NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1`
 - [ ] **Integration race tests** — create `__tests__/integration/chat/selection-intent-arbitration-race.test.ts` (3 red/green tests: pending latch race, command escape, flag-off)
 - [ ] **Manual re-anchor test** — verify "back to options" restores chat options from `lastOptionsShown` after panel-drawer latch
+- [ ] **Implement multi-source explicit scope cue parsing** — support deterministic cues for widget/dashboard/workspace before latch/default bypass
+- [ ] **Implement bounded context retry loop (Phase D draft)** — one retry max, evidence fingerprint gate, `no_new_evidence` fallback, and capped `request_context`
 
 ### Ongoing
 - [ ] Reproduce red error with `api_response_not_ok` debug log (HTTP 504 confirmation)

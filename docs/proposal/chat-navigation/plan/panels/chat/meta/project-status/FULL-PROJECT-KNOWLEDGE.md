@@ -1,8 +1,15 @@
-w# Full Project Knowledge — Chat Navigation & Annotation System
+# Full Project Knowledge — Chat Navigation & Annotation System
 
 **Purpose:** This document captures the complete understanding of the project so that any future session can immediately get up to speed without re-reading dozens of files. It covers architecture, the chat navigation system we are actively working on, the clarification/disambiguation subsystem in detail, every fix applied, and the current state of work.
 
-**Last Updated:** 2026-02-07
+**Last Updated:** 2026-02-13
+
+### 2026-02-13 Delta (Recent Governance/Planning State)
+
+- Active-option arbitration is now explicitly governed by `deterministic-llm-ladder-enforcement-addendum-plan.md` (Rules A-I, unresolved-before-escape, scope precedence, scope-bound pools).
+- Phase C gated auto-execute policy is documented in the addendum; safe clarifier remains mandatory fallback when gates fail.
+- `context-enrichment-retry-loop-plan.md` is added as a draft follow-up (bounded `request_context`, one retry max, evidence fingerprint gate).
+- Multi-source explicit scope cues are now required by plan (`chat`/`widget`/`dashboard`/`workspace`), while full parser expansion remains planned work.
 
 ---
 
@@ -254,6 +261,9 @@ selection-intent-arbitration-incubation-plan.md    ← Focus latch model (8 phas
 selection-intent-arbitration-widget-first-fix-plan.md ← Widget-first fix (6 steps: unified parser,
                                                         proactive latch, pending resolution, hard
                                                         invariant, cleanup, tests)
+deterministic-llm-ladder-enforcement-addendum-plan.md ← Active-option ladder contract (Rules A-I + Phase C policy)
+universal-selection-resolver-plan.md                 ← Source/scope/latch arbitration contract
+context-enrichment-retry-loop-plan.md                ← Draft Phase D bounded context-retry loop
 ```
 
 ### Supporting Documents
@@ -901,6 +911,8 @@ The `clarification-qa-checklist.md` defines **13 manual tests** (A1-E13) that mu
 
 5. **"open links panel" red error after stop (under investigation).** Action verbs ("open", "show") are not stripped in `panel-command-matcher.ts` tokenization, causing panel disambiguation to miss multi-word panel commands. Falls through to LLM API which times out at 8 seconds (504). Fix planned: add action verbs to STOPWORDS. Awaiting debug log confirmation before implementing.
 
+6. **Scope cue parser coverage is still incomplete for multi-source explicit cues.** Current deterministic parser is chat-cue centric (`from chat` / `in chat`), while planned behavior now also requires explicit widget/dashboard/workspace cue binding before bypass/latch logic.
+
 ### Deferred/Pending Work
 
 5. **Response-fit classifier still iterating** — the primary classifier plan is active but ongoing.
@@ -966,6 +978,9 @@ The `clarification-qa-checklist.md` defines **13 manual tests** (A1-E13) that mu
 | `widget-registry-implementation-plan.md` | Widget registry architecture (in-memory, 3-layer) |
 | `selection-intent-arbitration-incubation-plan.md` | Focus latch model — 8 phases of selection intent arbitration |
 | `selection-intent-arbitration-widget-first-fix-plan.md` | Widget-first latch fix — 6-step implementation plan |
+| `deterministic-llm-ladder-enforcement-addendum-plan.md` | Active-option ladder enforcement contract (Rules A-I + Phase C) |
+| `universal-selection-resolver-plan.md` | Scope/latch/source arbitration rules across chat + widget contexts |
+| `context-enrichment-retry-loop-plan.md` | Draft follow-up for bounded `request_context` retry loop |
 
 ---
 
@@ -1011,6 +1026,8 @@ npx tsc --noEmit
 1. **Fix feature flag gating in Step 2** — `handleSelectOption` panel_drawer snapshot policy (lines 890-922 of `chat-navigation-panel.tsx`) runs unconditionally; must be gated behind `NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1` so behavior is unchanged when flag is off
 2. **Integration race tests** — create `__tests__/integration/chat/selection-intent-arbitration-race.test.ts` (plan specifies 3 red/green tests: pending latch race, command escape, flag-off)
 3. **Manual re-anchor test** — verify "back to options" correctly restores chat options from `lastOptionsShown` after panel-drawer selection with latch active
+4. **Expand deterministic scope-cue parsing** — implement explicit widget/dashboard/workspace scope cues before latch/default/bypass routing
+5. **Implement bounded context-retry loop draft** — one retry max, evidence fingerprint gate (`no_new_evidence`), and allowlisted `request_context` budgets
 
 ### Ongoing
 4. Reproduce red error with `api_response_not_ok` debug log (HTTP 504 confirmation)
@@ -1062,3 +1079,10 @@ All reports live under `docs/proposal/chat-navigation/plan/panels/chat/meta/repo
 | 2026-02-02 | panel-de-routing-fix | Panel D/E routing fix |
 | 2026-02-06 | selection-intent-arbitration-implementation-report | Selection intent arbitration (focus latch phases 0-8) |
 | 2026-02-07 | selection-intent-arbitration-widget-first-fix-plan | Widget-first latch fix (6-step plan + implementation) |
+| 2026-02-07 | selection-intent-arbitration-widget-first-fix-report | Widget-first latch fix report |
+| 2026-02-07 | scope-cue-normalization-chat-scope-report | Scope-cue normalization (chat scope) |
+| 2026-02-07 | scope-cue-recovery-memory-report | Scope-cue recovery memory |
+| 2026-02-10 | deterministic-llm-arbitration-fallback-implementation-report | Deterministic→LLM ladder enforcement |
+| 2026-02-11 | phase-c-llm-auto-execute-implementation-report | Phase C gated auto-execute |
+| 2026-02-11 | provenance-debug-overlay-implementation-report | Dev-only provenance overlay |
+| 2026-02-11 | universal-selection-resolver-gaps-fix-report | Universal selection resolver gap fixes |

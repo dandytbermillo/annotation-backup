@@ -39,7 +39,7 @@ import type { UIContext } from '@/lib/chat/intent-prompt'
 import type { LastClarificationState } from '@/lib/chat/chat-navigation-context'
 import type { DocRetrievalState } from '@/lib/docs/doc-retrieval-state'
 import { matchVisiblePanelCommand, type VisibleWidget } from '@/lib/chat/panel-command-matcher'
-import type { RepairMemoryState, ClarificationSnapshot, ClarificationOption, LastSuggestionState, SuggestionCandidate, ChatSuggestions, WidgetSelectionContext } from '@/lib/chat/chat-navigation-context'
+import type { RepairMemoryState, ClarificationSnapshot, ClarificationOption, LastSuggestionState, SuggestionCandidate, ChatSuggestions, WidgetSelectionContext, ChatProvenance } from '@/lib/chat/chat-navigation-context'
 import { WIDGET_SELECTION_TTL, SOFT_ACTIVE_TURN_LIMIT } from '@/lib/chat/chat-navigation-context'
 import type {
   HandlerResult,
@@ -59,7 +59,7 @@ import type { DocRetrievalHandlerContext, DocRetrievalHandlerResult } from '@/li
 import { handleClarificationIntercept, handlePanelDisambiguation, handleCorrection, handleMetaExplain, handleFollowUp } from '@/lib/chat/chat-routing'
 import { handleCrossCorpusRetrieval } from '@/lib/chat/cross-corpus-handler'
 import { handleDocRetrieval } from '@/lib/chat/doc-routing'
-import { isAffirmationPhrase, isRejectionPhrase, matchesReshowPhrases, matchesShowAllHeuristic, hasGraceSkipActionVerb, hasQuestionIntent, ACTION_VERB_PATTERN } from '@/lib/chat/query-patterns'
+import { isAffirmationPhrase, isRejectionPhrase, matchesReshowPhrases, matchesShowAllHeuristic, hasGraceSkipActionVerb, hasQuestionIntent, ACTION_VERB_PATTERN, isCommandLike, isPoliteImperativeRequest } from '@/lib/chat/query-patterns'
 import { handleKnownNounRouting } from '@/lib/chat/known-noun-routing'
 import { callClarificationLLMClient, isLLMFallbackEnabledClient } from '@/lib/chat/clarification-llm-fallback'
 import { handleGroundingSetFallback, buildGroundingContext, checkSoftActiveWindow, isSelectionLike } from '@/lib/chat/grounding-set'
@@ -282,6 +282,8 @@ export interface RoutingDispatcherResult {
     itemLabel: string
     action: string
   }
+  /** Dev-only: routing provenance hint for debug overlay (undefined = deterministic) */
+  _devProvenanceHint?: ChatProvenance
 }
 
 /** Type alias for grounding actions (extracted from RoutingDispatcherResult for reuse) */
@@ -495,15 +497,11 @@ function resolveSelectionFollowUp(
     return { handled: false }
   }
 
-  // Question-intent filter with polite command exception
+  // Question-intent filter using shared utilities (no local regex duplication).
   // Per universal-selection-resolver-plan.md Phase 4:
-  // "can you open the second option pls" is a polite command, not a question.
-  // These should still be treated as selection follow-ups.
-  const normalizedInput = input.toLowerCase().trim()
-  const isPoliteCommand = /^(can|could|would)\s+(you\s+)?(please\s+)?/.test(normalizedInput)
-    && ACTION_VERB_PATTERN.test(input)
-
-  if (hasQuestionIntent(input) && !isPoliteCommand) {
+  // - isPoliteImperativeRequest: "can you open..." / "could you show..." (query-patterns.ts:363)
+  // - isCommandLike: action verb + no question-word prefix (handles trailing ? correctly)
+  if (hasQuestionIntent(input) && !isPoliteImperativeRequest(input) && !isCommandLike(input)) {
     return { handled: false }
   }
 
@@ -1064,6 +1062,7 @@ export async function dispatchRouting(
       classifierTimeout: false,
       classifierError: false,
       isFollowUp: false,
+      _devProvenanceHint: clarificationResult._devProvenanceHint,
     }
   }
 
@@ -2930,6 +2929,7 @@ export async function dispatchRouting(
                     classifierLatencyMs,
                     classifierError,
                     isFollowUp,
+                    _devProvenanceHint: 'llm_executed' as const,
                   }
                 }
 
@@ -2969,6 +2969,7 @@ export async function dispatchRouting(
                     classifierLatencyMs,
                     classifierError,
                     isFollowUp,
+                    _devProvenanceHint: 'llm_executed' as const,
                   }
                 }
 
@@ -3004,6 +3005,7 @@ export async function dispatchRouting(
                     classifierLatencyMs,
                     classifierError,
                     isFollowUp,
+                    _devProvenanceHint: 'llm_executed' as const,
                     groundingAction: {
                       type: 'execute_referent',
                       syntheticMessage,
@@ -3046,6 +3048,7 @@ export async function dispatchRouting(
                     classifierLatencyMs,
                     classifierError,
                     isFollowUp,
+                    _devProvenanceHint: 'llm_executed' as const,
                     groundingAction: {
                       type: 'execute_widget_item',
                       widgetId: sourceWidget?.id || '',
@@ -3102,6 +3105,7 @@ export async function dispatchRouting(
                 classifierLatencyMs,
                 classifierError,
                 isFollowUp,
+                _devProvenanceHint: 'llm_influenced' as const,
               }
             }
           }
@@ -3149,6 +3153,7 @@ export async function dispatchRouting(
               classifierLatencyMs,
               classifierError,
               isFollowUp,
+              _devProvenanceHint: 'llm_influenced' as const,
             }
           }
         } catch (error) {

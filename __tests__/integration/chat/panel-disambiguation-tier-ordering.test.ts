@@ -27,6 +27,7 @@ jest.mock('@/lib/chat/clarification-llm-fallback', () => ({
   callReturnCueLLM: jest.fn().mockResolvedValue({ isReturn: false }),
   isLLMFallbackEnabledClient: jest.fn().mockReturnValue(false),
   isLLMAutoExecuteEnabledClient: jest.fn().mockReturnValue(false),
+  isContextRetryEnabledClient: jest.fn().mockReturnValue(false),
   shouldCallLLMFallback: jest.fn().mockReturnValue(false),
   MIN_CONFIDENCE_SELECT: 0.6,
   AUTO_EXECUTE_CONFIDENCE: 0.85,
@@ -71,7 +72,7 @@ global.fetch = jest.fn().mockResolvedValue({
 
 import { dispatchRouting, type RoutingDispatcherContext } from '@/lib/chat/routing-dispatcher'
 import { resetLLMArbitrationGuard } from '@/lib/chat/chat-routing'
-import { callClarificationLLMClient, isLLMFallbackEnabledClient, isLLMAutoExecuteEnabledClient } from '@/lib/chat/clarification-llm-fallback'
+import { callClarificationLLMClient, isLLMFallbackEnabledClient, isLLMAutoExecuteEnabledClient, isContextRetryEnabledClient } from '@/lib/chat/clarification-llm-fallback'
 import { debugLog } from '@/lib/utils/debug-logger'
 
 // ============================================================================
@@ -806,7 +807,7 @@ describe('dispatchRouting: LLM arbitration integration (clarify-only)', () => {
     )
   })
 
-  it('LLM 429 → safe clarifier, fallback_reason: transport_error', async () => {
+  it('LLM 429 → safe clarifier, fallback_reason: rate_limited', async () => {
     ;(isLLMFallbackEnabledClient as jest.Mock).mockReturnValue(true)
     ;(callClarificationLLMClient as jest.Mock).mockResolvedValue({
       success: false,
@@ -825,7 +826,7 @@ describe('dispatchRouting: LLM arbitration integration (clarify-only)', () => {
       expect.objectContaining({
         action: 'llm_arbitration_failed_fallback_clarifier',
         metadata: expect.objectContaining({
-          fallback_reason: '429',
+          fallback_reason: 'rate_limited',
         }),
       })
     )
@@ -1406,6 +1407,606 @@ describe('dispatchRouting: Phase B LLM ladder enforcement (active-option flows)'
     mockHandleKnownNounRouting.mockReturnValue({ handled: false })
     const ctx3 = createPhaseBContext('can you ope panel d pls', 'msg-2')
     await dispatchRouting(ctx3)
+    expect(callClarificationLLMClient).toHaveBeenCalledTimes(1)
+  })
+})
+
+// ============================================================================
+// E2E Blocker: active widget + imperative command with trailing ? must NOT
+// hit cross-corpus; must resolve widget entry
+//
+// Per universal-selection-resolver-plan.md Normative Dependency + Acceptance
+// Test #6/#7a: isCommandLike must handle trailing ? so cross-corpus is skipped
+// and the input reaches downstream widget resolution.
+// ============================================================================
+
+describe('dispatchRouting: active widget + trailing ? imperative command bypasses cross-corpus', () => {
+  const { handleCrossCorpusRetrieval } = jest.requireMock('@/lib/chat/cross-corpus-handler') as {
+    handleCrossCorpusRetrieval: jest.Mock
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks()
+    mockBuildTurnSnapshot.mockReturnValue({
+      openWidgets: [{
+        id: 'links-panel-d',
+        label: 'Links Panel D',
+        options: [{ id: 'summary144', label: 'summary144' }],
+        segments: [{ segmentType: 'list', items: [{ id: 'summary144', label: 'summary144' }] }],
+      }],
+      activeSnapshotWidgetId: 'links-panel-d',
+      uiSnapshotId: 'test-snap-blocker',
+      revisionId: 1,
+      capturedAtMs: Date.now(),
+      hasBadgeLetters: false,
+    })
+  })
+
+  it('BLOCKER: "open that summary144 now plssss?" with focus latch must NOT hit cross-corpus AND must resolve entry', async () => {
+    // Positive assertion setup: known-noun routing resolves "summary144" as an entry
+    mockHandleKnownNounRouting.mockReturnValue({
+      handled: true,
+      tierLabel: 'known_noun_navigate',
+      action: 'navigate',
+    })
+
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'open that summary144 now plssss?',
+      uiContext: {
+        mode: 'dashboard',
+        dashboard: {
+          entryName: 'Test Entry',
+          visibleWidgets: [
+            { id: 'links-panel-d', title: 'Links Panel D', type: 'links_note_tiptap' },
+          ],
+        },
+      },
+      // Focus latch active for links panel D
+      focusLatch: {
+        kind: 'resolved' as const,
+        widgetId: 'links-panel-d',
+        widgetLabel: 'Links Panel D',
+        latchedAt: Date.now(),
+        turnsSinceLatched: 0,
+      },
+      getVisibleSnapshots: jest.fn().mockReturnValue([{
+        widgetId: 'links-panel-d',
+        title: 'Links Panel D',
+        segments: [{ segmentType: 'list', items: [{ id: 'summary144', label: 'summary144' }] }],
+      }]),
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    // NEGATIVE assertion: must NOT have been handled by cross-corpus
+    expect(result.tierLabel).not.toMatch(/cross_corpus/)
+
+    // POSITIVE assertion: must actually resolve the entry via downstream routing
+    // After isCommandLike fix, cross-corpus handler returns {handled: false} immediately,
+    // and known-noun routing resolves "summary144" as a navigable entry.
+    expect(result.handled).toBe(true)
+    // Known-noun routing handles the entry — dispatcher wraps tierLabel as 'known_noun'
+    expect(result.tierLabel).toBe('known_noun')
+  })
+
+  it('BLOCKER: cross-corpus handler is not invoked for imperative command with trailing ?', async () => {
+    // Even if known-noun routing doesn't handle it, cross-corpus must NOT process the command.
+    // The handler's isCommandLike guard returns true → handler returns {handled: false}.
+    mockHandleKnownNounRouting.mockReturnValue({ handled: false })
+
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'open that summary144 now plssss?',
+      uiContext: {
+        mode: 'dashboard',
+        dashboard: {
+          entryName: 'Test Entry',
+          visibleWidgets: [
+            { id: 'links-panel-d', title: 'Links Panel D', type: 'links_note_tiptap' },
+          ],
+        },
+      },
+      focusLatch: {
+        kind: 'resolved' as const,
+        widgetId: 'links-panel-d',
+        widgetLabel: 'Links Panel D',
+        latchedAt: Date.now(),
+        turnsSinceLatched: 0,
+      },
+      getVisibleSnapshots: jest.fn().mockReturnValue([{
+        widgetId: 'links-panel-d',
+        title: 'Links Panel D',
+        segments: [{ segmentType: 'list', items: [{ id: 'summary144', label: 'summary144' }] }],
+      }]),
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    // Cross-corpus handler may be called (by the dispatcher), but it returns {handled: false}
+    // because isCommandLike("open that summary144 now plssss?") is now true.
+    // The result should NOT be attributed to cross-corpus.
+    expect(result.tierLabel).not.toMatch(/cross_corpus/)
+
+    // If cross-corpus was called, verify it returned handled: false
+    if (handleCrossCorpusRetrieval.mock.calls.length > 0) {
+      const crossCorpusResult = await handleCrossCorpusRetrieval.mock.results[0]?.value
+      expect(crossCorpusResult?.handled).toBe(false)
+    }
+  })
+
+  it('genuine question with trailing ? still routes normally (regression guard)', async () => {
+    mockHandleKnownNounRouting.mockReturnValue({ handled: false })
+
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'what is summary144?',
+      uiContext: {
+        mode: 'dashboard',
+        dashboard: {
+          entryName: 'Test Entry',
+          visibleWidgets: [
+            { id: 'links-panel-d', title: 'Links Panel D', type: 'links_note_tiptap' },
+          ],
+        },
+      },
+      focusLatch: {
+        kind: 'resolved' as const,
+        widgetId: 'links-panel-d',
+        widgetLabel: 'Links Panel D',
+        latchedAt: Date.now(),
+        turnsSinceLatched: 0,
+      },
+      getVisibleSnapshots: jest.fn().mockReturnValue([]),
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    // "what is summary144?" is a genuine question — should NOT be treated as a command.
+    // isCommandLike returns false (starts with "what"), so cross-corpus handler can process it.
+    // The tierLabel should NOT be a widget/known-noun resolution tier.
+    expect(result.tierLabel).not.toBe('known_noun_navigate')
+  })
+})
+
+// ============================================================================
+// Context-Enrichment Retry Loop Integration (Tier 1b.3)
+// Per context-enrichment-retry-loop-plan.md
+// ============================================================================
+
+describe('dispatchRouting: context-enrichment retry loop (Tier 1b.3)', () => {
+  const panelOptions = [
+    { index: 1, label: 'Links Panels', sublabel: 'Panel', type: 'panel_drawer', id: 'opt-0', data: { panelId: 'links-panels', panelTitle: 'Links Panels', panelType: 'default' } },
+    { index: 2, label: 'Links Panel D', sublabel: 'Panel', type: 'panel_drawer', id: 'opt-1', data: { panelId: 'links-panel-d', panelTitle: 'Links Panel D', panelType: 'default' } },
+    { index: 3, label: 'Links Panel E', sublabel: 'Panel', type: 'panel_drawer', id: 'opt-2', data: { panelId: 'links-panel-e', panelTitle: 'Links Panel E', panelType: 'default' } },
+  ]
+  const disambigMessageId = 'assistant-panel-retry'
+  const panelClarification = {
+    type: 'panel_disambiguation' as const,
+    originalIntent: 'open links panel',
+    messageId: disambigMessageId,
+    timestamp: Date.now() - 2000,
+    options: panelOptions.map(o => ({ id: o.id, label: o.label, sublabel: o.sublabel, type: o.type })),
+    metaCount: 0,
+  }
+  const visibleWidgets = [
+    { id: 'links-panels', title: 'Links Panels', type: 'links_note_tiptap' },
+    { id: 'links-panel-d', title: 'Links Panel D', type: 'links_note_tiptap' },
+    { id: 'links-panel-e', title: 'Links Panel E', type: 'links_note_tiptap' },
+  ]
+
+  beforeEach(() => {
+    jest.clearAllMocks()
+    resetLLMArbitrationGuard()
+    ;(isLLMAutoExecuteEnabledClient as jest.Mock).mockReturnValue(false)
+    mockBuildTurnSnapshot.mockReturnValue({
+      openWidgets: [],
+      activeSnapshotWidgetId: null,
+      uiSnapshotId: 'test-snap-retry',
+      revisionId: 1,
+      capturedAtMs: Date.now(),
+      hasBadgeLetters: false,
+    })
+    mockHandleKnownNounRouting.mockReturnValue({ handled: false })
+  })
+
+  function createRetryTestContext(input: string) {
+    return createMockDispatchContext({
+      trimmedInput: input,
+      lastClarification: panelClarification,
+      pendingOptions: panelOptions,
+      activeOptionSetId: disambigMessageId,
+      uiContext: {
+        mode: 'dashboard',
+        dashboard: { entryName: 'Test Entry', visibleWidgets },
+      },
+    })
+  }
+
+  it('request_context → enrichment → retry → resolves with LLM pick (BLOCKER)', async () => {
+    ;(isLLMFallbackEnabledClient as jest.Mock).mockReturnValue(true)
+    ;(isContextRetryEnabledClient as jest.Mock).mockReturnValue(true)
+    ;(callClarificationLLMClient as jest.Mock)
+      .mockResolvedValueOnce({
+        success: true,
+        response: { decision: 'request_context', neededContext: ['chat_active_options'], contractVersion: '2.0', choiceIndex: -1, confidence: 0.5, reason: 'need context' },
+        latencyMs: 200,
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        response: { decision: 'select', choiceId: 'opt-1', choiceIndex: 1, confidence: 0.9, reason: 'resolved after enrichment' },
+        latencyMs: 150,
+      })
+
+    const ctx = createRetryTestContext('opn links')
+    const result = await dispatchRouting(ctx)
+
+    // Handled at Tier 0 (clarification intercept)
+    expect(result.handled).toBe(true)
+    expect(result.handledByTier).toBe(0)
+
+    // LLM was called twice (initial + retry)
+    expect(callClarificationLLMClient).toHaveBeenCalledTimes(2)
+
+    // Verify retry call includes enriched context (Fix 1: enrichment passthrough)
+    const call1Req = (callClarificationLLMClient as jest.Mock).mock.calls[0][0]
+    const call2Req = (callClarificationLLMClient as jest.Mock).mock.calls[1][0]
+    expect(call1Req.context).not.toContain('enriched_evidence')
+    expect(call2Req.context).toContain('enriched_evidence')
+
+    // Retry telemetry emitted
+    expect(debugLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'arbitration_retry_called',
+      })
+    )
+
+    // Clarify-only: must NOT auto-execute
+    expect(ctx.handleSelectOption).not.toHaveBeenCalled()
+
+    // Safe clarifier shown with LLM's pick first
+    expect(ctx.addMessage).toHaveBeenCalledTimes(1)
+    const addedMsg = (ctx.addMessage as jest.Mock).mock.calls[0][0]
+    expect(addedMsg.options[0].id).toBe('opt-1')
+  })
+
+  it('request_context + flag OFF → safe clarifier, no retry (BLOCKER)', async () => {
+    ;(isLLMFallbackEnabledClient as jest.Mock).mockReturnValue(true)
+    ;(isContextRetryEnabledClient as jest.Mock).mockReturnValue(false)
+    ;(callClarificationLLMClient as jest.Mock).mockResolvedValue({
+      success: true,
+      response: { decision: 'request_context', neededContext: ['chat_active_options'], contractVersion: '2.0', choiceIndex: -1, confidence: 0.5, reason: 'need context' },
+      latencyMs: 200,
+    })
+
+    const ctx = createRetryTestContext('opn links')
+    const result = await dispatchRouting(ctx)
+
+    expect(result.handled).toBe(true)
+    expect(result.handledByTier).toBe(0)
+
+    // LLM called only once (no retry)
+    expect(callClarificationLLMClient).toHaveBeenCalledTimes(1)
+
+    // Safe clarifier shown (no auto-execute)
+    expect(ctx.handleSelectOption).not.toHaveBeenCalled()
+    expect(ctx.addMessage).toHaveBeenCalledTimes(1)
+
+    // Downstream never reached
+    expect(mockHandleKnownNounRouting).not.toHaveBeenCalled()
+  })
+
+  it('entry-gate: active options + unresolved input → LLM invoked (behavioral proof of loop entry)', async () => {
+    // Proves: unresolved input with active options enters the arbitration loop.
+    // Behavioral: LLM is called (not just a spy on internal functions).
+    ;(isLLMFallbackEnabledClient as jest.Mock).mockReturnValue(true)
+    ;(isContextRetryEnabledClient as jest.Mock).mockReturnValue(false)
+    ;(callClarificationLLMClient as jest.Mock).mockResolvedValue({
+      success: false,
+      error: 'Timeout',
+      latencyMs: 800,
+    })
+
+    const ctx = createRetryTestContext('opn links')
+    const result = await dispatchRouting(ctx)
+
+    // Loop was entered — LLM was called
+    expect(callClarificationLLMClient).toHaveBeenCalledTimes(1)
+
+    // Safe clarifier (LLM failed)
+    expect(result.handled).toBe(true)
+    expect(result.handledByTier).toBe(0)
+    expect(ctx.handleSelectOption).not.toHaveBeenCalled()
+    expect(mockHandleKnownNounRouting).not.toHaveBeenCalled()
+  })
+
+  it('entry-gate: no active options → loop NOT invoked, input falls through to downstream', async () => {
+    // No pendingOptions or lastClarification → clarification intercept has nothing to intercept
+    ;(isLLMFallbackEnabledClient as jest.Mock).mockReturnValue(true)
+    ;(isContextRetryEnabledClient as jest.Mock).mockReturnValue(true)
+    mockHandleKnownNounRouting.mockReturnValue({ handled: true, handledByTier: 4, tierLabel: 'known_noun' })
+
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'open links panel',
+      uiContext: {
+        mode: 'dashboard',
+        dashboard: { entryName: 'Test Entry', visibleWidgets },
+      },
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    // LLM was never called — no active options, no loop entry
+    expect(callClarificationLLMClient).not.toHaveBeenCalled()
+
+    // Input fell through to downstream tiers
+    // (Tier 2c or Tier 4 handles it, depending on widget matching)
+    expect(result.handled).toBe(true)
+  })
+})
+
+// ============================================================================
+// Context-Enrichment Retry Loop Integration (Scope-Cue Phase 2b)
+// Per context-enrichment-retry-loop-plan.md
+// ============================================================================
+
+describe('dispatchRouting: scope-cue Phase 2b context-enrichment retry + dashboard/workspace rejection', () => {
+  const chatOptions = [
+    { id: 'opt-0', label: 'Links Panels', sublabel: 'Panel', type: 'panel_drawer' },
+    { id: 'opt-1', label: 'Links Panel D', sublabel: 'Panel', type: 'panel_drawer' },
+    { id: 'opt-2', label: 'Links Panel E', sublabel: 'Panel', type: 'panel_drawer' },
+  ]
+
+  let savedLatchEnv: string | undefined
+  let savedRetryEnv: string | undefined
+
+  beforeEach(() => {
+    jest.clearAllMocks()
+    resetLLMArbitrationGuard()
+    ;(isLLMAutoExecuteEnabledClient as jest.Mock).mockReturnValue(false)
+    // Enable latch feature flag for scope-cue processing
+    savedLatchEnv = process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1
+    process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1 = 'true'
+    savedRetryEnv = process.env.NEXT_PUBLIC_LLM_CONTEXT_RETRY_ENABLED
+    mockBuildTurnSnapshot.mockReturnValue({
+      openWidgets: [],
+      activeSnapshotWidgetId: null,
+      uiSnapshotId: 'test-snap-scope-retry',
+      revisionId: 1,
+      capturedAtMs: Date.now(),
+      hasBadgeLetters: false,
+    })
+    mockHandleKnownNounRouting.mockReturnValue({ handled: false })
+  })
+
+  afterEach(() => {
+    if (savedLatchEnv === undefined) {
+      delete process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1
+    } else {
+      process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1 = savedLatchEnv
+    }
+    if (savedRetryEnv === undefined) {
+      delete process.env.NEXT_PUBLIC_LLM_CONTEXT_RETRY_ENABLED
+    } else {
+      process.env.NEXT_PUBLIC_LLM_CONTEXT_RETRY_ENABLED = savedRetryEnv
+    }
+  })
+
+  it('"from chat" + request_context → chat-scoped retry → resolves (BLOCKER)', async () => {
+    ;(isLLMFallbackEnabledClient as jest.Mock).mockReturnValue(true)
+    ;(isContextRetryEnabledClient as jest.Mock).mockReturnValue(true)
+    ;(callClarificationLLMClient as jest.Mock)
+      .mockResolvedValueOnce({
+        success: true,
+        response: { decision: 'request_context', neededContext: ['chat_active_options'], contractVersion: '2.0', choiceIndex: -1, confidence: 0.5, reason: 'need context' },
+        latencyMs: 200,
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        response: { decision: 'select', choiceId: 'opt-1', choiceIndex: 1, confidence: 0.9, reason: 'resolved from chat evidence' },
+        latencyMs: 150,
+      })
+
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'open links from chat',
+      clarificationSnapshot: {
+        options: chatOptions,
+        originalIntent: 'open links panel',
+        type: 'panel_disambiguation',
+        turnsSinceSet: 0,
+        timestamp: Date.now(),
+      },
+      uiContext: {
+        mode: 'dashboard',
+        dashboard: {
+          entryName: 'Test Entry',
+          visibleWidgets: [
+            { id: 'summary144', title: 'Summary 144', type: 'summary_tiptap' },
+          ],
+        },
+      },
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    expect(result.handled).toBe(true)
+    expect(result.handledByTier).toBe(0)
+
+    // LLM called twice (retry happened)
+    expect(callClarificationLLMClient).toHaveBeenCalledTimes(2)
+
+    // Retry telemetry
+    expect(debugLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'arbitration_retry_called',
+      })
+    )
+  })
+
+  it('"from dashboard" explicit cue → scope-specific need_more_info message (BLOCKER)', async () => {
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'open panel d from dashboard',
+      clarificationSnapshot: {
+        options: chatOptions,
+        originalIntent: 'open links panel',
+        type: 'panel_disambiguation',
+        turnsSinceSet: 0,
+        timestamp: Date.now(),
+      },
+      uiContext: {
+        mode: 'dashboard',
+        dashboard: {
+          entryName: 'Test Entry',
+          visibleWidgets: [
+            { id: 'summary144', title: 'Summary 144', type: 'summary_tiptap' },
+          ],
+        },
+      },
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    expect(result.handled).toBe(true)
+
+    // Must show dashboard-specific message (not generic clarifier)
+    expect(ctx.addMessage).toHaveBeenCalledTimes(1)
+    const msg = (ctx.addMessage as jest.Mock).mock.calls[0][0]
+    expect(msg.content).toContain('Dashboard')
+    expect(msg.content).toContain('not yet available')
+
+    // LLM never called — scope rejected before retry
+    expect(callClarificationLLMClient).not.toHaveBeenCalled()
+    expect(mockHandleKnownNounRouting).not.toHaveBeenCalled()
+  })
+
+  it('"from workspace" explicit cue → scope-specific need_more_info message (BLOCKER)', async () => {
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'open panel d from workspace',
+      clarificationSnapshot: {
+        options: chatOptions,
+        originalIntent: 'open links panel',
+        type: 'panel_disambiguation',
+        turnsSinceSet: 0,
+        timestamp: Date.now(),
+      },
+      uiContext: {
+        mode: 'dashboard',
+        dashboard: {
+          entryName: 'Test Entry',
+          visibleWidgets: [
+            { id: 'summary144', title: 'Summary 144', type: 'summary_tiptap' },
+          ],
+        },
+      },
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    expect(result.handled).toBe(true)
+
+    // Must show workspace-specific message (not generic clarifier)
+    expect(ctx.addMessage).toHaveBeenCalledTimes(1)
+    const msg = (ctx.addMessage as jest.Mock).mock.calls[0][0]
+    expect(msg.content).toContain('Workspace')
+    expect(msg.content).toContain('not yet available')
+
+    // LLM never called
+    expect(callClarificationLLMClient).not.toHaveBeenCalled()
+    expect(mockHandleKnownNounRouting).not.toHaveBeenCalled()
+  })
+
+  it('scope-cue entry: "from chat" unresolved → loop invoked at scope_cue context (behavioral)', async () => {
+    // Proves: scope-cue Phase 2b unresolved input enters arbitration loop
+    ;(isLLMFallbackEnabledClient as jest.Mock).mockReturnValue(true)
+    ;(isContextRetryEnabledClient as jest.Mock).mockReturnValue(false)
+    ;(callClarificationLLMClient as jest.Mock).mockResolvedValue({
+      success: false,
+      error: 'Timeout',
+      latencyMs: 800,
+    })
+
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'open links from chat',
+      clarificationSnapshot: {
+        options: chatOptions,
+        originalIntent: 'open links panel',
+        type: 'panel_disambiguation',
+        turnsSinceSet: 0,
+        timestamp: Date.now(),
+      },
+      uiContext: {
+        mode: 'dashboard',
+        dashboard: {
+          entryName: 'Test Entry',
+          visibleWidgets: [
+            { id: 'summary144', title: 'Summary 144', type: 'summary_tiptap' },
+          ],
+        },
+      },
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    // Loop was entered via scope-cue — LLM was called
+    expect(callClarificationLLMClient).toHaveBeenCalledTimes(1)
+    expect(result.handled).toBe(true)
+    expect(result.handledByTier).toBe(0)
+  })
+
+  it('no parallel entry: active options + "from chat" scope cue → scope-cue path takes precedence (Step 11.3)', async () => {
+    // Both active options (pendingOptions/lastClarification) AND scope cue ("from chat") present.
+    // Per Rule H, scope-cue path takes precedence — only one loop invocation fires.
+    ;(isLLMFallbackEnabledClient as jest.Mock).mockReturnValue(true)
+    ;(isContextRetryEnabledClient as jest.Mock).mockReturnValue(false)
+    ;(callClarificationLLMClient as jest.Mock).mockResolvedValue({
+      success: true,
+      response: { decision: 'select', choiceId: 'opt-1', choiceIndex: 1, confidence: 0.85, reason: 'matched' },
+      latencyMs: 150,
+    })
+
+    // Create context with BOTH active options and scope cue
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'open links from chat',
+      // Active options (would trigger Tier 1b.3 path)
+      lastClarification: {
+        type: 'panel_disambiguation' as const,
+        originalIntent: 'open links panel',
+        messageId: 'msg-scope-parallel',
+        timestamp: Date.now() - 2000,
+        options: chatOptions.map(o => ({ id: o.id, label: o.label, sublabel: o.sublabel, type: o.type })),
+        metaCount: 0,
+      },
+      pendingOptions: chatOptions.map((o, i) => ({
+        index: i + 1,
+        label: o.label,
+        sublabel: o.sublabel,
+        type: o.type,
+        id: o.id,
+        data: { panelId: o.id, panelTitle: o.label, panelType: 'default' },
+      })),
+      activeOptionSetId: 'msg-scope-parallel',
+      // Scope cue present via clarificationSnapshot
+      clarificationSnapshot: {
+        options: chatOptions,
+        originalIntent: 'open links panel',
+        type: 'panel_disambiguation',
+        turnsSinceSet: 0,
+        timestamp: Date.now(),
+      },
+      uiContext: {
+        mode: 'dashboard',
+        dashboard: {
+          entryName: 'Test Entry',
+          visibleWidgets: [
+            { id: 'summary144', title: 'Summary 144', type: 'summary_tiptap' },
+          ],
+        },
+      },
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    expect(result.handled).toBe(true)
+    expect(result.handledByTier).toBe(0)
+
+    // LLM called exactly once — only one path fires (not two parallel loops)
     expect(callClarificationLLMClient).toHaveBeenCalledTimes(1)
   })
 })

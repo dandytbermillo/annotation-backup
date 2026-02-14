@@ -15,6 +15,10 @@ import type {
   ClarificationLLMResult,
   ClarificationLLMResponse,
 } from '@/lib/chat/clarification-llm-fallback'
+import {
+  validateNeededContext,
+  CLARIFICATION_LLM_CONTRACT_VERSION,
+} from '@/lib/chat/clarification-llm-fallback'
 
 // =============================================================================
 // Configuration
@@ -79,7 +83,9 @@ Return JSON ONLY:
   "choiceIndex": <0-based index or -1 if none>,
   "confidence": <0.0 to 1.0>,
   "reason": "<brief explanation>",
-  "decision": "select" | "repair" | "reject_list" | "ask_clarify" | "reroute"
+  "decision": "select" | "repair" | "reject_list" | "ask_clarify" | "reroute" | "request_context",
+  "contractVersion": "${CLARIFICATION_LLM_CONTRACT_VERSION}",
+  "neededContext": ["<context_type>"]
 }
 
 Decisions:
@@ -87,7 +93,8 @@ Decisions:
 - "repair": User rejects last choice ("not that", "wrong one", "the other one", "nto that")
 - "reject_list": User rejects ALL options ("none of these", "neither", "nto those")
 - "ask_clarify": Unclear which option user wants
-- "reroute": User wants something completely different (new task)`
+- "reroute": User wants something completely different (new task)
+- "request_context": You need more context to decide. Set neededContext to 1-2 of: "chat_active_options", "chat_recoverable_options", "active_widget_items", "active_dashboard_items", "active_workspace_items", "scope_disambiguation_hint"`
 
 function buildUserPrompt(request: ClarificationLLMRequest): string {
   const optionsList = request.options
@@ -238,6 +245,32 @@ export async function POST(request: NextRequest): Promise<NextResponse<Clarifica
       parsed.decision = parsed.confidence >= MIN_CONFIDENCE_ASK ? 'ask_clarify' : 'none'
     }
 
+    // ==========================================================================
+    // Canonical server-side validation for request_context (single validation boundary)
+    // Per context-enrichment-retry-loop-plan.md §Binding Hardening Rule 1
+    // ==========================================================================
+    if (parsed.decision === 'request_context') {
+      // Validate contractVersion
+      if (parsed.contractVersion !== CLARIFICATION_LLM_CONTRACT_VERSION) {
+        console.warn(`[clarification-llm] request_context downgraded: contract_version_mismatch (got ${parsed.contractVersion}, expected ${CLARIFICATION_LLM_CONTRACT_VERSION})`)
+        parsed.decision = 'ask_clarify'
+        parsed.reason = `Downgraded: contract_version_mismatch`
+        parsed.choiceIndex = -1
+      } else {
+        // Validate neededContext against allowlist with hard cap
+        const validatedContext = validateNeededContext(parsed.neededContext)
+        if (validatedContext.length === 0) {
+          console.warn('[clarification-llm] request_context downgraded: invalid_needed_context', { rawNeededContext: parsed.neededContext })
+          parsed.decision = 'ask_clarify'
+          parsed.reason = 'Downgraded: invalid_needed_context'
+          parsed.choiceIndex = -1
+        } else {
+          // Valid request_context — normalize neededContext to validated set
+          parsed.neededContext = validatedContext
+        }
+      }
+    }
+
     // Derive choiceId from choiceIndex for select decisions (per plan contract)
     // The client expects choiceId (stable ID) for option lookup
     let choiceId: string | null = null
@@ -253,6 +286,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<Clarifica
       response: {
         ...parsed,
         choiceId, // Add stable ID for client lookup
+        contractVersion: CLARIFICATION_LLM_CONTRACT_VERSION,
       },
       latencyMs,
     })

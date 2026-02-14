@@ -30,6 +30,7 @@ jest.mock('@/lib/chat/clarification-llm-fallback', () => ({
   callReturnCueLLM: jest.fn().mockResolvedValue({ isReturn: false }),
   isLLMFallbackEnabledClient: jest.fn().mockReturnValue(false),
   isLLMAutoExecuteEnabledClient: jest.fn().mockReturnValue(false),
+  isContextRetryEnabledClient: jest.fn().mockReturnValue(false),
   shouldCallLLMFallback: jest.fn().mockReturnValue(false),
   MIN_CONFIDENCE_SELECT: 0.6,
   AUTO_EXECUTE_CONFIDENCE: 0.85,
@@ -78,6 +79,7 @@ import type { ClarificationOption, LastClarificationState } from '@/lib/chat/cha
 import { debugLog } from '@/lib/utils/debug-logger'
 import { callClarificationLLMClient, isLLMFallbackEnabledClient, isLLMAutoExecuteEnabledClient } from '@/lib/chat/clarification-llm-fallback'
 import { classifyArbitrationConfidence, canonicalizeCommandInput } from '@/lib/chat/input-classifiers'
+import { isCommandLike } from '@/lib/chat/query-patterns'
 
 // ============================================================================
 // Helpers
@@ -1022,6 +1024,9 @@ describe('Selection-vs-Command Arbitration Pre-gate', () => {
         expect(ctx.saveClarificationSnapshot).toHaveBeenCalled()
         expect(ctx.setRepairMemory).toHaveBeenCalled()
         expect(ctx.setLastClarification).toHaveBeenCalledWith(null)
+
+        // Provenance hint: auto-execute path → llm_executed
+        expect(result._devProvenanceHint).toBe('llm_executed')
       })
 
       it('"can you ope panel d pls" + LLM enabled + auto-execute OFF → safe clarifier with LLM reorder', async () => {
@@ -1050,6 +1055,9 @@ describe('Selection-vs-Command Arbitration Pre-gate', () => {
         expect(ctx.addMessage).toHaveBeenCalledTimes(1)
         const addedMessage = (ctx.addMessage as jest.Mock).mock.calls[0][0]
         expect(addedMessage.options[0].id).toBe('opt-1') // LLM's pick first
+
+        // Provenance hint: LLM suggested but not auto-executed → llm_influenced
+        expect(result._devProvenanceHint).toBe('llm_influenced')
       })
 
       it('"can you ope panel d pls" + LLM confidence 0.7 + auto-execute ON → safe clarifier (below threshold)', async () => {
@@ -1078,6 +1086,9 @@ describe('Selection-vs-Command Arbitration Pre-gate', () => {
         expect(ctx.addMessage).toHaveBeenCalledTimes(1)
         const addedMessage = (ctx.addMessage as jest.Mock).mock.calls[0][0]
         expect(addedMessage.options[0].id).toBe('opt-1')
+
+        // Provenance hint: LLM suggested but below threshold → llm_influenced
+        expect(result._devProvenanceHint).toBe('llm_influenced')
       })
 
       it('"can you ope panel d pls" + active options + LLM disabled → safe clarifier (original order, no escape)', async () => {
@@ -1103,6 +1114,9 @@ describe('Selection-vs-Command Arbitration Pre-gate', () => {
         expect(ctx.addMessage).toHaveBeenCalledTimes(1)
         const addedMessage = (ctx.addMessage as jest.Mock).mock.calls[0][0]
         expect(addedMessage.options[0].id).toBe('opt-0') // Original order preserved
+
+        // Provenance hint: no LLM involved → deterministic (undefined)
+        expect(result._devProvenanceHint).toBeUndefined()
       })
 
       it('"can you ope panel d pls" + active options + LLM timeout → safe clarifier', async () => {
@@ -1305,5 +1319,45 @@ describe('Selection-vs-Command Arbitration Pre-gate', () => {
         expect(addedMessage.options[0].id).toBe('opt-1') // Prior LLM pick reused for ordering
       })
     })
+  })
+})
+
+// ============================================================================
+// isCommandLike: trailing ? on imperative commands
+// Per universal-selection-resolver-plan.md: trailing ? alone must not block
+// action verb detection. Only question-word prefixes (what/how/why/is/etc.)
+// should classify as non-command.
+// ============================================================================
+describe('isCommandLike: trailing ? on imperative commands', () => {
+  it('imperative commands with trailing ? are still commands', () => {
+    expect(isCommandLike('open that summary144 now plssss?')).toBe(true)
+    expect(isCommandLike('show me the links panel?')).toBe(true)
+    expect(isCommandLike('delete this entry?')).toBe(true)
+    expect(isCommandLike('open panel d?')).toBe(true)
+    expect(isCommandLike('close the panel?')).toBe(true)
+  })
+
+  it('imperative commands without trailing ? remain commands', () => {
+    expect(isCommandLike('open that summary144 now plssss')).toBe(true)
+    expect(isCommandLike('show me the links panel')).toBe(true)
+    expect(isCommandLike('delete this entry')).toBe(true)
+  })
+
+  it('actual questions remain non-commands', () => {
+    expect(isCommandLike('what is summary144?')).toBe(false)
+    expect(isCommandLike('how do I open the panel?')).toBe(false)
+    expect(isCommandLike('is this the right entry?')).toBe(false)
+    expect(isCommandLike('where are the links?')).toBe(false)
+    expect(isCommandLike('does this panel have entries?')).toBe(false)
+  })
+
+  it('doc instruction cues with trailing ? remain non-commands', () => {
+    expect(isCommandLike('show me how to open panels?')).toBe(false)
+    expect(isCommandLike('how to delete an entry?')).toBe(false)
+  })
+
+  it('polite imperative requests are commands', () => {
+    expect(isCommandLike('can you open panel d?')).toBe(true)
+    expect(isCommandLike('could you show the links?')).toBe(true)
   })
 })

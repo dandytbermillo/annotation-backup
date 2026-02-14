@@ -18,6 +18,7 @@ import { debugLog } from '@/lib/utils/debug-logger'
 import {
   useChatNavigation,
   useChatNavigationContext,
+  isProvenanceDebugEnabled,
   ViewPanelProvider,
   useViewPanel,
   ViewContentType,
@@ -528,6 +529,11 @@ function ChatNavigationPanelContent({
     suspendFocusLatch,
     incrementFocusLatchTurn,
     clearFocusLatch,
+    // Dev-only provenance debug overlay
+    provenanceMap,
+    setProvenance,
+    clearProvenanceMap,
+    lastAddedAssistantIdRef,
   } = useChatNavigationContext()
 
   const { executeAction, selectOption, openPanelDrawer: openPanelDrawerBase } = useChatNavigation({
@@ -1443,6 +1449,10 @@ function ChatNavigationPanelContent({
       //
       // See lib/chat/routing-dispatcher.ts for the single source of truth.
       // ---------------------------------------------------------------------------
+      // Dev provenance: reset tracking for this routing cycle
+      if (isProvenanceDebugEnabled()) {
+        lastAddedAssistantIdRef.current = null
+      }
       console.log('[ChatPanel] Checkpoint 3: Before dispatchRouting', { lastClarification: !!lastClarification, pendingOptions: pendingOptions?.length })
       const routingResult = await dispatchRouting({
         trimmedInput,
@@ -1636,6 +1646,10 @@ function ChatNavigationPanelContent({
           addMessage(assistantMessage)
         }
 
+        // Dev provenance: tag before early return (Tier S suggestion affirm)
+        if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current) {
+          setProvenance(lastAddedAssistantIdRef.current, routingResult._devProvenanceHint ?? 'deterministic')
+        }
         setIsLoading(false)
         return
       }
@@ -1709,6 +1723,10 @@ function ChatNavigationPanelContent({
           addMessage(errorMsg)
         }
 
+        // Dev provenance: tag before early return (Tier 4.5 grounding referent)
+        if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current) {
+          setProvenance(lastAddedAssistantIdRef.current, routingResult._devProvenanceHint ?? 'deterministic')
+        }
         setIsLoading(false)
         return
       }
@@ -1779,11 +1797,21 @@ function ChatNavigationPanelContent({
           addMessage(errorMsg)
         }
 
+        // Dev provenance: tag before early return (Tier 4.5 widget item)
+        if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current) {
+          setProvenance(lastAddedAssistantIdRef.current, routingResult._devProvenanceHint ?? 'deterministic')
+        }
         setIsLoading(false)
         return
       }
 
       if (routingResult.handled) {
+        // Dev provenance: tag the assistant message added during this routing cycle.
+        // lastAddedAssistantIdRef was set by addMessage (context-level) — works even when
+        // the message came from handleSelectOption (auto-execute path).
+        if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current) {
+          setProvenance(lastAddedAssistantIdRef.current, routingResult._devProvenanceHint ?? 'deterministic')
+        }
         // Per plan §10: if a non-suggestion tier handled the input while a
         // suggestion was active, clear stale suggestion state to prevent
         // leftover confirm/reject on the next turn.
@@ -2184,6 +2212,10 @@ function ChatNavigationPanelContent({
             data: selectedOption.data as SelectionOption['data'],
           }
 
+          // Dev provenance: tag before early return (LLM select_option)
+          if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current) {
+            setProvenance(lastAddedAssistantIdRef.current, 'llm_executed')
+          }
           setIsLoading(false)
           handleSelectOption(optionToSelect)
           return
@@ -2197,6 +2229,10 @@ function ChatNavigationPanelContent({
             isError: false,
           }
           addMessage(assistantMessage)
+          // Dev provenance: tag before early return (LLM select_option no match)
+          if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current) {
+            setProvenance(lastAddedAssistantIdRef.current, 'llm_executed')
+          }
           setIsLoading(false)
           return
         }
@@ -2271,6 +2307,10 @@ function ChatNavigationPanelContent({
           // Grounding-set soft-active: persist re-shown options
           saveLastOptionsShown(reshowOpts, messageId)
 
+          // Dev provenance: tag before early return (LLM reshow_options)
+          if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current) {
+            setProvenance(lastAddedAssistantIdRef.current, 'llm_executed')
+          }
           setIsLoading(false)
           return
         } else {
@@ -2289,6 +2329,10 @@ function ChatNavigationPanelContent({
             isError: false,
           }
           addMessage(assistantMessage)
+          // Dev provenance: tag before early return (LLM reshow_options expired)
+          if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current) {
+            setProvenance(lastAddedAssistantIdRef.current, 'llm_executed')
+          }
           setIsLoading(false)
           return
         }
@@ -2590,6 +2634,11 @@ function ChatNavigationPanelContent({
       if (resolution.showInViewPanel && resolution.viewPanelContent) {
         openPanelWithTracking(resolution.viewPanelContent, resolution.panelId)
       }
+
+      // Dev provenance: LLM API fallthrough — all messages from this path are LLM-executed
+      if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current) {
+        setProvenance(lastAddedAssistantIdRef.current, 'llm_executed')
+      }
     } catch (error) {
       // Check if this is an abort error (user canceled, navigation, etc.)
       const isAbortError = error instanceof Error && (
@@ -2635,7 +2684,9 @@ function ChatNavigationPanelContent({
     clearMessages()
     clearScopeCueRecoveryMemory()
     resetLLMArbitrationGuard()
-  }, [clearMessages, clearScopeCueRecoveryMemory])
+    clearProvenanceMap()
+    clearWidgetSelectionContext() // Phase 6: clear chat clears widget selection context
+  }, [clearMessages, clearScopeCueRecoveryMemory, clearProvenanceMap, clearWidgetSelectionContext])
 
   // ---------------------------------------------------------------------------
   // Render
@@ -2786,6 +2837,7 @@ function ChatNavigationPanelContent({
                     onShowMore={handleShowMore}
                     viewPanelDocSlug={viewPanelDocSlug}
                     viewPanelItemId={viewPanelItemId}
+                    provenanceMap={isProvenanceDebugEnabled() ? provenanceMap : undefined}
                   />
                 )}
 
