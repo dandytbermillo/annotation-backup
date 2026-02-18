@@ -529,6 +529,12 @@ function ChatNavigationPanelContent({
     suspendFocusLatch,
     incrementFocusLatchTurn,
     clearFocusLatch,
+    // Selection continuity (Plan 20)
+    selectionContinuity,
+    updateSelectionContinuity,
+    recordAcceptedChoice,
+    recordRejectedChoice,
+    resetSelectionContinuity,
     // Dev-only provenance debug overlay
     provenanceMap,
     setProvenance,
@@ -961,6 +967,8 @@ function ChatNavigationPanelContent({
         setPendingOptionsGraceCount(0)
         // Session boundary: user explicitly exited — clear durable recovery memory
         clearScopeCueRecoveryMemory()
+        // Session boundary: reset selection continuity (Plan 20, B9)
+        resetSelectionContinuity()
 
         // Show appropriate message based on exit type
         const exitMessage: ChatMessage = {
@@ -1106,6 +1114,19 @@ function ChatNavigationPanelContent({
         // Note: Don't clear pending options here - grace window logic handles clearing.
         // This allows users to select another option within the grace window.
 
+        // Record accepted choice for selection continuity (Plan 20)
+        if (result.success) {
+          const sourceScope: 'chat' | 'widget' = widgetSelectionContext ? 'widget' : 'chat'
+          recordAcceptedChoice(option.id, {
+            type: 'select_option',
+            targetRef: option.label,
+            sourceScope,
+            optionSetId: activeOptionSetId ?? lastClarification?.messageId ?? null,
+            timestamp: Date.now(),
+            outcome: 'success',
+          })
+        }
+
         // Track successful actions for session state and show toast
         if (result.success && result.action) {
           const now = Date.now()
@@ -1239,7 +1260,7 @@ function ChatNavigationPanelContent({
         setIsLoading(false)
       }
     },
-    [selectOption, addMessage, setLastAction, setLastQuickLinksBadge, incrementOpenCount, notesScopeFollowUpActive, lastClarification]
+    [selectOption, addMessage, setLastAction, setLastQuickLinksBadge, incrementOpenCount, notesScopeFollowUpActive, lastClarification, recordAcceptedChoice, widgetSelectionContext, activeOptionSetId]
   )
 
   // ---------------------------------------------------------------------------
@@ -1524,6 +1545,12 @@ function ChatNavigationPanelContent({
         suspendFocusLatch,
         incrementFocusLatchTurn,
         clearFocusLatch,
+        // Selection continuity (Plan 20)
+        selectionContinuity,
+        updateSelectionContinuity,
+        recordAcceptedChoice,
+        recordRejectedChoice,
+        resetSelectionContinuity,
       })
       const { clarificationCleared, isNewQuestionOrCommandDetected } = routingResult
       // Extract classifier state for downstream telemetry
@@ -2686,7 +2713,8 @@ function ChatNavigationPanelContent({
     resetLLMArbitrationGuard()
     clearProvenanceMap()
     clearWidgetSelectionContext() // Phase 6: clear chat clears widget selection context
-  }, [clearMessages, clearScopeCueRecoveryMemory, clearProvenanceMap, clearWidgetSelectionContext])
+    resetSelectionContinuity() // Plan 20, B9: clear chat resets continuity
+  }, [clearMessages, clearScopeCueRecoveryMemory, clearProvenanceMap, clearWidgetSelectionContext, resetSelectionContinuity])
 
   // ---------------------------------------------------------------------------
   // Render

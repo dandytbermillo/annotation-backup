@@ -71,6 +71,7 @@ global.fetch = jest.fn().mockResolvedValue({
 // ============================================================================
 
 import { dispatchRouting, type RoutingDispatcherContext } from '@/lib/chat/routing-dispatcher'
+import { EMPTY_CONTINUITY_STATE } from '@/lib/chat/chat-navigation-context'
 import { resetLLMArbitrationGuard } from '@/lib/chat/chat-routing'
 import { callClarificationLLMClient, isLLMFallbackEnabledClient, isLLMAutoExecuteEnabledClient, isContextRetryEnabledClient } from '@/lib/chat/clarification-llm-fallback'
 import { debugLog } from '@/lib/utils/debug-logger'
@@ -166,6 +167,13 @@ function createMockDispatchContext(overrides?: Partial<RoutingDispatcherContext>
     // Scope-cue recovery memory
     scopeCueRecoveryMemory: null,
     clearScopeCueRecoveryMemory: jest.fn(),
+
+    // Selection continuity (Plan 20)
+    selectionContinuity: EMPTY_CONTINUITY_STATE,
+    updateSelectionContinuity: jest.fn(),
+    recordAcceptedChoice: jest.fn(),
+    recordRejectedChoice: jest.fn(),
+    resetSelectionContinuity: jest.fn(),
 
     ...overrides,
   }

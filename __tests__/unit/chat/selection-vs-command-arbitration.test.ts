@@ -76,6 +76,7 @@ global.fetch = jest.fn().mockResolvedValue({
 
 import { handleClarificationIntercept, resetLLMArbitrationGuard, type ClarificationInterceptContext, type PendingOptionState } from '@/lib/chat/chat-routing'
 import type { ClarificationOption, LastClarificationState } from '@/lib/chat/chat-navigation-context'
+import { EMPTY_CONTINUITY_STATE } from '@/lib/chat/chat-navigation-context'
 import { debugLog } from '@/lib/utils/debug-logger'
 import { callClarificationLLMClient, isLLMFallbackEnabledClient, isLLMAutoExecuteEnabledClient } from '@/lib/chat/clarification-llm-fallback'
 import { classifyArbitrationConfidence, canonicalizeCommandInput } from '@/lib/chat/input-classifiers'
@@ -157,6 +158,10 @@ function createMockInterceptContext(overrides?: Partial<ClarificationInterceptCo
     activeSnapshotWidgetId: null,
     scopeCueRecoveryMemory: null,
     clearScopeCueRecoveryMemory: jest.fn(),
+    // Selection continuity (Plan 20)
+    selectionContinuity: EMPTY_CONTINUITY_STATE,
+    updateSelectionContinuity: jest.fn(),
+    resetSelectionContinuity: jest.fn(),
     ...overrides,
   }
 }
@@ -885,18 +890,18 @@ describe('Selection-vs-Command Arbitration Pre-gate', () => {
       expect(ctx.setPendingOptionsMessageId).toHaveBeenCalledWith(msg.id)
     })
 
-    it('no match via scope cue → unresolved hook fires (recoverable options exist)', async () => {
+    it('no match via scope cue + explicit command → 3-gate bypass to downstream routing', async () => {
       const ctx = makeScopeCueCtx('open recent from chat')
       const result = await handleClarificationIntercept(ctx)
 
-      // In v2, scope-cue unified hook fires when recoverableOptions.length > 0.
       // "open recent from chat" → strip "from chat" → "open recent" → 0 label matches
-      // → unified hook → tryLLMLastChance → LLM disabled (mock default) → safe clarifier
-      expect(result.handled).toBe(true)
-      expect(result.clarificationCleared).toBe(false)
+      // 3-gate bypass: labelMatches=0, isExplicitCommand("open recent")=true,
+      // isSelectionOnly("open recent")=false → bypass UNIFIED HOOK → Phase 3 command
+      // guard → returns handled: false (falls through to downstream Tier 4 routing)
+      expect(result.handled).toBe(false)
       expect(ctx.handleSelectOption).not.toHaveBeenCalled()
-      // Clarifier message re-shown
-      expect(ctx.addMessage).toHaveBeenCalled()
+      // No safe clarifier shown — command escapes to downstream routing
+      expect(ctx.setPendingOptions).not.toHaveBeenCalled()
     })
 
     it('exact-first winner in multi-match via scope cue → execute', async () => {

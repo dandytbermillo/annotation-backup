@@ -268,6 +268,59 @@ export function getLatchId(latch: FocusLatchState): string {
 /** Focus latch TTL in turns */
 export const FOCUS_LATCH_TTL = 5
 
+// =============================================================================
+// Selection Continuity State (Plan 20 — per Plan 19 canonical contract)
+// =============================================================================
+
+import { MAX_ACTION_TRACE, MAX_ACCEPTED_WINDOW, MAX_REJECTED_WINDOW } from './continuity-constants'
+
+/**
+ * Canonical action trace entry — per Plan 19 recentActionTrace[] schema.
+ * See: orchestrator/grounding-continuity-anti-reclarify-plan.md §Step 1
+ */
+export interface ActionTraceEntry {
+  type: string                                           // canonical: type
+  targetRef: string                                      // canonical: targetRef
+  sourceScope: 'chat' | 'widget' | 'dashboard' | 'workspace'  // canonical: sourceScope
+  optionSetId: string | null                             // NULLABLE — never use '' fallback
+  timestamp: number                                      // canonical: timestamp
+  outcome: 'success' | 'failed' | 'clarified'           // canonical: outcome
+}
+
+/**
+ * Canonical pending clarifier type — per Plan 19 pendingClarifierType enum.
+ * See: orchestrator/grounding-continuity-anti-reclarify-plan.md §Step 1
+ */
+export type PendingClarifierType =
+  | 'none'
+  | 'selection_disambiguation'
+  | 'scope_disambiguation'
+  | 'missing_slot'
+  | 'confirmation'
+  | 'repair'
+
+export interface SelectionContinuityState {
+  lastResolvedAction: ActionTraceEntry | null
+  recentActionTrace: ActionTraceEntry[]                  // max per Plan 19 RECENT_ACTION_TRACE_MAX_ENTRIES
+  lastAcceptedChoiceId: string | null
+  recentAcceptedChoiceIds: string[]                      // max 5
+  recentRejectedChoiceIds: string[]                      // max 5
+  activeOptionSetId: string | null                       // NULLABLE — strict null checks in gates
+  activeScope: 'chat' | 'widget' | 'dashboard' | 'workspace' | 'none'
+  pendingClarifierType: PendingClarifierType
+}
+
+export const EMPTY_CONTINUITY_STATE: SelectionContinuityState = {
+  lastResolvedAction: null,
+  recentActionTrace: [],
+  lastAcceptedChoiceId: null,
+  recentAcceptedChoiceIds: [],
+  recentRejectedChoiceIds: [],
+  activeOptionSetId: null,
+  activeScope: 'none',
+  pendingClarifierType: 'none',
+}
+
 /**
  * Doc retrieval conversation state for follow-ups and corrections.
  * Per general-doc-retrieval-routing-plan.md (v4)
@@ -438,6 +491,12 @@ interface ChatNavigationContextValue {
   suspendFocusLatch: () => void
   incrementFocusLatchTurn: () => void
   clearFocusLatch: () => void
+  // Selection continuity state (Plan 20 — per Plan 19 canonical contract)
+  selectionContinuity: SelectionContinuityState
+  updateSelectionContinuity: (updates: Partial<SelectionContinuityState>) => void
+  recordAcceptedChoice: (choiceId: string, action: ActionTraceEntry) => void
+  recordRejectedChoice: (choiceId: string) => void
+  resetSelectionContinuity: () => void
   // Dev-only provenance debug overlay (per provenance-debug-overlay plan)
   provenanceMap: Map<string, ChatProvenance>
   setProvenance: (messageId: string, provenance: ChatProvenance) => void
@@ -1338,6 +1397,38 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     setFocusLatchInternal(null)
   }, [isLatchEnabled])
 
+  // Selection continuity state (Plan 20 — per Plan 19 canonical contract)
+  const isContinuityEnabled = process.env.NEXT_PUBLIC_SELECTION_CONTINUITY_LANE_ENABLED === 'true'
+  const [selectionContinuity, setSelectionContinuity] = useState<SelectionContinuityState>(EMPTY_CONTINUITY_STATE)
+
+  const updateSelectionContinuity = useCallback((updates: Partial<SelectionContinuityState>) => {
+    if (!isContinuityEnabled) return
+    setSelectionContinuity(prev => ({ ...prev, ...updates }))
+  }, [isContinuityEnabled])
+
+  const recordAcceptedChoice = useCallback((choiceId: string, action: ActionTraceEntry) => {
+    if (!isContinuityEnabled) return
+    setSelectionContinuity(prev => ({
+      ...prev,
+      lastResolvedAction: action,
+      lastAcceptedChoiceId: choiceId,
+      recentActionTrace: [action, ...prev.recentActionTrace].slice(0, MAX_ACTION_TRACE),
+      recentAcceptedChoiceIds: [choiceId, ...prev.recentAcceptedChoiceIds].slice(0, MAX_ACCEPTED_WINDOW),
+    }))
+  }, [isContinuityEnabled])
+
+  const recordRejectedChoice = useCallback((choiceId: string) => {
+    if (!isContinuityEnabled) return
+    setSelectionContinuity(prev => ({
+      ...prev,
+      recentRejectedChoiceIds: [choiceId, ...prev.recentRejectedChoiceIds].slice(0, MAX_REJECTED_WINDOW),
+    }))
+  }, [isContinuityEnabled])
+
+  const resetSelectionContinuity = useCallback(() => {
+    setSelectionContinuity(EMPTY_CONTINUITY_STATE)
+  }, [])
+
   // Dev-only provenance debug overlay (per provenance-debug-overlay plan)
   const [provenanceMap, setProvenanceMap] = useState<Map<string, ChatProvenance>>(new Map())
   const setProvenance = useCallback((messageId: string, provenance: ChatProvenance) => {
@@ -1432,6 +1523,12 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         suspendFocusLatch,
         incrementFocusLatchTurn,
         clearFocusLatch,
+        // Selection continuity state (Plan 20)
+        selectionContinuity,
+        updateSelectionContinuity,
+        recordAcceptedChoice,
+        recordRejectedChoice,
+        resetSelectionContinuity,
         // Dev-only provenance debug overlay
         provenanceMap,
         setProvenance,

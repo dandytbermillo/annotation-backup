@@ -33,7 +33,7 @@ import {
 import { isBareNounQuery, maybeFormatSnippetWithHs3, dedupeHeaderPath, stripMarkdownHeadersForUI } from '@/lib/chat/doc-routing'
 import type { UIContext } from '@/lib/chat/intent-prompt'
 import type { ChatMessage, DocRetrievalState, SelectionOption, LastClarificationState, WorkspaceMatch, NoteMatch } from '@/lib/chat'
-import type { ClarificationOption, RepairMemoryState, ClarificationSnapshot, PanelDrawerData, DocData, ChatProvenance } from '@/lib/chat/chat-navigation-context'
+import type { ClarificationOption, RepairMemoryState, ClarificationSnapshot, PanelDrawerData, DocData, ChatProvenance, SelectionContinuityState } from '@/lib/chat/chat-navigation-context'
 import { REPAIR_MEMORY_TURN_LIMIT, STOP_SUPPRESSION_TURN_LIMIT, getLatchId } from '@/lib/chat/chat-navigation-context'
 import type { EntryMatch } from '@/lib/chat/resolution-types'
 import { matchVisiblePanelCommand, type VisibleWidget } from '@/lib/chat/panel-command-matcher'
@@ -1121,18 +1121,136 @@ export interface ClarificationInterceptResult extends HandlerResult {
 
 // Loop guard for LLM arbitration: prevent repeated LLM calls for same input+options.
 // Module-level singleton — reset when input or option set changes.
-let lastLLMArbitration: {
+interface LLMArbitrationGuardState {
   normalizedInput: string
   candidateIds: string
   clarificationMessageId: string
   suggestedId: string | null  // Rule F — loop-guard continuity
   enrichmentFingerprint?: string  // Context-enrichment retry loop
   retryAttempted?: boolean        // Context-enrichment retry loop — budget tracking
-} | null = null
+}
+let lastLLMArbitration: LLMArbitrationGuardState | null = null
+
+/**
+ * Read module-level guard state.
+ * NOTE: This is a TypeScript narrowing workaround, NOT concurrency protection.
+ * TS cannot track module-scope variable mutations through async calls, so
+ * `if (lastLLMArbitration)` after `await` narrows to `never`. A function call
+ * defeats this stale narrowing because TS cannot narrow through function
+ * return types. The underlying module-scope singleton is still single-threaded.
+ */
+function readLLMGuardState(): LLMArbitrationGuardState | null { return lastLLMArbitration }
+
+/** Centralized writer — all mutations to lastLLMArbitration go through here. */
+function writeLLMGuardState(state: LLMArbitrationGuardState | null): void {
+  lastLLMArbitration = state
+}
 
 /** Reset the LLM arbitration loop guard. Called on cycle boundary (clarification resolved) and chat clear. */
 export function resetLLMArbitrationGuard(): void {
-  lastLLMArbitration = null
+  writeLLMGuardState(null)
+}
+
+// =============================================================================
+// Selection Continuity Deterministic Resolver (Plan 20)
+// Per: selection-continuity-execution-lane-plan.md
+//
+// Attempts to resolve a selection deterministically using continuity state
+// (recent actions, rejected choices) before falling back to LLM arbitration.
+// All safety gates must pass — this is strictly additive (never bypasses
+// existing deterministic matching, only resolves when existing matching fails).
+// =============================================================================
+
+interface ContinuityResolveParams {
+  trimmedInput: string
+  candidates: { id: string; label: string; sublabel?: string }[]
+  continuityState: SelectionContinuityState
+  currentOptionSetId: string | null
+  currentScope: 'chat' | 'widget' | 'dashboard' | 'workspace' | 'none'
+  isCommandOrSelection: boolean
+  isQuestionIntent: boolean
+  labelMatchCount: number
+}
+
+interface ContinuityResolveResult {
+  resolved: boolean
+  winnerId: string | null
+  reason: string
+}
+
+/**
+ * Deterministic continuity resolver — pre-LLM tie-break using continuity state.
+ *
+ * Safety gates (ALL must pass for execution):
+ * 1. Feature flag enabled (checked by caller — not re-checked here)
+ * 2. isCommandOrSelection true (not pure question-intent)
+ * 3. !isQuestionIntent
+ * 4. currentOptionSetId !== null && continuityState.activeOptionSetId !== null
+ *    && continuityState.activeOptionSetId === currentOptionSetId (same option set)
+ * 5. continuityState.activeScope === currentScope (same scope)
+ * 6. Exactly one candidate remains after excluding recentRejectedChoiceIds
+ * 7. No loop-guard conflict (not same winnerId as last resolved action in same cycle)
+ *
+ * Returns { resolved: true, winnerId, reason } or { resolved: false, winnerId: null, reason }.
+ */
+function tryContinuityDeterministicResolve(params: ContinuityResolveParams): ContinuityResolveResult {
+  const {
+    candidates,
+    continuityState,
+    currentOptionSetId,
+    currentScope,
+    isCommandOrSelection,
+    isQuestionIntent,
+    labelMatchCount,
+  } = params
+
+  // Gate 2: Must be command or selection intent
+  if (!isCommandOrSelection) {
+    return { resolved: false, winnerId: null, reason: 'not_command_or_selection' }
+  }
+
+  // Gate 3: Must not be question intent
+  if (isQuestionIntent) {
+    return { resolved: false, winnerId: null, reason: 'question_intent' }
+  }
+
+  // Gate 4: Same option set — strict null check prevents empty-string matching (invariant 6)
+  if (currentOptionSetId === null || continuityState.activeOptionSetId === null) {
+    return { resolved: false, winnerId: null, reason: 'null_option_set_id' }
+  }
+  if (continuityState.activeOptionSetId !== currentOptionSetId) {
+    return { resolved: false, winnerId: null, reason: 'option_set_mismatch' }
+  }
+
+  // Gate 5: Same scope
+  if (continuityState.activeScope !== currentScope) {
+    return { resolved: false, winnerId: null, reason: 'scope_mismatch' }
+  }
+
+  // Gate 6: Filter out rejected choices, check for unique winner
+  const rejectedSet = new Set(continuityState.recentRejectedChoiceIds)
+  const eligibleCandidates = candidates.filter(c => !rejectedSet.has(c.id))
+
+  if (eligibleCandidates.length === 0) {
+    return { resolved: false, winnerId: null, reason: 'all_candidates_rejected' }
+  }
+  if (eligibleCandidates.length !== 1) {
+    return { resolved: false, winnerId: null, reason: `ambiguous_${eligibleCandidates.length}_candidates` }
+  }
+
+  const winner = eligibleCandidates[0]
+
+  // Gate 7: Loop-guard — don't re-select the same action that was just resolved
+  // in the same option set cycle (prevents infinite loops)
+  if (
+    continuityState.lastResolvedAction &&
+    continuityState.lastResolvedAction.optionSetId === currentOptionSetId &&
+    continuityState.lastResolvedAction.targetRef === winner.label
+  ) {
+    return { resolved: false, winnerId: null, reason: 'loop_guard_same_cycle' }
+  }
+
+  return { resolved: true, winnerId: winner.id, reason: 'continuity_deterministic' }
 }
 
 /**
@@ -1198,14 +1316,15 @@ async function tryLLMLastChance(params: {
   // --- Loop guard (Rule F: continuity) ---
   const normalizedInput = canonicalizeCommandInput(trimmedInput) ?? trimmedInput
   const candidateIds = candidates.map(c => c.id).sort().join(',')
+  const currentGuard = readLLMGuardState()
   const isRepeat =
-    lastLLMArbitration?.normalizedInput === normalizedInput
-    && lastLLMArbitration?.candidateIds === candidateIds
-    && lastLLMArbitration?.clarificationMessageId === clarificationMessageId
+    currentGuard?.normalizedInput === normalizedInput
+    && currentGuard?.candidateIds === candidateIds
+    && currentGuard?.clarificationMessageId === clarificationMessageId
   if (isRepeat) {
     // Rule F: reuse prior suggestion ordering for continuity — never auto-execute on repeat
-    if (lastLLMArbitration?.suggestedId) {
-      return { attempted: false, suggestedId: lastLLMArbitration.suggestedId, fallbackReason: 'loop_guard_continuity', autoExecute: false }
+    if (currentGuard?.suggestedId) {
+      return { attempted: false, suggestedId: currentGuard.suggestedId, fallbackReason: 'loop_guard_continuity', autoExecute: false }
     }
     return { attempted: false, suggestedId: null, fallbackReason: 'loop_guard', autoExecute: false }
   }
@@ -1230,7 +1349,7 @@ async function tryLLMLastChance(params: {
     && !llmAbstainsOnConfidence) {
     // LLM picked a winner — store suggestedId for Rule F continuity
     const suggestedId = llmResult.response.choiceId
-    lastLLMArbitration = { normalizedInput, candidateIds, clarificationMessageId, suggestedId }
+    writeLLMGuardState({ normalizedInput, candidateIds, clarificationMessageId, suggestedId })
 
     // Phase C: 3-gate auto-execute check
     // Gate 1: Kill switch enabled (NEXT_PUBLIC_LLM_AUTO_EXECUTE_ENABLED=true)
@@ -1264,7 +1383,7 @@ async function tryLLMLastChance(params: {
   // Must be handled BEFORE generic fallback mapping to prevent collapse into 'abstain'.
   // Server validates contractVersion + neededContext at boundary; client trusts the result.
   if (llmResult.success && llmResult.response?.decision === 'request_context') {
-    lastLLMArbitration = { normalizedInput, candidateIds, clarificationMessageId, suggestedId: null }
+    writeLLMGuardState({ normalizedInput, candidateIds, clarificationMessageId, suggestedId: null })
     void debugLog({
       component: 'ChatNavigation',
       action: 'llm_arbitration_request_context',
@@ -1286,7 +1405,7 @@ async function tryLLMLastChance(params: {
 
   // LLM failed/abstained/low-confidence → safe fallback (Rule D)
   // Store suggestedId: null for Rule F (no suggestion to reuse)
-  lastLLMArbitration = { normalizedInput, candidateIds, clarificationMessageId, suggestedId: null }
+  writeLLMGuardState({ normalizedInput, candidateIds, clarificationMessageId, suggestedId: null })
 
   // Extract server downgrade reason if present (e.g., 'Downgraded: contract_version_mismatch').
   // Server downgrade reasons take precedence over generic confidence/decision mapping because
@@ -1503,7 +1622,7 @@ export async function runBoundedArbitrationLoop(params: {
   })
 
   // Check retry budget (single retry per cycle)
-  if (lastLLMArbitration?.retryAttempted) {
+  if (readLLMGuardState()?.retryAttempted) {
     void debugLog({
       component: 'ChatNavigation',
       action: 'arbitration_retry_fallback',
@@ -1579,8 +1698,8 @@ export async function runBoundedArbitrationLoop(params: {
   // tryLLMLastChance stores guard state after attempt 1 — the retry is an
   // intentional second call within the same orchestration loop, not a user repeat.
   // We'll restore/update guard state after attempt 2.
-  const guardStateBeforeRetry = lastLLMArbitration
-  lastLLMArbitration = null
+  const guardStateBeforeRetry = readLLMGuardState()
+  writeLLMGuardState(null)
 
   const attempt2 = await tryLLMLastChance({
     trimmedInput,
@@ -1597,13 +1716,14 @@ export async function runBoundedArbitrationLoop(params: {
   // Update loop guard with retry state.
   // tryLLMLastChance stores a new guard entry from attempt 2.
   // We mark it as retryAttempted so future same-input calls know the budget is spent.
-  if (lastLLMArbitration) {
-    lastLLMArbitration.retryAttempted = true
-    lastLLMArbitration.enrichmentFingerprint = fingerprintAfter
+  const guardAfterRetry = readLLMGuardState()
+  if (guardAfterRetry) {
+    guardAfterRetry.retryAttempted = true
+    guardAfterRetry.enrichmentFingerprint = fingerprintAfter
   } else if (guardStateBeforeRetry) {
     // If attempt 2 didn't store guard state (e.g., classifier not eligible),
     // restore the original guard state with retry flag set.
-    lastLLMArbitration = { ...guardStateBeforeRetry, retryAttempted: true, enrichmentFingerprint: fingerprintAfter }
+    writeLLMGuardState({ ...guardStateBeforeRetry, retryAttempted: true, enrichmentFingerprint: fingerprintAfter })
   }
 
   const totalLatencyMs = Date.now() - loopStartTime
@@ -1687,7 +1807,7 @@ function enrichWidgetEvidence(ctx: ClarificationInterceptContext): { enrichedMet
 
   if (ctx.widgetSelectionContext) {
     metadata['widget_context'] = 'active'
-    metadata['widget_panelId'] = ctx.widgetSelectionContext.panelId ?? 'unknown'
+    metadata['widget_panelId'] = ctx.widgetSelectionContext.widgetId ?? 'unknown'
   }
 
   if (Object.keys(metadata).length === 0) return null
@@ -1799,6 +1919,11 @@ export interface ClarificationInterceptContext {
   // Scope-cue recovery memory (explicit-only, per scope-cue-recovery-plan)
   scopeCueRecoveryMemory: import('@/lib/chat/chat-navigation-context').ScopeCueRecoveryMemory | null
   clearScopeCueRecoveryMemory: () => void
+
+  // Selection continuity (Plan 20 — per Plan 19 canonical contract)
+  selectionContinuity: import('@/lib/chat/chat-navigation-context').SelectionContinuityState
+  updateSelectionContinuity: (updates: Partial<import('@/lib/chat/chat-navigation-context').SelectionContinuityState>) => void
+  resetSelectionContinuity: () => void
 }
 
 /**
@@ -1905,6 +2030,9 @@ export async function handleClarificationIntercept(
     activeSnapshotWidgetId,
     scopeCueRecoveryMemory,
     clearScopeCueRecoveryMemory,
+    // Selection continuity (Plan 20)
+    updateSelectionContinuity,
+    resetSelectionContinuity,
   } = ctx
 
   void debugLog({
@@ -1925,7 +2053,7 @@ export async function handleClarificationIntercept(
   // After any resolution (option selection, exit, new intent), lastClarification is set to null.
   // The guard must not persist across clarification cycles.
   if (!lastClarification) {
-    lastLLMArbitration = null
+    writeLLMGuardState(null)
   }
 
   // Hard invariant: when latch is resolved or pending, stale-chat ordinal paths are blocked
@@ -2780,6 +2908,8 @@ export async function handleClarificationIntercept(
     clearWidgetSelectionContext() // Phase 6: stop/exit clears widget selection context
     // Session boundary: stop-confirmed clears durable recovery memory (per scope-cue-recovery-plan)
     clearScopeCueRecoveryMemory()
+    // Session boundary: reset selection continuity (Plan 20, B9)
+    resetSelectionContinuity()
 
     // Set suppression counter for next N=2 turns
     setStopSuppressionCount(STOP_SUPPRESSION_TURN_LIMIT)
@@ -3058,6 +3188,12 @@ export async function handleClarificationIntercept(
         timestamp: Date.now(),
         options,
       })
+      // Update continuity state to track new active option set (Plan 20, B9)
+      updateSelectionContinuity({
+        activeOptionSetId: messageId,
+        activeScope: 'chat',
+        pendingClarifierType: 'selection_disambiguation',
+      })
     }
 
     const recoverable = getRecoverableChatOptionsWithIdentity()
@@ -3180,12 +3316,82 @@ export async function handleClarificationIntercept(
         }
 
         // =================================================================
-        // UNIFIED HOOK (scope-cue parity — Rule G: no explicit-command bypass)
-        // If recoverable options exist and deterministic didn't resolve,
-        // LLM is mandatory. Only question-intent escapes.
-        // Handles both multi-match-no-winner AND 0-match cases.
+        // Zero-match explicit command bypass (3-gate check):
+        // All three canonical shared classifiers must agree before bypassing.
+        // Gate 1: zero label matches against recoverable options
+        // Gate 2: isExplicitCommand — input has action verbs (open, show, go, etc.)
+        // Gate 3: NOT isSelectionOnly — input is not ordinal/label selection
+        //
+        // Hard exclusions (question-intent, interrupts) are checked BEFORE this
+        // block in the scope-cue flow and return early, so they can never be
+        // stolen by the bypass.
+        //
+        // This bypass is strictly scoped: zero-match explicit command escape only,
+        // never for question-intent or ambiguous selection-like turns.
         // =================================================================
-        if (recoverableOptions.length > 0) {
+        const strippedIsExplicitCommand = isExplicitCommand(scopeCueStripped)
+        const strippedIsSelection = isSelectionOnly(
+          scopeCueStripped, recoverableOptions.length,
+          recoverableOptions.map(o => o.label), 'embedded'
+        ).isSelection
+
+        if (labelMatches.length === 0 && strippedIsExplicitCommand && !strippedIsSelection) {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'scope_cue_zero_match_command_bypass',
+            metadata: { input: trimmedInput, candidateForLabelMatch, recoverableCount: recoverableOptions.length },
+          })
+          // Fall through to Phase 3 command guard below (skip UNIFIED HOOK)
+        } else if (recoverableOptions.length > 0) {
+          // --- Continuity deterministic resolver (Plan 20, Site 1: scope-cue Phase 2b) ---
+          // Try deterministic resolution with continuity state before LLM arbitration.
+          const isContinuityEnabled = process.env.NEXT_PUBLIC_SELECTION_CONTINUITY_LANE_ENABLED === 'true'
+          if (isContinuityEnabled) {
+            const inputForQuestionCheck = trimmedInput.replace(/[?!.]+$/, '').trim()
+            const continuityResult = tryContinuityDeterministicResolve({
+              trimmedInput: scopeCueStripped,
+              candidates: recoverableOptions.map(o => ({ id: o.id, label: o.label, sublabel: o.sublabel })),
+              continuityState: ctx.selectionContinuity,
+              currentOptionSetId: originalMessageId,
+              currentScope: scopeCue.scope,
+              isCommandOrSelection: strippedIsExplicitCommand || strippedIsSelection,
+              isQuestionIntent: hasQuestionIntent(inputForQuestionCheck) && !isPoliteImperativeRequest(trimmedInput),
+              labelMatchCount: labelMatches.length,
+            })
+            if (continuityResult.resolved && continuityResult.winnerId) {
+              const winnerCandidate = recoverableOptions.find(o => o.id === continuityResult.winnerId)
+              if (winnerCandidate) {
+                const optionToSelect: SelectionOption = {
+                  type: winnerCandidate.type as SelectionOption['type'],
+                  id: winnerCandidate.id,
+                  label: winnerCandidate.label,
+                  sublabel: winnerCandidate.sublabel,
+                  data: reconstructSnapshotData(winnerCandidate),
+                }
+                void debugLog({
+                  component: 'ChatNavigation',
+                  action: 'selection_deterministic_continuity_resolve',
+                  metadata: {
+                    site: 'scope_cue_phase_2b',
+                    winnerId: continuityResult.winnerId,
+                    winnerLabel: winnerCandidate.label,
+                    activeOptionSetId: ctx.selectionContinuity.activeOptionSetId,
+                    activeScope: ctx.selectionContinuity.activeScope,
+                    candidateCount: recoverableOptions.length,
+                  },
+                })
+                setPendingOptions([])
+                setPendingOptionsMessageId(null)
+                setPendingOptionsGraceCount(0)
+                setActiveOptionSetId(null)
+                setIsLoading(false)
+                handleSelectOption(optionToSelect)
+                return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+              }
+            }
+          }
+
+          // --- UNIFIED HOOK: LLM arbitration for unresolved scope-cue ---
           const scopeCueCandidates = recoverableOptions.map(o => ({
             id: o.id, label: o.label, sublabel: o.sublabel,
           }))
@@ -3204,7 +3410,7 @@ export async function handleClarificationIntercept(
 
           // Scope-specific fallback (per context-enrichment-retry-loop-plan §Binding Hardening)
           if (llmResult.fallbackReason === 'scope_not_available') {
-            const scopeLabel = scopeCue.scope === 'dashboard' ? 'Dashboard' : scopeCue.scope === 'workspace' ? 'Workspace' : 'This scope'
+            const scopeLabel = 'This scope'
             addMessage({
               id: `assistant-${Date.now()}`,
               role: 'assistant',
@@ -3265,6 +3471,61 @@ export async function handleClarificationIntercept(
             }
             // suggestedId not found in options → fall through to safe clarifier
           } else {
+            // --- need_more_info veto (Plan 20, Site 1) ---
+            // When LLM couldn't resolve but continuity deterministic can, execute.
+            // Note: veto does NOT directly execute. It returns to the existing
+            // auto-execute / safe-clarifier flow. autoExecute: false ensures the
+            // caller applies its own governing Phase C gates.
+            if (isContinuityEnabled && llmResult.attempted && !llmResult.suggestedId) {
+              const inputForQuestionCheck = trimmedInput.replace(/[?!.]+$/, '').trim()
+              const vetoResult = tryContinuityDeterministicResolve({
+                trimmedInput: scopeCueStripped,
+                candidates: recoverableOptions.map(o => ({ id: o.id, label: o.label, sublabel: o.sublabel })),
+                continuityState: ctx.selectionContinuity,
+                currentOptionSetId: originalMessageId,
+                currentScope: scopeCue.scope,
+                isCommandOrSelection: strippedIsExplicitCommand || strippedIsSelection,
+                isQuestionIntent: hasQuestionIntent(inputForQuestionCheck) && !isPoliteImperativeRequest(trimmedInput),
+                labelMatchCount: labelMatches.length,
+              })
+              if (vetoResult.resolved && vetoResult.winnerId) {
+                const vetoWinner = recoverableOptions.find(o => o.id === vetoResult.winnerId)
+                if (vetoWinner) {
+                  void debugLog({
+                    component: 'ChatNavigation',
+                    action: 'selection_need_more_info_veto_applied',
+                    metadata: {
+                      site: 'scope_cue_phase_2b',
+                      winnerId: vetoResult.winnerId,
+                      winnerLabel: vetoWinner.label,
+                      activeOptionSetId: ctx.selectionContinuity.activeOptionSetId,
+                    },
+                  })
+                  const optionToSelect: SelectionOption = {
+                    type: vetoWinner.type as SelectionOption['type'],
+                    id: vetoWinner.id,
+                    label: vetoWinner.label,
+                    sublabel: vetoWinner.sublabel,
+                    data: reconstructSnapshotData(vetoWinner),
+                  }
+                  setPendingOptions([])
+                  setPendingOptionsMessageId(null)
+                  setPendingOptionsGraceCount(0)
+                  setActiveOptionSetId(null)
+                  setIsLoading(false)
+                  handleSelectOption(optionToSelect)
+                  return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+                }
+              }
+              if (!vetoResult.resolved) {
+                void debugLog({
+                  component: 'ChatNavigation',
+                  action: 'selection_need_more_info_veto_blocked_reason',
+                  metadata: { site: 'scope_cue_phase_2b', reason: vetoResult.reason, activeOptionSetId: ctx.selectionContinuity.activeOptionSetId },
+                })
+              }
+            }
+
             // Safe clarifier — reorder if LLM suggested (Rules C, D, F)
             const reorderSource = llmResult.suggestedId
               ? [
@@ -3320,6 +3581,13 @@ export async function handleClarificationIntercept(
               messageId: clarifierMessageId,
               timestamp: Date.now(),
               options: reorderSource,
+            })
+            // Update continuity state to track new active option set (Plan 20, B9)
+            // Note: inside scopeCue.scope === 'chat' branch, scope is already 'chat'
+            updateSelectionContinuity({
+              activeOptionSetId: clarifierMessageId,
+              activeScope: 'chat',
+              pendingClarifierType: 'selection_disambiguation',
             })
             setIsLoading(false)
             return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected, _devProvenanceHint: llmResult.suggestedId ? 'llm_influenced' : undefined }
@@ -3850,6 +4118,7 @@ export async function handleClarificationIntercept(
         }
         clearFocusLatch() // Latch-off: stop clears focus latch (Phase 6b)
         clearWidgetSelectionContext() // Phase 6: stop/exit clears widget selection context
+        resetSelectionContinuity() // Plan 20, B9: Tier 1a exit clears continuity
         setStopSuppressionCount(STOP_SUPPRESSION_TURN_LIMIT) // Per stop-scope-plan §40-48
         const exitMessage: ChatMessage = {
           id: `assistant-${Date.now()}`,
@@ -4530,6 +4799,56 @@ export async function handleClarificationIntercept(
         // tryLLMLastChance). Pre-gate already handles "nothing to do with
         // active options" escapes via commandBypassesLabelMatching.
         // =================================================================
+
+        // --- Continuity deterministic resolver (Plan 20, Site 2: Tier 1b.3) ---
+        const isContinuityEnabledTier1b3 = process.env.NEXT_PUBLIC_SELECTION_CONTINUITY_LANE_ENABLED === 'true'
+        if (isContinuityEnabledTier1b3) {
+          const inputForQuestionCheck = trimmedInput.replace(/[?!.]+$/, '').trim()
+          const continuityResult = tryContinuityDeterministicResolve({
+            trimmedInput,
+            candidates: lastClarification.options.map(o => ({ id: o.id, label: o.label, sublabel: o.sublabel })),
+            continuityState: ctx.selectionContinuity,
+            currentOptionSetId: lastClarification.messageId ?? null,
+            currentScope: scopeCue.scope === 'none' ? 'chat' : scopeCue.scope,
+            isCommandOrSelection: inputIsExplicitCommand || ordinalCheck.isSelection || inputIsSelectionLike,
+            isQuestionIntent: hasQuestionIntent(inputForQuestionCheck) && !isPoliteImperativeRequest(trimmedInput),
+            labelMatchCount: matchingOptions.length,
+          })
+          if (continuityResult.resolved && continuityResult.winnerId) {
+            const winnerCandidate = lastClarification.options.find(o => o.id === continuityResult.winnerId)
+            if (winnerCandidate) {
+              const fullOption = pendingOptions.find(opt => opt.id === winnerCandidate.id)
+              const optionToSelect: SelectionOption = {
+                type: (fullOption?.type ?? winnerCandidate.type) as SelectionOption['type'],
+                id: winnerCandidate.id,
+                label: winnerCandidate.label,
+                sublabel: winnerCandidate.sublabel,
+                data: fullOption?.data as SelectionOption['data'] ??
+                  reconstructSnapshotData(winnerCandidate),
+              }
+              void debugLog({
+                component: 'ChatNavigation',
+                action: 'selection_deterministic_continuity_resolve',
+                metadata: {
+                  site: 'tier1b3_unresolved',
+                  winnerId: continuityResult.winnerId,
+                  winnerLabel: winnerCandidate.label,
+                  activeOptionSetId: ctx.selectionContinuity.activeOptionSetId,
+                  activeScope: ctx.selectionContinuity.activeScope,
+                  candidateCount: lastClarification.options.length,
+                },
+              })
+              saveClarificationSnapshot(lastClarification)
+              setRepairMemory(winnerCandidate.id, lastClarification.options)
+              setLastClarification(null)
+              setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+              setIsLoading(false)
+              handleSelectOption(optionToSelect)
+              return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+            }
+          }
+        }
+
         const tier1b3Candidates = lastClarification.options.map(o => ({
           id: o.id, label: o.label, sublabel: o.sublabel,
         }))
@@ -4548,7 +4867,7 @@ export async function handleClarificationIntercept(
 
         // Scope-specific fallback (per context-enrichment-retry-loop-plan §Binding Hardening)
         if (llmResult.fallbackReason === 'scope_not_available') {
-          const scopeLabel = scopeCue.scope === 'dashboard' ? 'Dashboard' : scopeCue.scope === 'workspace' ? 'Workspace' : 'This scope'
+          const scopeLabel = 'This scope'
           addMessage({
             id: `assistant-${Date.now()}`,
             role: 'assistant',
@@ -4610,6 +4929,58 @@ export async function handleClarificationIntercept(
           }
           // suggestedId not found in options → fall through to safe clarifier
         } else {
+          // --- need_more_info veto (Plan 20, Site 2: Tier 1b.3) ---
+          if (isContinuityEnabledTier1b3 && llmResult.attempted && !llmResult.suggestedId) {
+            const inputForQuestionCheck = trimmedInput.replace(/[?!.]+$/, '').trim()
+            const vetoResult = tryContinuityDeterministicResolve({
+              trimmedInput,
+              candidates: lastClarification.options.map(o => ({ id: o.id, label: o.label, sublabel: o.sublabel })),
+              continuityState: ctx.selectionContinuity,
+              currentOptionSetId: lastClarification.messageId ?? null,
+              currentScope: scopeCue.scope === 'none' ? 'chat' : scopeCue.scope,
+              isCommandOrSelection: inputIsExplicitCommand || ordinalCheck.isSelection || inputIsSelectionLike,
+              isQuestionIntent: hasQuestionIntent(inputForQuestionCheck) && !isPoliteImperativeRequest(trimmedInput),
+              labelMatchCount: matchingOptions.length,
+            })
+            if (vetoResult.resolved && vetoResult.winnerId) {
+              const vetoWinner = lastClarification.options.find(o => o.id === vetoResult.winnerId)
+              if (vetoWinner) {
+                const fullOption = pendingOptions.find(opt => opt.id === vetoWinner.id)
+                void debugLog({
+                  component: 'ChatNavigation',
+                  action: 'selection_need_more_info_veto_applied',
+                  metadata: {
+                    site: 'tier1b3_unresolved',
+                    winnerId: vetoResult.winnerId,
+                    winnerLabel: vetoWinner.label,
+                    activeOptionSetId: ctx.selectionContinuity.activeOptionSetId,
+                  },
+                })
+                saveClarificationSnapshot(lastClarification)
+                setRepairMemory(vetoWinner.id, lastClarification.options)
+                setLastClarification(null)
+                setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+                const optionToSelect: SelectionOption = {
+                  type: (fullOption?.type ?? vetoWinner.type) as SelectionOption['type'],
+                  id: vetoWinner.id,
+                  label: vetoWinner.label,
+                  sublabel: vetoWinner.sublabel,
+                  data: fullOption?.data as SelectionOption['data'] ?? reconstructSnapshotData(vetoWinner),
+                }
+                setIsLoading(false)
+                handleSelectOption(optionToSelect)
+                return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+              }
+            }
+            if (!vetoResult.resolved) {
+              void debugLog({
+                component: 'ChatNavigation',
+                action: 'selection_need_more_info_veto_blocked_reason',
+                metadata: { site: 'tier1b3_unresolved', reason: vetoResult.reason, activeOptionSetId: ctx.selectionContinuity.activeOptionSetId },
+              })
+            }
+          }
+
           // Safe clarifier — reorder if LLM suggested (Rules C, D, F)
           const reorderSource = llmResult.suggestedId
             ? [
@@ -4672,6 +5043,12 @@ export async function handleClarificationIntercept(
             messageId,
             timestamp: Date.now(),
             options: reorderSource,
+          })
+          // Update continuity state to track new active option set (Plan 20, B9)
+          updateSelectionContinuity({
+            activeOptionSetId: messageId,
+            activeScope: scopeCue.scope === 'none' ? 'chat' : scopeCue.scope,
+            pendingClarifierType: 'selection_disambiguation',
           })
           setIsLoading(false)
           return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected, _devProvenanceHint: llmResult.suggestedId ? 'llm_influenced' : undefined }

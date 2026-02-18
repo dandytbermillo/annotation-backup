@@ -230,6 +230,13 @@ export interface RoutingDispatcherContext {
   suspendFocusLatch: () => void
   incrementFocusLatchTurn: () => void
   clearFocusLatch: () => void
+
+  // --- Selection Continuity (Plan 20 — per Plan 19 canonical contract) ---
+  selectionContinuity: import('@/lib/chat/chat-navigation-context').SelectionContinuityState
+  updateSelectionContinuity: (updates: Partial<import('@/lib/chat/chat-navigation-context').SelectionContinuityState>) => void
+  recordAcceptedChoice: (choiceId: string, action: import('@/lib/chat/chat-navigation-context').ActionTraceEntry) => void
+  recordRejectedChoice: (choiceId: string) => void
+  resetSelectionContinuity: () => void
 }
 
 // =============================================================================
@@ -956,29 +963,33 @@ export async function dispatchRouting(
   // Latch validity: check discriminated union kind for resolution/expiry
   if (isLatchEnabled && ctx.focusLatch) {
     if (ctx.focusLatch.kind === 'resolved') {
+      // Capture narrowed type — TS narrows to ResolvedFocusLatch here
+      const resolvedLatch = ctx.focusLatch
       // Resolved latch: verify widget is still open
-      const stillOpen = turnSnapshot.openWidgets.some(w => w.id === ctx.focusLatch!.widgetId)
+      const stillOpen = turnSnapshot.openWidgets.some(w => w.id === resolvedLatch.widgetId)
       if (!stillOpen) {
-        void debugLog({ component: 'ChatNavigation', action: 'focus_latch_cleared', metadata: { reason: 'widget_gone', widgetId: (ctx.focusLatch as import('@/lib/chat/chat-navigation-context').ResolvedFocusLatch).widgetId } })
+        void debugLog({ component: 'ChatNavigation', action: 'focus_latch_cleared', metadata: { reason: 'widget_gone', widgetId: resolvedLatch.widgetId } })
         ctx.clearFocusLatch()
       }
     } else if (ctx.focusLatch.kind === 'pending') {
+      // Capture narrowed type — TS narrows to PendingFocusLatch here
+      const pendingLatch = ctx.focusLatch
       // Pending latch: try to resolve via panelId → widget slug
-      const resolved = turnSnapshot.openWidgets.find(w => w.panelId === ctx.focusLatch!.pendingPanelId)
+      const resolved = turnSnapshot.openWidgets.find(w => w.panelId === pendingLatch.pendingPanelId)
       if (resolved) {
         // Upgrade pending → resolved
         ctx.setFocusLatch({
           kind: 'resolved',
           widgetId: resolved.id,
-          widgetLabel: ctx.focusLatch.widgetLabel,
-          latchedAt: ctx.focusLatch.latchedAt,
-          turnsSinceLatched: ctx.focusLatch.turnsSinceLatched,
-          suspended: ctx.focusLatch.suspended,
+          widgetLabel: pendingLatch.widgetLabel,
+          latchedAt: pendingLatch.latchedAt,
+          turnsSinceLatched: pendingLatch.turnsSinceLatched,
+          suspended: pendingLatch.suspended,
         })
-        void debugLog({ component: 'ChatNavigation', action: 'focus_latch_upgraded', metadata: { from: 'pending', widgetId: resolved.id, panelId: (ctx.focusLatch as import('@/lib/chat/chat-navigation-context').PendingFocusLatch).pendingPanelId } })
-      } else if (ctx.focusLatch.turnsSinceLatched >= 2) {
+        void debugLog({ component: 'ChatNavigation', action: 'focus_latch_upgraded', metadata: { from: 'pending', widgetId: resolved.id, panelId: pendingLatch.pendingPanelId } })
+      } else if (pendingLatch.turnsSinceLatched >= 2) {
         // Graceful degradation: pending latch expired without resolution
-        void debugLog({ component: 'ChatNavigation', action: 'focus_latch_cleared', metadata: { reason: 'pending_expired', pendingPanelId: (ctx.focusLatch as import('@/lib/chat/chat-navigation-context').PendingFocusLatch).pendingPanelId } })
+        void debugLog({ component: 'ChatNavigation', action: 'focus_latch_cleared', metadata: { reason: 'pending_expired', pendingPanelId: pendingLatch.pendingPanelId } })
         ctx.clearFocusLatch()
       }
       // else: keep pending alive (async registration window, turnsSinceLatched < 2)
@@ -1043,6 +1054,10 @@ export async function dispatchRouting(
     // Scope-cue recovery memory (explicit-only, per scope-cue-recovery-plan)
     scopeCueRecoveryMemory: ctx.scopeCueRecoveryMemory,
     clearScopeCueRecoveryMemory: ctx.clearScopeCueRecoveryMemory,
+    // Selection continuity (Plan 20 — per Plan 19 canonical contract)
+    selectionContinuity: ctx.selectionContinuity,
+    updateSelectionContinuity: ctx.updateSelectionContinuity,
+    resetSelectionContinuity: ctx.resetSelectionContinuity,
   })
 
   const { clarificationCleared, isNewQuestionOrCommandDetected } = clarificationResult

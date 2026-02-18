@@ -72,7 +72,8 @@ global.fetch = jest.fn().mockResolvedValue({
 // ============================================================================
 
 import { dispatchRouting, type RoutingDispatcherContext, type RoutingDispatcherResult } from '@/lib/chat/routing-dispatcher'
-import type { ResolvedFocusLatch, PendingFocusLatch, ClarificationSnapshot, ClarificationOption, ScopeCueRecoveryMemory } from '@/lib/chat/chat-navigation-context'
+import type { ResolvedFocusLatch, PendingFocusLatch, ClarificationSnapshot, ClarificationOption, ScopeCueRecoveryMemory, SelectionContinuityState } from '@/lib/chat/chat-navigation-context'
+import { EMPTY_CONTINUITY_STATE } from '@/lib/chat/chat-navigation-context'
 import type { OpenWidgetState } from '@/lib/chat/grounding-set'
 
 // ============================================================================
@@ -253,6 +254,13 @@ function createMockDispatchContext(overrides?: Partial<RoutingDispatcherContext>
     // Scope-cue recovery memory (explicit-only, per scope-cue-recovery-plan)
     scopeCueRecoveryMemory: null,
     clearScopeCueRecoveryMemory: jest.fn(),
+
+    // Selection continuity (Plan 20)
+    selectionContinuity: EMPTY_CONTINUITY_STATE,
+    updateSelectionContinuity: jest.fn(),
+    recordAcceptedChoice: jest.fn(),
+    recordRejectedChoice: jest.fn(),
+    resetSelectionContinuity: jest.fn(),
 
     ...overrides,
   }
@@ -522,6 +530,63 @@ describe('dispatchRouting: selection-intent-arbitration race conditions', () => 
     // Known-noun should have handled the command
     expect(result.handled).toBe(true)
     expect(result.tierLabel).toContain('known_noun')
+  })
+
+  // ==========================================================================
+  // Test 9 Regression: 3-gate bypass must NOT steal question-intent or
+  // ambiguous selection-like inputs (A6-R1, A6-R2)
+  // ==========================================================================
+
+  it('Test 9-R1: scope-cued question-intent (zero label matches) is NOT treated as command bypass', async () => {
+    // "what happened in chat" — question-intent + scope cue, zero label matches.
+    // "what happened" has no action verb match in isExplicitCommand (no open/show/go etc).
+    // The 3-gate bypass should NOT fire (gate 2 fails: no action verb).
+    // Input enters UNIFIED HOOK → LLM mocked to fail → question_intent fallback →
+    // returns handled: false → falls through to downstream routing (Tier 4 etc).
+    //
+    // Key verification: handleSelectOption NOT called (no option selected),
+    // and no setPendingOptions (no safe clarifier shown from scope-cue flow).
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'what happened in chat',
+      focusLatch: makeResolvedLatch(),
+      clarificationSnapshot: makeStaleClarificationSnapshot(),
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    // Latch should be suspended (scope cue respected)
+    expect(ctx.suspendFocusLatch).toHaveBeenCalled()
+
+    // handleSelectOption should NOT have been called (question-intent, not a selection)
+    expect(ctx.handleSelectOption).not.toHaveBeenCalled()
+
+    // setPendingOptions may be called with [] for cleanup, but must NOT be called
+    // with a non-empty array (which would indicate a safe clarifier was shown)
+    for (const call of (ctx.setPendingOptions as jest.Mock).mock.calls) {
+      expect(call[0]).toEqual([])  // Only cleanup calls (empty array) allowed
+    }
+  })
+
+  it('Test 9-R2: scope-cued ambiguous selection-like input stays in UNIFIED HOOK', async () => {
+    // "that one from chat" — not an explicit command (no action verb), zero label matches
+    // Gate 2 (isExplicitCommand) fails → bypass does NOT fire → UNIFIED HOOK runs
+    const ctx = createMockDispatchContext({
+      trimmedInput: 'that one from chat',
+      focusLatch: makeResolvedLatch(),
+      clarificationSnapshot: makeStaleClarificationSnapshot(),
+    })
+
+    const result = await dispatchRouting(ctx)
+
+    // Latch should be suspended (scope cue respected)
+    expect(ctx.suspendFocusLatch).toHaveBeenCalled()
+
+    // Must NOT have routed to known-noun (ambiguous selection stays in unresolved hook)
+    expect(mockHandleKnownNounRouting).not.toHaveBeenCalled()
+
+    // The input should have been handled by the UNIFIED HOOK (safe clarifier or LLM attempt)
+    // Since LLM is mocked to fail, it will show a safe clarifier with setPendingOptions
+    expect(result.handled).toBe(true)
   })
 
   // ==========================================================================
