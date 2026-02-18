@@ -5,8 +5,8 @@
 The intended arbitration contract is:
 
 1. Deterministic high-confidence execute.
-2. Deterministic low-confidence or unresolved ambiguity -> constrained LLM.
-3. LLM unavailable/timeout/abstain/low-confidence -> safe deterministic clarifier (no risky execute).
+2. Deterministic low_confidence or unresolved ambiguity -> constrained LLM.
+3. LLM unavailable/timeout/rate_limited/transport_error/abstain/low_confidence -> safe deterministic clarifier (no risky execute).
 
 Current behavior is only partially aligned. In specific flows (notably typo/polite collisions like `can you ope panel d` with active options), pre-gates can bypass active-option arbitration before LLM eligibility is evaluated, leading to unrelated downstream clarifiers.
 
@@ -44,9 +44,10 @@ If input is command-like but deterministic active-option matching is weak/ambigu
 
 ### Rule C — LLM is bounded and clarify-only in this phase
 LLM can reorder/suggest within bounded candidates but must not auto-execute in this addendum scope.
+See supersession note before Phase C: gated auto-execute is only allowed when Phase C is enabled and all gates pass.
 
 ### Rule D — Safe fallback is mandatory
-On timeout/429/error/abstain/low-confidence, return deterministic clarifier in the same context. Never best-guess execute.
+On timeout/rate_limited/transport_error/abstain/low_confidence, return deterministic clarifier in the same context. Never best-guess execute.
 
 ### Rule E — One unresolved hook after deterministic
 Do not scatter LLM entry points across pre-gates and local branches. In active-option flows, LLM arbitration must be invoked from one unresolved hook that runs **after deterministic matching has failed** (`0-match` or `multi-match with no exact winner`).
@@ -70,7 +71,7 @@ This section is binding for implementation and review. Any violation is a merge 
 ### MUST
 - Use one ladder only in active-option flows: deterministic high-confidence -> LLM arbitration (bounded) -> safe clarifier fallback.
 - Keep LLM candidate pool bounded to the current active option set for that cycle.
-- Keep fallback behavior non-destructive: no execution on LLM timeout/429/transport error/abstain/low-confidence.
+- Keep fallback behavior non-destructive: no execution on LLM timeout/rate_limited/transport_error/abstain/low_confidence.
 - Use shared canonicalization/classification utilities only (`canonicalizeCommandInput`, `classifyArbitrationConfidence`).
 - Enforce loop-guard semantics exactly as specified in this document.
 - Keep unresolved arbitration entry centralized in one post-deterministic hook (Rule E).
@@ -82,7 +83,7 @@ This section is binding for implementation and review. Any violation is a merge 
 ### MUST NOT
 - Must not add local per-tier heuristics that bypass the shared classifier contract.
 - Must not inject command-space/global candidates into active-option arbitration pools.
-- Must not execute on LLM result in this addendum scope (clarify-only policy).
+- Must not execute on LLM result unless Phase C gates explicitly pass.
 - Must not silently fall through to unrelated downstream disambiguation when active-option ambiguity remains unresolved.
 - Must not add hardcoded typo dictionaries for ladder eligibility; unresolved inputs should ladder to bounded LLM.
 - Must not force deterministic execution or downstream escape while active-option ambiguity is unresolved.
@@ -92,7 +93,7 @@ This section is binding for implementation and review. Any violation is a merge 
 ### Review Gate (Required for merge)
 - If code behavior differs from this contract, this addendum takes precedence over local implementation choices.
 - PR must include tier assertions (`handledByTier`) for command escape and active-option handling.
-- PR must include negative-path tests (timeout/429/abstain) proving safe clarifier fallback.
+- PR must include negative-path tests (timeout/rate_limited/transport_error/abstain/low_confidence) proving safe clarifier fallback.
 - PR must include an unresolved command-like test proving LLM is attempted before escape in active-option context.
 
 ## Implementation Plan
@@ -173,7 +174,7 @@ Acceptance:
 
 **Files:** `lib/chat/chat-routing.ts`, tests
 
-- For timeout/429/transport/abstain/low-confidence, always show deterministic clarifier for current options.
+- For timeout/rate_limited/transport_error/abstain/low_confidence, always show deterministic clarifier for current options.
 - Add/keep explicit fallback reason logs.
 
 Acceptance:
@@ -205,7 +206,7 @@ Acceptance:
 3. High-confidence command escape remains:
    - `open recent` with non-matching active options -> bypass to command path.
 4. LLM fallback safety:
-   - timeout/429/abstain/low-confidence -> clarifier, no execute.
+   - timeout/rate_limited/transport_error/abstain/low_confidence -> clarifier, no execute.
 5. LLM mandatory-on-uncertain:
    - active options + no unique deterministic winner -> LLM attempted unless blocked by hard exclusions (question-intent/no active context/feature off).
 6. Loop-guard key/reset:
@@ -255,6 +256,10 @@ Reason: This addendum changes chat routing/arbitration logic only and does not c
 
 ---
 
+Supersession note:
+- Phase C policy below supersedes earlier clarify-only wording when and only when its gates are ON and satisfied.
+- When Phase C is OFF (or any gate fails), clarify-only fallback behavior remains the default.
+
 ## Phase C: LLM Auto-Execute for High-Confidence Results
 
 ### Policy Change
@@ -282,7 +287,7 @@ NOT allowlisted (too ambiguous for auto-execute):
 ### Auto-Execute Blocklist (Hard)
 
 - Loop guard repeat input: never auto-execute on repeat (Rule F continuity returns `autoExecute: false`)
-- LLM fail/timeout/429: safe clarifier (Rule D unchanged)
+- LLM fail/timeout/rate_limited/transport_error/abstain/low_confidence: safe clarifier (Rule D unchanged)
 - Question intent: falls through to downstream (Rule G unchanged)
 
 ### Kill Switch

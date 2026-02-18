@@ -67,6 +67,7 @@ If this plan conflicts with (1) or (2), this plan must be updated before impleme
    - same `activeScope`,
    - no collision, no question-intent, no loop-guard conflict.
 3. If unresolved, call bounded LLM.
+   - If bounded LLM is feature-disabled for this scope, return a safe clarifier in the same active context (no downstream unrelated escape).
 4. If LLM returns `need_more_info`, apply strict veto:
    - if deterministic safe-winner gates prove a unique safe winner, execute via deterministic path;
    - else clarifier.
@@ -76,6 +77,7 @@ Important: `need_more_info` veto execution is never a direct LLM execute decisio
 ### Context Enrichment Loop (Selection Lane, MUST)
 
 `request_context` handling is owned by the shared arbitration loop contract (`runBoundedArbitrationLoop`). This lane must not implement a separate `request_context` parser/loop.
+Decision mapping follows Plan 19: canonical unresolved outcome is `need_more_info`; `request_context` is its structured evidence-request variant.
 
 Budgets:
 
@@ -117,6 +119,7 @@ On stop: return grounded safe clarifier in same active context.
 2. No cross-source/scope execution without explicit safe winner.
 3. Respect stop/cancel/start-over interrupts.
 4. Keep existing loop-guard continuity behavior.
+   - When loop guard suppresses a same-cycle re-call, preserve prior suggestion ordering for the current option-set cycle.
 5. Preserve ladder addendum constraints and fallback guarantees.
 6. Context replacement invariant (MUST): when a new active selection context is registered, stale competing contexts must be replaced; continuity logic must not resurrect stale option sets.
 7. Command-selection collision invariant (MUST): continuity tie-break cannot override the collision policy defined by governing selection-vs-command arbitration; unresolved collisions must remain unresolved until deterministic or bounded-LLM resolution is valid.
@@ -150,6 +153,7 @@ Include loop-cycle fields from Plan 19 (`loop_cycle_id`, `fingerprint_before`, `
 8. Fingerprint unchanged after enrichment -> no second LLM call; grounded clarifier is returned.
 9. Selection enrichment budget exhausted -> no further retry; grounded clarifier is returned.
 10. Phase C interaction: with auto-exec ON/OFF, enrichment flow must still respect governing Phase C gates and must not create a new execute path.
+11. Loop-guard continuity: same-cycle guard hit reuses prior suggestion ordering for the same option-set cycle (no random reorder drift).
 
 ## Rollout
 

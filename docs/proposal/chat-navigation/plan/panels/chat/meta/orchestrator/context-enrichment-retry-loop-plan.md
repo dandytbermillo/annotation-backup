@@ -13,6 +13,11 @@ This plan remains background/reference. For active implementation authority, use
 
 If this file conflicts with those plans, the latter set wins.
 
+Authoritative sections pointer (MUST for implementation):
+- Shared invariants/constants/fallback reasons: `grounding-continuity-anti-reclarify-plan.md`
+- Selection-lane execution behavior and blocker tests: `selection-continuity-execution-lane-plan.md`
+- Semantic-lane behavior and blocker tests: `non-selection-semantic-continuity-answer-lane-plan.md`
+
 ## Purpose
 Add one bounded retry loop so unresolved selection inputs can be resolved with enriched local context before asking the user again.
 
@@ -20,7 +25,7 @@ Target behavior:
 1. Deterministic execute only when the system is 100% sure (unique deterministic winner).
 2. Unresolved -> constrained LLM.
 3. LLM requests more context -> app fetches bounded context -> one retry.
-4. If still unresolved/fail/timeout/abstain/low-confidence -> safe clarifier (no unsafe execute).
+4. If still unresolved/fail/timeout/abstain/low_confidence -> safe clarifier (no unsafe execute).
 
 ## Why
 Current one-shot arbitration overuses clarifier prompts in obvious user intents when the first LLM call is context-thin.
@@ -62,7 +67,7 @@ Out of scope:
 6. **Scope precedence preserved**
    - Explicit `from chat` / `in chat` binds scope before candidate generation.
 7. **Fallback remains safe**
-   - timeout/429/error/abstain/low-confidence -> safe clarifier.
+   - timeout/rate_limited/transport_error/abstain/low_confidence -> safe clarifier.
 8. **Shared classifier/canonicalization only**
    - Use `canonicalizeCommandInput` and `classifyArbitrationConfidence` as the single eligibility contract.
 9. **Loop-guard continuity**
@@ -130,7 +135,9 @@ Constraints:
 - Per-evidence budget caps must be enforced by app policy (no "give me everything").
 - Contract changes require `contractVersion` bump + flag gate.
 
-## Implementation Plan
+## Implementation Plan (Reference Only)
+
+This section is non-authoritative and retained for historical/reference clarity. Implement active behavior from Plan 19/20/21 when any statement differs.
 
 ### Step 1 — Shared orchestrator
 **Files:** `lib/chat/chat-routing.ts` (primary), optional extraction to `lib/chat/arbitration-loop.ts`
@@ -195,7 +202,8 @@ Acceptance:
 **Files:** `lib/chat/chat-routing.ts`
 
 Guard key:
-- `normalizedInput + sortedCandidateIds + optionSetId + enrichmentSignature`
+- `normalizedInput + evidenceFingerprint + loop_cycle_id`
+- `evidenceFingerprint` must include `scopeBinding` with concrete scope instance id (widget/dashboard/workspace/chat option set) per Plan 19.
 
 Evidence fingerprint gate:
 - Compute `evidenceFingerprintBefore` and `evidenceFingerprintAfter` around enrichment.
@@ -229,7 +237,7 @@ Fields:
 - resolution_source (`deterministic` | `llm` | `clarifier`)
 - attempts (`0` | `1` retry)
 - evidence_fingerprint
-- fallback reason (`timeout` | `429` | `abstain` | `low_confidence` | `no_new_evidence` | `need_more_info`)
+- fallback reason (`timeout` | `rate_limited` | `transport_error` | `abstain` | `low_confidence` | `no_new_evidence` | `budget_exhausted`)
 - total latency
 
 ### Step 6 — Tests (Blockers)
@@ -240,7 +248,7 @@ Fields:
 3. retry budget exhausted -> safe clarifier
 4. explicit chat scope never mixes widget candidates
 5. explicit widget scope never mixes chat candidates
-6. timeout/429/abstain/low-confidence after retry -> safe clarifier
+6. timeout/rate_limited/transport_error/abstain/low_confidence after retry -> safe clarifier
 7. loop guard suppresses duplicate retries in same cycle
 8. active options + command-like unresolved input attempts bounded LLM before any escape
 9. same-cycle guard hit preserves prior suggestion ordering (continuity)

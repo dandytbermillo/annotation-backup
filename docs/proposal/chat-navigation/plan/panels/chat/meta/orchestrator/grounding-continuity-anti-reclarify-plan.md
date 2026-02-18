@@ -57,6 +57,12 @@ Loop skeleton:
 6. Retry only when fingerprint changed and lane budget remains.
 7. If fingerprint unchanged or budget exhausted, stop and ask grounded clarifier.
 
+Decision mapping contract (MUST):
+
+- Canonical unresolved outcome is `need_more_info`.
+- `request_context` is a structured unresolved variant used to request bounded evidence.
+- `request_context` must never create a separate execute path; if unsupported/unavailable, degrade to standard unresolved handling and safe clarifier.
+
 Hard invariants:
 
 - Never re-call LLM with unchanged `evidenceFingerprint`.
@@ -104,7 +110,7 @@ Canonicalization rules (MUST):
 Enrichment control models:
 
 - Preferred default: orchestrator-driven enrichment (safer).
-- Optional advanced: LLM-suggested `neededEvidenceTypes[]` only if validated by allowlist + budget + scope rules.
+- Optional advanced (selection/shared lanes only in current phase): LLM-suggested `neededEvidenceTypes[]` only if validated by allowlist + budget + scope rules.
 
 Canonical enrichment allowlist enum (single source of truth):
 

@@ -37,7 +37,7 @@ If this plan conflicts with (1) or (2), this plan must be updated before impleme
 
 1. Semantic follow-ups use blended context (structured + recent language turns).
 2. This lane is answer/explain mode only.
-3. If missing critical slots, ask one grounded clarifier; do not loop.
+3. If missing critical slots, ask one grounded clarifier; do not enter repeated user-visible clarification loops. Bounded internal enrichment retries are allowed only within this plan's budgets and stop conditions.
 
 ## Intent Slot Schema (Normative)
 
@@ -105,12 +105,13 @@ No action execution in this lane.
 
 1. Classify input as semantic follow-up.
 2. Assemble bounded blended context.
-3. Call LLM in answer mode (not picker mode).
-4. If response is under-specified due to missing critical slot:
+3. If `NEXT_PUBLIC_SEMANTIC_CONTINUITY_ANSWER_LANE_ENABLED` is OFF, return bounded safe clarifier behavior in the same semantic context and stop (no unrelated downstream disambiguation escape).
+4. Call LLM in answer mode (not picker mode).
+5. If response is under-specified due to missing critical slot:
    - ask one combined clarifier,
    - do not recurse into repeated context-request loops.
-5. If user turns command-like/selection-like, hand back to execution lane.
-6. This lane must not create or duplicate selection unresolved arbitration hooks; it only consumes post-resolution continuity state.
+6. If user turns command-like/selection-like, hand back to execution lane.
+7. This lane must not create or duplicate selection unresolved arbitration hooks; it only consumes post-resolution continuity state.
 
 ### Context Enrichment Loop (Semantic Lane, MUST)
 
@@ -120,7 +121,7 @@ Control model:
 - Current phase policy: semantic-lane LLM `request_context` / `neededEvidenceTypes[]` hints are disabled.
 - Semantic enrichment is orchestrator-driven only in this phase.
 - Semantic hint-driven enrichment is deferred to a future flag/plan after dedicated enum expansion and blocker coverage.
-- In both modes, retry is allowed only when `evidenceFingerprint` changes.
+- Retry is allowed only when `evidenceFingerprint` changes.
 
 Budgets:
 
@@ -140,7 +141,6 @@ Stop conditions:
 - `evidenceFingerprint` unchanged after enrichment.
 - Enrichment budget exhausted.
 - Critical slots still unresolved after bounded enrichment.
-- Unsupported or over-cap LLM evidence request (when advanced mode is enabled).
 
 On stop: ask one packed grounded clarifier and end loop (no repeated clarifier loop).
 
@@ -175,6 +175,18 @@ Builder output contract:
 - Input: continuity state + scoped snapshots + recent assistant explanation + `activeScope`.
 - Output: flat `scopedEvidenceCandidate[]` before filtering.
 - Builders must not emit cross-scope candidates.
+
+Canonical `referentRef` schema (MUST):
+
+- `kind`: `choice` | `entity` | `widget_item` | `doc_selection` | `action_target`
+- `id`: stable referent identifier
+- `scope`: normalized scope key
+- `optionSetId`: nullable option-set id
+
+Referent binding contract:
+
+- Referent binders must emit `referentRef[]` using this exact shape before uniqueness checks.
+- Cross-scope referents are ineligible and must be filtered before counting uniqueness.
 
 Scoped evidence uniqueness predicate (MUST):
 
