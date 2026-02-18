@@ -20,7 +20,7 @@ The system is currently running in **Option A** (offline, single-user, no Yjs). 
 
 - Ladder governance is now anchored by `deterministic-llm-ladder-enforcement-addendum-plan.md` (Rules A-I, unresolved-before-escape, scope precedence, scope-bound candidate pools).
 - Phase C policy is documented in the addendum: LLM auto-execute is gate-controlled (kill switch + confidence + allowlist), with safe clarifier fallback when gates fail.
-- `context-enrichment-retry-loop-plan.md` was added as a **draft** follow-up (one bounded retry, `request_context` allowlist, evidence-fingerprint gate, `no_new_evidence` fallback).
+- `orchestrator/context-enrichment-retry-loop-plan.md` was added as a **draft** follow-up (one bounded retry, `request_context` allowlist, evidence-fingerprint gate, `no_new_evidence` fallback).
 - Project-level gap remains explicit: multi-source scope cue parsing (widget/dashboard/workspace cues) is planned but not fully implemented yet; current resolver behavior is still chat-cue first in `resolveScopeCue`.
 
 ---
@@ -65,7 +65,7 @@ Selection Intent Arbitration
 ├── selection-intent-arbitration-widget-first-fix-plan.md ← Widget-first fix (6 steps)
 ├── deterministic-llm-ladder-enforcement-addendum-plan.md ← Active-option ladder contract (Rules A-I + Phase C policy)
 ├── universal-selection-resolver-plan.md                 ← Scope/latch/source arbitration contract
-└── context-enrichment-retry-loop-plan.md                ← Draft Phase D bounded context-retry loop
+└── orchestrator/context-enrichment-retry-loop-plan.md                ← Draft Phase D bounded context-retry loop
 ```
 
 ---

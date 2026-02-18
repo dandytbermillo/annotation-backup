@@ -8,7 +8,7 @@
 
 - Active-option arbitration is now explicitly governed by `deterministic-llm-ladder-enforcement-addendum-plan.md` (Rules A-I, unresolved-before-escape, scope precedence, scope-bound pools).
 - Phase C gated auto-execute policy is documented in the addendum; safe clarifier remains mandatory fallback when gates fail.
-- `context-enrichment-retry-loop-plan.md` is added as a draft follow-up (bounded `request_context`, one retry max, evidence fingerprint gate).
+- `orchestrator/context-enrichment-retry-loop-plan.md` is added as a draft follow-up (bounded `request_context`, one retry max, evidence fingerprint gate).
 - Multi-source explicit scope cues are now required by plan (`chat`/`widget`/`dashboard`/`workspace`), while full parser expansion remains planned work.
 
 ---
@@ -263,7 +263,7 @@ selection-intent-arbitration-widget-first-fix-plan.md ← Widget-first fix (6 st
                                                         invariant, cleanup, tests)
 deterministic-llm-ladder-enforcement-addendum-plan.md ← Active-option ladder contract (Rules A-I + Phase C policy)
 universal-selection-resolver-plan.md                 ← Source/scope/latch arbitration contract
-context-enrichment-retry-loop-plan.md                ← Draft Phase D bounded context-retry loop
+orchestrator/context-enrichment-retry-loop-plan.md                ← Draft Phase D bounded context-retry loop
 ```
 
 ### Supporting Documents
@@ -980,7 +980,7 @@ The `clarification-qa-checklist.md` defines **13 manual tests** (A1-E13) that mu
 | `selection-intent-arbitration-widget-first-fix-plan.md` | Widget-first latch fix — 6-step implementation plan |
 | `deterministic-llm-ladder-enforcement-addendum-plan.md` | Active-option ladder enforcement contract (Rules A-I + Phase C) |
 | `universal-selection-resolver-plan.md` | Scope/latch/source arbitration rules across chat + widget contexts |
-| `context-enrichment-retry-loop-plan.md` | Draft follow-up for bounded `request_context` retry loop |
+| `orchestrator/context-enrichment-retry-loop-plan.md` | Draft follow-up for bounded `request_context` retry loop |
 
 ---
 

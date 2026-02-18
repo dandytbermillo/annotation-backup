@@ -2,7 +2,16 @@
 
 **Status:** Draft
 **Owner:** Chat Navigation
-**Last updated:** 2026-02-13
+**Last updated:** 2026-02-18
+
+## Supersession Note
+
+This plan remains background/reference. For active implementation authority, use:
+- `grounding-continuity-anti-reclarify-plan.md` (shared enrichment contract),
+- `selection-continuity-execution-lane-plan.md` (selection lane),
+- `non-selection-semantic-continuity-answer-lane-plan.md` (semantic lane).
+
+If this file conflicts with those plans, the latter set wins.
 
 ## Purpose
 Add one bounded retry loop so unresolved selection inputs can be resolved with enriched local context before asking the user again.
@@ -104,7 +113,7 @@ Add decision:
 
 Response fields:
 - `contractVersion`: semantic/monotonic contract identifier (required)
-- `neededContext`: array of enum values from allowlist:
+- `neededEvidenceTypes`: array of enum values from the canonical allowlist in `grounding-continuity-anti-reclarify-plan.md`:
   - `chat_active_options`
   - `chat_recoverable_options`
   - `active_widget_items`
@@ -116,8 +125,8 @@ Response fields:
 Constraints:
 - No free-form tool instructions.
 - If requested context is unavailable, orchestrator returns safe clarifier.
-- `neededContext` must remain scope-bound (no cross-scope candidate mixing).
-- Max requested evidence types per turn: 1-2 (hard cap).
+- `neededEvidenceTypes` must remain scope-bound (no cross-scope candidate mixing).
+- Max requested evidence types per turn: 1-2 (hard cap; map to `NEEDED_EVIDENCE_TYPES_MAX` from `grounding-continuity-anti-reclarify-plan.md`).
 - Per-evidence budget caps must be enforced by app policy (no "give me everything").
 - Contract changes require `contractVersion` bump + flag gate.
 
@@ -190,6 +199,7 @@ Guard key:
 
 Evidence fingerprint gate:
 - Compute `evidenceFingerprintBefore` and `evidenceFingerprintAfter` around enrichment.
+- `enrichmentSignature` and fingerprint payload serialization must follow the canonical JSON/sorting rules from `grounding-continuity-anti-reclarify-plan.md`.
 - Retry is permitted only when fingerprints differ.
 - If unchanged, set fallback reason `no_new_evidence` and do not re-call LLM.
 

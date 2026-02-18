@@ -1,6 +1,6 @@
 # Chat Navigation Plans — Index
 
-**Last Updated:** 2026-02-13
+**Last Updated:** 2026-02-15
 
 This index documents plan timelines for chat navigation: doc retrieval and clarification/disambiguation.
 
@@ -209,7 +209,7 @@ This index documents plan timelines for chat navigation: doc retrieval and clari
 ---
 
 ### 17. Context-Enrichment Retry Loop Plan
-**File:** `context-enrichment-retry-loop-plan.md`
+**File:** `orchestrator/context-enrichment-retry-loop-plan.md`
 **Purpose:** Add one bounded `request_context` retry before user clarifier to reduce unnecessary prompts while preserving scope safety and fallback guarantees
 
 **Status:** 📝 Draft (Phase D follow-up)
@@ -221,6 +221,30 @@ This index documents plan timelines for chat navigation: doc retrieval and clari
 **Purpose:** Unify source/scope/latch arbitration across chat options, widget lists, dashboard/workspace contexts, and follow-up selection turns
 
 **Status:** 🔄 Active / Iterating (gap-fix reports landed; additional scope-cue parser expansion pending)
+
+---
+
+### 19. Grounding Continuity Anti-Reclarify Plan
+**File:** `orchestrator/grounding-continuity-anti-reclarify-plan.md`
+**Purpose:** Reduce repeated grounding clarifiers by adding bounded continuity context plus a strict safe-winner veto for `need_more_info`
+
+**Status:** 📝 Draft (separate continuity-focused follow-up plan)
+
+---
+
+### 20. Selection Continuity Execution Lane Plan
+**File:** `orchestrator/selection-continuity-execution-lane-plan.md`
+**Purpose:** Formalize bounded continuity-aware deterministic execution rules for selection/command follow-ups with strict safety gates
+
+**Status:** 📝 Draft
+
+---
+
+### 21. Non-Selection Semantic Continuity Answer Lane Plan
+**File:** `orchestrator/non-selection-semantic-continuity-answer-lane-plan.md`
+**Purpose:** Add semantic follow-up answer lane using bounded blended context (structured state + short chat window), with no direct execution
+
+**Status:** 📝 Draft
 
 ---
 
@@ -289,8 +313,11 @@ docs/proposal/chat-navigation/plan/panels/chat/meta/
 ├── clarification-stop-scope-plan.md                  ← Addendum: stop/cancel scope
 ├── selection-vs-command-arbitration-rule-plan.md     ← Plan 15 (Selection vs command guardrail)
 ├── deterministic-llm-ladder-enforcement-addendum-plan.md ← Plan 16 (Active-option ladder contract)
-├── context-enrichment-retry-loop-plan.md             ← Plan 17 (Draft bounded retry loop)
+├── orchestrator/context-enrichment-retry-loop-plan.md             ← Plan 17 (Draft bounded retry loop)
 ├── universal-selection-resolver-plan.md              ← Plan 18 (Scope/source/latch resolver)
+├── orchestrator/grounding-continuity-anti-reclarify-plan.md       ← Plan 19 (Draft continuity anti-reclarify)
+├── orchestrator/selection-continuity-execution-lane-plan.md       ← Plan 20 (Draft selection continuity execution lane)
+├── orchestrator/non-selection-semantic-continuity-answer-lane-plan.md ← Plan 21 (Draft semantic continuity answer lane)
 ├── cursor-style-doc-retrieval-plan.md               ← Plan 1 (Foundation)
 ├── general-doc-retrieval-routing-plan.md            ← Plan 2 (Routing v5)
 ├── 2026-01-14-doc-retrieval-routing-debt-paydown-plan.md  ← Plan 3 (Debt)
