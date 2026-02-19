@@ -2395,7 +2395,11 @@ export async function dispatchRouting(
                   ? ctx.findLastOptionsMessage(ctx.messages)?.options.find(opt => opt.id === choiceId)
                   : undefined)
 
-              if (matchingOption && 'type' in matchingOption && 'data' in matchingOption) {
+              // widget_option with type+data must fall through to the widget handler at line ~2430,
+              // not handleSelectOption (which doesn't handle 'widget_option' type).
+              const matchingOptionIsWidget = matchingOption && 'type' in matchingOption
+                && (matchingOption as { type: string }).type === 'widget_option'
+              if (matchingOption && 'type' in matchingOption && 'data' in matchingOption && !matchingOptionIsWidget) {
                 void debugLog({
                   component: 'ChatNavigation',
                   action: 'tier3_6_llm_chat_select',
@@ -2926,10 +2930,10 @@ export async function dispatchRouting(
                 const matchingOption = ctx.pendingOptions.find(opt => opt.id === selected.id)
                   || (ctx.clarificationSnapshot?.options.find(opt => opt.id === selected.id))
 
-                if (matchingOption && 'type' in matchingOption && 'data' in matchingOption) {
-                  if (selected.type === 'widget_option') {
-                    trySetWidgetLatch({ itemId: selected.id, trigger: 'grounding_llm_select' })
-                  }
+                // widget_option must fall through to the dedicated execute_widget_item handler,
+                // not handleSelectOption (which doesn't handle 'widget_option' type).
+                if (matchingOption && 'type' in matchingOption && 'data' in matchingOption
+                    && selected.type !== 'widget_option') {
                   ctx.handleSelectOption(matchingOption as unknown as SelectionOption)
                   ctx.setIsLoading(false)
                   return {
@@ -2959,10 +2963,10 @@ export async function dispatchRouting(
                   ? lastOptionsMessage.options.find(opt => opt.id === selected.id)
                   : null
 
-                if (messageOption) {
-                  if (selected.type === 'widget_option') {
-                    trySetWidgetLatch({ itemId: selected.id, trigger: 'grounding_llm_select_message_fallback' })
-                  }
+                // widget_option must route to the dedicated execute_widget_item handler below,
+                // not through handleSelectOption (which doesn't handle 'widget_option' type).
+                // Per universal-selection-resolver-plan.md:10.
+                if (messageOption && selected.type !== 'widget_option') {
                   const optionToSelect: SelectionOption = {
                     type: messageOption.type as SelectionOption['type'],
                     id: messageOption.id,
