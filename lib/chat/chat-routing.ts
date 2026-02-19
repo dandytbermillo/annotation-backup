@@ -3315,34 +3315,21 @@ export async function handleClarificationIntercept(
           // No exact winner → fall through to unified hook below
         }
 
-        // =================================================================
-        // Zero-match explicit command bypass (3-gate check):
-        // All three canonical shared classifiers must agree before bypassing.
-        // Gate 1: zero label matches against recoverable options
-        // Gate 2: isExplicitCommand — input has action verbs (open, show, go, etc.)
-        // Gate 3: NOT isSelectionOnly — input is not ordinal/label selection
-        //
-        // Hard exclusions (question-intent, interrupts) are checked BEFORE this
-        // block in the scope-cue flow and return early, so they can never be
-        // stolen by the bypass.
-        //
-        // This bypass is strictly scoped: zero-match explicit command escape only,
-        // never for question-intent or ambiguous selection-like turns.
-        // =================================================================
+        // Shared classifiers for continuity resolver (used inside UNIFIED HOOK)
         const strippedIsExplicitCommand = isExplicitCommand(scopeCueStripped)
         const strippedIsSelection = isSelectionOnly(
           scopeCueStripped, recoverableOptions.length,
           recoverableOptions.map(o => o.label), 'embedded'
         ).isSelection
 
-        if (labelMatches.length === 0 && strippedIsExplicitCommand && !strippedIsSelection) {
-          void debugLog({
-            component: 'ChatNavigation',
-            action: 'scope_cue_zero_match_command_bypass',
-            metadata: { input: trimmedInput, candidateForLabelMatch, recoverableCount: recoverableOptions.length },
-          })
-          // Fall through to Phase 3 command guard below (skip UNIFIED HOOK)
-        } else if (recoverableOptions.length > 0) {
+        // Per selection-continuity-execution-lane-plan.md:116 (binding #5):
+        // Scope-cue active arbitration with recoverable scoped options keeps
+        // one scoped unresolved entry path. Zero-match command phrasing must
+        // NOT bypass to downstream routing — stay in scoped unresolved ladder
+        // (deterministic → LLM → safe clarifier). Hard exclusions
+        // (question_intent, interrupt) are handled inside tryLLMLastChance
+        // or before this block (early returns in the scope-cue flow).
+        if (recoverableOptions.length > 0) {
           // --- Continuity deterministic resolver (Plan 20, Site 1: scope-cue Phase 2b) ---
           // Try deterministic resolution with continuity state before LLM arbitration.
           const isContinuityEnabled = process.env.NEXT_PUBLIC_SELECTION_CONTINUITY_LANE_ENABLED === 'true'
@@ -5999,6 +5986,8 @@ export interface PanelDisambiguationHandlerContext {
   saveLastOptionsShown?: (options: ClarificationOption[], messageId: string) => void
   // Per universal-selection-resolver-plan.md: clear widget context when registering chat context
   clearWidgetSelectionContext?: () => void
+  // Clear focus latch when opening a new panel (prevents stale latch scoping to wrong widget)
+  clearFocusLatch?: () => void
   // Single-match direct open (Step 1b — deterministic panel open when 1 match found)
   openPanelDrawer?: (panelId: string, panelTitle?: string) => void
 }
@@ -6033,6 +6022,7 @@ export function handlePanelDisambiguation(
     setLastClarification,
     saveLastOptionsShown,
     clearWidgetSelectionContext,
+    clearFocusLatch,
     openPanelDrawer,
   } = context
 
@@ -6146,6 +6136,9 @@ export function handlePanelDisambiguation(
     setPendingOptionsMessageId(null)
     setLastClarification(null)
     clearWidgetSelectionContext?.()
+    // Clear stale focus latch — panel switch starts fresh scope
+    // (prevents grounding tier from scoping to wrong widget's candidates)
+    clearFocusLatch?.()
 
     // Direct open
     openPanelDrawer(singleMatch.id, singleMatch.title)

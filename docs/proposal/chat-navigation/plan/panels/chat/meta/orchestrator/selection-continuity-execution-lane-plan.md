@@ -68,6 +68,7 @@ If this plan conflicts with (1) or (2), this plan must be updated before impleme
    - no collision, no question-intent, no loop-guard conflict.
 3. If unresolved, call bounded LLM.
    - If bounded LLM is feature-disabled for this scope, return a safe clarifier in the same active context (no downstream unrelated escape).
+   - In explicit scope-cue flows with recoverable scoped options (for example `from chat`), unresolved turns must enter the scoped unresolved hook; do not bypass directly to downstream command routing on zero-match command phrasing.
 4. If LLM returns `need_more_info`, apply strict veto:
    - if deterministic safe-winner gates prove a unique safe winner, execute via deterministic path;
    - else clarifier.
@@ -112,6 +113,7 @@ On stop: return grounded safe clarifier in same active context.
 2. Keep one post-deterministic unresolved arbitration hook in active-option flows; this lane must not introduce parallel unresolved LLM entry points.
 3. Enforce explicit scope-cue precedence before widget bypass in scoped selection arbitration.
 4. Enforce scope-bound candidate pools for scoped arbitration (`from chat` -> chat-origin candidates, etc.); no cross-scope mixed arbitration pool.
+5. In scope-cue active arbitration with recoverable scoped options, keep one scoped unresolved entry path; do not add zero-match command bypass logic that skips scoped unresolved LLM/clarifier handling.
 
 ## Safety Invariants
 
@@ -154,6 +156,8 @@ Include loop-cycle fields from Plan 19 (`loop_cycle_id`, `fingerprint_before`, `
 9. Selection enrichment budget exhausted -> no further retry; grounded clarifier is returned.
 10. Phase C interaction: with auto-exec ON/OFF, enrichment flow must still respect governing Phase C gates and must not create a new execute path.
 11. Loop-guard continuity: same-cycle guard hit reuses prior suggestion ordering for the same option-set cycle (no random reorder drift).
+12. Scope-cued filler/polite command (`open the panel d from chat pls thank you`) with no deterministic winner still stays in scoped unresolved handling (deterministic-or-LLM), never unrelated downstream clarifier.
+13. Scope-cued ambiguous selection-like input (`that one from chat`) does not trigger command bypass and still enters scoped unresolved handling.
 
 ## Rollout
 

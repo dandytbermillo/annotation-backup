@@ -890,18 +890,42 @@ describe('Selection-vs-Command Arbitration Pre-gate', () => {
       expect(ctx.setPendingOptionsMessageId).toHaveBeenCalledWith(msg.id)
     })
 
-    it('no match via scope cue + explicit command → 3-gate bypass to downstream routing', async () => {
+    it('no match via scope cue + explicit command → scoped unresolved handling (no downstream bypass)', async () => {
       const ctx = makeScopeCueCtx('open recent from chat')
       const result = await handleClarificationIntercept(ctx)
 
-      // "open recent from chat" → strip "from chat" → "open recent" → 0 label matches
-      // 3-gate bypass: labelMatches=0, isExplicitCommand("open recent")=true,
-      // isSelectionOnly("open recent")=false → bypass UNIFIED HOOK → Phase 3 command
-      // guard → returns handled: false (falls through to downstream Tier 4 routing)
-      expect(result.handled).toBe(false)
+      // "open recent from chat" → strip "from chat" → "open recent" → 0 label matches.
+      // Per selection-continuity-execution-lane-plan.md:116 (binding #5):
+      // Zero-match command stays in scoped unresolved handling, never bypasses
+      // to downstream routing. With LLM disabled, safe clarifier shown.
+      expect(result.handled).toBe(true)
       expect(ctx.handleSelectOption).not.toHaveBeenCalled()
-      // No safe clarifier shown — command escapes to downstream routing
-      expect(ctx.setPendingOptions).not.toHaveBeenCalled()
+      // Safe clarifier shown with scoped options
+      expect(ctx.setPendingOptions).toHaveBeenCalled()
+    })
+
+    it('scope-cued command with trailing politeness stays in scoped handling (regression: Plan 20 item 12)', async () => {
+      // "open the panel d from chat pls thank you" → strip "from chat" → "open the panel d pls thank you"
+      // canonicalizeCommandInput doesn't fully strip "thank you" → 0 label matches.
+      // Per policy: stays in scoped unresolved handling (no downstream bypass).
+      const ctx = makeScopeCueCtx('open the panel d from chat pls thank you')
+      const result = await handleClarificationIntercept(ctx)
+
+      expect(result.handled).toBe(true)
+      expect(ctx.handleSelectOption).not.toHaveBeenCalled()
+      // Safe clarifier with scoped chat options, NOT downstream widget items
+      expect(ctx.setPendingOptions).toHaveBeenCalled()
+    })
+
+    it('scope-cued command with typo/filler variant stays in scoped handling (regression: Plan 20 item 12b)', async () => {
+      // "open the panel d from chat pls now please" → 0 label matches after canonicalize
+      // Stays in scoped unresolved handling
+      const ctx = makeScopeCueCtx('open the panel d from chat pls now please')
+      const result = await handleClarificationIntercept(ctx)
+
+      expect(result.handled).toBe(true)
+      expect(ctx.handleSelectOption).not.toHaveBeenCalled()
+      expect(ctx.setPendingOptions).toHaveBeenCalled()
     })
 
     it('exact-first winner in multi-match via scope cue → execute', async () => {

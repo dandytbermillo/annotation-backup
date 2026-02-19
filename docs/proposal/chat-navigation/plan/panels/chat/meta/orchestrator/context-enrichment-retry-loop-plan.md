@@ -81,6 +81,7 @@ Out of scope:
 13. **Deterministic confidence gate is strict**
    - If deterministic confidence is not 100% (no unique deterministic winner), do not execute.
    - In active-option scope, unresolved input must ladder to bounded LLM before any unrelated downstream fallback, except hard exclusions (question-intent, no active-option context, or feature flags disabled).
+   - In explicit scope-cue flows with recoverable scoped options (`from chat`, etc.), unresolved input must stay in scoped unresolved arbitration; zero-match command phrasing must not bypass to unrelated downstream routing.
 
 ## Binding Hardening Rules
 
@@ -272,6 +273,7 @@ Fields:
 7. explicit scope cue resolution occurs before latch/widget bypass (no early bypass suppression)
 8. repeated `request_context` with unchanged evidence does not loop; emits `no_new_evidence` and returns stable clarifier
 9. active options + ambiguous command-like input enters loop only via post-deterministic unresolved hook (or safe clarifier when flag off), never unrelated downstream clarifier
+10. explicit scope-cued filler/polite command with no deterministic winner (for example `open the panel d from chat pls thank you`) still enters scoped unresolved handling and does not route to unrelated downstream clarifier set.
 
 ## Rollout
 - Flag: `NEXT_PUBLIC_LLM_CONTEXT_RETRY_ENABLED`

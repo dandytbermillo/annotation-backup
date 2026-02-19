@@ -500,13 +500,15 @@ describe('dispatchRouting: selection-intent-arbitration race conditions', () => 
     // setting/clearing pendingOptions. The scope-cue block is not reached.
   })
 
-  it('Test 9: resolved latch + "open recent in chat" (command + scope cue) → falls through without restore', async () => {
-    // Mock known-noun to handle "open recent"
-    mockHandleKnownNounRouting.mockReturnValue({
-      handled: true,
-      handledByTier: 4,
-      tierLabel: 'known_noun_panel_command',
-    })
+  it('Test 9: resolved latch + "open recent in chat" (command + scope cue) → stays in scoped handling', async () => {
+    // Per selection-continuity-execution-lane-plan.md:116 (binding #5):
+    // Scope-cued unresolved input with recoverable scoped options must stay
+    // in the scoped unresolved ladder (deterministic → LLM → safe clarifier).
+    // Zero-match command phrasing must NOT bypass to downstream routing.
+    //
+    // With LLM disabled (isLLMFallbackEnabledClient=false):
+    // tryLLMLastChance returns { attempted: false, fallbackReason: 'feature_disabled' }
+    // → UNIFIED HOOK shows safe clarifier with scoped chat options.
 
     const ctx = createMockDispatchContext({
       trimmedInput: 'open recent in chat',
@@ -516,36 +518,29 @@ describe('dispatchRouting: selection-intent-arbitration race conditions', () => 
 
     const result = await dispatchRouting(ctx)
 
-    // Latch should have been suspended (scope cue respected)
+    // Scope cue respected: latch suspended, widget context cleared
     expect(ctx.suspendFocusLatch).toHaveBeenCalled()
     expect(ctx.clearWidgetSelectionContext).toHaveBeenCalled()
 
-    // Chat state should NOT have been restored (command fallthrough)
-    expect(ctx.setPendingOptions).not.toHaveBeenCalled()
-    expect(ctx.setActiveOptionSetId).not.toHaveBeenCalled()
-
-    // handleSelectOption should NOT have been called
+    // Input stays in scoped handling — does NOT escape to known-noun
     expect(ctx.handleSelectOption).not.toHaveBeenCalled()
-
-    // Known-noun should have handled the command
+    expect(mockHandleKnownNounRouting).not.toHaveBeenCalled()
     expect(result.handled).toBe(true)
-    expect(result.tierLabel).toContain('known_noun')
   })
 
   // ==========================================================================
-  // Test 9 Regression: 3-gate bypass must NOT steal question-intent or
-  // ambiguous selection-like inputs (A6-R1, A6-R2)
+  // Test 9 Regression: question-intent escapes via tryLLMLastChance hard
+  // exclusion; ambiguous selection stays in scoped handling (A6-R1, A6-R2)
   // ==========================================================================
 
-  it('Test 9-R1: scope-cued question-intent (zero label matches) is NOT treated as command bypass', async () => {
+  it('Test 9-R1: scope-cued question-intent escapes via tryLLMLastChance question_intent exclusion', async () => {
     // "what happened in chat" — question-intent + scope cue, zero label matches.
-    // "what happened" has no action verb match in isExplicitCommand (no open/show/go etc).
-    // The 3-gate bypass should NOT fire (gate 2 fails: no action verb).
-    // Input enters UNIFIED HOOK → LLM mocked to fail → question_intent fallback →
-    // returns handled: false → falls through to downstream routing (Tier 4 etc).
+    // hasQuestionIntent("what happened in chat") = true → tryLLMLastChance returns
+    // { fallbackReason: 'question_intent' }. UNIFIED HOOK checks fallbackReason ===
+    // 'question_intent' → logs, no return → falls through to Phase 3 command guard.
+    // Phase 3: isNewQuestionOrCommandDetected = true → returns { handled: false }.
     //
-    // Key verification: handleSelectOption NOT called (no option selected),
-    // and no setPendingOptions (no safe clarifier shown from scope-cue flow).
+    // Key verification: handleSelectOption NOT called, question escapes to downstream.
     const ctx = createMockDispatchContext({
       trimmedInput: 'what happened in chat',
       focusLatch: makeResolvedLatch(),
@@ -567,9 +562,9 @@ describe('dispatchRouting: selection-intent-arbitration race conditions', () => 
     }
   })
 
-  it('Test 9-R2: scope-cued ambiguous selection-like input stays in UNIFIED HOOK', async () => {
-    // "that one from chat" — not an explicit command (no action verb), zero label matches
-    // Gate 2 (isExplicitCommand) fails → bypass does NOT fire → UNIFIED HOOK runs
+  it('Test 9-R2: scope-cued ambiguous selection-like input stays in scoped unresolved handling', async () => {
+    // "that one from chat" — not an explicit command (no action verb), zero label matches.
+    // Enters UNIFIED HOOK → LLM arbitration or safe clarifier with scoped options.
     const ctx = createMockDispatchContext({
       trimmedInput: 'that one from chat',
       focusLatch: makeResolvedLatch(),

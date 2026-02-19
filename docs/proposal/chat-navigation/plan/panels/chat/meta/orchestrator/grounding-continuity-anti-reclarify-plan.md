@@ -69,6 +69,7 @@ Hard invariants:
 - No unbounded retries.
 - No free-form global search in selection lane.
 - No execution path bypassing governing deterministic/Phase C policy.
+- In explicit scope-cue flows with recoverable scoped options, unresolved turns must remain in scoped unresolved arbitration (deterministic/LLM/clarifier ladder) and must not early-escape to unrelated downstream routing on zero-match command phrasing.
 
 Canonical `EvidenceCandidate` fields (shared minimum):
 

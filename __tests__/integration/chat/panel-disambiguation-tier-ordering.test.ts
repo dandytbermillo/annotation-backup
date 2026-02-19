@@ -233,6 +233,57 @@ describe('dispatchRouting: Tier 2c handles verb-prefixed panel commands before T
     expect(mockHandleKnownNounRouting).not.toHaveBeenCalled()
   })
 
+  it('Tier 2c single-match open clears stale focusLatch (prevents wrong widget scoping)', async () => {
+    // Regression: "open recent widget" after selecting from Links Panel D
+    // should clear the stale focusLatch so subsequent queries use Recent's candidates.
+    const savedEnv = process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1
+    process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1 = 'true'
+
+    try {
+      const ctx = createMockDispatchContext({
+        trimmedInput: 'open recent widget',
+        focusLatch: {
+          kind: 'resolved' as const,
+          widgetId: 'w_links_d',
+          widgetLabel: 'Links Panel D',
+          latchedAt: Date.now(),
+          turnsSinceLatched: 0,
+        },
+        uiContext: {
+          mode: 'dashboard',
+          dashboard: {
+            entryName: 'Test Entry',
+            visibleWidgets: [
+              { id: 'w_recent_widget', title: 'Recent', type: 'recent_widget' },
+              { id: 'w_links_d', title: 'Links Panel D', type: 'links_note_tiptap' },
+            ],
+          },
+        },
+      })
+
+      const result = await dispatchRouting(ctx)
+
+      // Tier 2c handles single-match "Recent"
+      expect(result.handled).toBe(true)
+      expect(result.handledByTier).toBe(2)
+      expect(result.tierLabel).toBe('panel_disambiguation')
+      expect(ctx.openPanelDrawer).toHaveBeenCalledWith('w_recent_widget', 'Recent')
+
+      // Stale focusLatch MUST be cleared so grounding uses correct widget
+      expect(ctx.clearFocusLatch).toHaveBeenCalled()
+      expect(ctx.clearWidgetSelectionContext).toHaveBeenCalled()
+
+      // Tier 4 never reached
+      expect(mockHandleKnownNounRouting).not.toHaveBeenCalled()
+    } finally {
+      if (savedEnv === undefined) {
+        delete process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1
+      } else {
+        process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1 = savedEnv
+      }
+    }
+  })
+
   it('"open links panel" + 3 Links Panel variants → Tier 2c disambiguates, Tier 4 never invoked', async () => {
     const ctx = createMockDispatchContext({
       trimmedInput: 'open links panel',

@@ -1221,6 +1221,7 @@ export async function dispatchRouting(
       setLastClarification: ctx.setLastClarification,
       saveLastOptionsShown: ctx.saveLastOptionsShown,
       clearWidgetSelectionContext: ctx.clearWidgetSelectionContext,
+      clearFocusLatch: isLatchEnabled ? ctx.clearFocusLatch : undefined,
       openPanelDrawer: ctx.openPanelDrawer,
     })
     if (panelDisambiguationResult.handled) {
