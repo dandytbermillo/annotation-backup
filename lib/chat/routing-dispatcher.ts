@@ -2738,10 +2738,10 @@ export async function dispatchRouting(
           opt => opt.id === groundingResult.selectedCandidate!.id
         ))
 
-        if (matchingOption && 'type' in matchingOption && 'data' in matchingOption) {
-          if (groundingResult.selectedCandidate!.type === 'widget_option') {
-            trySetWidgetLatch({ itemId: groundingResult.selectedCandidate!.id, trigger: 'grounding_deterministic_select' })
-          }
+        // widget_option must fall through to the dedicated execute_widget_item handler,
+        // not handleSelectOption (which doesn't handle 'widget_option' type).
+        if (matchingOption && 'type' in matchingOption && 'data' in matchingOption
+            && groundingResult.selectedCandidate!.type !== 'widget_option') {
           ctx.handleSelectOption(matchingOption as unknown as SelectionOption)
           ctx.setIsLoading(false)
           return {
@@ -2770,10 +2770,9 @@ export async function dispatchRouting(
           ? lastOptionsMessage.options.find(opt => opt.id === groundingResult.selectedCandidate!.id)
           : null
 
-        if (messageOption) {
-          if (groundingResult.selectedCandidate!.type === 'widget_option') {
-            trySetWidgetLatch({ itemId: groundingResult.selectedCandidate!.id, trigger: 'grounding_deterministic_select_message_fallback' })
-          }
+        // widget_option must route to the dedicated execute_widget_item handler below,
+        // not through handleSelectOption (which doesn't handle 'widget_option' type).
+        if (messageOption && groundingResult.selectedCandidate!.type !== 'widget_option') {
           const optionToSelect: SelectionOption = {
             type: messageOption.type as SelectionOption['type'],
             id: messageOption.id,
