@@ -11,6 +11,7 @@
  */
 
 import { levenshteinDistance } from '@/lib/chat/typo-suggestions'
+import { hasQuestionIntent } from '@/lib/chat/query-patterns'
 
 // =============================================================================
 // Explicit Command Detection
@@ -540,4 +541,34 @@ export function classifyArbitrationConfidence(params: {
     ambiguityReason: 'multi_match_no_exact_winner',
     candidates,
   }
+}
+
+// =============================================================================
+// Phase 10: Semantic Answer Lane Detector
+// =============================================================================
+
+/**
+ * Pattern for imperative-form semantic triggers that hasQuestionIntent misses.
+ * Catches "summarize my session", "recap what we did", etc.
+ */
+const SEMANTIC_LANE_PATTERN = /\b(why did|explain|what (just )?happened|what was that|summarize|recap|what have i been doing|what did we do|my (recent )?activity|my session)\b/i
+
+/**
+ * Detect semantic question/imperative inputs for the semantic answer lane.
+ * Catches both question-form ("why did I do that?") and imperative-form ("summarize my session").
+ * Excludes command-like and selection-like inputs to avoid false positives on mixed prompts.
+ */
+export function isSemanticQuestionInput(
+  input: string,
+  optionCount?: number,
+  optionLabels?: string[],
+): boolean {
+  // Exclude command-like inputs ("open X and explain why")
+  if (isExplicitCommand(input)) return false
+  // Exclude selection-like inputs ("2", "bottom")
+  // isSelectionOnly signature: (input, optionCount, optionLabels, mode) → { isSelection, index? }
+  const sel = isSelectionOnly(input, optionCount ?? 0, optionLabels ?? [], 'strict')
+  if (sel.isSelection) return false
+
+  return hasQuestionIntent(input) || SEMANTIC_LANE_PATTERN.test(input)
 }

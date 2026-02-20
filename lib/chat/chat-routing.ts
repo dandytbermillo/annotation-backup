@@ -1924,6 +1924,9 @@ export interface ClarificationInterceptContext {
   selectionContinuity: import('@/lib/chat/chat-navigation-context').SelectionContinuityState
   updateSelectionContinuity: (updates: Partial<import('@/lib/chat/chat-navigation-context').SelectionContinuityState>) => void
   resetSelectionContinuity: () => void
+
+  /** Phase 10: Semantic answer lane detected — escape clarification for semantic questions */
+  semanticLaneDetected?: boolean
 }
 
 /**
@@ -2081,6 +2084,29 @@ export async function handleClarificationIntercept(
 
   // Track if clarification was cleared within this execution cycle
   let clarificationCleared = false
+
+  // =========================================================================
+  // Semantic Answer Lane: escape clarification handler for semantic question inputs.
+  // Clears stale clarification state and returns handled: false so the input reaches
+  // the LLM API via the normal routing path (which has semantic intent descriptions).
+  // =========================================================================
+  if (ctx.semanticLaneDetected) {
+    if (lastClarification) {
+      if (lastClarification.options && lastClarification.options.length > 0) {
+        saveClarificationSnapshot(lastClarification, true)
+      }
+      setLastClarification(null)
+      setPendingOptions([])
+      setPendingOptionsMessageId(null)
+      setPendingOptionsGraceCount(0)
+    }
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'semantic_lane_escape_clarification',
+      metadata: { userInput: trimmedInput, hadClarificationContext: !!lastClarification },
+    })
+    return { handled: false, clarificationCleared: !!lastClarification, isNewQuestionOrCommandDetected }
+  }
 
   // Reset stop suppression on any non-exit input (per stop-scope-plan §40-48).
   // Must run before any early-return path so the counter doesn't leak across

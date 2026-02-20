@@ -426,6 +426,10 @@ export async function POST(request: NextRequest) {
       userMessage,
     })
 
+    // Phase 10: Semantic Answer Lane — flag-off remap + answer-only enforcement
+    const isSemanticLaneEnabled = process.env.NEXT_PUBLIC_SEMANTIC_CONTINUITY_ANSWER_LANE_ENABLED === 'true'
+    const SEMANTIC_ANSWER_INTENTS = new Set(['explain_last_action', 'summarize_recent_activity'])
+
     // Step 1.5: Handle need_context loop
     // Per llm-context-retrieval-general-answers-plan.md:
     // If LLM returns need_context, fetch expanded context and re-call LLM (max 1 retry)
@@ -478,6 +482,14 @@ export async function POST(request: NextRequest) {
           reason: "I couldn't find enough context to answer that. Could you provide more details or rephrase your question?",
         },
       }
+    }
+
+    // 5a: If flag is off but LLM returned a semantic intent, remap to safe existing behavior
+    // Placed AFTER the retry loop so it catches the final intent regardless of retries
+    if (!isSemanticLaneEnabled && SEMANTIC_ANSWER_INTENTS.has(intent.intent)) {
+      // explain_last_action → last_action is a clean 1:1 semantic match
+      // summarize_recent_activity → unsupported (not session_stats — different semantics)
+      intent.intent = intent.intent === 'explain_last_action' ? 'last_action' : 'unsupported'
     }
 
     // Step 2: Resolve intent to actionable data
@@ -558,6 +570,21 @@ export async function POST(request: NextRequest) {
 
     const resolution = await resolveIntent(intent, resolutionContext)
 
+    // 5b: Semantic answer lane — server-side answer-only enforcement
+    if (isSemanticLaneEnabled && SEMANTIC_ANSWER_INTENTS.has(intent.intent)) {
+      const ALLOWED_ACTIONS = new Set(['inform', 'answer_from_context', 'general_answer', 'error'])
+
+      if (!ALLOWED_ACTIONS.has(resolution.action)) {
+        console.warn(
+          `[semantic-lane] Blocked non-answer action "${resolution.action}" for intent "${intent.intent}"`
+        )
+        resolution.action = 'inform'
+        resolution.success = true
+        resolution.message = resolution.message
+          || "I can answer questions about your activity, but I won't perform actions from here."
+      }
+    }
+
     // Step 3: Handle general_answer with time replacement
     // Per llm-context-retrieval-general-answers-plan.md:
     // For time questions, replace placeholder with actual server time
@@ -619,10 +646,12 @@ export async function POST(request: NextRequest) {
         // Replace generic unsupported message with friendly suggestion
         resolution.message = suggestions.message
       }
-    } else if (!hasVerb && !isVerifyQuery && !isQuestionLike && !context?.pendingOptions?.length && !context?.lastClarification) {
+    } else if (!resolution.success && !hasVerb && !isVerifyQuery && !isQuestionLike && !context?.pendingOptions?.length && !context?.lastClarification) {
       // If the input has no verb and is not a verify query, don't let the LLM guess.
       // Only override when the input is not an exact match to a known command.
       // Phase 2a.2: Skip typo fallback when pendingOptions or lastClarification exist - let LLM handle with context
+      // Guard: only apply when resolution failed — never overwrite a successful resolver result
+      // (e.g., explain_last_action resolves to action:'inform' successfully)
       const typoSuggestion = getSuggestions(userMessage, suggestionContext)
       const topCandidate = typoSuggestion?.candidates[0]
       const isExactMatch = Boolean(

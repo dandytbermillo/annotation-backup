@@ -1196,6 +1196,14 @@ function ChatNavigationPanelContent({
                   // (unlike workspaces which are tracked in DashboardView)
                   incrementOpenCount(entryData.id, entryData.name, 'entry')
                 }
+              } else if (option.type === 'panel_drawer') {
+                const panelData = option.data as { panelId: string; panelTitle: string; panelType: string }
+                setLastAction({
+                  type: 'open_panel',
+                  panelId: panelData.panelId,
+                  panelTitle: panelData.panelTitle,
+                  timestamp: now,
+                })
               }
               break
             case 'deleted':
@@ -1786,7 +1794,8 @@ function ChatNavigationPanelContent({
           })
 
           if (!response.ok) {
-            throw new Error('Widget item action failed')
+            const errorBody = await response.text().catch(() => '(unreadable)')
+            throw new Error(`Widget item action failed [${response.status}]: ${errorBody.slice(0, 200)}`)
           }
 
           const { resolution } = (await response.json()) as {
@@ -1814,6 +1823,16 @@ function ChatNavigationPanelContent({
             addMessage(assistantMessage)
           }
         } catch (error) {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'execute_widget_item_failed',
+            metadata: {
+              itemId,
+              itemLabel,
+              widgetId,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          })
           const errorMsg: ChatMessage = {
             id: `assistant-${Date.now()}`,
             role: 'assistant',
@@ -2047,7 +2066,8 @@ function ChatNavigationPanelContent({
         throw new Error(`Failed to process request (HTTP ${response.status})`)
       }
 
-      const { resolution, suggestions: rawSuggestions, clarification: apiClarification } = (await response.json()) as {
+      const { intent: apiIntent, resolution, suggestions: rawSuggestions, clarification: apiClarification } = (await response.json()) as {
+        intent?: { intent: string; args?: Record<string, unknown> }
         resolution: IntentResolutionResult
         suggestions?: ChatSuggestions
         // Phase 2a.3: Clarification metadata from API
@@ -2055,6 +2075,37 @@ function ChatNavigationPanelContent({
           id: string
           nextAction: 'show_workspace_picker'
           originalIntent: string
+        }
+      }
+
+      // Phase 10: Semantic answer lane — client-side defense-in-depth
+      // Only enforce when the RESOLVED intent is semantic — not based on routing marker alone
+      // Note: IntentResolutionResult does NOT include .intent; use apiIntent from the parsed response
+      const SEMANTIC_ANSWER_INTENTS_SET = new Set(['explain_last_action', 'summarize_recent_activity'])
+      const isSemanticIntent = apiIntent && SEMANTIC_ANSWER_INTENTS_SET.has(apiIntent.intent)
+
+      if (routingResult.semanticLanePending && isSemanticIntent) {
+        const isAnswerAction = resolution.action === 'inform'
+          || resolution.action === 'answer_from_context'
+          || resolution.action === 'general_answer'
+          || resolution.action === 'error'
+
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'semantic_lane_result',
+          metadata: { resolvedAction: resolution.action, resolvedIntent: apiIntent?.intent, isAnswerAction },
+        })
+
+        if (!isAnswerAction) {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'semantic_lane_blocked_execution',
+            metadata: { blockedAction: resolution.action },
+          })
+          resolution.action = 'inform'
+          resolution.success = true
+          resolution.message = resolution.message
+            || "I can answer questions about your activity, but I won't perform actions from here."
         }
       }
 

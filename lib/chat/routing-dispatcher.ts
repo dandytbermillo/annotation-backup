@@ -289,6 +289,8 @@ export interface RoutingDispatcherResult {
     itemLabel: string
     action: string
   }
+  /** Phase 10: Semantic answer lane marker — input matched semantic question patterns */
+  semanticLanePending?: boolean
   /** Dev-only: routing provenance hint for debug overlay (undefined = deterministic) */
   _devProvenanceHint?: ChatProvenance
 }
@@ -301,7 +303,7 @@ export type GroundingAction = NonNullable<RoutingDispatcherResult['groundingActi
 // =============================================================================
 
 // Import from shared utility (extracted to avoid circular dependency with chat-routing.ts)
-import { isExplicitCommand, isSelectionOnly, normalizeOrdinalTypos } from '@/lib/chat/input-classifiers'
+import { isExplicitCommand, isSelectionOnly, normalizeOrdinalTypos, isSemanticQuestionInput } from '@/lib/chat/input-classifiers'
 // Re-export to avoid breaking existing imports from this file
 export { isExplicitCommand }
 
@@ -1001,6 +1003,29 @@ export async function dispatchRouting(
   try {
 
   // =========================================================================
+  // Semantic Answer Lane — Early detection
+  //
+  // Must run before handleClarificationIntercept so the flag can be passed in.
+  // Detects semantic question inputs ("explain what just happened", "why did I do that?")
+  // and marks them for bypass of clarification, cross-corpus, grounding, and docs tiers.
+  // Input still falls through to LLM API — this only prevents interception.
+  // =========================================================================
+  const isSemanticAnswerLaneEnabled = process.env.NEXT_PUBLIC_SEMANTIC_CONTINUITY_ANSWER_LANE_ENABLED === 'true'
+  const semanticLaneDetected = isSemanticAnswerLaneEnabled && isSemanticQuestionInput(ctx.trimmedInput)
+  if (semanticLaneDetected) {
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'semantic_answer_lane_entry',
+      metadata: {
+        input: ctx.trimmedInput,
+        hasLastAction: !!ctx.sessionState?.lastAction,
+        actionHistoryLength: ctx.sessionState?.actionHistory?.length ?? 0,
+      },
+    })
+    defaultResult.semanticLanePending = true
+  }
+
+  // =========================================================================
   // TIERS 0, 1, 3 — Clarification Intercept
   // (Stop/Cancel, Return/Resume/Repair, Active Clarification)
   //
@@ -1058,6 +1083,8 @@ export async function dispatchRouting(
     selectionContinuity: ctx.selectionContinuity,
     updateSelectionContinuity: ctx.updateSelectionContinuity,
     resetSelectionContinuity: ctx.resetSelectionContinuity,
+    // Phase 10: Semantic answer lane (escape hatch for semantic question inputs)
+    semanticLaneDetected,
   })
 
   const { clarificationCleared, isNewQuestionOrCommandDetected } = clarificationResult
@@ -1145,18 +1172,28 @@ export async function dispatchRouting(
     && !hasQuestionIntent(ctx.trimmedInput))
     || skipCrossCorpusForFocusLatch
 
-  if (skipCrossCorpusForWidgetSelection) {
+  if (semanticLaneDetected) {
     void debugLog({
       component: 'ChatNavigation',
-      action: 'skip_cross_corpus_widget_context',
-      metadata: {
-        input: ctx.trimmedInput,
-        widgetId: ctx.widgetSelectionContext?.widgetId,
-        reason: skipCrossCorpusForFocusLatch
-          ? 'focus_latch_or_prelatch_active_and_selection_like'
-          : 'widget_selection_context_active_and_selection_like',
-      },
+      action: 'semantic_lane_skip_cross_corpus',
+      metadata: { input: ctx.trimmedInput },
     })
+  }
+
+  if (skipCrossCorpusForWidgetSelection || semanticLaneDetected) {
+    if (skipCrossCorpusForWidgetSelection) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'skip_cross_corpus_widget_context',
+        metadata: {
+          input: ctx.trimmedInput,
+          widgetId: ctx.widgetSelectionContext?.widgetId,
+          reason: skipCrossCorpusForFocusLatch
+            ? 'focus_latch_or_prelatch_active_and_selection_like'
+            : 'widget_selection_context_active_and_selection_like',
+        },
+      })
+    }
     // Fall through to Tier 2c, 3.5, etc.
   } else {
     // Tier 2b: Cross-Corpus Retrieval
@@ -1237,7 +1274,17 @@ export async function dispatchRouting(
   }
 
   // Tier 2d: Meta-Explain
-  const metaExplainResult = await handleMetaExplain({
+  // Semantic answer lane: skip meta-explain for semantic question inputs.
+  // "explain what just happened" matches isMetaExplainOutsideClarification (startsWith('explain ')),
+  // which would return handled: true and block the input from reaching the LLM API.
+  if (semanticLaneDetected) {
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'semantic_lane_skip_meta_explain',
+      metadata: { input: ctx.trimmedInput },
+    })
+  }
+  const metaExplainResult = !semanticLaneDetected ? await handleMetaExplain({
     trimmedInput: ctx.trimmedInput,
     docRetrievalState: ctx.docRetrievalState,
     messages: ctx.messages,
@@ -1252,7 +1299,7 @@ export async function dispatchRouting(
     setPendingOptionsMessageId: ctx.setPendingOptionsMessageId as (messageId: string) => void,
     setLastClarification: ctx.setLastClarification,
     saveLastOptionsShown: ctx.saveLastOptionsShown,
-  })
+  }) : { handled: false }
   if (metaExplainResult.handled) {
     return {
       ...defaultResult,
@@ -2583,7 +2630,14 @@ export async function dispatchRouting(
   //   4) If deterministic fails + candidates exist → constrained LLM
   //   5) If no candidates → ask missing slot
   // =========================================================================
-  {
+  if (semanticLaneDetected) {
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'semantic_lane_skip_grounding',
+      metadata: { input: ctx.trimmedInput },
+    })
+  }
+  if (!semanticLaneDetected) {
     // NOTE: Paused re-anchor (H) is NOT handled here — it's already handled by
     // the stop-paused ordinal guard in handleClarificationIntercept() (Tier 0,
     // chat-routing.ts lines 1987-2009). That runs before Tier 4.5, so stop-paused
@@ -3336,7 +3390,14 @@ export async function dispatchRouting(
   // Only reached when all higher tiers declined. Routes doc-style queries
   // ("what is X", "how do I") to doc retrieval.
   // =========================================================================
-  const docRetrievalResult = await handleDocRetrieval({
+  if (semanticLaneDetected) {
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'semantic_lane_skip_docs',
+      metadata: { input: ctx.trimmedInput },
+    })
+  }
+  const docRetrievalResult = !semanticLaneDetected ? await handleDocRetrieval({
     trimmedInput: ctx.trimmedInput,
     uiContext: ctx.uiContext,
     docRetrievalState: ctx.docRetrievalState,
@@ -3357,7 +3418,7 @@ export async function dispatchRouting(
     setPendingOptions: ctx.setPendingOptions,
     setPendingOptionsMessageId: ctx.setPendingOptionsMessageId as (messageId: string) => void,
     setLastClarification: ctx.setLastClarification,
-  })
+  }) : { handled: false, route: undefined }
   if (docRetrievalResult.handled) {
     return {
       ...defaultResult,

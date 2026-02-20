@@ -45,6 +45,9 @@ export const IntentType = z.enum([
   'general_answer',       // Non-app question: time, math, static knowledge (no side effects)
   // Phase 9: App data retrieval (DB lookup for entities not in chat)
   'retrieve_from_app',    // Query DB for widgets/workspaces/notes/entries not shown in chat
+  // Phase 10: Semantic Answer Lane (flag-gated, answer-only)
+  'explain_last_action',        // Contextual explanation of last action (why, not just what)
+  'summarize_recent_activity',  // Narrative timeline summary of recent session activity
   'unsupported',
 ])
 

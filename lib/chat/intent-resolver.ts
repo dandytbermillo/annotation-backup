@@ -308,6 +308,12 @@ export async function resolveIntent(
     case 'retrieve_from_app':
       return resolveRetrieveFromApp(intent, context)
 
+    // Phase 10: Semantic Answer Lane (answer-only, no execution)
+    case 'explain_last_action':
+      return resolveExplainLastAction(context)
+    case 'summarize_recent_activity':
+      return resolveSummarizeRecentActivity(context)
+
     case 'unsupported':
     default:
       return {
@@ -2993,5 +2999,138 @@ async function resolvePanelIntent(
     success: true,
     action: 'inform',
     message: result.message || 'Action completed.',
+  }
+}
+
+// =============================================================================
+// Phase 10: Semantic Answer Lane Resolvers (answer-only, no execution)
+// =============================================================================
+
+/**
+ * Resolve explain_last_action intent — contextual explanation of the last action.
+ * Unlike resolveLastAction (factual: "You opened X"), this provides context
+ * (e.g., "You opened X because you asked to navigate to entry Y").
+ *
+ * SAFETY: All code paths return action: 'inform'. No navigation, no execution.
+ */
+function resolveExplainLastAction(
+  context: ResolutionContext
+): IntentResolutionResult {
+  const ss = context.sessionState
+  const lastAction = ss?.lastAction
+  const actionHistory = ss?.actionHistory
+
+  if (!lastAction) {
+    return {
+      success: true,
+      action: 'inform',
+      message: "There's no recent action to explain.",
+    }
+  }
+
+  const timeAgo = formatTimeAgo(new Date(lastAction.timestamp).toISOString())
+
+  // Build the primary explanation
+  let explanation = ''
+  switch (lastAction.type) {
+    case 'open_workspace':
+      explanation = `You opened workspace "${lastAction.workspaceName}" ${timeAgo}.`
+      break
+    case 'open_entry':
+      explanation = `You opened entry "${lastAction.entryName}" ${timeAgo}.`
+      break
+    case 'open_panel':
+      explanation = `You opened "${lastAction.panelTitle || 'a panel'}" ${timeAgo}.`
+      break
+    case 'rename_workspace':
+      explanation = `You renamed workspace "${lastAction.fromName}" to "${lastAction.toName}" ${timeAgo}.`
+      break
+    case 'delete_workspace':
+      explanation = `You deleted workspace "${lastAction.workspaceName}" ${timeAgo}.`
+      break
+    case 'create_workspace':
+      explanation = `You created workspace "${lastAction.workspaceName}" ${timeAgo}.`
+      break
+    case 'go_to_dashboard':
+      explanation = `You returned to the dashboard ${timeAgo}.`
+      break
+    case 'go_home':
+      explanation = `You went home ${timeAgo}.`
+      break
+    default:
+      explanation = `Your last action was ${timeAgo}.`
+  }
+
+  // Add context from preceding action in history (if available)
+  if (actionHistory && actionHistory.length >= 2) {
+    const precedingAction = actionHistory[actionHistory.length - 2]
+    if (precedingAction) {
+      const precedingDesc = formatActionTypeDescription(precedingAction.type)
+      explanation += ` Before that, you were ${precedingDesc} "${precedingAction.targetName}".`
+    }
+  }
+
+  return {
+    success: true,
+    action: 'inform',
+    message: explanation,
+  }
+}
+
+/**
+ * Resolve summarize_recent_activity intent — narrative timeline of recent session activity.
+ * Unlike resolveSessionStats (count-based: "opened X 3 times"), this provides a
+ * narrative timeline of recent actions.
+ *
+ * SAFETY: All code paths return action: 'inform'. No navigation, no execution.
+ */
+function resolveSummarizeRecentActivity(
+  context: ResolutionContext
+): IntentResolutionResult {
+  const ss = context.sessionState
+  const actionHistory = ss?.actionHistory
+
+  if (!actionHistory || actionHistory.length === 0) {
+    return {
+      success: true,
+      action: 'inform',
+      message: 'No activity recorded in this session yet.',
+    }
+  }
+
+  // Group actions by type for summary counts
+  const typeCounts: Record<string, number> = {}
+  for (const entry of actionHistory) {
+    typeCounts[entry.type] = (typeCounts[entry.type] || 0) + 1
+  }
+
+  // Build counts summary
+  const countParts: string[] = []
+  for (const [type, count] of Object.entries(typeCounts)) {
+    const desc = formatActionTypeDescription(type)
+    countParts.push(`${count} ${desc}`)
+  }
+  const countsSummary = countParts.join(', ')
+
+  // Build timeline of last ~5 actions
+  const recentActions = actionHistory.slice(-5)
+  const timelineParts: string[] = []
+  for (const entry of recentActions) {
+    const timeAgo = formatTimeAgo(new Date(entry.timestamp).toISOString())
+    const desc = formatActionTypeDescription(entry.type)
+    timelineParts.push(`${desc} "${entry.targetName}" ${timeAgo}`)
+  }
+
+  const totalActions = actionHistory.length
+  let message = `This session: ${totalActions} action${totalActions === 1 ? '' : 's'} (${countsSummary}).`
+
+  if (timelineParts.length > 0) {
+    message += `\n\nRecent activity:\n${timelineParts.map((t, i) => `${i + 1}. ${t}`).join('\n')}`
+  }
+
+  return {
+    success: true,
+    action: 'inform',
+    message,
   }
 }

@@ -684,9 +684,30 @@ export async function buildIntentMessages(
       context?.focusedPanelId
     )
   }
+  // Phase 10: Semantic Answer Lane — flag-gated intent descriptions
+  const isSemanticLaneEnabled = process.env.NEXT_PUBLIC_SEMANTIC_CONTINUITY_ANSWER_LANE_ENABLED === 'true'
+  const semanticLaneSection = isSemanticLaneEnabled ? `
+
+### Semantic Answer Intents (Phase 10)
+
+25. **explain_last_action** - User asks *why* or wants context about a recent action
+    Use when user wants to understand the reason or context behind what just happened, not just a factual report.
+    Examples: "why did you do that?", "explain what just happened", "what was that about?"
+    Args: none required (uses sessionState.lastAction + actionHistory)
+    DISTINCTION from last_action: last_action = factual report ("You opened X"), explain_last_action = contextual explanation ("You opened X because you asked to navigate to entry Y, which has dashboard workspace Z")
+    IMPORTANT: This intent has NO side effects - it only returns an informational message.
+
+26. **summarize_recent_activity** - User asks for a session summary or recap
+    Use when user wants a narrative timeline of what they've been doing.
+    Examples: "what have I been doing?", "summarize my session", "recap what we did"
+    Args: none required (uses sessionState.actionHistory)
+    DISTINCTION from session_stats: session_stats = count-based ("opened X 3 times"), summarize_recent_activity = narrative timeline ("First you opened the dashboard, then navigated to workspace 6, then renamed it...")
+    IMPORTANT: This intent has NO side effects - it only returns an informational message.
+` : ''
+
   const systemPrompt = panelIntentsSection
-    ? `${INTENT_SYSTEM_PROMPT}\n\n${panelIntentsSection}`
-    : INTENT_SYSTEM_PROMPT
+    ? `${INTENT_SYSTEM_PROMPT}${semanticLaneSection}\n\n${panelIntentsSection}`
+    : `${INTENT_SYSTEM_PROMPT}${semanticLaneSection}`
 
   const messages: Array<{ role: 'system' | 'user'; content: string }> = [
     { role: 'system', content: systemPrompt },
