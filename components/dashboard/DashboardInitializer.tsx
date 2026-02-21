@@ -320,15 +320,8 @@ export function DashboardInitializer({
               workspaceName: "Dashboard",
             })
 
-            // Track entry open for session stats (unified UI + chat tracking)
-            setLastAction({
-              type: 'open_entry',
-              entryId,
-              entryName,
-              timestamp: Date.now(),
-            })
-            incrementOpenCount(entryId, entryName, 'entry')
             // ActionTrace Phase B: Record open_entry at commit point
+            // MUST fire before setLastAction so the freshness guard ref is set and blocks the redundant legacy write.
             recordExecutedAction({
               actionType: 'open_entry',
               target: { kind: 'entry', id: entryId, name: entryName },
@@ -340,6 +333,15 @@ export function DashboardInitializer({
               isUserMeaningful: true,
               outcome: 'success',
             })
+            // Track entry open for session stats (unified UI + chat tracking)
+            // (freshness guard blocks this write since recordExecutedAction already mirrored to legacy)
+            setLastAction({
+              type: 'open_entry',
+              entryId,
+              entryName,
+              timestamp: Date.now(),
+            })
+            incrementOpenCount(entryId, entryName, 'entry')
           }
 
           // Track the visit

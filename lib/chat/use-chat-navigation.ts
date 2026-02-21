@@ -599,9 +599,12 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
         // Widget Architecture: Open panel in drawer
         case 'open_panel_drawer':
           if (resolution.panelId) {
-            // Phase 1b.1: Notify caller for lastAction tracking
-            onPanelDrawerOpen?.(resolution.panelId, resolution.panelTitle)
+            // Dispatch first so recordExecutedAction (via DashboardView handleOpenDrawer)
+            // sets the freshness guard ref BEFORE onPanelDrawerOpen's setLastAction fires.
+            // This ensures the guard blocks the redundant legacy write.
             const drawerResult = openPanelDrawer(resolution.panelId)
+            // Phase 1b.1: Notify caller for lastAction tracking (now guarded by freshness ref)
+            onPanelDrawerOpen?.(resolution.panelId, resolution.panelTitle)
             // Preserve resolution.message if it has a specific panel title
             // (e.g., "Opening Links Panel D...") instead of generic "Opening panel..."
             return {

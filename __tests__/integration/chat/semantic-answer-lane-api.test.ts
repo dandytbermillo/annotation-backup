@@ -15,6 +15,7 @@ import { resolveIntent } from '@/lib/chat/intent-resolver'
 import { parseIntentResponse } from '@/lib/chat/intent-schema'
 import type { IntentResponse } from '@/lib/chat/intent-schema'
 import type { ResolutionContext } from '@/lib/chat/resolution-types'
+import { detectLocalSemanticIntent } from '@/lib/chat/input-classifiers'
 
 // Replicate the API-level guard logic from route.ts for testing
 function applySemanticLaneGuards(
@@ -36,6 +37,62 @@ function applySemanticLaneGuards(
   if (isSemanticLaneEnabled && SEMANTIC_ANSWER_INTENTS.has(intent.intent)) {
     const ALLOWED_ACTIONS = new Set(['inform', 'answer_from_context', 'general_answer', 'error'])
 
+    if (!ALLOWED_ACTIONS.has(resolution.action)) {
+      resolution = {
+        ...resolution,
+        action: 'inform',
+        success: true,
+        message: resolution.message
+          || "I can answer questions about your activity, but I won't perform actions from here.",
+      }
+    }
+  }
+
+  return { intent, resolution }
+}
+
+/**
+ * Replicate the full route.ts pipeline for semantic fallback guard testing:
+ * LLM intent → resolveIntent → misclassification guard → semantic lane enforcement
+ *
+ * This matches the exact control flow in route.ts lines 572-606.
+ */
+async function applyFullRoutePipeline(
+  llmIntent: IntentResponse,
+  resolutionContext: ResolutionContext,
+  userMessage: string,
+  opts: {
+    isSemanticLaneEnabled: boolean
+    pendingOptions?: unknown[]
+    lastClarification?: unknown
+  },
+): Promise<{
+  intent: IntentResponse
+  resolution: Awaited<ReturnType<typeof resolveIntent>>
+}> {
+  const intent = { ...llmIntent }
+
+  // Step 1: resolveIntent (line 572)
+  let resolution = await resolveIntent(intent, resolutionContext)
+
+  // Step 2: Server fallback guard — misclassification remap (line 574-600)
+  if (
+    opts.isSemanticLaneEnabled &&
+    intent.intent === 'answer_from_context' &&
+    !opts.pendingOptions?.length &&
+    !opts.lastClarification
+  ) {
+    const correctedIntent = detectLocalSemanticIntent(userMessage)
+    if (correctedIntent && resolutionContext.sessionState?.lastAction) {
+      intent.intent = correctedIntent
+      resolution = await resolveIntent(intent, resolutionContext)
+    }
+  }
+
+  // Step 3: Semantic lane enforcement (line 602-610)
+  const SEMANTIC_ANSWER_INTENTS = new Set(['explain_last_action', 'summarize_recent_activity'])
+  if (opts.isSemanticLaneEnabled && SEMANTIC_ANSWER_INTENTS.has(intent.intent)) {
+    const ALLOWED_ACTIONS = new Set(['inform', 'answer_from_context', 'general_answer', 'error'])
     if (!ALLOWED_ACTIONS.has(resolution.action)) {
       resolution = {
         ...resolution,
@@ -236,5 +293,159 @@ describe('no-execution guarantee (flag on)', () => {
       expect(guarded.action).toBe('inform')
       expect(EXECUTION_ACTIONS.has(guarded.action)).toBe(false)
     }
+  })
+})
+
+// =============================================================================
+// Server Fallback Guard — Route-Level Integration Tests
+// =============================================================================
+
+describe('server fallback guard — full route pipeline', () => {
+  const pipelineContext: ResolutionContext = {
+    currentEntryId: 'entry-1',
+    currentEntryName: 'Test Entry',
+    entries: [{ id: 'entry-1', name: 'Test Entry' }],
+    workspaces: [{ id: 'ws-1', name: 'Sprint 6', entryId: 'entry-1' }],
+    currentWorkspaceId: 'ws-1',
+    currentWorkspaceName: 'Sprint 6',
+    panels: [],
+    sessionState: {
+      lastAction: {
+        type: 'open_panel',
+        panelTitle: 'Links Panel E',
+        timestamp: Date.now() - 5000,
+      },
+      // newest-first (see chat-navigation-context.tsx:1174)
+      actionHistory: [
+        { type: 'open_panel', targetType: 'panel', targetName: 'Links Panel E', targetId: 'panel-e', timestamp: Date.now() - 5000 },
+        { type: 'open_panel', targetType: 'panel', targetName: 'Links Panel D', targetId: 'panel-d', timestamp: Date.now() - 60000 },
+      ],
+    },
+  }
+
+  test('misclassified answer_from_context → guard remaps intent → deterministic answer with correct panel', async () => {
+    // LLM returns answer_from_context (wrong) for "what did I do before that?"
+    const llmIntent: IntentResponse = {
+      intent: 'answer_from_context',
+      args: { contextAnswer: 'You opened Links Panel D.' },
+    }
+
+    const { intent, resolution } = await applyFullRoutePipeline(
+      llmIntent,
+      pipelineContext,
+      'what did I do before that?',
+      { isSemanticLaneEnabled: true },
+    )
+
+    // Guard should remap to explain_last_action
+    expect(intent.intent).toBe('explain_last_action')
+    // Resolution should come from deterministic resolver, not LLM free-text
+    expect(resolution.success).toBe(true)
+    expect(resolution.action).toBe('inform')
+    expect(resolution.message).toContain('Links Panel E')
+    expect(resolution.message).toContain('Before that')
+    expect(resolution.message).toContain('Links Panel D')
+  })
+
+  test('normal answer_from_context (non-meta-query) → no override', async () => {
+    const llmIntent: IntentResponse = {
+      intent: 'answer_from_context',
+      args: { contextAnswer: 'The links panel shows your bookmarks and saved links.' },
+    }
+
+    const { intent, resolution } = await applyFullRoutePipeline(
+      llmIntent,
+      pipelineContext,
+      'tell me about the links panel',
+      { isSemanticLaneEnabled: true },
+    )
+
+    // No remap — LLM classification stands
+    expect(intent.intent).toBe('answer_from_context')
+    expect(resolution.action).toBe('answer_from_context')
+    expect(resolution.message).toContain('bookmarks')
+  })
+
+  test('answer_from_context + active pendingOptions → guard skipped (addendum safety)', async () => {
+    const llmIntent: IntentResponse = {
+      intent: 'answer_from_context',
+      args: { contextAnswer: 'You opened Links Panel D.' },
+    }
+
+    const { intent, resolution } = await applyFullRoutePipeline(
+      llmIntent,
+      pipelineContext,
+      'what did I do before that?',
+      {
+        isSemanticLaneEnabled: true,
+        pendingOptions: [{ label: 'Links Panel D' }, { label: 'Links Panel E' }],
+      },
+    )
+
+    // Guard skipped — active options present
+    expect(intent.intent).toBe('answer_from_context')
+    expect(resolution.action).toBe('answer_from_context')
+  })
+
+  test('answer_from_context + active lastClarification → guard skipped (addendum safety)', async () => {
+    const llmIntent: IntentResponse = {
+      intent: 'answer_from_context',
+      args: { contextAnswer: 'You opened Links Panel D.' },
+    }
+
+    const { intent, resolution } = await applyFullRoutePipeline(
+      llmIntent,
+      pipelineContext,
+      'what did I do before that?',
+      {
+        isSemanticLaneEnabled: true,
+        lastClarification: { question: 'Which panel?' },
+      },
+    )
+
+    // Guard skipped — active clarification present
+    expect(intent.intent).toBe('answer_from_context')
+    expect(resolution.action).toBe('answer_from_context')
+  })
+
+  test('answer_from_context + semantic lane disabled → guard skipped', async () => {
+    const llmIntent: IntentResponse = {
+      intent: 'answer_from_context',
+      args: { contextAnswer: 'You opened Links Panel D.' },
+    }
+
+    const { intent, resolution } = await applyFullRoutePipeline(
+      llmIntent,
+      pipelineContext,
+      'what did I do before that?',
+      { isSemanticLaneEnabled: false },
+    )
+
+    // Guard skipped — flag off
+    expect(intent.intent).toBe('answer_from_context')
+    expect(resolution.action).toBe('answer_from_context')
+  })
+
+  test('answer_from_context + no lastAction in session → guard skipped', async () => {
+    const noActionContext: ResolutionContext = {
+      ...pipelineContext,
+      sessionState: {}, // no lastAction
+    }
+
+    const llmIntent: IntentResponse = {
+      intent: 'answer_from_context',
+      args: { contextAnswer: 'You opened Links Panel D.' },
+    }
+
+    const { intent, resolution } = await applyFullRoutePipeline(
+      llmIntent,
+      noActionContext,
+      'what did I do before that?',
+      { isSemanticLaneEnabled: true },
+    )
+
+    // Guard skipped — no lastAction
+    expect(intent.intent).toBe('answer_from_context')
+    expect(resolution.action).toBe('answer_from_context')
   })
 })

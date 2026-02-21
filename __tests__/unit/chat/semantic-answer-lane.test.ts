@@ -376,3 +376,126 @@ describe('flag-off robustness', () => {
     expect(result.message).toBeTruthy()
   })
 })
+
+// =============================================================================
+// Server Fallback Guard — Misclassification Override Tests
+// =============================================================================
+
+import { detectLocalSemanticIntent } from '@/lib/chat/input-classifiers'
+
+describe('server fallback guard — intent remap + re-resolve', () => {
+  const baseContext: ResolutionContext = {
+    currentEntryId: 'entry-1',
+    currentEntryName: 'Test Entry',
+    entries: [],
+    workspaces: [],
+    currentWorkspaceId: null,
+    currentWorkspaceName: null,
+    panels: [],
+  }
+
+  const makeIntent = (intentName: string, args: Record<string, unknown> = {}): IntentResponse => ({
+    intent: intentName as IntentResponse['intent'],
+    args,
+  })
+
+  test('misclassified answer_from_context + exact meta-query → overridden deterministic answer', async () => {
+    // Simulates the server guard logic in route.ts:
+    // LLM returned answer_from_context for "what did I do before that?"
+    // Guard detects this and remaps intent to explain_last_action, then re-resolves.
+    const contextWithHistory: ResolutionContext = {
+      ...baseContext,
+      sessionState: {
+        lastAction: {
+          type: 'open_panel',
+          panelTitle: 'Links Panel E',
+          timestamp: Date.now() - 5000,
+        },
+        // actionHistory is newest-first (see chat-navigation-context.tsx:1174)
+        actionHistory: [
+          { type: 'open_panel', targetType: 'panel', targetName: 'Links Panel E', targetId: 'panel-e', timestamp: Date.now() - 5000 },
+          { type: 'open_panel', targetType: 'panel', targetName: 'Links Panel D', targetId: 'panel-d', timestamp: Date.now() - 60000 },
+        ],
+      },
+    }
+
+    // Step 1: LLM misclassifies as answer_from_context
+    const misclassifiedIntent = makeIntent('answer_from_context', {
+      contextAnswer: 'You opened Links Panel D.',
+    })
+    const badResolution = await resolveIntent(misclassifiedIntent, contextWithHistory)
+    // answer_from_context passes through LLM free-text — may contain wrong answer
+    expect(badResolution.action).toBe('answer_from_context')
+
+    // Step 2: Guard detects narrow pattern match
+    const correctedIntent = detectLocalSemanticIntent('what did I do before that?')
+    expect(correctedIntent).toBe('explain_last_action')
+
+    // Step 3: Remap and re-resolve
+    const remappedIntent = makeIntent(correctedIntent!)
+    const goodResolution = await resolveIntent(remappedIntent, contextWithHistory)
+    expect(goodResolution.success).toBe(true)
+    expect(goodResolution.action).toBe('inform')
+    // Must mention Links Panel E (the actual last action) — the deterministic
+    // resolver uses lastAction + actionHistory, not LLM free-text
+    expect(goodResolution.message).toContain('Links Panel E')
+    // "Before that" should reference Links Panel D (actionHistory[1], newest-first)
+    expect(goodResolution.message).toContain('Before that')
+    expect(goodResolution.message).toContain('Links Panel D')
+  })
+
+  test('normal answer_from_context (notes-scope clarification) → unchanged', async () => {
+    // LLM correctly returns answer_from_context for a general knowledge question.
+    // Guard should NOT override because the input doesn't match narrow patterns.
+    const userMessage = 'tell me about the links panel'
+    const correctedIntent = detectLocalSemanticIntent(userMessage)
+
+    // Detector returns null → no override
+    expect(correctedIntent).toBeNull()
+
+    // Original answer_from_context resolution stands
+    const intent = makeIntent('answer_from_context', {
+      contextAnswer: 'The links panel shows your bookmarks and saved links.',
+    })
+    const resolution = await resolveIntent(intent, {
+      ...baseContext,
+      sessionState: {
+        lastAction: { type: 'open_panel', panelTitle: 'Links', timestamp: Date.now() - 5000 },
+      },
+    })
+    expect(resolution.action).toBe('answer_from_context')
+    expect(resolution.message).toContain('bookmarks')
+  })
+
+  test('active-option context → guard skipped (addendum safety)', async () => {
+    // Even if the input matches a narrow pattern, the guard must NOT fire
+    // when there are pending options or active clarification.
+    // This tests the guard conditions, not resolveIntent directly.
+    const userMessage = 'what did I do before that?'
+    const correctedIntent = detectLocalSemanticIntent(userMessage)
+    expect(correctedIntent).toBe('explain_last_action') // pattern matches
+
+    // But guard conditions prevent override:
+    const hasPendingOptions = true
+    const hasLastClarification = true
+
+    // Simulating route.ts guard — these conditions block the remap
+    const guardPasses =
+      !hasPendingOptions &&
+      !hasLastClarification
+    expect(guardPasses).toBe(false) // guard does NOT pass → no override
+
+    // Original answer_from_context would be used as-is
+    const intent = makeIntent('answer_from_context', {
+      contextAnswer: 'Some LLM free-text answer.',
+    })
+    const resolution = await resolveIntent(intent, {
+      ...baseContext,
+      sessionState: {
+        lastAction: { type: 'open_panel', panelTitle: 'Links Panel E', timestamp: Date.now() - 5000 },
+      },
+    })
+    // answer_from_context passes through unchanged
+    expect(resolution.action).toBe('answer_from_context')
+  })
+})

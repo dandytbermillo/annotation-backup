@@ -15,6 +15,7 @@ import { getSuggestions, type SuggestionResult, type DynamicSuggestionContext } 
 import { panelRegistry } from '@/lib/panels/panel-registry'
 import { resolveNoteWorkspaceUserId } from '@/app/api/note-workspaces/user-id'
 import { extractLinkNotesBadge } from '@/lib/chat/ui-helpers'
+import { detectLocalSemanticIntent } from '@/lib/chat/input-classifiers'
 
 // =============================================================================
 // OpenAI Client
@@ -568,7 +569,35 @@ export async function POST(request: NextRequest) {
       pendingOptions: conversationContext?.pendingOptions,
     }
 
-    const resolution = await resolveIntent(intent, resolutionContext)
+    let resolution = await resolveIntent(intent, resolutionContext)
+
+    // 5a: Server fallback guard — catch LLM misclassification for semantic meta-queries.
+    // If LLM returned answer_from_context but the input is a narrow deterministic meta-query,
+    // remap intent and re-resolve through the existing structured resolver.
+    // Hard guard conditions — ALL must be true:
+    //   1. semantic lane enabled
+    //   2. LLM said answer_from_context (the known misclassification)
+    //   3. no pending options (addendum safety)
+    //   4. no active lastClarification context (addendum safety)
+    //   5. exact detector match (narrow patterns only)
+    //   6. session has lastAction (resolver needs data)
+    if (
+      isSemanticLaneEnabled &&
+      intent.intent === 'answer_from_context' &&
+      !context?.pendingOptions?.length &&
+      !context?.lastClarification
+    ) {
+      const correctedIntent = detectLocalSemanticIntent(userMessage)
+      if (correctedIntent && resolutionContext.sessionState?.lastAction) {
+        void debugLog({
+          component: 'ChatNavigateAPI',
+          action: 'semantic_fallback_remap',
+          metadata: { from: 'answer_from_context', to: correctedIntent, userMessage },
+        })
+        intent.intent = correctedIntent
+        resolution = await resolveIntent(intent, resolutionContext)
+      }
+    }
 
     // 5b: Semantic answer lane — server-side answer-only enforcement
     if (isSemanticLaneEnabled && SEMANTIC_ANSWER_INTENTS.has(intent.intent)) {

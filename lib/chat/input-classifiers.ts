@@ -572,3 +572,35 @@ export function isSemanticQuestionInput(
 
   return hasQuestionIntent(input) || SEMANTIC_LANE_PATTERN.test(input)
 }
+
+// =============================================================================
+// Narrow Semantic Meta-Query Detector (server-side misclassification guard)
+// =============================================================================
+
+/**
+ * Detect semantic meta-queries that have known deterministic resolvers.
+ * Returns the correct resolver intent or null (no override).
+ *
+ * STRICT: Only exact, high-confidence patterns with zero ambiguity.
+ * Used server-side to catch LLM misclassification — not a client bypass.
+ * Per addendum: unresolved/uncertain => LLM result stands.
+ */
+export function detectLocalSemanticIntent(
+  input: string
+): 'last_action' | 'explain_last_action' | null {
+  const n = input.toLowerCase().trim()
+
+  // Reject anything with active-option signals (ordinals, selections)
+  if (/^\d+$/.test(n)) return null
+  if (/\b(option|choice|first|second|third|top|bottom)\b/i.test(n)) return null
+
+  // Reject compound queries
+  if (/\b(and|also|then|plus)\b/i.test(n)) return null
+
+  // === HIGH-CONFIDENCE EXACT PATTERNS ONLY ===
+  if (/^what did i do before that\??$/i.test(n)) return 'explain_last_action'
+  if (/^what did i (just )?do\??$/i.test(n)) return 'last_action'
+  if (/^what was my last action\??$/i.test(n)) return 'last_action'
+
+  return null // everything else → LLM result stands
+}

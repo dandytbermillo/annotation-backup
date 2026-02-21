@@ -1119,13 +1119,8 @@ export function DashboardView({
         },
       })
     }
-    setLastAction({
-      type: 'open_panel',
-      panelTitle: panel.title ?? panel.panelType,
-      panelId: panel.id,
-      timestamp: Date.now(),
-    })
     // ActionTrace Phase B: Record open_panel at commit point (direct_ui only — double-click)
+    // MUST fire before setLastAction so the freshness guard ref is set and blocks the redundant legacy write.
     recordExecutedAction({
       actionType: 'open_panel',
       target: { kind: 'panel', id: panel.id, name: panel.title ?? panel.panelType },
@@ -1136,6 +1131,12 @@ export function DashboardView({
       scopeInstanceId: entryId,
       isUserMeaningful: true,
       outcome: 'success',
+    })
+    setLastAction({
+      type: 'open_panel',
+      panelTitle: panel.title ?? panel.panelType,
+      panelId: panel.id,
+      timestamp: Date.now(),
     })
     void debugLog({
       component: "DashboardView",

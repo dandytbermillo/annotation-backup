@@ -896,6 +896,7 @@ function resolveLastAction(
 ): IntentResolutionResult {
   const ss = context.sessionState
   const lastAction = ss?.lastAction
+  const actionHistory = ss?.actionHistory
 
   if (!lastAction) {
     return {
@@ -907,70 +908,51 @@ function resolveLastAction(
 
   const timeAgo = formatTimeAgo(new Date(lastAction.timestamp).toISOString())
 
+  // Build the primary explanation
+  let explanation = ''
   switch (lastAction.type) {
     case 'open_workspace':
-      return {
-        success: true,
-        action: 'inform',
-        message: `You opened workspace "${lastAction.workspaceName}" ${timeAgo}.`,
-      }
-
+      explanation = `You opened workspace "${lastAction.workspaceName}" ${timeAgo}.`
+      break
     case 'open_entry':
-      return {
-        success: true,
-        action: 'inform',
-        message: `You opened entry "${lastAction.entryName}" ${timeAgo}.`,
-      }
-
+      explanation = `You opened entry "${lastAction.entryName}" ${timeAgo}.`
+      break
     // Phase 1b: Format open_panel actions
     case 'open_panel':
-      return {
-        success: true,
-        action: 'inform',
-        message: `You opened "${lastAction.panelTitle || 'a panel'}" ${timeAgo}.`,
-      }
-
+      explanation = `You opened "${lastAction.panelTitle || 'a panel'}" ${timeAgo}.`
+      break
     case 'rename_workspace':
-      return {
-        success: true,
-        action: 'inform',
-        message: `You renamed workspace "${lastAction.fromName}" to "${lastAction.toName}" ${timeAgo}.`,
-      }
-
+      explanation = `You renamed workspace "${lastAction.fromName}" to "${lastAction.toName}" ${timeAgo}.`
+      break
     case 'delete_workspace':
-      return {
-        success: true,
-        action: 'inform',
-        message: `You deleted workspace "${lastAction.workspaceName}" ${timeAgo}.`,
-      }
-
+      explanation = `You deleted workspace "${lastAction.workspaceName}" ${timeAgo}.`
+      break
     case 'create_workspace':
-      return {
-        success: true,
-        action: 'inform',
-        message: `You created workspace "${lastAction.workspaceName}" ${timeAgo}.`,
-      }
-
+      explanation = `You created workspace "${lastAction.workspaceName}" ${timeAgo}.`
+      break
     case 'go_to_dashboard':
-      return {
-        success: true,
-        action: 'inform',
-        message: `You returned to the dashboard ${timeAgo}.`,
-      }
-
+      explanation = `You returned to the dashboard ${timeAgo}.`
+      break
     case 'go_home':
-      return {
-        success: true,
-        action: 'inform',
-        message: `You went home ${timeAgo}.`,
-      }
-
+      explanation = `You went home ${timeAgo}.`
+      break
     default:
-      return {
-        success: true,
-        action: 'inform',
-        message: `Your last action was ${timeAgo}.`,
-      }
+      explanation = `Your last action was ${timeAgo}.`
+  }
+
+  // Add context from preceding action in history (if available)
+  if (actionHistory && actionHistory.length >= 2) {
+    const precedingAction = actionHistory[1]
+    if (precedingAction) {
+      const precedingDesc = formatActionTypeDescription(precedingAction.type)
+      explanation += ` Before that, you were ${precedingDesc} "${precedingAction.targetName}".`
+    }
+  }
+
+  return {
+    success: true,
+    action: 'inform',
+    message: explanation,
   }
 }
 

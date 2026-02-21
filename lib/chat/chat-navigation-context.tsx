@@ -1021,16 +1021,19 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
   // Also appends to action history for "did I [action] X?" queries
   const setLastAction = useCallback((action: LastAction) => {
     // Freshness guard: skip if trace has already recorded the same or newer action.
+    // recordExecutedAction fires first (sets ref with its own Date.now()), then the
+    // legacy setLastAction caller fires with a SEPARATE Date.now() that is 1–50 ms
+    // later. A strict === comparison misses this; use a 200 ms identity window instead.
     const lastWrite = lastTraceWriteRef.current
     if (lastWrite) {
       if (action.timestamp < lastWrite.tsMs) {
         return  // strictly older — trace has a newer action
       }
-      if (action.timestamp === lastWrite.tsMs) {
-        // Same-ms: only skip if same action identity (type + target)
+      if (action.timestamp - lastWrite.tsMs < 200) {
+        // Within identity window — skip if same action type + target
         const actionTargetId = extractLastActionTargetId(action)
         if (action.type === lastWrite.actionType && actionTargetId === lastWrite.targetId) {
-          return  // same action, trace already mirrored it
+          return  // same action within window, trace already mirrored it
         }
       }
     }
@@ -1302,6 +1305,16 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     const legacyLastAction = traceToLegacyLastAction(entry)
     const legacyHistoryEntry = traceToLegacyHistoryEntry(entry)
 
+    // Set freshness guard ref BEFORE the batched state update.
+    // React 18 batches setSessionState updaters — they don't execute immediately.
+    // If we set the ref inside the updater, any setLastAction calls in the same
+    // synchronous call stack would see stale ref data and the guard would fail.
+    // By setting eagerly here, the guard blocks redundant setLastAction calls
+    // even before React processes the queued updater.
+    // Safe for deduped writes: deduped entries share the same identity as the
+    // accepted write, so advancing the ref to the same identity is a no-op.
+    lastTraceWriteRef.current = { tsMs, actionType: entry.actionType, targetId: entry.target.id }
+
     // Single setSessionState call with side-effect-in-updater persistence
     // (same pattern as existing setLastAction lines 1046-1059)
     setSessionState((prev) => {
@@ -1311,12 +1324,9 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
       if (prevTrace.length > 0) {
         const head = prevTrace[0]
         if (head.dedupeKey === dedupeKey && tsMs - head.tsMs < ACTION_TRACE_DEDUPE_WINDOW_MS) {
-          return prev  // duplicate, skip — freshness ref NOT advanced
+          return prev  // duplicate, skip
         }
       }
-
-      // Accepted write — update freshness guard identity
-      lastTraceWriteRef.current = { tsMs, actionType: entry.actionType, targetId: entry.target.id }
 
       const newTrace = [entry, ...prevTrace].slice(0, ACTION_TRACE_MAX_SIZE)
 
