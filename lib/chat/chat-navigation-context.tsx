@@ -273,12 +273,22 @@ export const FOCUS_LATCH_TTL = 5
 // =============================================================================
 
 import { MAX_ACTION_TRACE, MAX_ACCEPTED_WINDOW, MAX_REJECTED_WINDOW } from './continuity-constants'
+import {
+  type ActionTraceEntry as SessionActionTraceEntry,
+  computeDedupeKey,
+  generateTraceId,
+  ACTION_TRACE_MAX_SIZE,
+  ACTION_TRACE_DEDUPE_WINDOW_MS,
+} from './action-trace'
 
 /**
- * Canonical action trace entry — per Plan 19 recentActionTrace[] schema.
+ * Selection-lane action trace entry — per Plan 19 recentActionTrace[] schema.
  * See: orchestrator/grounding-continuity-anti-reclarify-plan.md §Step 1
+ *
+ * Renamed from ActionTraceEntry to SelectionActionTrace to avoid collision
+ * with the enriched session-level ActionTraceEntry in action-trace.ts.
  */
-export interface ActionTraceEntry {
+export interface SelectionActionTrace {
   type: string                                           // canonical: type
   targetRef: string                                      // canonical: targetRef
   sourceScope: 'chat' | 'widget' | 'dashboard' | 'workspace'  // canonical: sourceScope
@@ -286,6 +296,9 @@ export interface ActionTraceEntry {
   timestamp: number                                      // canonical: timestamp
   outcome: 'success' | 'failed' | 'clarified'           // canonical: outcome
 }
+
+/** @deprecated Use SelectionActionTrace — kept for short-term import compatibility */
+export type ActionTraceEntry = SelectionActionTrace
 
 /**
  * Canonical pending clarifier type — per Plan 19 pendingClarifierType enum.
@@ -300,8 +313,8 @@ export type PendingClarifierType =
   | 'repair'
 
 export interface SelectionContinuityState {
-  lastResolvedAction: ActionTraceEntry | null
-  recentActionTrace: ActionTraceEntry[]                  // max per Plan 19 RECENT_ACTION_TRACE_MAX_ENTRIES
+  lastResolvedAction: SelectionActionTrace | null
+  recentActionTrace: SelectionActionTrace[]              // max per Plan 19 RECENT_ACTION_TRACE_MAX_ENTRIES
   lastAcceptedChoiceId: string | null
   recentAcceptedChoiceIds: string[]                      // max 5
   recentRejectedChoiceIds: string[]                      // max 5
@@ -424,6 +437,8 @@ interface ChatNavigationContextValue {
   appendActionHistory: (entry: Omit<import('./intent-prompt').ActionHistoryEntry, 'timestamp'>) => void
   // Request history for "did I ask you to [action] X?" queries
   appendRequestHistory: (entry: Omit<import('./intent-prompt').RequestHistoryEntry, 'timestamp'>) => void
+  // Centralized execution recorder (Phase A — commit-point producers write here)
+  recordExecutedAction: (entry: Omit<SessionActionTraceEntry, 'traceId' | 'seq' | 'dedupeKey' | 'tsMs'> & { tsMs?: number }) => void
   // Persistence
   conversationId: string | null
   isLoadingHistory: boolean
@@ -494,7 +509,7 @@ interface ChatNavigationContextValue {
   // Selection continuity state (Plan 20 — per Plan 19 canonical contract)
   selectionContinuity: SelectionContinuityState
   updateSelectionContinuity: (updates: Partial<SelectionContinuityState>) => void
-  recordAcceptedChoice: (choiceId: string, action: ActionTraceEntry) => void
+  recordAcceptedChoice: (choiceId: string, action: SelectionActionTrace) => void
   recordRejectedChoice: (choiceId: string) => void
   resetSelectionContinuity: () => void
   // Dev-only provenance debug overlay (per provenance-debug-overlay plan)
@@ -623,6 +638,7 @@ async function fetchSessionState(
   lastAction?: LastAction
   lastQuickLinksBadge?: SessionState['lastQuickLinksBadge']
   actionHistory?: SessionState['actionHistory']
+  actionTrace?: SessionState['actionTrace']
   requestHistory?: SessionState['requestHistory']
 } | null> {
   try {
@@ -642,6 +658,7 @@ async function persistSessionState(
     lastAction?: LastAction
     lastQuickLinksBadge?: SessionState['lastQuickLinksBadge']
     actionHistory?: SessionState['actionHistory']
+    actionTrace?: SessionState['actionTrace']
     requestHistory?: SessionState['requestHistory']
   }
 ): Promise<boolean> {
@@ -730,6 +747,7 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     lastAction?: LastAction
     lastQuickLinksBadge?: SessionState['lastQuickLinksBadge']
     actionHistory?: SessionState['actionHistory']
+    actionTrace?: SessionState['actionTrace']
     requestHistory?: SessionState['requestHistory']
   } | null>(null)
 
@@ -750,6 +768,7 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
       lastAction?: LastAction
       lastQuickLinksBadge?: SessionState['lastQuickLinksBadge']
       actionHistory?: SessionState['actionHistory']
+      actionTrace?: SessionState['actionTrace']
       requestHistory?: SessionState['requestHistory']
     }
   ) => {
@@ -796,6 +815,7 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
             openCounts: ssData.openCounts ?? undefined,
             lastQuickLinksBadge: ssData.lastQuickLinksBadge ?? undefined,
             actionHistory: ssData.actionHistory ?? undefined,
+            actionTrace: ssData.actionTrace ?? undefined,
             requestHistory: ssData.requestHistory ?? undefined,
           }))
         }
@@ -979,10 +999,42 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     }))
   }, [])
 
+  /** Extract target ID from LastAction for freshness guard identity comparison. */
+  function extractLastActionTargetId(action: LastAction): string | undefined {
+    switch (action.type) {
+      case 'open_workspace':
+      case 'rename_workspace':
+      case 'delete_workspace':
+      case 'create_workspace':
+        return action.workspaceId
+      case 'open_entry':
+      case 'go_to_dashboard':
+      case 'go_home':
+        return action.entryId
+      case 'open_panel':
+        return action.panelId
+    }
+  }
+
   // Record last action (called after navigation/operation completes)
   // Uses debounced persistence for efficiency
   // Also appends to action history for "did I [action] X?" queries
   const setLastAction = useCallback((action: LastAction) => {
+    // Freshness guard: skip if trace has already recorded the same or newer action.
+    const lastWrite = lastTraceWriteRef.current
+    if (lastWrite) {
+      if (action.timestamp < lastWrite.tsMs) {
+        return  // strictly older — trace has a newer action
+      }
+      if (action.timestamp === lastWrite.tsMs) {
+        // Same-ms: only skip if same action identity (type + target)
+        const actionTargetId = extractLastActionTargetId(action)
+        if (action.type === lastWrite.actionType && actionTargetId === lastWrite.targetId) {
+          return  // same action, trace already mirrored it
+        }
+      }
+    }
+
     setSessionState((prev) => ({
       ...prev,
       lastAction: action,
@@ -1156,6 +1208,140 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
       }
     })
   }, [conversationId, debouncedPersistSessionState])
+
+  // ===========================================================================
+  // Centralized Action Trace — Phase A recorder
+  // ===========================================================================
+
+  // Provider-owned monotonic sequence (no module-global counter)
+  const actionTraceSeqRef = useRef(0)
+
+  // Freshness guard: tracks the latest accepted trace write identity.
+  // Legacy setLastAction skips if it matches (same or older timestamp + same action identity).
+  const lastTraceWriteRef = useRef<{ tsMs: number; actionType: string; targetId?: string } | null>(null)
+
+  /**
+   * Convert enriched session trace entry to legacy LastAction.
+   * Returns null for unmappable ActionType values (select_option, execute_widget_item, add_link, remove_link).
+   */
+  const traceToLegacyLastAction = useCallback((entry: SessionActionTraceEntry): LastAction | null => {
+    // LastAction.type only accepts these values
+    const LEGACY_ACTION_TYPES: ReadonlySet<string> = new Set([
+      'open_workspace', 'open_entry', 'open_panel',
+      'rename_workspace', 'delete_workspace', 'create_workspace',
+      'go_to_dashboard', 'go_home',
+    ])
+    if (!LEGACY_ACTION_TYPES.has(entry.actionType)) return null
+
+    const base: LastAction = {
+      type: entry.actionType as LastAction['type'],
+      timestamp: entry.tsMs,
+    }
+    switch (entry.target.kind) {
+      case 'workspace':
+        base.workspaceId = entry.target.id
+        base.workspaceName = entry.target.name
+        break
+      case 'entry':
+        base.entryId = entry.target.id
+        base.entryName = entry.target.name
+        break
+      case 'panel':
+        base.panelId = entry.target.id
+        base.panelTitle = entry.target.name
+        break
+    }
+    return base
+  }, [])
+
+  /**
+   * Convert enriched session trace entry to legacy ActionHistoryEntry.
+   * Returns null for unmappable ActionType values (select_option, execute_widget_item).
+   */
+  const traceToLegacyHistoryEntry = useCallback((entry: SessionActionTraceEntry): import('./intent-prompt').ActionHistoryEntry | null => {
+    // ActionHistoryEntry.type accepts a broader union than LastAction.type
+    const LEGACY_HISTORY_TYPES: ReadonlySet<string> = new Set([
+      'open_workspace', 'open_entry', 'open_panel',
+      'rename_workspace', 'delete_workspace', 'create_workspace',
+      'go_to_dashboard', 'go_home', 'add_link', 'remove_link',
+    ])
+    if (!LEGACY_HISTORY_TYPES.has(entry.actionType)) return null
+
+    // Map TargetRefKind to legacy targetType
+    const targetTypeMap: Record<string, 'workspace' | 'entry' | 'panel' | 'link'> = {
+      workspace: 'workspace',
+      entry: 'entry',
+      panel: 'panel',
+      widget_item: 'panel',  // closest legacy equivalent
+      none: 'entry',         // safe fallback
+    }
+    return {
+      type: entry.actionType as import('./intent-prompt').ActionHistoryEntry['type'],
+      targetType: targetTypeMap[entry.target.kind] || 'entry',
+      targetName: entry.target.name || '',
+      targetId: entry.target.id,
+      timestamp: entry.tsMs,
+    }
+  }, [])
+
+  /**
+   * Centralized execution recorder — Phase A.
+   * Called at commit points (Phase B) to record user-meaningful state changes.
+   * Mirrors to legacy lastAction/actionHistory for backward compatibility.
+   */
+  const recordExecutedAction = useCallback((
+    input: Omit<SessionActionTraceEntry, 'traceId' | 'seq' | 'dedupeKey' | 'tsMs'> & { tsMs?: number }
+  ) => {
+    const tsMs = input.tsMs ?? Date.now()
+    const seq = ++actionTraceSeqRef.current
+    const traceId = generateTraceId()
+    const dedupeKey = computeDedupeKey(input)
+    const entry: SessionActionTraceEntry = { ...input, traceId, tsMs, seq, dedupeKey }
+
+    // Compute legacy mirrors — may be null for unmappable types
+    const legacyLastAction = traceToLegacyLastAction(entry)
+    const legacyHistoryEntry = traceToLegacyHistoryEntry(entry)
+
+    // Single setSessionState call with side-effect-in-updater persistence
+    // (same pattern as existing setLastAction lines 1046-1059)
+    setSessionState((prev) => {
+      const prevTrace = prev.actionTrace || []
+
+      // Dedupe: skip if same dedupeKey within window
+      if (prevTrace.length > 0) {
+        const head = prevTrace[0]
+        if (head.dedupeKey === dedupeKey && tsMs - head.tsMs < ACTION_TRACE_DEDUPE_WINDOW_MS) {
+          return prev  // duplicate, skip — freshness ref NOT advanced
+        }
+      }
+
+      // Accepted write — update freshness guard identity
+      lastTraceWriteRef.current = { tsMs, actionType: entry.actionType, targetId: entry.target.id }
+
+      const newTrace = [entry, ...prevTrace].slice(0, ACTION_TRACE_MAX_SIZE)
+
+      // Conditionally mirror to legacy fields (only when mappable)
+      const newActionHistory = legacyHistoryEntry
+        ? [legacyHistoryEntry, ...(prev.actionHistory || [])].slice(0, ACTION_HISTORY_MAX_SIZE)
+        : prev.actionHistory
+
+      // Persist inside updater (same pattern as setLastAction line 1059)
+      if (conversationId) {
+        debouncedPersistSessionState(conversationId, {
+          actionTrace: newTrace,
+          ...(legacyLastAction ? { lastAction: legacyLastAction } : {}),
+          ...(newActionHistory !== prev.actionHistory ? { actionHistory: newActionHistory } : {}),
+        })
+      }
+
+      return {
+        ...prev,
+        actionTrace: newTrace,
+        ...(legacyLastAction ? { lastAction: legacyLastAction } : {}),
+        ...(newActionHistory !== prev.actionHistory ? { actionHistory: newActionHistory } : {}),
+      }
+    })
+  }, [conversationId, debouncedPersistSessionState, traceToLegacyLastAction, traceToLegacyHistoryEntry])
 
   // Panel visibility setters (Gap 2)
   const setVisiblePanels = useCallback((panelIds: string[]) => {
@@ -1406,7 +1592,7 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     setSelectionContinuity(prev => ({ ...prev, ...updates }))
   }, [isContinuityEnabled])
 
-  const recordAcceptedChoice = useCallback((choiceId: string, action: ActionTraceEntry) => {
+  const recordAcceptedChoice = useCallback((choiceId: string, action: SelectionActionTrace) => {
     if (!isContinuityEnabled) return
     setSelectionContinuity(prev => ({
       ...prev,
@@ -1459,6 +1645,7 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         setLastQuickLinksBadge,
         appendActionHistory,
         appendRequestHistory,
+        recordExecutedAction,
         conversationId,
         isLoadingHistory,
         hasMoreMessages,

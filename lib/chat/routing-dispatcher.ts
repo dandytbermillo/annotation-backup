@@ -234,7 +234,7 @@ export interface RoutingDispatcherContext {
   // --- Selection Continuity (Plan 20 — per Plan 19 canonical contract) ---
   selectionContinuity: import('@/lib/chat/chat-navigation-context').SelectionContinuityState
   updateSelectionContinuity: (updates: Partial<import('@/lib/chat/chat-navigation-context').SelectionContinuityState>) => void
-  recordAcceptedChoice: (choiceId: string, action: import('@/lib/chat/chat-navigation-context').ActionTraceEntry) => void
+  recordAcceptedChoice: (choiceId: string, action: import('@/lib/chat/chat-navigation-context').SelectionActionTrace) => void
   recordRejectedChoice: (choiceId: string) => void
   resetSelectionContinuity: () => void
 }

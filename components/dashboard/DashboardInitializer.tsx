@@ -93,7 +93,7 @@ export function DashboardInitializer({
   const pinnedEntriesState = usePinnedEntriesState()
 
   // Chat navigation context for tracking entry opens (UI + chat unified tracking)
-  const { setLastAction, incrementOpenCount } = useChatNavigationContext()
+  const { setLastAction, incrementOpenCount, recordExecutedAction } = useChatNavigationContext()
 
   // Layer 2: Sync pinned workspace IDs to RuntimeManager for eviction protection
   // When pinned entries change, update the runtime manager so it knows which
@@ -269,7 +269,7 @@ export function DashboardInitializer({
   }, [dashboardEnabled])
 
   // Handle navigation from dashboard to a workspace
-  const handleDashboardNavigate = useCallback(async (entryId: string, workspaceId: string) => {
+  const handleDashboardNavigate = useCallback(async (entryId: string, workspaceId: string, opts?: { source?: 'chat' | 'direct_ui' }) => {
     console.log("[DashboardInitializer] Navigating to workspace:", workspaceId, "entryId:", entryId)
 
     // Check if the target workspace is a Dashboard workspace
@@ -328,6 +328,18 @@ export function DashboardInitializer({
               timestamp: Date.now(),
             })
             incrementOpenCount(entryId, entryName, 'entry')
+            // ActionTrace Phase B: Record open_entry at commit point
+            recordExecutedAction({
+              actionType: 'open_entry',
+              target: { kind: 'entry', id: entryId, name: entryName },
+              source: opts?.source || 'direct_ui',
+              resolverPath: opts?.source === 'chat' ? 'executeAction' : 'directUI',
+              reasonCode: opts?.source === 'chat' ? 'unknown' : 'direct_ui',
+              scopeKind: 'dashboard',
+              scopeInstanceId: entryId,
+              isUserMeaningful: true,
+              outcome: 'success',
+            })
           }
 
           // Track the visit
@@ -430,7 +442,19 @@ export function DashboardInitializer({
     // Call optional callbacks
     onNavigateToWorkspace?.(entryId, workspaceId)
     onWorkspaceActivate?.(workspaceId)
-  }, [onNavigateToWorkspace, onWorkspaceActivate, setLastAction, incrementOpenCount])
+    // ActionTrace Phase B: Record open_workspace at commit point
+    recordExecutedAction({
+      actionType: 'open_workspace',
+      target: { kind: 'workspace', id: workspaceId, name: regularWorkspaceName },
+      source: opts?.source || 'direct_ui',
+      resolverPath: opts?.source === 'chat' ? 'executeAction' : 'directUI',
+      reasonCode: opts?.source === 'chat' ? 'unknown' : 'direct_ui',
+      scopeKind: 'workspace',
+      scopeInstanceId: workspaceId,
+      isUserMeaningful: true,
+      outcome: 'success',
+    })
+  }, [onNavigateToWorkspace, onWorkspaceActivate, setLastAction, incrementOpenCount, recordExecutedAction])
 
   // Show dashboard for current entry (go back to dashboard from workspace)
   const handleShowDashboard = useCallback(() => {
@@ -458,6 +482,7 @@ export function DashboardInitializer({
       entryId: string
       workspaceId?: string
       dashboardId?: string
+      source?: 'chat'
     }>) => {
       const { entryId, workspaceId, dashboardId } = event.detail
 
@@ -478,7 +503,9 @@ export function DashboardInitializer({
       const targetWorkspaceId = dashboardId || workspaceId
 
       if (targetWorkspaceId) {
-        handleDashboardNavigate(entryId, targetWorkspaceId)
+        handleDashboardNavigate(entryId, targetWorkspaceId, {
+          source: event.detail.source === 'chat' ? 'chat' : 'direct_ui'
+        })
       } else {
         // Neither dashboardId nor workspaceId - invalid link, log and no-op
         console.warn("[DashboardInitializer] chat-navigate-entry: no target workspace", { entryId })

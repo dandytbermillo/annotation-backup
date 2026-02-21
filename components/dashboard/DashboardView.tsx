@@ -109,7 +109,7 @@ export function DashboardView({
   const isDrawerOpen = drawerPanel !== null
 
   // Chat Navigation: Get functions to track view mode and workspace opens
-  const { setCurrentLocation, incrementOpenCount, setUiContext, setLastAction } = useChatNavigationContext()
+  const { setCurrentLocation, incrementOpenCount, setUiContext, setLastAction, recordExecutedAction } = useChatNavigationContext()
 
   // Debug: Track mount/unmount and initial state
   useEffect(() => {
@@ -643,7 +643,10 @@ export function DashboardView({
   // Phase 3: Also sets active workspace context so AnnotationAppShell loads the correct workspace
   // Phase 4: Calls onViewModeChange for navigation tracking and URL updates
   // Phase 5: Adds debouncing for rapid mode switching and loading state
-  const handleWorkspaceSelectById = useCallback((selectedWorkspaceId: string) => {
+  const handleWorkspaceSelectById = useCallback((
+    selectedWorkspaceId: string,
+    opts?: { source?: 'chat' | 'direct_ui'; isUserMeaningful?: boolean }
+  ) => {
     // Phase 5: Debounce rapid mode switching
     const now = Date.now()
     if (now - lastModeSwitchRef.current < MODE_SWITCH_DEBOUNCE_MS) {
@@ -700,8 +703,19 @@ export function DashboardView({
     // Chat Navigation: Track workspace open count for session stats
     if (ws) {
       incrementOpenCount(selectedWorkspaceId, ws.name, 'workspace')
+      recordExecutedAction({
+        actionType: 'open_workspace',
+        target: { kind: 'workspace', id: selectedWorkspaceId, name: ws.name },
+        source: opts?.source || 'direct_ui',
+        resolverPath: opts?.source === 'chat' ? 'executeAction' : 'directUI',
+        reasonCode: opts?.source === 'chat' ? 'unknown' : 'direct_ui',
+        scopeKind: 'workspace',
+        scopeInstanceId: selectedWorkspaceId,
+        isUserMeaningful: opts?.isUserMeaningful ?? true,
+        outcome: 'success',
+      })
     }
-  }, [entryId, workspaces, onViewModeChange, incrementOpenCount])
+  }, [entryId, workspaces, onViewModeChange, incrementOpenCount, recordExecutedAction])
 
   // Handle navigating to Home
   const handleGoHome = useCallback(() => {
@@ -738,13 +752,25 @@ export function DashboardView({
     const ws = workspaces.find(w => w.id === workspaceId)
     if (ws) {
       incrementOpenCount(workspaceId, ws.name, 'workspace')
+      // ActionTrace Phase B: Record open_workspace at commit point (direct_ui only — canvas dock)
+      recordExecutedAction({
+        actionType: 'open_workspace',
+        target: { kind: 'workspace', id: workspaceId, name: ws.name },
+        source: 'direct_ui',
+        resolverPath: 'directUI',
+        reasonCode: 'direct_ui',
+        scopeKind: 'workspace',
+        scopeInstanceId: workspaceId,
+        isUserMeaningful: true,
+        outcome: 'success',
+      })
     }
-  }, [activeWorkspaceId, entryId, onViewModeChange, workspaces, incrementOpenCount])
+  }, [activeWorkspaceId, entryId, onViewModeChange, workspaces, incrementOpenCount, recordExecutedAction])
 
   // Handle returning to dashboard mode (Phase 2)
   // Phase 4: Calls onViewModeChange for navigation tracking and URL updates
   // Phase 5: Adds debouncing for rapid mode switching and loading state
-  const handleReturnToDashboard = useCallback(() => {
+  const handleReturnToDashboard = useCallback((opts?: { source?: 'chat' | 'direct_ui' }) => {
     // Phase 5: Debounce rapid mode switching
     const now = Date.now()
     if (now - lastModeSwitchRef.current < MODE_SWITCH_DEBOUNCE_MS) {
@@ -793,7 +819,19 @@ export function DashboardView({
     setActiveWorkspaceContext(null)
     // Phase 4: Notify parent for navigation tracking and URL updates
     onViewModeChange?.('dashboard')
-  }, [activeWorkspaceId, entryId, onViewModeChange])
+    // ActionTrace Phase B: Record go_to_dashboard at commit point
+    recordExecutedAction({
+      actionType: 'go_to_dashboard',
+      target: { kind: 'entry', id: entryId, name: entryName },
+      source: opts?.source || 'direct_ui',
+      resolverPath: opts?.source === 'chat' ? 'executeAction' : 'directUI',
+      reasonCode: opts?.source === 'chat' ? 'unknown' : 'direct_ui',
+      scopeKind: 'workspace',
+      scopeInstanceId: activeWorkspaceId ?? undefined,
+      isUserMeaningful: true,
+      outcome: 'success',
+    })
+  }, [activeWorkspaceId, entryId, entryName, onViewModeChange, recordExecutedAction])
 
   // Refetch workspaces helper
   const refetchWorkspaces = useCallback(async () => {
@@ -1087,12 +1125,24 @@ export function DashboardView({
       panelId: panel.id,
       timestamp: Date.now(),
     })
+    // ActionTrace Phase B: Record open_panel at commit point (direct_ui only — double-click)
+    recordExecutedAction({
+      actionType: 'open_panel',
+      target: { kind: 'panel', id: panel.id, name: panel.title ?? panel.panelType },
+      source: 'direct_ui',
+      resolverPath: 'directUI',
+      reasonCode: 'direct_ui',
+      scopeKind: 'dashboard',
+      scopeInstanceId: entryId,
+      isUserMeaningful: true,
+      outcome: 'success',
+    })
     void debugLog({
       component: "DashboardView",
       action: "drawer_opened",
       metadata: { panelId: panel.id, panelType: panel.panelType },
     })
-  }, [activePanelId, entryId, entryName, isEntryActive, setLastAction, setUiContext, visibleWidgets])
+  }, [activePanelId, entryId, entryName, isEntryActive, setLastAction, setUiContext, visibleWidgets, recordExecutedAction])
 
   // Widget Architecture: Handle drawer close
   const handleDrawerClose = useCallback(() => {
@@ -1107,7 +1157,7 @@ export function DashboardView({
 
   // Widget Architecture: Listen for 'open-panel-drawer' events from chat
   useEffect(() => {
-    const handleOpenDrawer = (e: CustomEvent<{ panelId: string }>) => {
+    const handleOpenDrawer = (e: CustomEvent<{ panelId: string; source?: 'chat' }>) => {
       console.log('[DashboardView] handleOpenDrawer_called:', {
         requestedPanelId: e.detail.panelId,
         panelsCount: panels.length,
@@ -1132,6 +1182,19 @@ export function DashboardView({
         })
         setDrawerPanel(panel)
         setActiveWidgetId(panel.id)
+        // ActionTrace Phase B: Record open_panel at commit point
+        const eventSource = e.detail.source === 'chat' ? 'chat' as const : 'direct_ui' as const
+        recordExecutedAction({
+          actionType: 'open_panel',
+          target: { kind: 'panel', id: panel.id, name: panel.title ?? panel.panelType },
+          source: eventSource,
+          resolverPath: eventSource === 'chat' ? 'executeAction' : 'directUI',
+          reasonCode: eventSource === 'chat' ? 'unknown' : 'direct_ui',
+          scopeKind: 'dashboard',
+          scopeInstanceId: entryId,
+          isUserMeaningful: true,
+          outcome: 'success',
+        })
         console.log('[DashboardView] drawer_opened_from_chat:', { panelId: panel.id, panelType: panel.panelType })
         void debugLog({
           component: "DashboardView",
@@ -1150,7 +1213,7 @@ export function DashboardView({
 
     window.addEventListener('open-panel-drawer', handleOpenDrawer as EventListener)
     return () => window.removeEventListener('open-panel-drawer', handleOpenDrawer as EventListener)
-  }, [panels])
+  }, [panels, recordExecutedAction, entryId])
 
   // Handle panel config change
   const handleConfigChange = useCallback(
@@ -1523,8 +1586,8 @@ export function DashboardView({
         metadata: { workspaceId, viewMode, entryId },
       })
 
-      // Switch to workspace mode
-      handleWorkspaceSelectById(workspaceId)
+      // Switch to workspace mode (auto-sync — not user-meaningful to avoid polluting semantic answers)
+      handleWorkspaceSelectById(workspaceId, { isUserMeaningful: false })
     })
     return () => unsubscribe()
   }, [viewMode, workspaces, entryId, activeWorkspaceId, handleWorkspaceSelectById, refetchWorkspaces])
@@ -1579,10 +1642,10 @@ export function DashboardView({
 
       // Switch to workspace mode if not already there
       if (viewMode === 'dashboard') {
-        handleWorkspaceSelectById(targetWorkspaceId)
+        handleWorkspaceSelectById(targetWorkspaceId, { source: 'chat' })
       } else if (activeWorkspaceId !== targetWorkspaceId) {
         // Already in workspace mode but different workspace
-        handleWorkspaceSelectById(targetWorkspaceId)
+        handleWorkspaceSelectById(targetWorkspaceId, { source: 'chat' })
       }
     }
 
@@ -1604,7 +1667,7 @@ export function DashboardView({
 
       // Only handle if we're in workspace mode (otherwise already on dashboard)
       if (viewMode === 'workspace') {
-        handleReturnToDashboard()
+        handleReturnToDashboard({ source: 'chat' })
       }
     }
 
@@ -1641,7 +1704,7 @@ export function DashboardView({
       }
 
       // Switch to workspace (works even if already the active workspace)
-      handleWorkspaceSelectById(workspaceId)
+      handleWorkspaceSelectById(workspaceId, { source: 'chat' })
     }
 
     window.addEventListener('chat-navigate-workspace', handleChatNavigateWorkspace as EventListener)

@@ -82,7 +82,7 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
         // (setActiveWorkspaceContext early-returns on same value, so subscription won't fire)
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('chat-navigate-workspace', {
-            detail: { workspaceId: workspace.id, workspaceName: workspace.name },
+            detail: { workspaceId: workspace.id, workspaceName: workspace.name, source: 'chat' as const },
           }))
         }
 
@@ -229,7 +229,7 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
         // DashboardView listens for this and calls handleReturnToDashboard
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('chat-navigate-dashboard', {
-            detail: { entryId },
+            detail: { entryId, source: 'chat' as const },
           }))
         }
 
@@ -279,6 +279,7 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
             detail: {
               entryId: homeEntryId,
               dashboardId: dashboardWorkspaceId,
+              source: 'chat' as const,
             },
           }))
         }
@@ -408,7 +409,7 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
       try {
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('open-panel-drawer', {
-            detail: { panelId },
+            detail: { panelId, source: 'chat' as const },
           }))
         }
 
@@ -525,6 +526,7 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
                 detail: {
                   entryId: resolution.entry.id,
                   dashboardId: resolution.entry.dashboardWorkspaceId,
+                  source: 'chat' as const,
                 },
               }))
             }
@@ -703,6 +705,7 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
               detail: {
                 entryId: entryData.id,
                 dashboardId: entryData.dashboardWorkspaceId,
+                source: 'chat' as const,
               },
             }))
           }
@@ -754,6 +757,7 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
             window.dispatchEvent(new CustomEvent('open-panel-drawer', {
               detail: {
                 panelId: drawerData.panelId,
+                source: 'chat' as const,
               },
             }))
           }
@@ -811,6 +815,25 @@ declare global {
       noteId: string
       workspaceId?: string
       entryId?: string
+    }>
+    'chat-navigate-workspace': CustomEvent<{
+      workspaceId: string
+      workspaceName?: string
+      source?: 'chat'
+    }>
+    'chat-navigate-dashboard': CustomEvent<{
+      entryId?: string
+      source?: 'chat'
+    }>
+    'chat-navigate-entry': CustomEvent<{
+      entryId: string
+      workspaceId?: string
+      dashboardId?: string
+      source?: 'chat'
+    }>
+    'open-panel-drawer': CustomEvent<{
+      panelId: string
+      source?: 'chat'
     }>
   }
 }

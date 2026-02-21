@@ -547,6 +547,8 @@ export interface SessionState {
   openCounts?: Record<string, { type: 'workspace' | 'entry'; count: number; name: string }>
   // Action history for "did I [action] X?" queries (bounded, last 50)
   actionHistory?: ActionHistoryEntry[]
+  // Centralized action trace for session-level execution recording (Phase A — newest-first, bounded to 50)
+  actionTrace?: import('./action-trace').ActionTraceEntry[]
   // Request history for "did I ask you to [action] X?" queries (bounded, last 50)
   requestHistory?: RequestHistoryEntry[]
 }

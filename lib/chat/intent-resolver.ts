@@ -3063,7 +3063,7 @@ function resolveExplainLastAction(
 
   // Add context from preceding action in history (if available)
   if (actionHistory && actionHistory.length >= 2) {
-    const precedingAction = actionHistory[actionHistory.length - 2]
+    const precedingAction = actionHistory[1]
     if (precedingAction) {
       const precedingDesc = formatActionTypeDescription(precedingAction.type)
       explanation += ` Before that, you were ${precedingDesc} "${precedingAction.targetName}".`

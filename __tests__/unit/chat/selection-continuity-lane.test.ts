@@ -78,7 +78,7 @@ global.fetch = jest.fn().mockResolvedValue({
 }) as jest.Mock
 
 import { handleClarificationIntercept, resetLLMArbitrationGuard, type ClarificationInterceptContext, type PendingOptionState } from '@/lib/chat/chat-routing'
-import type { ClarificationOption, LastClarificationState, SelectionContinuityState, ActionTraceEntry } from '@/lib/chat/chat-navigation-context'
+import type { ClarificationOption, LastClarificationState, SelectionContinuityState, SelectionActionTrace } from '@/lib/chat/chat-navigation-context'
 import { EMPTY_CONTINUITY_STATE } from '@/lib/chat/chat-navigation-context'
 
 // ============================================================================
@@ -125,7 +125,7 @@ function makeContinuityState(overrides?: Partial<SelectionContinuityState>): Sel
   }
 }
 
-function makeActionTrace(label: string, optionSetId: string | null): ActionTraceEntry {
+function makeActionTrace(label: string, optionSetId: string | null): SelectionActionTrace {
   return {
     type: 'select_option',
     targetRef: label,
