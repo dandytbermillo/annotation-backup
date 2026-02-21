@@ -4,6 +4,13 @@
 
 Stop stale semantic responses (`"explain what just happened"`, `"why did I do that?"`) by moving action recording from scattered chat request paths to execution commit points.
 
+## Related Plan Addendum and Reports
+
+- Main plan addendum (Phase B/C updates): `docs/proposal/chat-navigation/plan/panels/chat/meta/orchestrator/report/2026-02-21-main-plan-addendum-phase-bc.md`
+- Phase A implementation report: `docs/proposal/chat-navigation/plan/panels/chat/meta/orchestrator/report/2026-02-20-phase-a-actiontrace-foundation-implementation-report.md`
+- Phase B commit wiring report: `docs/proposal/chat-navigation/plan/panels/chat/meta/orchestrator/report/2026-02-20-phase-b-actiontrace-commit-wiring-report.md`
+- Phase B semantic fallback guard report: `docs/proposal/chat-navigation/plan/panels/chat/meta/orchestrator/report/2026-02-21-phase-b-semantic-fallback-guard-report.md`
+
 ## Problem
 
 - `setLastAction` is currently written in many chat-layer branches, which is brittle and easy to miss when new routing paths are added.
