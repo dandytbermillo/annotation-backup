@@ -547,15 +547,6 @@ function ChatNavigationPanelContent({
       onNavigationComplete?.()
       setOpen(false)
     },
-    // Phase 1b.1: Track panel opens from executeAction (e.g., disambiguation selection)
-    onPanelDrawerOpen: (panelId, panelTitle) => {
-      setLastAction({
-        type: 'open_panel',
-        panelId,
-        panelTitle: panelTitle || panelId,
-        timestamp: Date.now(),
-      })
-    },
   })
 
   // Wrapper for openPanel that also tracks the action
@@ -569,16 +560,11 @@ function ChatNavigationPanelContent({
     })
   }, [openPanel, setLastAction])
 
-  // Wrapper for openPanelDrawer that also tracks the action
-  const openPanelDrawer = useCallback((panelId: string, panelTitle?: string) => {
-    openPanelDrawerBase(panelId)
-    setLastAction({
-      type: 'open_panel',
-      panelTitle: panelTitle || panelId,
-      panelId: panelId,
-      timestamp: Date.now(),
-    })
-  }, [openPanelDrawerBase, setLastAction])
+  // Wrapper for openPanelDrawer — Phase C: setLastAction removed (commit-point parity via
+  // DashboardView handleOpenDrawer → recordExecutedAction, sync path)
+  const openPanelDrawer = useCallback((panelId: string, panelTitle?: string, executionMeta?: import('@/lib/chat/action-trace').ExecutionMeta) => {
+    openPanelDrawerBase(panelId, executionMeta)
+  }, [openPanelDrawerBase])
 
   // Auto-focus input when panel opens
   // Note: Scroll position is naturally preserved because we use CSS hiding instead of unmounting
@@ -1133,12 +1119,8 @@ function ChatNavigationPanelContent({
           switch (result.action) {
             case 'navigated':
               if (option.type === 'workspace') {
-                setLastAction({
-                  type: 'open_workspace',
-                  workspaceId: workspaceData.id,
-                  workspaceName: workspaceData.name,
-                  timestamp: now,
-                })
+                // Phase C: setLastAction removed (commit-point parity via
+                // DashboardView handleWorkspaceSelectById → recordExecutedAction, sync path)
                 showWorkspaceOpenedToast(workspaceData.name, workspaceData.entryName)
                 // Note: incrementOpenCount is NOT called here - DashboardView.handleWorkspaceSelectById
                 // is the single source of truth for open counts (avoids double-counting)
@@ -1185,26 +1167,16 @@ function ChatNavigationPanelContent({
               } else if (option.type === 'entry') {
                 const entryData = option.data as { id?: string; name?: string }
                 if (entryData.id && entryData.name) {
-                  setLastAction({
-                    type: 'open_entry',
-                    entryId: entryData.id,
-                    entryName: entryData.name,
-                    timestamp: now,
-                  })
+                  // Phase C: setLastAction removed (commit-point parity via
+                  // DashboardInitializer handleDashboardNavigate → recordExecutedAction, async path)
                   showEntryOpenedToast(entryData.name)
                   // Note: incrementOpenCount for entries is called here since chat is the navigation source
                   // (unlike workspaces which are tracked in DashboardView)
                   incrementOpenCount(entryData.id, entryData.name, 'entry')
                 }
-              } else if (option.type === 'panel_drawer') {
-                const panelData = option.data as { panelId: string; panelTitle: string; panelType: string }
-                setLastAction({
-                  type: 'open_panel',
-                  panelId: panelData.panelId,
-                  panelTitle: panelData.panelTitle,
-                  timestamp: now,
-                })
               }
+              // Phase C: panel_drawer setLastAction removed (commit-point parity via
+              // DashboardView handleOpenDrawer → recordExecutedAction, sync path)
               break
             case 'deleted':
               if (option.type === 'confirm_delete') {
@@ -1613,7 +1585,7 @@ function ChatNavigationPanelContent({
 
           // Execute action based on resolution
           if (resolution.action === 'open_panel_drawer' && resolution.panelId) {
-            openPanelDrawer(resolution.panelId, resolution.panelTitle)
+            openPanelDrawer(resolution.panelId, resolution.panelTitle, resolution.executionMeta)
           }
 
           // Handle actions that return selectable options
@@ -2506,12 +2478,8 @@ function ChatNavigationPanelContent({
         switch (result.action) {
           case 'navigated':
             if (resolution.action === 'navigate_workspace' && resolution.workspace) {
-              setLastAction({
-                type: 'open_workspace',
-                workspaceId: resolution.workspace.id,
-                workspaceName: resolution.workspace.name,
-                timestamp: now,
-              })
+              // Phase C: setLastAction removed (commit-point parity via
+              // DashboardView handleWorkspaceSelectById → recordExecutedAction, sync path)
               showWorkspaceOpenedToast(resolution.workspace.name, resolution.workspace.entryName)
               // Note: incrementOpenCount is NOT called here - DashboardView.handleWorkspaceSelectById
               // is the single source of truth for open counts (avoids double-counting)
@@ -2539,24 +2507,13 @@ function ChatNavigationPanelContent({
                 })
                 .catch(err => console.warn('[ChatNavigation] Failed to track Home entry:', err))
             } else if (resolution.action === 'navigate_entry' && resolution.entry) {
-              setLastAction({
-                type: 'open_entry',
-                entryId: resolution.entry.id,
-                entryName: resolution.entry.name,
-                timestamp: now,
-              })
+              // Phase C: setLastAction removed (commit-point parity via
+              // DashboardInitializer handleDashboardNavigate → recordExecutedAction, async path)
               showEntryOpenedToast(resolution.entry.name)
               incrementOpenCount(resolution.entry.id, resolution.entry.name, 'entry')
-            } else if (resolution.action === 'open_panel_drawer' && resolution.panelId) {
-              // Track panel drawer opens for "did I open X?" queries
-              // Use semanticPanelId for robust ID-based matching (e.g., "quick-links-d")
-              setLastAction({
-                type: 'open_panel',
-                panelId: resolution.semanticPanelId || resolution.panelId,
-                panelTitle: resolution.panelTitle || resolution.panelId,
-                timestamp: now,
-              })
             }
+            // Phase C: open_panel_drawer setLastAction removed (commit-point parity via
+            // DashboardView handleOpenDrawer → recordExecutedAction, sync path)
             break
           case 'created':
             if (resolution.newWorkspace) {

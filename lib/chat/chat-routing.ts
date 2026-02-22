@@ -80,7 +80,7 @@ import {
   isLLMAutoExecuteEnabledClient,
   type NeededContextType,
 } from '@/lib/chat/clarification-llm-fallback'
-import { isExplicitCommand, isSelectionOnly, resolveScopeCue, canonicalizeCommandInput, classifyArbitrationConfidence } from '@/lib/chat/input-classifiers'
+import { isExplicitCommand, isSelectionOnly, resolveScopeCue, canonicalizeCommandInput, classifyArbitrationConfidence, classifyExecutionMeta } from '@/lib/chat/input-classifiers'
 import { isSelectionLike } from '@/lib/chat/grounding-set'
 import type { LastOptionsShown } from '@/lib/chat/chat-navigation-context'
 
@@ -6015,7 +6015,7 @@ export interface PanelDisambiguationHandlerContext {
   // Clear focus latch when opening a new panel (prevents stale latch scoping to wrong widget)
   clearFocusLatch?: () => void
   // Single-match direct open (Step 1b — deterministic panel open when 1 match found)
-  openPanelDrawer?: (panelId: string, panelTitle?: string) => void
+  openPanelDrawer?: (panelId: string, panelTitle?: string, executionMeta?: import('@/lib/chat/action-trace').ExecutionMeta) => void
 }
 
 export interface PanelDisambiguationHandlerResult extends HandlerResult {
@@ -6147,6 +6147,19 @@ export function handlePanelDisambiguation(
   if (isSingleMatch && openPanelDrawer) {
     const singleMatch = matchResult.matches[0]
 
+    // Classify from actual match evidence (shared classifier — single decision point)
+    const meta = classifyExecutionMeta({
+      matchKind: matchResult.type as 'exact' | 'partial',
+      candidateCount: 1,
+      resolverPath: 'panelDisambiguation',
+    })
+
+    // Unresolved gate: non-exact → fall through to LLM tier (Rule B, Rule C)
+    // Context preserved: no state cleared before this return
+    if (meta.reasonCode === 'unknown') {
+      return { handled: false, matchType: matchResult.type, matchCount: 1 }
+    }
+
     void debugLog({
       component: 'ChatNavigation',
       action: 'panel_disambiguation_single_match_open',
@@ -6166,8 +6179,8 @@ export function handlePanelDisambiguation(
     // (prevents grounding tier from scoping to wrong widget's candidates)
     clearFocusLatch?.()
 
-    // Direct open
-    openPanelDrawer(singleMatch.id, singleMatch.title)
+    // Direct open with executionMeta
+    openPanelDrawer(singleMatch.id, singleMatch.title, meta)
 
     const assistantMessage: ChatMessage = {
       id: `assistant-${Date.now()}`,

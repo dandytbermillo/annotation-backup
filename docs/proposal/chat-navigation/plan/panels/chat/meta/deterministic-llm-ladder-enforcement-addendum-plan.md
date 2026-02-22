@@ -10,7 +10,7 @@ The intended arbitration contract is:
 
 Current behavior is only partially aligned. In specific flows (notably typo/polite collisions like `can you ope panel d` with active options), pre-gates can bypass active-option arbitration before LLM eligibility is evaluated, leading to unrelated downstream clarifiers.
 
-This addendum enforces the ladder consistently for active clarification contexts without changing broader routing architecture.
+This addendum enforces the ladder consistently as a global routing contract.
 
 ## Authority Boundary (Parent Plan vs Addendum)
 
@@ -18,45 +18,49 @@ Parent authority:
 - `deterministic-llm-arbitration-fallback-plan.md` defines the global policy (deterministic first, LLM only for unresolved ambiguity, safe fallback only).
 
 Addendum authority:
-- This document defines **where and how** that policy is enforced in active-clarification flows.
+- This document defines **where and how** that policy is enforced across routing, dispatch, commit recording, and semantic explanation.
 - If this addendum conflicts with the parent policy, parent policy wins.
-- If code behavior conflicts with this addendum in active-clarification tiers, this addendum wins over local ad-hoc behavior.
+- If code behavior conflicts with this addendum, this addendum wins over local ad-hoc behavior.
 
 ## Scope
 
 In scope (this addendum):
-- Active clarification option flows in `lib/chat/chat-routing.ts` (Tier 1b.3 family).
+- Global routing decisions for selection and non-selection inputs.
 - Shared normalization/classification enforcement in `lib/chat/input-classifiers.ts`.
-- Regression tests for typo-command + active-option collision paths.
+- Dispatch-to-commit provenance threading (`executionMeta` / `reasonCode`) for all chat-driven execution paths.
+- Semantic explanation behavior for `last_action` / `explain_last_action` (read-only over persisted state).
+- Regression tests proving unresolved inputs always ladder to bounded LLM before safe clarifier.
 
 Out of scope (follow-up):
 - Full cross-source tie arbitration across all tiers.
 - Reworking grounding-set source prioritization semantics.
-- Enabling LLM auto-execute. Clarify-only remains default.
+- Enabling LLM auto-execute outside explicit gated phases.
 
 ## Required Behavioral Rules
 
 ### Rule A — Single ladder, single decision point
-When active options exist, branch decisions must be based on shared confidence/arbitration signals, not local ad-hoc gates.
+All unresolved classification must follow one ladder:
+`Deterministic high-confidence -> bounded LLM (if unresolved) -> safe clarifier`.
+No parallel ladders or duplicated unresolved hooks.
 
-### Rule B — No early escape on unresolved active-option ambiguity
-If input is command-like but deterministic active-option matching is weak/ambiguous, it must remain ladder-eligible (LLM or safe clarifier), not escape directly to downstream tiers.
+### Rule B — Strict deterministic gate
+Deterministic execution is allowed only for strict high-confidence winners.
+For non-selection inputs, deterministic matching must use anchored exact patterns (`^...$`) with no prefix/suffix filler stripping.
 
-### Rule C — LLM is bounded and clarify-only in this phase
-LLM can reorder/suggest within bounded candidates but must not auto-execute in this addendum scope.
-See supersession note before Phase C: gated auto-execute is only allowed when Phase C is enabled and all gates pass.
+### Rule C — Unresolved means bounded LLM
+If deterministic confidence is not high (including paraphrase/same-meaning non-exact phrasing), the flow must call bounded LLM before any escape to unsupported or downstream fallback.
 
 ### Rule D — Safe fallback is mandatory
-On timeout/rate_limited/transport_error/abstain/low_confidence, return deterministic clarifier in the same context. Never best-guess execute.
+On timeout/rate_limited/transport_error/abstain/low_confidence, return safe clarifier in the same context. Never best-guess execute.
 
 ### Rule E — One unresolved hook after deterministic
-Do not scatter LLM entry points across pre-gates and local branches. In active-option flows, LLM arbitration must be invoked from one unresolved hook that runs **after deterministic matching has failed** (`0-match` or `multi-match with no exact winner`).
+Do not scatter LLM entry points across pre-gates, tiers, commit handlers, or explain-time logic. Unresolved arbitration must be invoked from one shared post-deterministic hook.
 
 ### Rule F — Loop-guard continuity
 Loop-guard may suppress repeated LLM calls within one unresolved cycle, but UI behavior must remain stable. If loop-guard blocks a re-call, reuse the last suggestion ordering for the same option-set cycle so repeated turns do not appear random.
 
-### Rule G — Uncertain means LLM (active-option scope)
-In active-option flows, if deterministic confidence is not high (not a unique deterministic winner), LLM arbitration is mandatory before any action/escape decision except explicit hard exclusions (question-intent, no active-option context, or feature flag off).
+### Rule G — Commit-time provenance, explain-time read-only
+Reason classification must be finalized before commit recording and persisted in trace state. Explain resolvers must read persisted reason data only (no retroactive LLM recovery).
 
 ### Rule H — Scope cue precedence over widget bypass
 Explicit scope cues (`from chat`, `in chat`) must be evaluated before widget-selection bypass logic. A widget-context early return must not suppress a valid chat re-anchor.
@@ -64,21 +68,26 @@ Explicit scope cues (`from chat`, `in chat`) must be evaluated before widget-sel
 ### Rule I — Scope-bound candidate pools
 When explicit scope is resolved, the bounded LLM candidate pool must come from that scope only. `from chat` arbitration must not be fed widget-entry-only candidates when chat-origin options are available.
 
+### Rule J — Deterministic-first for selection flows
+Selection/ordinal disambiguation flows may execute deterministically when unambiguous, but must still use shared classification utilities and must not introduce local tier heuristics.
+
 ## Non-Deviation Contract (Mandatory)
 
 This section is binding for implementation and review. Any violation is a merge blocker.
 
 ### MUST
-- Use one ladder only in active-option flows: deterministic high-confidence -> LLM arbitration (bounded) -> safe clarifier fallback.
+- Use one ladder globally: deterministic high-confidence -> bounded LLM (if unresolved) -> safe clarifier fallback.
 - Keep LLM candidate pool bounded to the current active option set for that cycle.
 - Keep fallback behavior non-destructive: no execution on LLM timeout/rate_limited/transport_error/abstain/low_confidence.
 - Use shared canonicalization/classification utilities only (`canonicalizeCommandInput`, `classifyArbitrationConfidence`).
 - Enforce loop-guard semantics exactly as specified in this document.
 - Keep unresolved arbitration entry centralized in one post-deterministic hook (Rule E).
 - Preserve suggestion continuity when loop-guard skips a re-call (Rule F).
-- Treat unresolved active-option states as LLM-mandatory (Rule G).
+- Treat unresolved states as LLM-mandatory before safe clarifier (Rule C).
 - Enforce explicit scope-cue precedence before widget bypass checks (Rule H).
 - Keep LLM candidate pools scope-bound; no cross-scope mixing in scoped arbitration (Rule I).
+- Enforce strict deterministic matching for non-selection commands using anchored exact patterns only (Rule B).
+- Persist final reason classification at commit-time; keep explain resolvers read-only over persisted trace (Rule G).
 
 ### MUST NOT
 - Must not add local per-tier heuristics that bypass the shared classifier contract.
@@ -89,14 +98,21 @@ This section is binding for implementation and review. Any violation is a merge 
 - Must not force deterministic execution or downstream escape while active-option ambiguity is unresolved.
 - Must not bypass explicit `from chat`/`in chat` via widget-context early return.
 - Must not pass widget-entry-only candidates into a chat-scoped arbitration call.
+- Must not use filler/polite stripping to make non-selection deterministic matches appear high-confidence.
+- Must not run retroactive LLM reason classification inside explain resolvers.
 
 ### Review Gate (Required for merge)
 - If code behavior differs from this contract, this addendum takes precedence over local implementation choices.
 - PR must include tier assertions (`handledByTier`) for command escape and active-option handling.
+- PR must include global unresolved-path tests proving non-selection non-exact phrasing goes deterministic -> bounded LLM -> safe clarifier.
 - PR must include negative-path tests (timeout/rate_limited/transport_error/abstain/low_confidence) proving safe clarifier fallback.
-- PR must include an unresolved command-like test proving LLM is attempted before escape in active-option context.
+- PR must include a commit/explain contract test proving reason classification is finalized before commit and explain remains read-only.
 
 ## Implementation Plan
+
+Global precedence note:
+- The global rules above are authoritative for all routing/dispatch/commit/explain paths.
+- Tier-specific steps below are implementation details and must not weaken the global ladder contract.
 
 ### Tier Insertion Map (Exact Placement)
 

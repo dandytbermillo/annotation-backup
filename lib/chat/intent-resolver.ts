@@ -28,6 +28,8 @@ import { serverPool } from '@/lib/db/pool'
 import { buildQuickLinksViewItems } from './parse-quick-links'
 import { executePanelIntent, panelRegistry } from '@/lib/panels/panel-registry'
 import { debugLog } from '@/lib/utils/debug-logger'
+import type { ActionTraceEntry, ReasonCode, SourceKind, ExecutionMeta } from './action-trace'
+import { classifyExecutionMeta } from '@/lib/chat/input-classifiers'
 
 // =============================================================================
 // Centralized Panel Matching Helper
@@ -205,6 +207,9 @@ export interface IntentResolutionResult {
   // Used to match user queries like "did I open quick links D?"
   semanticPanelId?: string
 
+  // Execution provenance metadata — threaded through API → events → commit points
+  executionMeta?: ExecutionMeta
+
   // For need_context: what context the LLM needs
   contextRequest?: string
 
@@ -351,6 +356,7 @@ async function resolveOpenWorkspace(
         action: 'navigate_workspace',
         workspace: result.workspace,
         message: `Opening workspace "${result.workspace!.name}"`,
+        executionMeta: classifyExecutionMeta({ matchKind: 'exact', candidateCount: 1, resolverPath: 'executeAction' }),
       }
 
     case 'multiple':
@@ -395,6 +401,7 @@ async function resolveOpenWorkspace(
           panelTitle: panelMatch.title,
           semanticPanelId: workspaceName.toLowerCase(),
           message: `Opening ${panelMatch.title}...`,
+          executionMeta: classifyExecutionMeta({ matchKind: 'exact', candidateCount: 1, resolverPath: 'executeAction' }),
         }
       }
 
@@ -417,6 +424,7 @@ async function resolveOpenRecentWorkspace(
       action: 'navigate_workspace',
       workspace: result.workspace,
       message: `Opening recent workspace "${result.workspace.name}"`,
+      executionMeta: classifyExecutionMeta({ matchKind: 'exact', candidateCount: 1, resolverPath: 'executeAction' }),
     }
   }
 
@@ -431,6 +439,7 @@ async function resolveOpenRecentWorkspace(
       panelTitle: recentPanel.title,
       semanticPanelId: 'recent',
       message: `Opening ${recentPanel.title}...`,
+      executionMeta: classifyExecutionMeta({ matchKind: 'exact', candidateCount: 1, resolverPath: 'executeAction' }),
     }
   }
 
@@ -628,6 +637,7 @@ async function resolveGoToDashboard(
     success: true,
     action: 'navigate_dashboard',
     message: 'Returning to dashboard...',
+    executionMeta: classifyExecutionMeta({ matchKind: 'exact', candidateCount: 1, resolverPath: 'executeAction' }),
   }
 }
 
@@ -651,6 +661,7 @@ async function resolveGoHome(
     success: true,
     action: 'navigate_home',
     message: 'Going home...',
+    executionMeta: classifyExecutionMeta({ matchKind: 'exact', candidateCount: 1, resolverPath: 'executeAction' }),
   }
 }
 
@@ -1856,6 +1867,7 @@ async function resolveShowQuickLinks(
     // Semantic ID for action tracking (e.g., "quick-links-d")
     semanticPanelId: `quick-links-${badge}`,
     message: `Opening ${panelTitle}...`,
+    executionMeta: classifyExecutionMeta({ matchKind: 'exact', candidateCount: 1, resolverPath: 'executeAction' }),
   }
 }
 
@@ -2284,6 +2296,7 @@ async function resolveBareName(
         panelTitle: panelMatches[0].title,
         semanticPanelId: name.toLowerCase(),
         message: `Opening ${panelMatches[0].title}...`,
+        executionMeta: classifyExecutionMeta({ matchKind: 'exact', candidateCount: 1, resolverPath: 'executeAction' }),
       }
     } else if (panelMatches.length > 1) {
       // Multiple matches - disambiguation
@@ -2321,6 +2334,7 @@ async function resolveBareName(
         action: 'navigate_workspace',
         workspace: workspaceResult.workspace,
         message: `Opening workspace "${workspaceResult.workspace!.name}"`,
+        executionMeta: classifyExecutionMeta({ matchKind: 'exact', candidateCount: 1, resolverPath: 'executeAction' }),
       }
     } else {
       // Multiple workspace matches - disambiguate
@@ -2350,6 +2364,7 @@ async function resolveBareName(
         action: 'navigate_entry',
         entry,
         message: `Opening entry "${entry.name}"`,
+        executionMeta: classifyExecutionMeta({ matchKind: 'exact', candidateCount: 1, resolverPath: 'executeAction' }),
       }
     } else {
       // Multiple entry matches - disambiguate
@@ -2779,6 +2794,7 @@ async function resolvePanelIntent(
         panelTitle: drawerResult.panelTitle,
         semanticPanelId: drawerResult.semanticPanelId,
         message: `Opening ${drawerResult.panelTitle}...`,
+        executionMeta: classifyExecutionMeta({ matchKind: 'exact', candidateCount: 1, resolverPath: 'executeAction' }),
       }
     }
 
@@ -2876,6 +2892,7 @@ async function resolvePanelIntent(
           panelTitle: drawerFallback.panelTitle,
           semanticPanelId: drawerFallback.semanticPanelId,
           message: `Opening ${drawerFallback.panelTitle}...`,
+          executionMeta: classifyExecutionMeta({ matchKind: 'exact', candidateCount: 1, resolverPath: 'executeAction' }),
         }
       }
       // If drawer resolution failed for quick-links, try multiple panels disambiguation
@@ -2959,6 +2976,7 @@ async function resolvePanelIntent(
           isDefault: false,
         },
         message: result.message || `Opening ${nav.name}`,
+        executionMeta: classifyExecutionMeta({ matchKind: 'exact', candidateCount: 1, resolverPath: 'executeAction' }),
       }
     } else if (nav.type === 'entry') {
       return {
@@ -2972,6 +2990,7 @@ async function resolvePanelIntent(
           isSystem: false,
         },
         message: result.message || `Opening ${nav.name}`,
+        executionMeta: classifyExecutionMeta({ matchKind: 'exact', candidateCount: 1, resolverPath: 'executeAction' }),
       }
     }
   }
@@ -2988,12 +3007,121 @@ async function resolvePanelIntent(
 // Phase 10: Semantic Answer Lane Resolvers (answer-only, no execution)
 // =============================================================================
 
+// ---------------------------------------------------------------------------
+// Causal explanation helpers (used by resolveExplainLastAction)
+// ---------------------------------------------------------------------------
+
+/** Timestamp proximity window for matching trace entries to lastAction (ms). */
+export const CAUSAL_MATCH_WINDOW_MS = 5000
+
+type LastAction = NonNullable<import('./intent-prompt').SessionState['lastAction']>
+
+/** Map a ReasonCode to a human-readable causal phrase. Returns undefined for 'unknown'. */
+function formatReasonPhrase(code: ReasonCode): string | undefined {
+  switch (code) {
+    case 'explicit_label_match': return 'you asked for it by name'
+    case 'ordinal': return 'you selected it from the options'
+    case 'llm_select_validated': return 'the system matched your request'
+    case 'scope_cue': return 'you were still in that context'
+    case 'grounding_resolved': return 'the system confirmed the right match'
+    case 'disambiguation_resolved': return 'you chose it during disambiguation'
+    case 'continuity_tiebreak': return 'it matched your recent activity'
+    case 'direct_ui': return 'you interacted with it directly'
+    case 'unknown': return undefined
+    default: return undefined
+  }
+}
+
+/** Map a SourceKind to a human-readable source phrase. */
+function formatSourcePhrase(source: SourceKind): string {
+  switch (source) {
+    case 'chat': return ' via the chat'
+    case 'widget': return ' via a widget'
+    case 'direct_ui': return ' via the UI'
+    default: return ''
+  }
+}
+
+/** Extract the relevant ID from lastAction based on its type. */
+function extractLastActionId(lastAction: LastAction): string | undefined {
+  switch (lastAction.type) {
+    case 'open_workspace': return lastAction.workspaceId
+    case 'open_entry': return lastAction.entryId
+    case 'open_panel': return lastAction.panelId
+    default: return undefined
+  }
+}
+
+/** Extract the relevant name from lastAction based on its type. */
+function extractLastActionName(lastAction: LastAction): string | undefined {
+  switch (lastAction.type) {
+    case 'open_workspace': return lastAction.workspaceName
+    case 'open_entry': return lastAction.entryName
+    case 'open_panel': return lastAction.panelTitle
+    case 'rename_workspace': return lastAction.toName
+    default: return undefined
+  }
+}
+
+/**
+ * Scan actionTrace newest-first for the first entry that matches lastAction
+ * with high confidence. Returns undefined if no confident match found.
+ *
+ * Matching criteria (all must pass):
+ * - actionType matches lastAction.type
+ * - target.id matches extracted ID (or target.name matches extracted name as fallback)
+ * - outcome === 'success'
+ * - isUserMeaningful === true
+ * - timestamp within CAUSAL_MATCH_WINDOW_MS of lastAction.timestamp
+ */
+function findMatchingTraceEntry(
+  actionTrace: ActionTraceEntry[] | undefined,
+  lastAction: LastAction
+): ActionTraceEntry | undefined {
+  if (!actionTrace || actionTrace.length === 0) return undefined
+
+  const lastActionId = extractLastActionId(lastAction)
+  const lastActionName = extractLastActionName(lastAction)
+
+  for (const entry of actionTrace) {
+    // Type must match
+    if (entry.actionType !== lastAction.type) continue
+
+    // Outcome + meaningfulness gates
+    if (entry.outcome !== 'success') continue
+    if (!entry.isUserMeaningful) continue
+
+    // Timestamp proximity gate
+    if (Math.abs(entry.tsMs - lastAction.timestamp) >= CAUSAL_MATCH_WINDOW_MS) continue
+
+    // Identity match: prefer ID, fallback to name
+    if (lastActionId && entry.target.id) {
+      if (entry.target.id === lastActionId) return entry
+    } else if (lastActionName && entry.target.name) {
+      if (entry.target.name === lastActionName) return entry
+    }
+  }
+
+  return undefined
+}
+
 /**
  * Resolve explain_last_action intent — contextual explanation of the last action.
- * Unlike resolveLastAction (factual: "You opened X"), this provides context
- * (e.g., "You opened X because you asked to navigate to entry Y").
+ * Unlike resolveLastAction (factual: "You opened X"), this provides causal context
+ * using ActionTrace enrichment data (reasonCode, source).
+ *
+ * Example: "You opened 'Recent' just now — you asked for it by name via the chat."
+ *
+ * Falls back to factual-only when:
+ * - No matching trace entry found
+ * - reasonCode is 'unknown'
+ * - Trace entry doesn't pass confidence gates
  *
  * SAFETY: All code paths return action: 'inform'. No navigation, no execution.
+ *
+ * Read-only over persisted trace (Rule G — commit-time provenance, explain read-only).
+ * No LLM at explain time (MUST NOT line 102 — no retroactive LLM in explain).
+ * Classification happens ONCE at dispatch time via classifyExecutionMeta().
  */
 function resolveExplainLastAction(
   context: ResolutionContext
@@ -3012,35 +3140,54 @@ function resolveExplainLastAction(
 
   const timeAgo = formatTimeAgo(new Date(lastAction.timestamp).toISOString())
 
-  // Build the primary explanation
+  // Build the primary explanation (same switch as resolveLastAction)
   let explanation = ''
   switch (lastAction.type) {
     case 'open_workspace':
-      explanation = `You opened workspace "${lastAction.workspaceName}" ${timeAgo}.`
+      explanation = `You opened workspace "${lastAction.workspaceName}" ${timeAgo}`
       break
     case 'open_entry':
-      explanation = `You opened entry "${lastAction.entryName}" ${timeAgo}.`
+      explanation = `You opened entry "${lastAction.entryName}" ${timeAgo}`
       break
     case 'open_panel':
-      explanation = `You opened "${lastAction.panelTitle || 'a panel'}" ${timeAgo}.`
+      explanation = `You opened "${lastAction.panelTitle || 'a panel'}" ${timeAgo}`
       break
     case 'rename_workspace':
-      explanation = `You renamed workspace "${lastAction.fromName}" to "${lastAction.toName}" ${timeAgo}.`
+      explanation = `You renamed workspace "${lastAction.fromName}" to "${lastAction.toName}" ${timeAgo}`
       break
     case 'delete_workspace':
-      explanation = `You deleted workspace "${lastAction.workspaceName}" ${timeAgo}.`
+      explanation = `You deleted workspace "${lastAction.workspaceName}" ${timeAgo}`
       break
     case 'create_workspace':
-      explanation = `You created workspace "${lastAction.workspaceName}" ${timeAgo}.`
+      explanation = `You created workspace "${lastAction.workspaceName}" ${timeAgo}`
       break
     case 'go_to_dashboard':
-      explanation = `You returned to the dashboard ${timeAgo}.`
+      explanation = `You returned to the dashboard ${timeAgo}`
       break
     case 'go_home':
-      explanation = `You went home ${timeAgo}.`
+      explanation = `You went home ${timeAgo}`
       break
     default:
-      explanation = `Your last action was ${timeAgo}.`
+      explanation = `Your last action was ${timeAgo}`
+  }
+
+  // Causal explanation — read-only over persisted trace (Rule G).
+  // Classification happened at dispatch time via classifyExecutionMeta().
+  // No LLM at explain time (MUST NOT line 102).
+  const traceMatch = findMatchingTraceEntry(ss?.actionTrace, lastAction)
+  if (traceMatch && traceMatch.reasonCode !== 'unknown') {
+    const reasonPhrase = formatReasonPhrase(traceMatch.reasonCode)
+    if (reasonPhrase) {
+      const sourcePhrase = formatSourcePhrase(traceMatch.source)
+      explanation += ` — ${reasonPhrase}${sourcePhrase}.`
+    } else {
+      explanation += '.'
+    }
+  } else if (traceMatch && traceMatch.reasonCode === 'unknown' && traceMatch.source === 'chat') {
+    // Safe clarifier — reasonCode unresolved at dispatch time, no retroactive LLM
+    explanation += ' — based on your chat request.'
+  } else {
+    explanation += '.'
   }
 
   // Add context from preceding action in history (if available)

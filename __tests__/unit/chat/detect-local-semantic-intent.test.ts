@@ -71,4 +71,46 @@ describe('detectLocalSemanticIntent', () => {
     expect(detectLocalSemanticIntent('')).toBeNull()
     expect(detectLocalSemanticIntent('   ')).toBeNull()
   })
+
+  // === Filler stripping (conversational prefix/suffix) ===
+
+  it('strips "assistant" prefix → explain_last_action', () => {
+    expect(detectLocalSemanticIntent('assistant what did I do before that?')).toBe('explain_last_action')
+  })
+
+  it('strips "assistant" + "thank you" suffix → explain_last_action', () => {
+    expect(detectLocalSemanticIntent('assistant explain what did I do before that? thank you')).toBe('explain_last_action')
+  })
+
+  it('strips "hey" prefix + "thanks" suffix → last_action', () => {
+    expect(detectLocalSemanticIntent('hey what did I just do? thanks')).toBe('last_action')
+  })
+
+  it('strips "please" prefix + "thank you" suffix → last_action', () => {
+    expect(detectLocalSemanticIntent('please what was my last action? thank you')).toBe('last_action')
+  })
+
+  it('matches "explain what did I do before that?" → explain_last_action', () => {
+    expect(detectLocalSemanticIntent('explain what did I do before that?')).toBe('explain_last_action')
+  })
+
+  it('filler stripping does not break non-semantic queries → null', () => {
+    expect(detectLocalSemanticIntent('open panel e please')).toBeNull()
+  })
+
+  it('compound guard still rejects on original input (filler does not bypass) → null', () => {
+    expect(detectLocalSemanticIntent('assistant and then what did I do')).toBeNull()
+  })
+
+  it('strips "ok" prefix → last_action', () => {
+    expect(detectLocalSemanticIntent('ok what did I do?')).toBe('last_action')
+  })
+
+  it('strips "um" prefix → explain_last_action', () => {
+    expect(detectLocalSemanticIntent('um what did I do before that?')).toBe('explain_last_action')
+  })
+
+  it('strips suffix with punctuation → last_action', () => {
+    expect(detectLocalSemanticIntent('what did I just do? thx!')).toBe('last_action')
+  })
 })

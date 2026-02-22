@@ -126,6 +126,284 @@ describe('resolveExplainLastAction', () => {
   })
 })
 
+// =============================================================================
+// Causal Explanation Tests (ActionTrace wiring)
+// =============================================================================
+
+import type { ActionTraceEntry } from '@/lib/chat/action-trace'
+import { CAUSAL_MATCH_WINDOW_MS } from '@/lib/chat/intent-resolver'
+
+describe('resolveExplainLastAction — causal phrases from ActionTrace', () => {
+  const baseContext: ResolutionContext = {
+    currentEntryId: 'entry-1',
+    currentEntryName: 'Test Entry',
+    entries: [],
+    workspaces: [],
+    currentWorkspaceId: null,
+    currentWorkspaceName: null,
+    panels: [],
+  }
+
+  const makeIntent = (intentName: string): IntentResponse => ({
+    intent: intentName as IntentResponse['intent'],
+    args: {},
+  })
+
+  const now = Date.now()
+
+  const makeTraceEntry = (overrides: Partial<ActionTraceEntry>): ActionTraceEntry => ({
+    traceId: 'trace-1',
+    tsMs: now - 2000,
+    seq: 1,
+    actionType: 'open_panel',
+    target: { kind: 'panel', id: 'panel-recent', name: 'Recent' },
+    source: 'chat',
+    resolverPath: 'executeAction',
+    reasonCode: 'explicit_label_match',
+    scopeKind: 'chat',
+    dedupeKey: 'open_panel:panel:panel-recent:chat:',
+    isUserMeaningful: true,
+    outcome: 'success',
+    ...overrides,
+  })
+
+  test('includes causal suffix when actionTrace has matching entry with known reasonCode', async () => {
+    const context: ResolutionContext = {
+      ...baseContext,
+      sessionState: {
+        lastAction: {
+          type: 'open_panel',
+          panelId: 'panel-recent',
+          panelTitle: 'Recent',
+          timestamp: now - 2000,
+        },
+        actionTrace: [makeTraceEntry({})],
+      },
+    }
+
+    const result = await resolveIntent(makeIntent('explain_last_action'), context)
+    expect(result.success).toBe(true)
+    expect(result.action).toBe('inform')
+    expect(result.message).toContain('Recent')
+    expect(result.message).toContain('you asked for it by name')
+    expect(result.message).toContain('via the chat')
+  })
+
+  test('reasonCode unknown + source chat → safe clarifier (no retroactive LLM — MUST NOT line 102)', async () => {
+    const context: ResolutionContext = {
+      ...baseContext,
+      sessionState: {
+        lastAction: {
+          type: 'open_panel',
+          panelId: 'panel-recent',
+          panelTitle: 'Recent',
+          timestamp: now - 2000,
+        },
+        actionTrace: [makeTraceEntry({ reasonCode: 'unknown', source: 'chat' })],
+      },
+    }
+
+    const result = await resolveIntent(makeIntent('explain_last_action'), context)
+    expect(result.success).toBe(true)
+    expect(result.action).toBe('inform')
+    expect(result.message).toContain('Recent')
+    // Read-only over stored trace — no LLM at explain time (Rule G)
+    expect(result.message).toContain('based on your chat request')
+    expect(result.message).not.toContain('you asked')
+  })
+
+  test('weak fallback: reasonCode unknown + source direct_ui → factual-only (no weak fallback)', async () => {
+    const context: ResolutionContext = {
+      ...baseContext,
+      sessionState: {
+        lastAction: {
+          type: 'open_panel',
+          panelId: 'panel-recent',
+          panelTitle: 'Recent',
+          timestamp: now - 2000,
+        },
+        actionTrace: [makeTraceEntry({ reasonCode: 'unknown', source: 'direct_ui' })],
+      },
+    }
+
+    const result = await resolveIntent(makeIntent('explain_last_action'), context)
+    expect(result.success).toBe(true)
+    expect(result.action).toBe('inform')
+    expect(result.message).toContain('Recent')
+    // No weak fallback for direct_ui
+    expect(result.message).not.toContain('based on your chat request')
+    expect(result.message).not.toContain('you asked')
+  })
+
+  test('falls back to factual-only when actionTrace is empty', async () => {
+    const context: ResolutionContext = {
+      ...baseContext,
+      sessionState: {
+        lastAction: {
+          type: 'open_panel',
+          panelId: 'panel-recent',
+          panelTitle: 'Recent',
+          timestamp: now - 2000,
+        },
+        actionTrace: [],
+      },
+    }
+
+    const result = await resolveIntent(makeIntent('explain_last_action'), context)
+    expect(result.success).toBe(true)
+    expect(result.action).toBe('inform')
+    expect(result.message).toContain('Recent')
+    expect(result.message).not.toContain('you asked')
+  })
+
+  test('falls back to factual-only when no entry matches (wrong actionType)', async () => {
+    const context: ResolutionContext = {
+      ...baseContext,
+      sessionState: {
+        lastAction: {
+          type: 'open_panel',
+          panelId: 'panel-recent',
+          panelTitle: 'Recent',
+          timestamp: now - 2000,
+        },
+        actionTrace: [makeTraceEntry({ actionType: 'open_workspace' })],
+      },
+    }
+
+    const result = await resolveIntent(makeIntent('explain_last_action'), context)
+    expect(result.message).not.toContain('you asked')
+  })
+
+  test('falls back to factual-only when matching entry has outcome !== success', async () => {
+    const context: ResolutionContext = {
+      ...baseContext,
+      sessionState: {
+        lastAction: {
+          type: 'open_panel',
+          panelId: 'panel-recent',
+          panelTitle: 'Recent',
+          timestamp: now - 2000,
+        },
+        actionTrace: [makeTraceEntry({ outcome: 'failed' })],
+      },
+    }
+
+    const result = await resolveIntent(makeIntent('explain_last_action'), context)
+    expect(result.message).not.toContain('you asked')
+  })
+
+  test('falls back to factual-only when matching entry has isUserMeaningful !== true', async () => {
+    const context: ResolutionContext = {
+      ...baseContext,
+      sessionState: {
+        lastAction: {
+          type: 'open_panel',
+          panelId: 'panel-recent',
+          panelTitle: 'Recent',
+          timestamp: now - 2000,
+        },
+        actionTrace: [makeTraceEntry({ isUserMeaningful: false })],
+      },
+    }
+
+    const result = await resolveIntent(makeIntent('explain_last_action'), context)
+    expect(result.message).not.toContain('you asked')
+  })
+
+  test('falls back when timestamp is outside proximity window', async () => {
+    const context: ResolutionContext = {
+      ...baseContext,
+      sessionState: {
+        lastAction: {
+          type: 'open_panel',
+          panelId: 'panel-recent',
+          panelTitle: 'Recent',
+          timestamp: now - 2000,
+        },
+        actionTrace: [makeTraceEntry({ tsMs: now - 2000 - CAUSAL_MATCH_WINDOW_MS - 1 })],
+      },
+    }
+
+    const result = await resolveIntent(makeIntent('explain_last_action'), context)
+    expect(result.message).not.toContain('you asked')
+  })
+
+  test('matches by name fallback when IDs are absent', async () => {
+    const context: ResolutionContext = {
+      ...baseContext,
+      sessionState: {
+        lastAction: {
+          type: 'open_panel',
+          panelTitle: 'Recent',
+          timestamp: now - 2000,
+          // No panelId
+        },
+        actionTrace: [makeTraceEntry({
+          target: { kind: 'panel', name: 'Recent' }, // No id
+        })],
+      },
+    }
+
+    const result = await resolveIntent(makeIntent('explain_last_action'), context)
+    expect(result.message).toContain('you asked for it by name')
+  })
+
+  test('source phrase varies by source kind', async () => {
+    const widgetTrace = makeTraceEntry({
+      source: 'widget',
+      reasonCode: 'ordinal',
+    })
+
+    const context: ResolutionContext = {
+      ...baseContext,
+      sessionState: {
+        lastAction: {
+          type: 'open_panel',
+          panelId: 'panel-recent',
+          panelTitle: 'Recent',
+          timestamp: now - 2000,
+        },
+        actionTrace: [widgetTrace],
+      },
+    }
+
+    const result = await resolveIntent(makeIntent('explain_last_action'), context)
+    expect(result.message).toContain('you selected it from the options')
+    expect(result.message).toContain('via a widget')
+  })
+
+  test('scans newest-first and finds first matching entry', async () => {
+    const olderTrace = makeTraceEntry({
+      tsMs: now - 3000,
+      reasonCode: 'ordinal',
+      target: { kind: 'panel', id: 'panel-recent', name: 'Recent' },
+    })
+    const newerTrace = makeTraceEntry({
+      tsMs: now - 1000,
+      reasonCode: 'explicit_label_match',
+      target: { kind: 'panel', id: 'panel-recent', name: 'Recent' },
+    })
+
+    const context: ResolutionContext = {
+      ...baseContext,
+      sessionState: {
+        lastAction: {
+          type: 'open_panel',
+          panelId: 'panel-recent',
+          panelTitle: 'Recent',
+          timestamp: now - 2000,
+        },
+        // newest-first ordering
+        actionTrace: [newerTrace, olderTrace],
+      },
+    }
+
+    const result = await resolveIntent(makeIntent('explain_last_action'), context)
+    // Should find newerTrace first (explicit_label_match)
+    expect(result.message).toContain('you asked for it by name')
+  })
+})
+
 describe('resolveSummarizeRecentActivity', () => {
   const baseContext: ResolutionContext = {
     currentEntryId: 'entry-1',

@@ -647,7 +647,8 @@ export interface ConversationContext {
 }
 
 /**
- * Build the messages array for OpenAI chat completion.
+ * Build the messages array for LLM intent classification.
+ * Returns structured messages that the caller concatenates for the active provider.
  * Optionally includes conversation context for better follow-up understanding.
  *
  * @param userMessage - The user's message

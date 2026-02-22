@@ -544,6 +544,71 @@ export function classifyArbitrationConfidence(params: {
 }
 
 // =============================================================================
+// Phase 11: Execution Meta Classifier
+// =============================================================================
+
+import type { ExecutionMeta, ReasonCode, ResolverPath } from './action-trace'
+
+/** Evidence from the dispatch site about how the match was made. */
+export interface ClassifyEvidence {
+  matchKind: 'exact' | 'partial' | 'context_expand' | 'registry_exact' | 'ordinal' | 'grounding'
+  candidateCount: number
+  resolverPath: ResolverPath  // passthrough for tracing, not used in classification
+  intentTag?: string
+}
+
+/**
+ * Shared execution-meta classifier — single decision point.
+ * Deterministic step of: deterministic → bounded LLM → safe clarifier.
+ *
+ * Takes structured match evidence. Only assigns deterministic reasonCode
+ * for strict exact matches (Rule B). Non-exact returns 'unknown'.
+ *
+ * CRITICAL: when reasonCode === 'unknown', the dispatch site MUST NOT
+ * execute. It must fall through to the unresolved hook (LLM tier).
+ *
+ * Server-side unresolved hook: app/api/chat/navigate/route.ts (existing
+ * LLM resolver). When bounded LLM is enabled for classification, it
+ * will be wired here (Rule E: one post-deterministic hook).
+ *
+ * See: deterministic-llm-ladder-enforcement-addendum-plan.md
+ */
+export function classifyExecutionMeta(evidence: ClassifyEvidence): ExecutionMeta {
+  const { matchKind, candidateCount, resolverPath, intentTag } = evidence
+  const reasonCode = classifyFromEvidence(matchKind, candidateCount)
+  return { reasonCode, resolverPath, intentTag }
+}
+
+function classifyFromEvidence(matchKind: ClassifyEvidence['matchKind'], candidateCount: number): ReasonCode {
+  switch (matchKind) {
+    case 'exact':
+      // Strict ^..$ name match — deterministic ONLY with unique winner
+      // Multiple candidates with exact match is NOT a unique winner → unresolved
+      if (candidateCount !== 1) return 'unknown'
+      return 'explicit_label_match'
+    case 'registry_exact':
+      // Known noun registry lookup — always unique by definition (registry key → 1 panel)
+      return 'explicit_label_match'
+    case 'context_expand':
+      // Expanding a recent preview — unique deterministic winner justified:
+      // exactly 1 target (the preview being expanded), no name ambiguity,
+      // user explicitly requested expansion of the specific preview shown
+      return 'continuity_tiebreak'
+    case 'ordinal':
+      // User selected by number/position from a displayed list — unique winner
+      return 'ordinal'
+    case 'grounding':
+      // Grounding set resolution — unique winner (grounding confirmed)
+      return 'grounding_resolved'
+    case 'partial':
+      // NOT strict exact → must go to unresolved hook (Rule B)
+      return 'unknown'
+    default:
+      return 'unknown'
+  }
+}
+
+// =============================================================================
 // Phase 10: Semantic Answer Lane Detector
 // =============================================================================
 
@@ -584,6 +649,9 @@ export function isSemanticQuestionInput(
  * STRICT: Only exact, high-confidence patterns with zero ambiguity.
  * Used server-side to catch LLM misclassification — not a client bypass.
  * Per addendum: unresolved/uncertain => LLM result stands.
+ *
+ * Guards run on ORIGINAL input (compound/ordinal/option rejection).
+ * Pattern matching runs on CLEANED input (conversational filler stripped).
  */
 export function detectLocalSemanticIntent(
   input: string
@@ -594,13 +662,19 @@ export function detectLocalSemanticIntent(
   if (/^\d+$/.test(n)) return null
   if (/\b(option|choice|first|second|third|top|bottom)\b/i.test(n)) return null
 
-  // Reject compound queries
+  // Reject compound queries — guards run on ORIGINAL input
   if (/\b(and|also|then|plus)\b/i.test(n)) return null
 
+  // Strip conversational filler (anchored prefix/suffix only — never internal words)
+  let cleaned = n
+  cleaned = cleaned.replace(/^(?:hey|hi|hello|assistant|please|ok|okay|um|uh)\b[,]?\s*/i, '')
+  cleaned = cleaned.replace(/[,]?\s*(?:thank you|thanks|please|thx)\s*[.!?]*$/i, '')
+  cleaned = cleaned.trim()
+
   // === HIGH-CONFIDENCE EXACT PATTERNS ONLY ===
-  if (/^what did i do before that\??$/i.test(n)) return 'explain_last_action'
-  if (/^what did i (just )?do\??$/i.test(n)) return 'last_action'
-  if (/^what was my last action\??$/i.test(n)) return 'last_action'
+  if (/^(?:explain\s+)?what did i do before that\??$/i.test(cleaned)) return 'explain_last_action'
+  if (/^what did i (just )?do\??$/i.test(cleaned)) return 'last_action'
+  if (/^what was my last action\??$/i.test(cleaned)) return 'last_action'
 
   return null // everything else → LLM result stands
 }

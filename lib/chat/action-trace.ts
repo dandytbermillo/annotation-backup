@@ -51,10 +51,20 @@ export type ResolverPath =
   | 'executeAction'
   | 'handleGroundingSet'
   | 'handleClarificationIntercept'
+  | 'panelDisambiguation'       // Tier 2c — single-match panel open
+  | 'previewShortcut'           // Tier 2g — preview expand
+  | 'knownNounRouting'          // Tier 4 — known noun match
   | 'directUI'
   | 'unknown'
 
 export type ActionOutcome = 'success' | 'failed'
+
+/** Execution provenance metadata — threaded from resolver through API → events → commit points. */
+export interface ExecutionMeta {
+  reasonCode: ReasonCode
+  resolverPath?: ResolverPath
+  intentTag?: string
+}
 
 // ---------------------------------------------------------------------------
 // Main entry

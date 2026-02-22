@@ -14,6 +14,8 @@ import { setActiveEntryContext } from '@/lib/entry/entry-context'
 import { setActiveWorkspaceContext, requestWorkspaceListRefresh } from '@/lib/note-workspaces/state'
 import type { IntentResolutionResult } from './intent-resolver'
 import type { WorkspaceMatch, NoteMatch, EntryMatch } from './resolution-types'
+import type { ExecutionMeta } from './action-trace'
+import { classifyExecutionMeta } from './input-classifiers'
 
 // =============================================================================
 // Types
@@ -30,8 +32,6 @@ export interface UseChatNavigationOptions {
   onNavigationComplete?: (result: ChatNavigationResult) => void
   /** Called when an error occurs */
   onError?: (error: Error) => void
-  /** Called when a panel drawer is opened (Phase 1b.1: for lastAction tracking) */
-  onPanelDrawerOpen?: (panelId: string, panelTitle?: string) => void
   /** Current entry ID for context */
   currentEntryId?: string
   /** Current workspace ID for context */
@@ -60,14 +60,14 @@ export interface UseChatNavigationOptions {
  * ```
  */
 export function useChatNavigation(options: UseChatNavigationOptions = {}) {
-  const { onNavigationComplete, onError, onPanelDrawerOpen } = options
+  const { onNavigationComplete, onError } = options
 
   // ---------------------------------------------------------------------------
   // Navigate to Workspace
   // ---------------------------------------------------------------------------
 
   const navigateToWorkspace = useCallback(
-    async (workspace: WorkspaceMatch): Promise<ChatNavigationResult> => {
+    async (workspace: WorkspaceMatch, executionMeta?: ExecutionMeta): Promise<ChatNavigationResult> => {
       try {
         // Step 1: Set entry context (must come first)
         if (workspace.entryId) {
@@ -82,7 +82,7 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
         // (setActiveWorkspaceContext early-returns on same value, so subscription won't fire)
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('chat-navigate-workspace', {
-            detail: { workspaceId: workspace.id, workspaceName: workspace.name, source: 'chat' as const },
+            detail: { workspaceId: workspace.id, workspaceName: workspace.name, source: 'chat' as const, executionMeta },
           }))
         }
 
@@ -217,7 +217,7 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
   // ---------------------------------------------------------------------------
 
   const goToDashboard = useCallback(
-    async (entryId?: string): Promise<ChatNavigationResult> => {
+    async (entryId?: string, executionMeta?: ExecutionMeta): Promise<ChatNavigationResult> => {
       try {
         // Keep entry context but clear workspace context
         // This navigates to the "dashboard" view of the entry
@@ -229,7 +229,7 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
         // DashboardView listens for this and calls handleReturnToDashboard
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('chat-navigate-dashboard', {
-            detail: { entryId, source: 'chat' as const },
+            detail: { entryId, source: 'chat' as const, executionMeta },
           }))
         }
 
@@ -259,7 +259,7 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
   // ---------------------------------------------------------------------------
 
   const goHome = useCallback(
-    async (): Promise<ChatNavigationResult> => {
+    async (executionMeta?: ExecutionMeta): Promise<ChatNavigationResult> => {
       try {
         // Fetch the Home entry info from the dashboard API
         const response = await fetch('/api/dashboard/info')
@@ -280,6 +280,7 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
               entryId: homeEntryId,
               dashboardId: dashboardWorkspaceId,
               source: 'chat' as const,
+              executionMeta,
             },
           }))
         }
@@ -405,11 +406,11 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
   // ---------------------------------------------------------------------------
 
   const openPanelDrawer = useCallback(
-    (panelId: string): ChatNavigationResult => {
+    (panelId: string, executionMeta?: ExecutionMeta): ChatNavigationResult => {
       try {
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('open-panel-drawer', {
-            detail: { panelId, source: 'chat' as const },
+            detail: { panelId, source: 'chat' as const, executionMeta },
           }))
         }
 
@@ -448,7 +449,7 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
       switch (resolution.action) {
         case 'navigate_workspace':
           if (resolution.workspace) {
-            return navigateToWorkspace(resolution.workspace)
+            return navigateToWorkspace(resolution.workspace, resolution.executionMeta)
           }
           return {
             success: false,
@@ -527,6 +528,7 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
                   entryId: resolution.entry.id,
                   dashboardId: resolution.entry.dashboardWorkspaceId,
                   source: 'chat' as const,
+                  executionMeta: resolution.executionMeta,
                 },
               }))
             }
@@ -546,10 +548,10 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
 
         // Phase 1: Workspace Operations
         case 'navigate_dashboard':
-          return goToDashboard()
+          return goToDashboard(undefined, resolution.executionMeta)
 
         case 'navigate_home':
-          return goHome()
+          return goHome(resolution.executionMeta)
 
         case 'list_workspaces':
           // Workspace list is provided as options - return for UI to display as pills
@@ -599,12 +601,9 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
         // Widget Architecture: Open panel in drawer
         case 'open_panel_drawer':
           if (resolution.panelId) {
-            // Dispatch first so recordExecutedAction (via DashboardView handleOpenDrawer)
-            // sets the freshness guard ref BEFORE onPanelDrawerOpen's setLastAction fires.
-            // This ensures the guard blocks the redundant legacy write.
-            const drawerResult = openPanelDrawer(resolution.panelId)
-            // Phase 1b.1: Notify caller for lastAction tracking (now guarded by freshness ref)
-            onPanelDrawerOpen?.(resolution.panelId, resolution.panelTitle)
+            // Phase C: onPanelDrawerOpen callback removed — setLastAction is handled by
+            // DashboardView handleOpenDrawer → recordExecutedAction (sync commit point)
+            const drawerResult = openPanelDrawer(resolution.panelId, resolution.executionMeta)
             // Preserve resolution.message if it has a specific panel title
             // (e.g., "Opening Links Panel D...") instead of generic "Opening panel..."
             return {
@@ -689,8 +688,8 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
             }
           }
 
-          // Default: navigate to workspace
-          return navigateToWorkspace(option.data as WorkspaceMatch)
+          // Default: navigate to workspace (ordinal/disambiguation selection)
+          return navigateToWorkspace(option.data as WorkspaceMatch, classifyExecutionMeta({ matchKind: 'ordinal', candidateCount: 1, resolverPath: 'handleSelectOption' }))
         case 'note':
           return navigateToNote(option.data as NoteMatch)
         case 'entry':
@@ -709,6 +708,7 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
                 entryId: entryData.id,
                 dashboardId: entryData.dashboardWorkspaceId,
                 source: 'chat' as const,
+                executionMeta: classifyExecutionMeta({ matchKind: 'ordinal', candidateCount: 1, resolverPath: 'handleSelectOption' }),
               },
             }))
           }
@@ -761,6 +761,7 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
               detail: {
                 panelId: drawerData.panelId,
                 source: 'chat' as const,
+                executionMeta: classifyExecutionMeta({ matchKind: 'ordinal', candidateCount: 1, resolverPath: 'handleSelectOption' }),
               },
             }))
           }
@@ -823,20 +824,24 @@ declare global {
       workspaceId: string
       workspaceName?: string
       source?: 'chat'
+      executionMeta?: ExecutionMeta
     }>
     'chat-navigate-dashboard': CustomEvent<{
       entryId?: string
       source?: 'chat'
+      executionMeta?: ExecutionMeta
     }>
     'chat-navigate-entry': CustomEvent<{
       entryId: string
       workspaceId?: string
       dashboardId?: string
       source?: 'chat'
+      executionMeta?: ExecutionMeta
     }>
     'open-panel-drawer': CustomEvent<{
       panelId: string
       source?: 'chat'
+      executionMeta?: ExecutionMeta
     }>
   }
 }

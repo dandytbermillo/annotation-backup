@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
+import { GoogleGenerativeAI } from '@google/generative-ai'
 import { readFileSync, existsSync } from 'fs'
 import { join } from 'path'
 
@@ -16,6 +17,7 @@ import { panelRegistry } from '@/lib/panels/panel-registry'
 import { resolveNoteWorkspaceUserId } from '@/app/api/note-workspaces/user-id'
 import { extractLinkNotesBadge } from '@/lib/chat/ui-helpers'
 import { detectLocalSemanticIntent } from '@/lib/chat/input-classifiers'
+import { trySemanticRescue } from '@/lib/chat/semantic-rescue'
 
 // =============================================================================
 // OpenAI Client
@@ -58,6 +60,30 @@ function getOpenAIClient(): OpenAI {
 }
 
 // =============================================================================
+// Gemini Client (Phase 2)
+// =============================================================================
+
+function getGeminiApiKey(): string | null {
+  const envKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY
+  if (envKey && envKey.length > 20) {
+    return envKey
+  }
+
+  try {
+    const secretsPath = join(process.cwd(), 'config', 'secrets.json')
+    if (existsSync(secretsPath)) {
+      const secrets = JSON.parse(readFileSync(secretsPath, 'utf-8'))
+      if (secrets.GEMINI_API_KEY) return secrets.GEMINI_API_KEY
+      if (secrets.GOOGLE_API_KEY) return secrets.GOOGLE_API_KEY
+    }
+  } catch {
+    // Ignore file read errors
+  }
+
+  return null
+}
+
+// =============================================================================
 // Configuration
 // =============================================================================
 
@@ -69,7 +95,22 @@ const LLM_CONFIG = {
 }
 
 const TIMEOUT_MS = 8000
+const GEMINI_NAVIGATE_MODEL = process.env.GEMINI_NAVIGATE_MODEL || 'gemini-2.0-flash'
+const GEMINI_NAVIGATE_TIMEOUT_MS = 3000
+const GEMINI_CLARIFICATION_TIMEOUT_MS = 1500
 const MAX_CONTEXT_RETRIES = 1  // Max retries for need_context loop
+
+// =============================================================================
+// Provider Toggle (Phase 1)
+// =============================================================================
+
+type NavigateLLMProvider = 'openai' | 'gemini'
+
+function getNavigateProvider(): NavigateLLMProvider {
+  const env = process.env.NAVIGATE_LLM_PROVIDER?.toLowerCase()
+  if (env === 'gemini') return 'gemini'
+  return 'openai'  // default
+}
 
 // =============================================================================
 // Context Helpers
@@ -140,6 +181,171 @@ function getServerTimeString(): string {
     timeZoneName: 'short',
   })
 }
+
+// =============================================================================
+// JSON Parser (Phase 2 — handles Gemini's markdown-wrapped JSON)
+// =============================================================================
+
+/**
+ * Parse JSON with fenced-block stripping.
+ * Gemini sometimes wraps JSON in ```json ... ``` blocks.
+ */
+function safeParseJson<T>(value: string): T | null {
+  try {
+    let cleaned = value.trim()
+    if (cleaned.startsWith('```json')) {
+      cleaned = cleaned.slice(7)
+    } else if (cleaned.startsWith('```')) {
+      cleaned = cleaned.slice(3)
+    }
+    if (cleaned.endsWith('```')) {
+      cleaned = cleaned.slice(0, -3)
+    }
+    return JSON.parse(cleaned.trim()) as T
+  } catch {
+    return null
+  }
+}
+
+// =============================================================================
+// Gemini LLM Functions (Phase 2)
+// =============================================================================
+
+/**
+ * Call Gemini to parse intent from user message.
+ * Uses role-preserving SYSTEM:/USER: prompt format for parity with OpenAI.
+ */
+async function callGeminiForIntent(
+  userMessage: string,
+  conversationContext: ConversationContext | undefined,
+  userId: string | null
+): Promise<{ intent: IntentResponse; error?: string }> {
+  const apiKey = getGeminiApiKey()
+  if (!apiKey) {
+    return { intent: { intent: 'unsupported', args: { reason: 'Gemini not configured' } }, error: 'no_api_key' }
+  }
+
+  const genAI = new GoogleGenerativeAI(apiKey)
+  const model = genAI.getGenerativeModel({
+    model: GEMINI_NAVIGATE_MODEL,
+    generationConfig: { temperature: 0, maxOutputTokens: 150 },
+  })
+
+  const messages = await buildIntentMessages(userMessage, conversationContext, userId)
+
+  // CRITICAL: Preserve role boundaries (not naive flatten)
+  // This maintains system/user separation for prompt parity with OpenAI's message array.
+  const fullPrompt = messages
+    .map(m => `${m.role === 'system' ? 'SYSTEM' : 'USER'}:\n${m.content}`)
+    .join('\n\n')
+
+  const callStart = Date.now()
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+  try {
+    const result = await Promise.race([
+      model.generateContent(fullPrompt),
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error('timeout')), GEMINI_NAVIGATE_TIMEOUT_MS)
+      }),
+    ])
+    clearTimeout(timeoutId)
+
+    const latency = Date.now() - callStart
+    const content = result.response.text().trim()
+    if (!content) {
+      return { intent: { intent: 'unsupported', args: { reason: 'No response' } } }
+    }
+
+    const rawJson = safeParseJson<Record<string, unknown>>(content)
+    if (!rawJson) {
+      console.warn(`[navigate-gemini] JSON parse failed (${latency}ms), raw:`, content.substring(0, 200))
+      return { intent: { intent: 'unsupported', args: { reason: 'Parse failure' } }, error: 'parse_failed' }
+    }
+    return { intent: parseIntentResponse(rawJson) }
+  } catch (error) {
+    clearTimeout(timeoutId)
+    const latency = Date.now() - callStart
+    if (error instanceof Error && error.message === 'timeout') {
+      console.warn(`[navigate-gemini] Timeout after ${latency}ms`)
+      return { intent: { intent: 'unsupported', args: { reason: 'Request timeout' } }, error: 'timeout' }
+    }
+    throw error
+  }
+}
+
+type ClarificationReply = 'YES' | 'NO' | 'META' | 'UNCLEAR'
+type ClarificationGeminiResult = { reply: ClarificationReply; error?: 'no_api_key' | 'timeout' | 'api_error' }
+
+/**
+ * Interpret clarification reply via Gemini.
+ * Normalizes response: trim, strip punctuation, uppercase.
+ * Returns error channel so dispatch can detect failure and fall back to OpenAI.
+ */
+async function interpretClarificationReplyGemini(
+  userReply: string,
+  clarificationQuestion: string
+): Promise<ClarificationGeminiResult> {
+  const apiKey = getGeminiApiKey()
+  if (!apiKey) return { reply: 'UNCLEAR', error: 'no_api_key' }
+
+  const genAI = new GoogleGenerativeAI(apiKey)
+  const model = genAI.getGenerativeModel({
+    model: GEMINI_NAVIGATE_MODEL,
+    generationConfig: { temperature: 0, maxOutputTokens: 10 },
+  })
+
+  const prompt = `SYSTEM:
+You interpret user responses to clarification questions.
+Respond with EXACTLY one word: YES, NO, META, or UNCLEAR.
+
+- YES: User is affirming, agreeing, or wants to proceed. Examples:
+  - Direct: "yes", "yeah", "yep", "sure", "ok", "okay", "please do", "go ahead", "I guess so"
+  - Question-style affirmations: "can you do that?", "could you?", "would you?", "can you?", "is that possible?"
+  - These question forms mean "yes, please do it" in context
+- NO: User is declining, rejecting, or wants to cancel (e.g., "no", "nope", "cancel", "never mind", "not really", "no thanks")
+- META: User is asking for explanation or clarification about the question itself. Examples:
+  - "what do you mean?", "explain", "help me understand"
+  - "what are my options?", "what's the difference?"
+  - "I'm not sure what that does", "can you tell me more?"
+  - "huh?", "what?", "I don't know"
+- UNCLEAR: User's intent is truly ambiguous or they're asking a completely different/unrelated question
+
+Do not explain. Just output YES, NO, META, or UNCLEAR.
+
+USER:
+Clarification question: "${clarificationQuestion}"
+User replied: "${userReply}"
+
+Is this YES, NO, META, or UNCLEAR?`
+
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+  try {
+    const result = await Promise.race([
+      model.generateContent(prompt),
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error('timeout')), GEMINI_CLARIFICATION_TIMEOUT_MS)
+      }),
+    ])
+    clearTimeout(timeoutId)
+
+    // Normalize: trim, strip punctuation (periods, quotes), uppercase
+    const raw = result.response.text().trim()
+    const content = raw.replace(/[."']/g, '').trim().toUpperCase()
+    if (content === 'YES' || content === 'NO' || content === 'META' || content === 'UNCLEAR') {
+      return { reply: content }
+    }
+    return { reply: 'UNCLEAR' }
+  } catch (error) {
+    clearTimeout(timeoutId)
+    const isTimeout = error instanceof Error && error.message === 'timeout'
+    console.error('[ChatNavigation] Gemini clarification error:', isTimeout ? 'timeout' : error)
+    return { reply: 'UNCLEAR', error: isTimeout ? 'timeout' : 'api_error' }
+  }
+}
+
+// =============================================================================
+// OpenAI LLM Functions (original)
+// =============================================================================
 
 /**
  * Call LLM to parse intent from user message.
@@ -295,13 +501,96 @@ Is this YES, NO, META, or UNCLEAR?`,
 }
 
 // =============================================================================
+// Provider Dispatch (Phase 1)
+// =============================================================================
+
+/**
+ * One-shot fallback guard: request-scoped mutable ref.
+ * Prevents need_context retry loop from cascading Gemini→OpenAI repeatedly.
+ * Created per-request in POST handler and passed to dispatch functions.
+ */
+type FallbackGuard = { attempted: boolean }
+
+/**
+ * Dispatch intent classification to the configured LLM provider.
+ * Default: OpenAI. When NAVIGATE_LLM_PROVIDER=gemini, routes to Gemini path.
+ * Phase 4: On Gemini failure (timeout/parse/no_key), falls back to OpenAI once.
+ */
+async function callNavigateLLMForIntent(
+  provider: NavigateLLMProvider,
+  userMessage: string,
+  conversationContext: ConversationContext | undefined,
+  userId: string | null,
+  fallbackGuard: FallbackGuard
+): Promise<{ intent: IntentResponse; error?: string; fellBackToOpenAI?: boolean }> {
+  if (provider === 'gemini') {
+    const geminiResult = await callGeminiForIntent(userMessage, conversationContext, userId)
+    // Automatic fallback on Gemini failure (one-shot guard prevents repeated cascading)
+    if (!fallbackGuard.attempted && (geminiResult.error === 'timeout' || geminiResult.error === 'no_api_key' || geminiResult.error === 'parse_failed')) {
+      fallbackGuard.attempted = true
+      console.warn('[navigate-llm] Gemini failed, one-shot fallback to OpenAI:', geminiResult.error)
+      try {
+        const client = getOpenAIClient()
+        const openaiResult = await callLLMForIntent(client, userMessage, conversationContext, userId)
+        return { ...openaiResult, fellBackToOpenAI: true }
+      } catch {
+        // OpenAI also unavailable (e.g. Gemini-only deployment) — return original Gemini error
+        console.warn('[navigate-llm] OpenAI fallback also unavailable, returning Gemini result')
+        return geminiResult
+      }
+    }
+    return geminiResult
+  }
+  // Default: existing OpenAI path
+  const client = getOpenAIClient()
+  return callLLMForIntent(client, userMessage, conversationContext, userId)
+}
+
+/**
+ * Dispatch clarification interpretation to the configured LLM provider.
+ * Phase 4: On Gemini failure (timeout/no_api_key/api_error), falls back to OpenAI.
+ * Returns result + metadata for metrics.
+ */
+async function callNavigateClarification(
+  provider: NavigateLLMProvider,
+  userReply: string,
+  clarificationQuestion: string
+): Promise<{ reply: ClarificationReply; fellBackToOpenAI?: boolean; geminiError?: string }> {
+  if (provider === 'gemini') {
+    const geminiResult = await interpretClarificationReplyGemini(userReply, clarificationQuestion)
+    if (geminiResult.error) {
+      console.warn('[navigate-llm] Gemini clarification failed, falling back to OpenAI:', geminiResult.error)
+      try {
+        const client = getOpenAIClient()
+        const openaiReply = await interpretClarificationReply(client, userReply, clarificationQuestion)
+        return { reply: openaiReply, fellBackToOpenAI: true, geminiError: geminiResult.error }
+      } catch {
+        // OpenAI also unavailable — return Gemini's best-effort UNCLEAR
+        console.warn('[navigate-llm] OpenAI fallback also failed for clarification, returning Gemini result')
+        return { reply: geminiResult.reply, geminiError: geminiResult.error }
+      }
+    }
+    return { reply: geminiResult.reply }
+  }
+  const client = getOpenAIClient()
+  const reply = await interpretClarificationReply(client, userReply, clarificationQuestion)
+  return { reply }
+}
+
+// =============================================================================
 // POST /api/chat/navigate
 //
 // Combined endpoint: parse intent + resolve to actionable data
 // =============================================================================
 
 export async function POST(request: NextRequest) {
+  const requestStartTime = Date.now()
+
   try {
+    // Resolve LLM provider (Phase 1: default openai, toggle via NAVIGATE_LLM_PROVIDER)
+    const provider = getNavigateProvider()
+    const fallbackGuard: FallbackGuard = { attempted: false }  // Request-scoped one-shot guard
+
     // Get user ID
     const userId = resolveNoteWorkspaceUserId(request)
     if (userId === 'invalid') {
@@ -322,17 +611,29 @@ export async function POST(request: NextRequest) {
     // Phase 2a.3: Handle clarification-mode interpretation
     // When clarificationMode is true, just interpret the reply as YES/NO/UNCLEAR
     if (clarificationMode && clarificationQuestion) {
-      const client = getOpenAIClient()
-      const interpretation = await interpretClarificationReply(client, message, clarificationQuestion)
+      const clarificationStart = Date.now()
+      const clarificationResult = await callNavigateClarification(provider, message, clarificationQuestion)
+      const clarificationLatency = Date.now() - clarificationStart
+
+      // Phase 0 metrics: clarification path (with fallback telemetry)
+      console.log('[navigate-llm-metrics]', JSON.stringify({
+        provider,
+        path: 'clarification',
+        latencyMs: clarificationLatency,
+        totalLatencyMs: Date.now() - requestStartTime,
+        interpretation: clarificationResult.reply,
+        fellBackToOpenAI: !!clarificationResult.fellBackToOpenAI,
+        geminiError: clarificationResult.geminiError ?? null,
+      }))
 
       void debugLog({
         component: 'ChatNavigation',
         action: 'clarification_interpretation',
-        metadata: { userReply: message, clarificationQuestion, interpretation },
+        metadata: { userReply: message, clarificationQuestion, interpretation: clarificationResult.reply },
       })
 
       return NextResponse.json({
-        clarificationInterpretation: interpretation,
+        clarificationInterpretation: clarificationResult.reply,
       })
     }
 
@@ -381,30 +682,60 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    // Check if OpenAI is configured
-    const apiKey = getOpenAIApiKey()
-    if (!apiKey) {
-      return NextResponse.json(
-        {
-          error: 'Chat navigation is not configured',
-          resolution: {
-            success: false,
-            action: 'error',
-            message: 'Chat navigation is not configured. Please set OPENAI_API_KEY in .env.local or config/secrets.json.',
-          } satisfies IntentResolutionResult,
-        },
-        { status: 503 }
-      )
+    // Check if LLM provider is configured
+    // For openai: hard gate (no fallback target)
+    // For gemini: skip gate — let dispatch handle no_api_key via OpenAI fallback
+    if (provider === 'openai') {
+      const apiKey = getOpenAIApiKey()
+      if (!apiKey) {
+        return NextResponse.json(
+          {
+            error: 'Chat navigation is not configured',
+            resolution: {
+              success: false,
+              action: 'error',
+              message: 'Chat navigation is not configured. Please set OPENAI_API_KEY in .env.local or config/secrets.json.',
+            } satisfies IntentResolutionResult,
+          },
+          { status: 503 }
+        )
+      }
+    } else if (provider === 'gemini') {
+      // Only hard-fail if NEITHER provider has a key configured
+      const geminiKey = getGeminiApiKey()
+      const openaiKey = getOpenAIApiKey()
+      if (!geminiKey && !openaiKey) {
+        return NextResponse.json(
+          {
+            error: 'Chat navigation is not configured',
+            resolution: {
+              success: false,
+              action: 'error',
+              message: 'Chat navigation is not configured. Please set GEMINI_API_KEY/GOOGLE_API_KEY or OPENAI_API_KEY in .env.local or config/secrets.json.',
+            } satisfies IntentResolutionResult,
+          },
+          { status: 503 }
+        )
+      }
     }
 
     // Step 1: Parse intent with LLM
-    // Pass userId to load DB widget manifests (server-side)
-    const client = getOpenAIClient()
+    // Phase 0 metrics: track LLM call latency
+    const llmCallStart = Date.now()
 
-    // Initial LLM call
-    let llmResult = await callLLMForIntent(client, userMessage, conversationContext, userId)
+    // Initial LLM call (dispatched via provider toggle)
+    let llmResult = await callNavigateLLMForIntent(provider, userMessage, conversationContext, userId, fallbackGuard)
 
     if (llmResult.error === 'timeout') {
+      console.log('[navigate-llm-metrics]', JSON.stringify({
+        provider,
+        path: 'intent',
+        llmLatencyMs: Date.now() - llmCallStart,
+        totalLatencyMs: Date.now() - requestStartTime,
+        timeout: true,
+        earlyReturn: true,
+        fellBackToOpenAI: !!llmResult.fellBackToOpenAI,
+      }))
       return NextResponse.json(
         {
           error: 'Request timeout',
@@ -455,10 +786,20 @@ export async function POST(request: NextRequest) {
       // Build expanded context based on LLM's request
       const expandedContext = buildExpandedContext(contextRequest, conversationContext, fullChatHistory)
 
-      // Re-call LLM with expanded context
-      llmResult = await callLLMForIntent(client, userMessage, expandedContext, userId)
+      // Re-call LLM with expanded context (via provider dispatch)
+      llmResult = await callNavigateLLMForIntent(provider, userMessage, expandedContext, userId, fallbackGuard)
 
       if (llmResult.error === 'timeout') {
+        console.log('[navigate-llm-metrics]', JSON.stringify({
+          provider,
+          path: 'intent',
+          llmLatencyMs: Date.now() - llmCallStart,
+          totalLatencyMs: Date.now() - requestStartTime,
+          timeout: true,
+          earlyReturn: true,
+          needContextRetryCount: contextRetryCount,
+          fellBackToOpenAI: !!llmResult.fellBackToOpenAI,
+        }))
         return NextResponse.json(
           {
             error: 'Request timeout',
@@ -475,13 +816,31 @@ export async function POST(request: NextRequest) {
       intent = llmResult.intent
     }
 
-    // If still need_context after max retries, ask user for clarification
+    // If still need_context after max retries, attempt semantic rescue before falling back
+    let needContextRescueApplied = false
     if (intent.intent === 'need_context') {
-      intent = {
-        intent: 'unsupported',
-        args: {
-          reason: "I couldn't find enough context to answer that. Could you provide more details or rephrase your question?",
-        },
+      const rescuedIntent = trySemanticRescue(
+        userMessage,
+        isSemanticLaneEnabled,
+        context?.pendingOptions,
+        context?.lastClarification,
+        conversationContext?.sessionState?.lastAction
+      )
+      if (rescuedIntent) {
+        needContextRescueApplied = true
+        void debugLog({
+          component: 'ChatNavigateAPI',
+          action: 'need_context_semantic_rescue',
+          metadata: { from: 'need_context', to: rescuedIntent, userMessage },
+        })
+        intent = { intent: rescuedIntent, args: {} }
+      } else {
+        intent = {
+          intent: 'unsupported',
+          args: {
+            reason: "I couldn't find enough context to answer that. Could you provide more details or rephrase your question?",
+          },
+        }
       }
     }
 
@@ -571,24 +930,23 @@ export async function POST(request: NextRequest) {
 
     let resolution = await resolveIntent(intent, resolutionContext)
 
+    // Phase 0 metrics: track whether semantic fallback guard remaps intent
+    let fallbackRemapApplied = false
+
     // 5a: Server fallback guard — catch LLM misclassification for semantic meta-queries.
     // If LLM returned answer_from_context but the input is a narrow deterministic meta-query,
     // remap intent and re-resolve through the existing structured resolver.
-    // Hard guard conditions — ALL must be true:
-    //   1. semantic lane enabled
-    //   2. LLM said answer_from_context (the known misclassification)
-    //   3. no pending options (addendum safety)
-    //   4. no active lastClarification context (addendum safety)
-    //   5. exact detector match (narrow patterns only)
-    //   6. session has lastAction (resolver needs data)
-    if (
-      isSemanticLaneEnabled &&
-      intent.intent === 'answer_from_context' &&
-      !context?.pendingOptions?.length &&
-      !context?.lastClarification
-    ) {
-      const correctedIntent = detectLocalSemanticIntent(userMessage)
-      if (correctedIntent && resolutionContext.sessionState?.lastAction) {
+    // Uses shared trySemanticRescue utility (same 5 hard guards as need_context rescue).
+    if (intent.intent === 'answer_from_context') {
+      const correctedIntent = trySemanticRescue(
+        userMessage,
+        isSemanticLaneEnabled,
+        context?.pendingOptions,
+        context?.lastClarification,
+        conversationContext?.sessionState?.lastAction
+      )
+      if (correctedIntent) {
+        fallbackRemapApplied = true
         void debugLog({
           component: 'ChatNavigateAPI',
           action: 'semantic_fallback_remap',
@@ -733,6 +1091,23 @@ export async function POST(request: NextRequest) {
         },
       })
     }
+
+    // Phase 0 metrics: main intent pipeline
+    const llmLatencyMs = Date.now() - llmCallStart
+    const totalLatencyMs = Date.now() - requestStartTime
+    console.log('[navigate-llm-metrics]', JSON.stringify({
+      provider,
+      path: 'intent',
+      llmLatencyMs,
+      totalLatencyMs,
+      timeout: llmResult.error === 'timeout',
+      parseFailed: llmResult.error === 'parse_failed',
+      needContextRetryCount: contextRetryCount,
+      intent: intent.intent,
+      fallbackRemapApplied,
+      needContextRescueApplied,
+      fellBackToOpenAI: !!llmResult.fellBackToOpenAI,
+    }))
 
     return NextResponse.json({
       intent,

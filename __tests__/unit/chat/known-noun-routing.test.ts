@@ -72,7 +72,10 @@ describe('handleKnownNounRouting — Tier 4 fallthrough guard', () => {
     })
     const result = handleKnownNounRouting(ctx)
     expect(result.handled).toBe(true)
-    expect(ctx.openPanelDrawer).toHaveBeenCalledWith('links-panel-d', 'Links Panel D')
+    expect(ctx.openPanelDrawer).toHaveBeenCalledWith('links-panel-d', 'Links Panel D', expect.objectContaining({
+      reasonCode: 'explicit_label_match',
+      resolverPath: 'knownNounRouting',
+    }))
   })
 
   test('Test D: "open links panel" + only Links Panel D → no ambiguous evidence, "not available"', () => {

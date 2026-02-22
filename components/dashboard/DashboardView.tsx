@@ -645,7 +645,7 @@ export function DashboardView({
   // Phase 5: Adds debouncing for rapid mode switching and loading state
   const handleWorkspaceSelectById = useCallback((
     selectedWorkspaceId: string,
-    opts?: { source?: 'chat' | 'direct_ui'; isUserMeaningful?: boolean }
+    opts?: { source?: 'chat' | 'direct_ui'; isUserMeaningful?: boolean; executionMeta?: import('@/lib/chat/action-trace').ExecutionMeta }
   ) => {
     // Phase 5: Debounce rapid mode switching
     const now = Date.now()
@@ -703,16 +703,21 @@ export function DashboardView({
     // Chat Navigation: Track workspace open count for session stats
     if (ws) {
       incrementOpenCount(selectedWorkspaceId, ws.name, 'workspace')
+      // Defensive: chat-sourced actions should always carry executionMeta
+      if (opts?.source === 'chat' && !opts?.executionMeta) {
+        void debugLog({ component: 'DashboardView', action: 'missing_executionMeta_chat_source', metadata: { workspaceId: selectedWorkspaceId } })
+      }
       recordExecutedAction({
         actionType: 'open_workspace',
         target: { kind: 'workspace', id: selectedWorkspaceId, name: ws.name },
         source: opts?.source || 'direct_ui',
-        resolverPath: opts?.source === 'chat' ? 'executeAction' : 'directUI',
-        reasonCode: opts?.source === 'chat' ? 'unknown' : 'direct_ui',
+        resolverPath: opts?.executionMeta?.resolverPath ?? (opts?.source === 'chat' ? 'executeAction' : 'directUI'),
+        reasonCode: opts?.executionMeta?.reasonCode ?? (opts?.source === 'chat' ? 'unknown' : 'direct_ui'),
         scopeKind: 'workspace',
         scopeInstanceId: selectedWorkspaceId,
         isUserMeaningful: opts?.isUserMeaningful ?? true,
         outcome: 'success',
+        intentTag: opts?.executionMeta?.intentTag,
       })
     }
   }, [entryId, workspaces, onViewModeChange, incrementOpenCount, recordExecutedAction])
@@ -770,7 +775,7 @@ export function DashboardView({
   // Handle returning to dashboard mode (Phase 2)
   // Phase 4: Calls onViewModeChange for navigation tracking and URL updates
   // Phase 5: Adds debouncing for rapid mode switching and loading state
-  const handleReturnToDashboard = useCallback((opts?: { source?: 'chat' | 'direct_ui' }) => {
+  const handleReturnToDashboard = useCallback((opts?: { source?: 'chat' | 'direct_ui'; executionMeta?: import('@/lib/chat/action-trace').ExecutionMeta }) => {
     // Phase 5: Debounce rapid mode switching
     const now = Date.now()
     if (now - lastModeSwitchRef.current < MODE_SWITCH_DEBOUNCE_MS) {
@@ -820,16 +825,21 @@ export function DashboardView({
     // Phase 4: Notify parent for navigation tracking and URL updates
     onViewModeChange?.('dashboard')
     // ActionTrace Phase B: Record go_to_dashboard at commit point
+    // Defensive: chat-sourced actions should always carry executionMeta
+    if (opts?.source === 'chat' && !opts?.executionMeta) {
+      void debugLog({ component: 'DashboardView', action: 'missing_executionMeta_chat_source', metadata: { action: 'go_to_dashboard' } })
+    }
     recordExecutedAction({
       actionType: 'go_to_dashboard',
       target: { kind: 'entry', id: entryId, name: entryName },
       source: opts?.source || 'direct_ui',
-      resolverPath: opts?.source === 'chat' ? 'executeAction' : 'directUI',
-      reasonCode: opts?.source === 'chat' ? 'unknown' : 'direct_ui',
+      resolverPath: opts?.executionMeta?.resolverPath ?? (opts?.source === 'chat' ? 'executeAction' : 'directUI'),
+      reasonCode: opts?.executionMeta?.reasonCode ?? (opts?.source === 'chat' ? 'unknown' : 'direct_ui'),
       scopeKind: 'workspace',
       scopeInstanceId: activeWorkspaceId ?? undefined,
       isUserMeaningful: true,
       outcome: 'success',
+      intentTag: opts?.executionMeta?.intentTag,
     })
   }, [activeWorkspaceId, entryId, entryName, onViewModeChange, recordExecutedAction])
 
@@ -1158,7 +1168,7 @@ export function DashboardView({
 
   // Widget Architecture: Listen for 'open-panel-drawer' events from chat
   useEffect(() => {
-    const handleOpenDrawer = (e: CustomEvent<{ panelId: string; source?: 'chat' }>) => {
+    const handleOpenDrawer = (e: CustomEvent<{ panelId: string; source?: 'chat'; executionMeta?: import('@/lib/chat/action-trace').ExecutionMeta }>) => {
       console.log('[DashboardView] handleOpenDrawer_called:', {
         requestedPanelId: e.detail.panelId,
         panelsCount: panels.length,
@@ -1185,16 +1195,22 @@ export function DashboardView({
         setActiveWidgetId(panel.id)
         // ActionTrace Phase B: Record open_panel at commit point
         const eventSource = e.detail.source === 'chat' ? 'chat' as const : 'direct_ui' as const
+        const meta = e.detail.executionMeta
+        // Defensive: chat-sourced actions should always carry executionMeta
+        if (eventSource === 'chat' && !meta) {
+          void debugLog({ component: 'DashboardView', action: 'missing_executionMeta_chat_source', metadata: { panelId: panel.id } })
+        }
         recordExecutedAction({
           actionType: 'open_panel',
           target: { kind: 'panel', id: panel.id, name: panel.title ?? panel.panelType },
           source: eventSource,
-          resolverPath: eventSource === 'chat' ? 'executeAction' : 'directUI',
-          reasonCode: eventSource === 'chat' ? 'unknown' : 'direct_ui',
+          resolverPath: meta?.resolverPath ?? (eventSource === 'chat' ? 'executeAction' : 'directUI'),
+          reasonCode: meta?.reasonCode ?? (eventSource === 'chat' ? 'unknown' : 'direct_ui'),
           scopeKind: 'dashboard',
           scopeInstanceId: entryId,
           isUserMeaningful: true,
           outcome: 'success',
+          intentTag: meta?.intentTag,
         })
         console.log('[DashboardView] drawer_opened_from_chat:', { panelId: panel.id, panelType: panel.panelType })
         void debugLog({
@@ -1659,7 +1675,7 @@ export function DashboardView({
   // Chat Navigation Fix 3: Listen for chat-navigate-dashboard events
   // This handles "go to dashboard" / "back" commands from chat navigation
   useEffect(() => {
-    const handleChatNavigateDashboard = (event: CustomEvent<{ entryId?: string }>) => {
+    const handleChatNavigateDashboard = (event: CustomEvent<{ entryId?: string; executionMeta?: import('@/lib/chat/action-trace').ExecutionMeta }>) => {
       void debugLog({
         component: "DashboardView",
         action: "chat_navigate_dashboard_received",
@@ -1668,7 +1684,7 @@ export function DashboardView({
 
       // Only handle if we're in workspace mode (otherwise already on dashboard)
       if (viewMode === 'workspace') {
-        handleReturnToDashboard({ source: 'chat' })
+        handleReturnToDashboard({ source: 'chat', executionMeta: event.detail?.executionMeta })
       }
     }
 
@@ -1682,7 +1698,7 @@ export function DashboardView({
   // This handles "open workspace X" commands even when workspace context is unchanged
   // (setActiveWorkspaceContext early-returns on same value, so subscription won't fire)
   useEffect(() => {
-    const handleChatNavigateWorkspace = (event: CustomEvent<{ workspaceId: string; workspaceName?: string }>) => {
+    const handleChatNavigateWorkspace = (event: CustomEvent<{ workspaceId: string; workspaceName?: string; executionMeta?: import('@/lib/chat/action-trace').ExecutionMeta }>) => {
       const { workspaceId, workspaceName } = event.detail
 
       void debugLog({
@@ -1705,7 +1721,7 @@ export function DashboardView({
       }
 
       // Switch to workspace (works even if already the active workspace)
-      handleWorkspaceSelectById(workspaceId, { source: 'chat' })
+      handleWorkspaceSelectById(workspaceId, { source: 'chat', executionMeta: event.detail.executionMeta })
     }
 
     window.addEventListener('chat-navigate-workspace', handleChatNavigateWorkspace as EventListener)

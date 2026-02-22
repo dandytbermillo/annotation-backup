@@ -198,7 +198,7 @@ describe('dispatchRouting: Tier 2c handles verb-prefixed panel commands before T
     mockHandleKnownNounRouting.mockReturnValue({ handled: false })
   })
 
-  it('Test F: "open links panel" + single Links Panel D → Tier 2c opens directly, Tier 4 never invoked', async () => {
+  it('Test F: "open links panel" + single Links Panel D → Tier 2c partial match falls through (unresolved gate)', async () => {
     const ctx = createMockDispatchContext({
       trimmedInput: 'open links panel',
       uiContext: {
@@ -214,23 +214,11 @@ describe('dispatchRouting: Tier 2c handles verb-prefixed panel commands before T
 
     const result = await dispatchRouting(ctx)
 
-    // Tier 2c should handle it (single-match direct open via verb stripping)
-    expect(result.handled).toBe(true)
-    expect(result.handledByTier).toBe(2)
-    expect(result.tierLabel).toBe('panel_disambiguation')
-
-    // Panel should have been opened directly
-    expect(ctx.openPanelDrawer).toHaveBeenCalledWith('links-panel-d', 'Links Panel D')
-
-    // Confirmation message
-    expect(ctx.addMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        content: 'Opening Links Panel D.',
-      })
-    )
-
-    // Tier 4 (handleKnownNounRouting) should NEVER have been called
-    expect(mockHandleKnownNounRouting).not.toHaveBeenCalled()
+    // "open links panel" → verb-stripped "links panel" → partial match against "Links Panel D"
+    // Unresolved gate (Rule B): partial single-match → handled: false, falls through to LLM tier
+    // Tier 4 (known-noun) is mocked to handled: false, so dispatch continues past it
+    // Overall: not handled by deterministic tiers (Tier 5 LLM would resolve in production)
+    expect(result.handled).toBe(false)
   })
 
   it('Tier 2c single-match open clears stale focusLatch (prevents wrong widget scoping)', async () => {
@@ -267,7 +255,10 @@ describe('dispatchRouting: Tier 2c handles verb-prefixed panel commands before T
       expect(result.handled).toBe(true)
       expect(result.handledByTier).toBe(2)
       expect(result.tierLabel).toBe('panel_disambiguation')
-      expect(ctx.openPanelDrawer).toHaveBeenCalledWith('w_recent_widget', 'Recent')
+      expect(ctx.openPanelDrawer).toHaveBeenCalledWith('w_recent_widget', 'Recent', expect.objectContaining({
+        reasonCode: 'explicit_label_match',
+        resolverPath: 'panelDisambiguation',
+      }))
 
       // Stale focusLatch MUST be cleared so grounding uses correct widget
       expect(ctx.clearFocusLatch).toHaveBeenCalled()
@@ -370,7 +361,7 @@ describe('dispatchRouting: polite/natural variants route correctly through Tier 
     expect(mockHandleKnownNounRouting).not.toHaveBeenCalled()
   })
 
-  it('"hey open the links panel" + single Links Panel D → Tier 2c opens directly', async () => {
+  it('"hey open the links panel" + single Links Panel D → Tier 2c partial match falls through (unresolved gate)', async () => {
     const ctx = createMockDispatchContext({
       trimmedInput: 'hey open the links panel',
       uiContext: {
@@ -386,11 +377,10 @@ describe('dispatchRouting: polite/natural variants route correctly through Tier 
 
     const result = await dispatchRouting(ctx)
 
-    expect(result.handled).toBe(true)
-    expect(result.handledByTier).toBe(2)
-    expect(result.tierLabel).toBe('panel_disambiguation')
-    expect(ctx.openPanelDrawer).toHaveBeenCalledWith('links-panel-d', 'Links Panel D')
-    expect(mockHandleKnownNounRouting).not.toHaveBeenCalled()
+    // "hey open the links panel" → partial match against "Links Panel D"
+    // Unresolved gate (Rule B): partial single-match → falls through
+    expect(result.handled).toBe(false)
+    expect(ctx.openPanelDrawer).not.toHaveBeenCalled()
   })
 
   it('"could you show the links panel please" + 3 variants → Tier 2c disambiguates', async () => {

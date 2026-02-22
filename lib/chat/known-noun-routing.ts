@@ -17,7 +17,7 @@ import type { PendingOptionState } from '@/lib/chat/chat-routing'
 import type { LastClarificationState } from '@/lib/chat/chat-navigation-context'
 import { hasQuestionIntent } from '@/lib/chat/query-patterns'
 import { matchVisiblePanelCommand } from '@/lib/chat/panel-command-matcher'
-import { canonicalizeCommandInput } from '@/lib/chat/input-classifiers'
+import { canonicalizeCommandInput, classifyExecutionMeta } from '@/lib/chat/input-classifiers'
 
 // =============================================================================
 // Known-Noun Allowlist
@@ -245,7 +245,7 @@ export interface KnownNounRoutingContext {
   visibleWidgets?: Array<{ id: string; title: string; type: string }>
   addMessage: (message: ChatMessage) => void
   setIsLoading: (loading: boolean) => void
-  openPanelDrawer: (panelId: string, panelTitle?: string) => void
+  openPanelDrawer: (panelId: string, panelTitle?: string, executionMeta?: import('@/lib/chat/action-trace').ExecutionMeta) => void
   setPendingOptions: (options: PendingOptionState[]) => void
   setPendingOptionsMessageId: (messageId: string | null) => void
   setPendingOptionsGraceCount?: (count: number) => void
@@ -514,8 +514,20 @@ export function handleKnownNounRouting(
     // Clear focus latch — panel switch starts fresh scope (per incubation plan Rule 6e)
     ctx.clearFocusLatch?.()
 
+    // Classify from evidence — shared classifier (single decision point)
+    const meta = classifyExecutionMeta({
+      matchKind: 'registry_exact',
+      candidateCount: 1,
+      resolverPath: 'knownNounRouting',
+    })
+
+    // Explicit unresolved gate (should never trigger for registry_exact, but defensive)
+    if (meta.reasonCode === 'unknown') {
+      return { handled: false }
+    }
+
     // Execute: open the panel drawer using the real panel ID
-    ctx.openPanelDrawer(realPanel.id, realPanel.title ?? match.title)
+    ctx.openPanelDrawer(realPanel.id, realPanel.title ?? match.title, meta)
 
     const assistantMessage: ChatMessage = {
       id: `assistant-${Date.now()}`,

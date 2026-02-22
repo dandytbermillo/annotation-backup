@@ -269,7 +269,7 @@ export function DashboardInitializer({
   }, [dashboardEnabled])
 
   // Handle navigation from dashboard to a workspace
-  const handleDashboardNavigate = useCallback(async (entryId: string, workspaceId: string, opts?: { source?: 'chat' | 'direct_ui' }) => {
+  const handleDashboardNavigate = useCallback(async (entryId: string, workspaceId: string, opts?: { source?: 'chat' | 'direct_ui'; executionMeta?: import('@/lib/chat/action-trace').ExecutionMeta }) => {
     console.log("[DashboardInitializer] Navigating to workspace:", workspaceId, "entryId:", entryId)
 
     // Check if the target workspace is a Dashboard workspace
@@ -322,16 +322,21 @@ export function DashboardInitializer({
 
             // ActionTrace Phase B: Record open_entry at commit point
             // MUST fire before setLastAction so the freshness guard ref is set and blocks the redundant legacy write.
+            // Defensive: chat-sourced actions should always carry executionMeta
+            if (opts?.source === 'chat' && !opts?.executionMeta) {
+              void debugLog({ component: 'DashboardInitializer', action: 'missing_executionMeta_chat_source', metadata: { entryId } })
+            }
             recordExecutedAction({
               actionType: 'open_entry',
               target: { kind: 'entry', id: entryId, name: entryName },
               source: opts?.source || 'direct_ui',
-              resolverPath: opts?.source === 'chat' ? 'executeAction' : 'directUI',
-              reasonCode: opts?.source === 'chat' ? 'unknown' : 'direct_ui',
+              resolverPath: opts?.executionMeta?.resolverPath ?? (opts?.source === 'chat' ? 'executeAction' : 'directUI'),
+              reasonCode: opts?.executionMeta?.reasonCode ?? (opts?.source === 'chat' ? 'unknown' : 'direct_ui'),
               scopeKind: 'dashboard',
               scopeInstanceId: entryId,
               isUserMeaningful: true,
               outcome: 'success',
+              intentTag: opts?.executionMeta?.intentTag,
             })
             // Track entry open for session stats (unified UI + chat tracking)
             // (freshness guard blocks this write since recordExecutedAction already mirrored to legacy)
@@ -445,16 +450,21 @@ export function DashboardInitializer({
     onNavigateToWorkspace?.(entryId, workspaceId)
     onWorkspaceActivate?.(workspaceId)
     // ActionTrace Phase B: Record open_workspace at commit point
+    // Defensive: chat-sourced actions should always carry executionMeta
+    if (opts?.source === 'chat' && !opts?.executionMeta) {
+      void debugLog({ component: 'DashboardInitializer', action: 'missing_executionMeta_chat_source', metadata: { workspaceId } })
+    }
     recordExecutedAction({
       actionType: 'open_workspace',
       target: { kind: 'workspace', id: workspaceId, name: regularWorkspaceName },
       source: opts?.source || 'direct_ui',
-      resolverPath: opts?.source === 'chat' ? 'executeAction' : 'directUI',
-      reasonCode: opts?.source === 'chat' ? 'unknown' : 'direct_ui',
+      resolverPath: opts?.executionMeta?.resolverPath ?? (opts?.source === 'chat' ? 'executeAction' : 'directUI'),
+      reasonCode: opts?.executionMeta?.reasonCode ?? (opts?.source === 'chat' ? 'unknown' : 'direct_ui'),
       scopeKind: 'workspace',
       scopeInstanceId: workspaceId,
       isUserMeaningful: true,
       outcome: 'success',
+      intentTag: opts?.executionMeta?.intentTag,
     })
   }, [onNavigateToWorkspace, onWorkspaceActivate, setLastAction, incrementOpenCount, recordExecutedAction])
 
@@ -485,6 +495,7 @@ export function DashboardInitializer({
       workspaceId?: string
       dashboardId?: string
       source?: 'chat'
+      executionMeta?: import('@/lib/chat/action-trace').ExecutionMeta
     }>) => {
       const { entryId, workspaceId, dashboardId } = event.detail
 
@@ -506,7 +517,8 @@ export function DashboardInitializer({
 
       if (targetWorkspaceId) {
         handleDashboardNavigate(entryId, targetWorkspaceId, {
-          source: event.detail.source === 'chat' ? 'chat' : 'direct_ui'
+          source: event.detail.source === 'chat' ? 'chat' : 'direct_ui',
+          executionMeta: event.detail.executionMeta,
         })
       } else {
         // Neither dashboardId nor workspaceId - invalid link, log and no-op

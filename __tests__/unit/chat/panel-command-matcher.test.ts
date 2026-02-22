@@ -115,7 +115,9 @@ describe('matchVisiblePanelCommand — verb prefix stripping', () => {
 import { handlePanelDisambiguation } from '@/lib/chat/chat-routing'
 
 describe('handlePanelDisambiguation — single-match direct open', () => {
-  test('Test E: single panel match → opens directly via openPanelDrawer', () => {
+  test('Test E: single partial match → falls through (unresolved gate — Rule B)', () => {
+    // "open links panel" → verb-stripped "links panel" → partial match against "Links Panel D"
+    // Per unresolved gate: partial match returns handled: false (falls through to LLM tier)
     const openPanelDrawer = jest.fn()
     const addMessage = jest.fn()
     const setPendingOptions = jest.fn()
@@ -138,18 +140,13 @@ describe('handlePanelDisambiguation — single-match direct open', () => {
       openPanelDrawer,
     })
 
-    expect(result.handled).toBe(true)
-    expect(openPanelDrawer).toHaveBeenCalledWith('links-panel-d', 'Links Panel D')
-    expect(addMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        content: 'Opening Links Panel D.',
-      })
-    )
-    // Stale state cleared
-    expect(setPendingOptions).toHaveBeenCalledWith([])
-    expect(setPendingOptionsMessageId).toHaveBeenCalledWith(null)
-    expect(setLastClarification).toHaveBeenCalledWith(null)
-    expect(clearWidgetSelectionContext).toHaveBeenCalled()
+    // Partial match → unresolved gate → handled: false (falls through to LLM tier)
+    expect(result.handled).toBe(false)
+    expect(openPanelDrawer).not.toHaveBeenCalled()
+    // Context NOT cleared (preserved for LLM tier)
+    expect(setPendingOptions).not.toHaveBeenCalled()
+    expect(setPendingOptionsMessageId).not.toHaveBeenCalled()
+    expect(setLastClarification).not.toHaveBeenCalled()
   })
 
   test('single match without openPanelDrawer → falls through safely', () => {

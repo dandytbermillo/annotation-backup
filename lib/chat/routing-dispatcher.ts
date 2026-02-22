@@ -198,7 +198,7 @@ export interface RoutingDispatcherContext {
 
   // --- Preview Shortcut (Tier 2g) ---
   lastPreview: LastPreviewState | null
-  openPanelDrawer: (panelId: string, panelTitle?: string) => void
+  openPanelDrawer: (panelId: string, panelTitle?: string, executionMeta?: import('@/lib/chat/action-trace').ExecutionMeta) => void
   openPanelWithTracking: (content: ViewPanelContent, panelId?: string) => void
 
   // --- Grounding-Set Fallback (Tier 4.5, per grounding-set-fallback-plan.md) ---
@@ -303,7 +303,7 @@ export type GroundingAction = NonNullable<RoutingDispatcherResult['groundingActi
 // =============================================================================
 
 // Import from shared utility (extracted to avoid circular dependency with chat-routing.ts)
-import { isExplicitCommand, isSelectionOnly, normalizeOrdinalTypos, isSemanticQuestionInput } from '@/lib/chat/input-classifiers'
+import { isExplicitCommand, isSelectionOnly, normalizeOrdinalTypos, isSemanticQuestionInput, classifyExecutionMeta } from '@/lib/chat/input-classifiers'
 // Re-export to avoid breaking existing imports from this file
 export { isExplicitCommand }
 
@@ -1383,7 +1383,12 @@ export async function dispatchRouting(
     })
 
     if (ctx.lastPreview.drawerPanelId) {
-      ctx.openPanelDrawer(ctx.lastPreview.drawerPanelId, ctx.lastPreview.drawerPanelTitle)
+      const previewMeta = classifyExecutionMeta({
+        matchKind: 'context_expand',
+        candidateCount: 1,
+        resolverPath: 'previewShortcut',
+      })
+      ctx.openPanelDrawer(ctx.lastPreview.drawerPanelId, ctx.lastPreview.drawerPanelTitle, previewMeta)
     } else {
       ctx.openPanelWithTracking(ctx.lastPreview.viewPanelContent, ctx.lastPreview.drawerPanelId)
     }
@@ -1437,7 +1442,12 @@ export async function dispatchRouting(
           })
 
           if (ctx.lastPreview.drawerPanelId) {
-            ctx.openPanelDrawer(ctx.lastPreview.drawerPanelId, ctx.lastPreview.drawerPanelTitle)
+            const classifierMeta = classifyExecutionMeta({
+              matchKind: 'context_expand',
+              candidateCount: 1,
+              resolverPath: 'previewShortcut',
+            })
+            ctx.openPanelDrawer(ctx.lastPreview.drawerPanelId, ctx.lastPreview.drawerPanelTitle, classifierMeta)
           } else {
             ctx.openPanelWithTracking(ctx.lastPreview.viewPanelContent, ctx.lastPreview.drawerPanelId)
           }
