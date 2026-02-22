@@ -1,5 +1,16 @@
 # Centralized Action Recording with ActionTrace
 
+## Current Status (Updated 2026-02-22)
+
+- Phase A foundation is complete and live.
+- Phase B commit-point wiring is complete, including `executionMeta` threading to commit points.
+- Phase C legacy-write cleanup is partially complete (open_panel drawer, open_workspace, open_entry removals done; non-parity legacy writes remain by design).
+- `resolveExplainLastAction` is now read-only over persisted trace/history (no retroactive LLM recovery in explain path).
+- Shared classifier (`classifyExecutionMeta`) is now the single reason classifier used by resolver + dispatch paths.
+- Active-clarification semantic-question guard is implemented in dispatcher: semantic questions with visible pending options return clarification guidance and preserve options (no API call, no state clear).
+- Known follow-up: reason labeling remains coarse for some label-text selection paths (can appear as `ordinal` where `explicit_label_match`/`disambiguation_resolved` may be preferable).
+- Known post-Phase C regression (open): `resolveVerifyAction` panel checks still assume semantic-style ids in `targetId`, while commit recording now stores DB panel ids; this can produce `"did I open ..."` false negatives/positives and contradictory wording.
+
 ## Goal
 
 Stop stale semantic responses (`"explain what just happened"`, `"why did I do that?"`) by moving action recording from scattered chat request paths to execution commit points.
@@ -38,16 +49,21 @@ Compliance decisions:
 
 ### In Scope
 - Add bounded `ActionTrace` model and centralized recorder.
+- Add shared execution provenance classifier (`classifyExecutionMeta`) and thread `executionMeta` across resolver/dispatch -> events -> commit points.
 - Record actions at commit points:
   - entry switch commit
   - panel drawer open commit
   - workspace navigation commit
+- Enforce unresolved gate for non-deterministic panel disambiguation (partial single match falls through to unresolved hook; no forced execute).
+- Keep semantic explain answers read-only over persisted trace/history.
 - Mirror ActionTrace head to legacy `lastAction` and `actionHistory` for compatibility.
 - Fix semantic resolver ordering bug for newest-first history.
+- Fix verify-action panel matching reliability in resolver (strict 4-step decision order, no substring id matching, contradiction-safe no-match wording).
 
 ### Out of Scope (Follow-Up)
 - Full removal of all legacy `setLastAction` calls in one pass.
-- Rich semantic evidence builder work beyond bounded ActionTrace.
+- New commit-time or explain-time LLM reason-classification calls (deferred until a truly unresolved provenance path exists).
+- Additive semantic-id threading through trace/event payloads (`target.semanticId`) is deferred hardening after resolver reliability fix.
 
 ## Ladder Rule Boundary (Deterministic->LLM Addendum Compliance)
 
@@ -59,7 +75,7 @@ This plan is constrained to post-execution recording and semantic-history correc
 ### MUST NOT change in this plan
 - Tier 1b.3 / Phase 2b arbitration decisions.
 - Pre-gate escape behavior and unresolved routing behavior.
-- LLM invocation topology (no new LLM call sites; no parallel unresolved hooks).
+- Add parallel unresolved hooks or explain-time provenance recovery calls.
 - Candidate-pool construction, scope binding, or cross-scope mixing rules.
 - Loop-guard semantics and safe-fallback behavior.
 
@@ -67,11 +83,13 @@ This plan is constrained to post-execution recording and semantic-history correc
 - Commit-point `recordExecutedAction(...)` calls after execution commits.
 - Trace persistence, dedupe, and compatibility mirroring to legacy fields.
 - Semantic resolver read-order fixes (`newest-first`) for explanation answers.
+- Deterministic dispatch guard for semantic questions during active clarification (`pendingOptions.length > 0`) to preserve options and avoid stale-history answers.
 
 ## Architecture
 
 ### Source of truth
 - `sessionState.actionTrace` (new, bounded, newest-first).
+- `executionMeta.reasonCode` persisted at commit time (derived once by shared classifier).
 - Recorder ownership: **session-level execution recorder**, not chat-only context.
   - Chat context consumes/exposes trace for routing and semantic lane.
   - Commit-point producers (dashboard/workspace/panel execution paths) write to the same recorder API.
@@ -80,6 +98,7 @@ This plan is constrained to post-execution recording and semantic-history correc
 ### Compatibility
 - Derive `lastAction` and `actionHistory` from new trace entries during transition.
 - Existing resolver paths remain functional while migrating.
+- `resolveExplainLastAction` reads persisted trace/history only; it does not classify provenance retroactively.
 
 ### Dedup
 - Deterministic, scope-aware dedupe key:
@@ -189,6 +208,8 @@ Deterministic rubric (apply uniformly):
    - preceding action should use index `1` (not `length - 2`).
 5. Keep legacy chat-path writes during parity window, but guard against stale overwrite if trace head is newer.
 6. Record `outcome: failed` only where failure is authoritative at commit layer (not speculative request-layer failures).
+7. Add shared execution classifier (`classifyExecutionMeta`) and thread `executionMeta` through all commit-producing resolver/dispatch paths.
+8. For Tier 2c partial single-match, enforce unresolved gate (`handled: false`) so unresolved flows reach the existing unresolved hook.
 
 ## Phase C (Follow-Up Cleanup)
 
@@ -199,6 +220,36 @@ Deterministic rubric (apply uniformly):
 1. Remove legacy `setLastAction` writes only for action types confirmed to have commit-point parity.
 2. Keep rename/create/delete legacy writes until those action types are also commit-point recorded.
 
+## Phase D (Stabilization, Implemented)
+
+### Changes
+1. Remove explain-time LLM provenance callback wiring; keep explain resolver read-only and synchronous.
+2. Add dispatcher-level active-clarification guard for semantic questions when `pendingOptions` are visible.
+3. Add defensive commit-point telemetry when chat-sourced commit arrives without `executionMeta`.
+4. Add classifier/resolver/dispatcher regression coverage for execution provenance.
+
+## Phase E (Verify-Action Panel Matching Reliability, Planned)
+
+### Problem
+- `resolveVerifyAction` open-panel branch currently compares semantic-like query ids against `actionHistory[].targetId`; after Phase C, `targetId` is often a DB id.
+- Existing substring-based id matching is unsafe and can produce false positives.
+- No-match wording can contradict listed opened panels.
+
+### Phase E1 (Immediate, low blast radius)
+1. Replace open-panel verify matching with strict 4-step order:
+   - exact normalized `targetName` match (primary),
+   - exact semantic-id/legacy-id equality match,
+   - family-match list response for generic panel names,
+   - true no-match response (contradiction-safe wording).
+2. Remove bidirectional `includes` id checks; use strict equality only.
+3. Filter empty/null `targetName` in no-match panel listings.
+4. Keep changes resolver-local (`lib/chat/intent-resolver.ts`) to minimize system-wide risk.
+
+### Phase E2 (Deferred hardening)
+1. Add optional `target.semanticId` to trace model.
+2. Thread semantic panel id through chat event payloads and commit recording.
+3. Update legacy bridge with explicit compatibility note (`semanticId ?? id`) and focused regression checks for consumers that read `actionHistory[].targetId`.
+
 ## Test Plan
 
 ### Unit
@@ -207,6 +258,11 @@ Deterministic rubric (apply uniformly):
 - deterministic dedupe key composition (`target + scope`)
 - converter correctness (trace -> lastAction/actionHistory)
 - semantic resolver ordering (`current = [0]`, `before that = [1]`)
+- verify-action open-panel quality:
+  - exact-name match with DB-style `targetId`,
+  - legacy semantic-id equality match,
+  - family-query list behavior,
+  - contradiction guard for no-match responses.
 
 ### Integration
 - chat disambiguation -> panel open -> widget item execute -> semantic explain
@@ -215,11 +271,14 @@ Deterministic rubric (apply uniformly):
 - mixed chat/UI flow does not double-record
 - semantic prompt pack uses only recent meaningful entries (3-5), not full trace
 - commit coverage matrix asserts each user-meaningful execution has exactly one recorder write
+- active clarification + semantic question keeps options visible and does not route to stale-history semantic response
+- verify-action API path remains stable with mixed historical id formats (DB ids + legacy semantic ids).
 
 ### Manual
 1. Open panel (chat and UI), then ask `"explain what just happened"` -> latest panel action.
 2. Do two actions, then ask follow-up -> previous action is immediate predecessor.
 3. Rapid repeated clicks -> single trace entry due to dedupe.
+4. With visible disambiguation pills, ask `"why did you do that?"` -> clarification-context response; options remain visible.
 
 ## Acceptance Criteria
 
@@ -228,6 +287,9 @@ Deterministic rubric (apply uniformly):
 - No whack-a-mole dependency on individual chat routing branches.
 - Legacy behavior remains stable during migration.
 - No new provider/consumer runtime drift.
+- No hardcoded `executionMeta` object literals in commit-producing chat routes; shared classifier is the source of reason classification.
+- Action-producing resolver returns include `executionMeta` for deterministic paths.
+- `"did I open ..."` answers are contradiction-safe and do not rely on substring id matching.
 
 ## Risks and Mitigations
 
@@ -237,8 +299,13 @@ Deterministic rubric (apply uniformly):
   - Mitigation: explicit event metadata propagation.
 - Risk: wide-scope regression from mass removal.
   - Mitigation: defer removals to Phase C after parity evidence.
+- Risk: coarse reason wording for some label-text selections (e.g., `ordinal` vs label-match phrasing).
+  - Mitigation: follow-up classification refinement with evidence-based selection intent signals.
+- Risk: legacy consumer assumptions around `actionHistory[].targetId` format (DB id vs semantic id).
+  - Mitigation: Phase E1 keeps contract unchanged; Phase E2 introduces semantic id additively with explicit compatibility notes and regression tests.
 
 ## Verification Commands
 
 - `npx tsc --noEmit -p tsconfig.type-check.json`
 - `npm test -- --testPathPattern="semantic-answer-lane|semantic-lane-routing-bypass|panel-disambiguation-tier-ordering|selection-intent-arbitration-dispatcher"`
+- `npm test -- --testPathPattern="resolve-verify-action|semantic-answer-lane-api"`

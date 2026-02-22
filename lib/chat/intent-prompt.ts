@@ -99,7 +99,7 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
     IMPORTANT: Use sessionState.openCounts to answer this question. Returns yes/no + count. Works for both workspaces and entries.
 
 13. **verify_action** - User asks to verify whether they performed a specific action this session
-    Examples: "did you just rename Sprint 6 to Sprint 66?", "did I just open workspace77?", "did I just open summary14?", "did I just go home?", "was my last action opening X?", "did I open recent?", "did I open quick links D?"
+    Examples: "did you just rename Sprint 6 to Sprint 66?", "did I just open workspace77?", "did I just open summary14?", "did I just go home?", "was my last action opening X?", "did I open recent?", "did I open quick links D?", "did I open the links panel d?", "did I open the recent widget?", "have I opened links panel this session?"
     Args:
       - verifyActionType (required): "open_workspace" | "open_entry" | "rename_workspace" | "delete_workspace" | "create_workspace" | "go_to_dashboard" | "go_home" | "open_panel"
       - verifyWorkspaceName (optional): workspace or entry name to verify
@@ -317,10 +317,17 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
 - "where am I", "current location", "what workspace", "am I on dashboard" → **location_info**
 - "what did I just", "last action", "what was the last thing" → **last_action**
 - "how many times", "how often", "session stats" → **session_stats**
-- "did I open X?" (without "just/last/previous") → **session_stats** (checks session history)
+- "did I open X?" (where X is a workspace or entry name, without "just/last/previous") → **session_stats** (checks session open counts)
+- "did I open [panel name]?" (Recent, Quick Links D, Links Panel, etc.) → **verify_action** with verifyActionType: "open_panel" (checks actionHistory)
 - "did I just/last open X?", "was my last action X?" → **verify_action** (checks most recent action only)
 - "did you rename X to Y?" → **verify_action** (verifies specific action details)
 - "did I ask you to X?", "did I tell you to X?", "did I request X?" → **verify_request** (checks request history, not action history)
+
+CRITICAL: "did I open [panel]?" vs. "open [panel]" disambiguation:
+- "did I open links panel d?" → **verify_action** (question about history, NOT a command)
+- "did I open recent?" → **verify_action** (question about history)
+- "open links panel d" → **panel_intent** or **show_quick_links** (command)
+- "did I open X?" questions should NEVER be classified as show_quick_links, panel_intent, or any navigation intent.
 - "the first one", "second option", "last one" (when pendingOptions exists) → **select_option**
 - "the one from X", "the workspace with Y" (when pendingOptions exists) → **select_option**
 - "show me the options", "what were my choices?", "I'm confused" (when pendingOptions exists) → **reshow_options**

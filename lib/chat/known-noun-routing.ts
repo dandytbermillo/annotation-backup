@@ -17,7 +17,7 @@ import type { PendingOptionState } from '@/lib/chat/chat-routing'
 import type { LastClarificationState } from '@/lib/chat/chat-navigation-context'
 import { hasQuestionIntent } from '@/lib/chat/query-patterns'
 import { matchVisiblePanelCommand } from '@/lib/chat/panel-command-matcher'
-import { canonicalizeCommandInput, classifyExecutionMeta } from '@/lib/chat/input-classifiers'
+import { canonicalizeCommandInput, classifyExecutionMeta, isStrictExactMatch } from '@/lib/chat/input-classifiers'
 
 // =============================================================================
 // Known-Noun Allowlist
@@ -501,8 +501,25 @@ export function handleKnownNounRouting(
       },
     })
 
-    // Known-noun command execution starts a fresh command context.
-    // Clear stale selection memories so follow-up ordinals don't bind to old lists.
+    // Addendum Rule B: strict ^...$ match required for deterministic execution.
+    // matchKnownNoun uses canonicalizeCommandInput (verb stripping) — NOT strict.
+    // Only execute deterministically if raw input matches the panel title exactly.
+    const strictExact = isStrictExactMatch(ctx.trimmedInput, realPanel.title ?? match.title)
+    const effectiveMatchKind = strictExact ? 'registry_exact' as const : 'partial' as const
+
+    // Classify from evidence — shared classifier (single decision point)
+    const meta = classifyExecutionMeta({
+      matchKind: effectiveMatchKind,
+      candidateCount: 1,
+      resolverPath: 'knownNounRouting',
+    })
+
+    // Unresolved gate — NO state clearing before this return (context preserved for LLM)
+    if (meta.reasonCode === 'unknown') {
+      return { handled: false }
+    }
+
+    // Gate passed — clear stale selection state (fresh command context)
     ctx.setPendingOptions([])
     ctx.setPendingOptionsMessageId(null)
     ctx.setPendingOptionsGraceCount?.(0)
@@ -513,18 +530,6 @@ export function handleKnownNounRouting(
     ctx.clearWidgetSelectionContext?.()
     // Clear focus latch — panel switch starts fresh scope (per incubation plan Rule 6e)
     ctx.clearFocusLatch?.()
-
-    // Classify from evidence — shared classifier (single decision point)
-    const meta = classifyExecutionMeta({
-      matchKind: 'registry_exact',
-      candidateCount: 1,
-      resolverPath: 'knownNounRouting',
-    })
-
-    // Explicit unresolved gate (should never trigger for registry_exact, but defensive)
-    if (meta.reasonCode === 'unknown') {
-      return { handled: false }
-    }
 
     // Execute: open the panel drawer using the real panel ID
     ctx.openPanelDrawer(realPanel.id, realPanel.title ?? match.title, meta)

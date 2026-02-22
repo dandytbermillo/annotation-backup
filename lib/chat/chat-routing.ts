@@ -80,7 +80,7 @@ import {
   isLLMAutoExecuteEnabledClient,
   type NeededContextType,
 } from '@/lib/chat/clarification-llm-fallback'
-import { isExplicitCommand, isSelectionOnly, resolveScopeCue, canonicalizeCommandInput, classifyArbitrationConfidence, classifyExecutionMeta } from '@/lib/chat/input-classifiers'
+import { isExplicitCommand, isSelectionOnly, resolveScopeCue, canonicalizeCommandInput, classifyArbitrationConfidence, classifyExecutionMeta, isStrictExactMatch } from '@/lib/chat/input-classifiers'
 import { isSelectionLike } from '@/lib/chat/grounding-set'
 import type { LastOptionsShown } from '@/lib/chat/chat-navigation-context'
 
@@ -6147,15 +6147,20 @@ export function handlePanelDisambiguation(
   if (isSingleMatch && openPanelDrawer) {
     const singleMatch = matchResult.matches[0]
 
-    // Classify from actual match evidence (shared classifier — single decision point)
+    // Addendum Rule B: strict ^...$ match determines matchKind for classifier.
+    // Token-containment 'exact' from matchVisiblePanelCommand is NOT strict exact.
+    // Only raw input === panel title qualifies as deterministic 'exact'.
+    const strictExact = isStrictExactMatch(trimmedInput, singleMatch.title)
+    const effectiveMatchKind: 'exact' | 'partial' = strictExact ? 'exact' : 'partial'
+
     const meta = classifyExecutionMeta({
-      matchKind: matchResult.type as 'exact' | 'partial',
+      matchKind: effectiveMatchKind,
       candidateCount: 1,
       resolverPath: 'panelDisambiguation',
     })
 
-    // Unresolved gate: non-exact → fall through to LLM tier (Rule B, Rule C)
-    // Context preserved: no state cleared before this return
+    // Unresolved gate: non-strict-exact → fall through to LLM tier (Rule B, Rule C)
+    // NO state cleared before this return — context preserved for LLM
     if (meta.reasonCode === 'unknown') {
       return { handled: false, matchType: matchResult.type, matchCount: 1 }
     }

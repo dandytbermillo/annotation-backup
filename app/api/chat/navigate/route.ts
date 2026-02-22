@@ -16,7 +16,7 @@ import { getSuggestions, type SuggestionResult, type DynamicSuggestionContext } 
 import { panelRegistry } from '@/lib/panels/panel-registry'
 import { resolveNoteWorkspaceUserId } from '@/app/api/note-workspaces/user-id'
 import { extractLinkNotesBadge } from '@/lib/chat/ui-helpers'
-import { detectLocalSemanticIntent } from '@/lib/chat/input-classifiers'
+import { detectLocalSemanticIntent, isVerifyOpenQuestion } from '@/lib/chat/input-classifiers'
 import { trySemanticRescue } from '@/lib/chat/semantic-rescue'
 
 // =============================================================================
@@ -970,6 +970,51 @@ export async function POST(request: NextRequest) {
         resolution.message = resolution.message
           || "I can answer questions about your activity, but I won't perform actions from here."
       }
+    }
+
+    // 5c: Verify-question execution guard — catch LLM misclassification for "did I open X?"
+    // Scope: panel-navigation outputs only. Does NOT intercept workspace/entry/home navigation.
+    const PANEL_NAVIGATION_ACTIONS = new Set([
+      'open_panel_drawer', 'open_panel_preview', 'show_quick_links',
+    ])
+
+    // Guard condition: input is a verify-open question AND LLM returned either
+    // (a) a panel-navigation action (misclassified as command), or
+    // (b) verify_request (misclassified as "did I ask you to..." when user said "did I open...")
+    const isVerifyOpen = isVerifyOpenQuestion(userMessage)
+    const isMisclassifiedAsNavigation = isVerifyOpen && PANEL_NAVIGATION_ACTIONS.has(resolution.action)
+    const isMisclassifiedAsRequest = isVerifyOpen && intent.intent === 'verify_request'
+
+    if (isMisclassifiedAsNavigation || isMisclassifiedAsRequest) {
+      // Extract panel name from the misclassified resolution
+      const verifyPanelName = resolution.panelTitle || intent.args?.quickLinksPanelTitle
+        || (intent.args?.quickLinksPanelBadge ? `Quick Links ${intent.args.quickLinksPanelBadge}` : null)
+        || intent.args?.panelId
+        || intent.args?.verifyRequestTargetName
+
+      void debugLog({
+        component: 'ChatNavigateAPI',
+        action: 'verify_question_execution_guard',
+        metadata: {
+          originalIntent: intent.intent,
+          originalAction: resolution.action,
+          remappedTo: 'verify_action',
+          guardReason: isMisclassifiedAsNavigation ? 'panel_navigation_intercept' : 'verify_request_remap',
+          verifyPanelName,
+          userMessage,
+        },
+      })
+
+      // Create NEW remapped intent (do not mutate original)
+      const remappedIntent = {
+        intent: 'verify_action' as const,
+        args: {
+          ...intent.args,
+          verifyActionType: 'open_panel' as const,
+          verifyPanelName: verifyPanelName || undefined,
+        },
+      }
+      resolution = await resolveIntent(remappedIntent, resolutionContext)
     }
 
     // Step 3: Handle general_answer with time replacement

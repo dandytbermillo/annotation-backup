@@ -42,6 +42,10 @@ next-env.d.ts
 # OS
 Thumbs.db
 
+# tests
+/__tests__/
+/e2e/
+
 # Package manager lock files (optional - you might want to keep these)
 # pnpm-lock.yaml
 # package-lock.json

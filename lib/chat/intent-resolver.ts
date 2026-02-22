@@ -1183,39 +1183,84 @@ function resolveVerifyAction(
     }
 
     if (targetPanelIdPattern) {
-      // Match by targetId (panelId) - robust against display name changes
-      const matchingOpen = panelOpens.find(entry => {
-        if (!entry.targetId) return false
-        const entryPanelId = entry.targetId.toLowerCase()
-        // Exact match or pattern match (e.g., "quick-links-d" matches "quick-links-d")
-        // Also handle partial matches for badge (e.g., targetId contains the pattern)
-        return entryPanelId === targetPanelIdPattern ||
-               entryPanelId.includes(targetPanelIdPattern) ||
-               targetPanelIdPattern.includes(entryPanelId)
-      })
+      // === Step 1: Exact targetName match (normalized) ===
+      // targetName is reliably populated from panel.title at recording time.
+      // Primary strategy since Phase C stores DB UUIDs as targetId.
+      const exactNameMatch = panelOpens.find(entry =>
+        matches(entry.targetName, friendlyPanelName!) ||
+        matches(entry.targetName, verifyPanelName!)
+      )
 
-      if (matchingOpen) {
+      if (exactNameMatch) {
         return {
           success: true,
           action: 'inform',
-          message: `Yes, you opened "${matchingOpen.targetName}" this session.`,
+          message: `Yes, you opened "${exactNameMatch.targetName}" this session.`,
         }
-      } else {
-        // List what panels were opened (use display names for user-friendly response)
-        const openedPanels = [...new Set(panelOpens.map(e => e.targetName))]
-        if (openedPanels.length === 1) {
+      }
+
+      // === Step 2: Exact semantic ID match (future-proof + legacy compat) ===
+      // Catches legacy entries that stored semantic IDs as targetId,
+      // and future entries when Phase 2 threads semanticId through TargetRef.
+      const semanticIdMatch = panelOpens.find(entry => {
+        if (!entry.targetId) return false
+        const entryId = entry.targetId.toLowerCase()
+        return entryId === targetPanelIdPattern
+      })
+
+      if (semanticIdMatch) {
+        // Prefer targetName for display; fall back to friendlyPanelName for legacy entries with empty targetName
+        const displayName = semanticIdMatch.targetName || friendlyPanelName || verifyPanelName
+        return {
+          success: true,
+          action: 'inform',
+          message: `Yes, you opened "${displayName}" this session.`,
+        }
+      }
+
+      // === Step 3: Family match (word-boundary, ambiguous → list) ===
+      // "links panel" (no badge) → matches "Links Panel D", "Links Panel E"
+      // Word boundary: next char after pattern must be space or end-of-string.
+      // "Links Panels" does NOT family-match "Links Panel" (next char is 's').
+      const patternLower = friendlyPanelName!.trim().toLowerCase()
+      const familyMatches = panelOpens.filter(entry => {
+        if (!entry.targetName) return false
+        const entryNameLower = entry.targetName.trim().toLowerCase()
+        if (entryNameLower === patternLower) return false // exact handled in step 1
+        if (!entryNameLower.startsWith(patternLower)) return false
+        const nextChar = entryNameLower[patternLower.length]
+        return nextChar === ' ' || nextChar === undefined
+      })
+
+      if (familyMatches.length > 0) {
+        const familyNames = [...new Set(familyMatches.map(e => e.targetName))]
+        if (familyNames.length === 1) {
           return {
             success: true,
             action: 'inform',
-            message: `No, I have no record of opening "${friendlyPanelName}" this session. You opened "${openedPanels[0]}".`,
-          }
-        } else {
-          return {
-            success: true,
-            action: 'inform',
-            message: `No, I have no record of opening "${friendlyPanelName}" this session. Panels opened: ${openedPanels.join(', ')}.`,
+            message: `You opened "${familyNames[0]}" this session (similar to "${friendlyPanelName}").`,
           }
         }
+        return {
+          success: true,
+          action: 'inform',
+          message: `You opened ${familyNames.length} panels in the "${friendlyPanelName}" family: ${familyNames.join(', ')}.`,
+        }
+      }
+
+      // === Step 4: True no-match ===
+      const openedPanels = [...new Set(panelOpens.map(e => e.targetName).filter(Boolean))]
+      if (openedPanels.length === 0) {
+        return {
+          success: true,
+          action: 'inform',
+          message: `No, I have no record of opening "${friendlyPanelName}" this session.`,
+        }
+      }
+      return {
+        success: true,
+        action: 'inform',
+        message: `No, you did not open "${friendlyPanelName}" this session. Panels opened: ${openedPanels.join(', ')}.`,
       }
     } else {
       // No specific panel name - list all opened panels

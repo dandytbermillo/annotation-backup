@@ -47,6 +47,13 @@ No parallel ladders or duplicated unresolved hooks.
 Deterministic execution is allowed only for strict high-confidence winners.
 For non-selection inputs, deterministic matching must use anchored exact patterns (`^...$`) with no prefix/suffix filler stripping.
 
+**Exemption — `context_expand` (Tier 2g preview shortcut)**:
+Rule B strict-exact gate applies to name-based panel matching only.
+Tier 2g `context_expand` is exempt because it matches by intent pattern
+("show all") against a temporally-identified target (the recent preview),
+not by comparing raw input against panel titles. The target is uniquely
+determined by `lastPreview.drawerPanelId` with no name ambiguity.
+
 ### Rule C — Unresolved means bounded LLM
 If deterministic confidence is not high (including paraphrase/same-meaning non-exact phrasing), the flow must call bounded LLM before any escape to unsupported or downstream fallback.
 

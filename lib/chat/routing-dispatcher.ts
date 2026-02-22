@@ -303,7 +303,7 @@ export type GroundingAction = NonNullable<RoutingDispatcherResult['groundingActi
 // =============================================================================
 
 // Import from shared utility (extracted to avoid circular dependency with chat-routing.ts)
-import { isExplicitCommand, isSelectionOnly, normalizeOrdinalTypos, isSemanticQuestionInput, classifyExecutionMeta } from '@/lib/chat/input-classifiers'
+import { isExplicitCommand, isSelectionOnly, normalizeOrdinalTypos, isSemanticQuestionInput, classifyExecutionMeta, isStrictExactMatch, isVerifyOpenQuestion } from '@/lib/chat/input-classifiers'
 // Re-export to avoid breaking existing imports from this file
 export { isExplicitCommand }
 
@@ -1011,7 +1011,39 @@ export async function dispatchRouting(
   // Input still falls through to LLM API — this only prevents interception.
   // =========================================================================
   const isSemanticAnswerLaneEnabled = process.env.NEXT_PUBLIC_SEMANTIC_CONTINUITY_ANSWER_LANE_ENABLED === 'true'
-  const semanticLaneDetected = isSemanticAnswerLaneEnabled && isSemanticQuestionInput(ctx.trimmedInput)
+  const isSemanticQuestion = isSemanticAnswerLaneEnabled && isSemanticQuestionInput(ctx.trimmedInput)
+
+  // =========================================================================
+  // Active-clarification guard: when disambiguation options are visible and
+  // the user asks a semantic question ("why did you do that?"), explain the
+  // active clarification instead of answering from stale action history.
+  // Keeps pendingOptions visible — no state mutation on this path.
+  // =========================================================================
+  if (isSemanticQuestion && ctx.pendingOptions.length > 0) {
+    const optionLabels = ctx.pendingOptions.map(o => o.label).join(', ')
+    const assistantMessage: ChatMessage = {
+      id: `assistant-${Date.now()}`,
+      role: 'assistant',
+      content: `I asked for clarification because multiple items matched your request. Please select one: ${optionLabels}.`,
+      timestamp: new Date(),
+      isError: false,
+    }
+    ctx.addMessage(assistantMessage)
+    ctx.setIsLoading(false)
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'semantic_lane_blocked_by_active_clarification',
+      metadata: { input: ctx.trimmedInput, optionCount: ctx.pendingOptions.length },
+    })
+    return {
+      ...defaultResult,
+      handled: true,
+      handledByTier: 0,
+      tierLabel: 'semantic_question_during_clarification',
+    }
+  }
+
+  const semanticLaneDetected = isSemanticQuestion
   if (semanticLaneDetected) {
     void debugLog({
       component: 'ChatNavigation',
@@ -1223,22 +1255,25 @@ export async function dispatchRouting(
   // Tier 2c: Panel Disambiguation (deterministic, pre-LLM)
   // Question intent override: "what is links panel?" should route to docs (Tier 5),
   // not get caught by token-subset matching in panel disambiguation.
-  // Exception: polite commands like "can you open links panel" have question intent
-  // (^can) but should still reach Tier 2c when they match visible panels.
+  // Addendum Rule B: only strict exact panel name match overrides question intent.
+  // Polite commands ("can you open links panel") now fall through to LLM tier.
   const questionIntentBlocks = (() => {
     if (!hasQuestionIntent(ctx.trimmedInput)) return false
-    // Check if this is actually a polite command that matches visible panels
+    // Addendum Rule B: only strict exact panel name match overrides question intent.
+    // Token-containment evidence is NOT sufficient to convert a question into a command.
     const dw = ctx.uiContext?.mode === 'dashboard' ? ctx.uiContext?.dashboard?.visibleWidgets : undefined
-    const pe = dw?.length ? matchVisiblePanelCommand(ctx.trimmedInput, dw) : null
-    if (pe && pe.type !== 'none') {
-      void debugLog({
-        component: 'ChatNavigation',
-        action: 'question_intent_overridden_by_panel_evidence',
-        metadata: { input: ctx.trimmedInput, matchType: pe.type, matchCount: pe.matches.length, tier: '2c' },
-      })
-      return false // Polite command — don't block Tier 2c
+    if (dw?.length) {
+      const hasStrictMatch = dw.some(w => isStrictExactMatch(ctx.trimmedInput, w.title))
+      if (hasStrictMatch) {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'question_intent_overridden_by_strict_exact_match',
+          metadata: { input: ctx.trimmedInput, tier: '2c' },
+        })
+        return false // Raw input IS a panel name — let Tier 2c handle
+      }
     }
-    return true // Genuine question — block Tier 2c
+    return true // Question — block Tier 2c
   })()
   if (questionIntentBlocks) {
     void debugLog({
@@ -1383,6 +1418,8 @@ export async function dispatchRouting(
     })
 
     if (ctx.lastPreview.drawerPanelId) {
+      // Tier 2g: context_expand is exempt from strict-exact gate (addendum Rule B exemption).
+      // Intent-pattern matching against temporal target, not name matching.
       const previewMeta = classifyExecutionMeta({
         matchKind: 'context_expand',
         candidateCount: 1,
@@ -1442,6 +1479,8 @@ export async function dispatchRouting(
           })
 
           if (ctx.lastPreview.drawerPanelId) {
+            // Tier 2g: context_expand is exempt from strict-exact gate (addendum Rule B exemption).
+            // Intent-pattern matching against temporal target, not name matching.
             const classifierMeta = classifyExecutionMeta({
               matchKind: 'context_expand',
               candidateCount: 1,
@@ -2927,6 +2966,10 @@ export async function dispatchRouting(
         isExplicitCommand(ctx.trimmedInput) &&
         matchVisiblePanelCommand(ctx.trimmedInput, ctx.uiContext?.dashboard?.visibleWidgets).type !== 'none'
 
+      // Verify-question bypass: "did/have I/we/you open(ed)..." should NOT enter grounding LLM.
+      // These are historical queries, not selection attempts. Send to main API for intent classification.
+      const isVerifyBypass = isVerifyOpenQuestion(ctx.trimmedInput)
+
       if (isCommandPanelIntent) {
         void debugLog({
           component: 'ChatNavigation',
@@ -2939,6 +2982,17 @@ export async function dispatchRouting(
         })
         // Fall through — panel command should be handled by Tier 2c, not grounding LLM.
         // Routing continues to subsequent tiers.
+      } else if (isVerifyBypass) {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'grounding_llm_skipped_verify_question',
+          metadata: {
+            input: ctx.trimmedInput,
+            candidateCount: groundingResult.llmCandidates.length,
+            reason: 'verify_question_bypass_to_api',
+          },
+        })
+        // Fall through — verify question should reach intent API, not grounding LLM.
       } else if (isGroundingLLMEnabled()) {
         try {
           // Per incubation plan §Observability: log LLM attempt

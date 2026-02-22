@@ -609,6 +609,47 @@ function classifyFromEvidence(matchKind: ClassifyEvidence['matchKind'], candidat
 }
 
 // =============================================================================
+// Strict Exact Match (Addendum Rule B — no-stripping gate)
+// =============================================================================
+
+/**
+ * Strict anchored exact match for deterministic execution gate.
+ * Per addendum Rule B: no prefix/suffix filler stripping.
+ * Only lowercased trim comparison — nothing else.
+ *
+ * Used as a pre-gate before classifyExecutionMeta({ matchKind: 'exact' }).
+ * If this returns false, dispatch site MUST use matchKind: 'partial'
+ * (which the classifier maps to 'unknown' → unresolved gate blocks execution).
+ */
+export function isStrictExactMatch(rawInput: string, candidateLabel: string): boolean {
+  return rawInput.toLowerCase().trim() === candidateLabel.toLowerCase().trim()
+}
+
+// =============================================================================
+// Verify-Open Question Detection
+// =============================================================================
+
+/**
+ * Detect verify-open questions: "did I open X?", "have I opened X?", etc.
+ * Used to bypass grounding LLM (Tier 4.5) and catch server-side LLM misclassification.
+ *
+ * Handles conversational prefixes like "hey assistant did i open..."
+ * by matching the core pattern anywhere (non-anchored).
+ *
+ * Negative guard: "did I ask/tell/request (you) to open..." → NOT a verify question
+ * (that's verify_request territory).
+ */
+const VERIFY_OPEN_CORE = /(did|have)\s+(i|we|you)\s+open(?:ed)?\b/i
+const REQUEST_PHRASE_GUARD = /(did|have)\s+(i|we|you)\s+(ask|tell|request)\s+(you\s+)?to\b/i
+
+export function isVerifyOpenQuestion(input: string): boolean {
+  const trimmed = input.trim()
+  if (!VERIFY_OPEN_CORE.test(trimmed)) return false
+  if (REQUEST_PHRASE_GUARD.test(trimmed)) return false
+  return true
+}
+
+// =============================================================================
 // Phase 10: Semantic Answer Lane Detector
 // =============================================================================
 
