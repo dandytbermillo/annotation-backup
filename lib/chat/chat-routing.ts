@@ -80,7 +80,7 @@ import {
   isLLMAutoExecuteEnabledClient,
   type NeededContextType,
 } from '@/lib/chat/clarification-llm-fallback'
-import { isExplicitCommand, isSelectionOnly, resolveScopeCue, canonicalizeCommandInput, classifyArbitrationConfidence, classifyExecutionMeta, isStrictExactMatch } from '@/lib/chat/input-classifiers'
+import { isExplicitCommand, isSelectionOnly, resolveScopeCue, canonicalizeCommandInput, classifyArbitrationConfidence, classifyExecutionMeta, isStrictExactMatch, evaluateDeterministicDecision } from '@/lib/chat/input-classifiers'
 import { isSelectionLike } from '@/lib/chat/grounding-set'
 import type { LastOptionsShown } from '@/lib/chat/chat-navigation-context'
 
@@ -3603,7 +3603,7 @@ export async function handleClarificationIntercept(
               pendingClarifierType: 'selection_disambiguation',
             })
             setIsLoading(false)
-            return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected, _devProvenanceHint: llmResult.suggestedId ? 'llm_influenced' : undefined }
+            return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected, _devProvenanceHint: llmResult.suggestedId ? 'llm_influenced' : 'safe_clarifier' as const }
           }
         }
         // No recoverable options or question-intent → fall through to Phase 3
@@ -4542,7 +4542,8 @@ export async function handleClarificationIntercept(
         const tokens = input.toLowerCase().split(/\s+/).filter(Boolean)
         if (tokens.length === 0) return { badge: null, inputWithoutBadge: input }
 
-        const lastToken = tokens[tokens.length - 1]
+        // Strip trailing punctuation (e.g., "d?" → "d", "d!" → "d")
+        const lastToken = tokens[tokens.length - 1].replace(/[?!.,;:]+$/, '')
         // Badge is a single letter (a-z) or single digit (1-9)
         if (/^[a-z]$/.test(lastToken) || /^[1-9]$/.test(lastToken)) {
           return {
@@ -4672,54 +4673,91 @@ export async function handleClarificationIntercept(
       // Trying both normalizedInput and inputForMatching preserves the original
       // dual-path behavior.
 
-      // Only auto-select if EXACTLY ONE option matches
-      // If multiple match (e.g., "links panel" matches both D and E), fall through to re-show
+      // Only auto-select if EXACTLY ONE option matches AND it's high-confidence.
+      // If multiple match (e.g., "links panel" matches both D and E), fall through to re-show.
+      // Universal deterministic confidence gate: soft matches fall through to unresolved hook.
       if (matchingOptions.length === 1) {
         const matchedOption = matchingOptions[0]
-        const fullOption = pendingOptions.find(opt => opt.id === matchedOption.id)
 
-        void debugLog({
-          component: 'ChatNavigation',
-          action: 'clarification_tier1b3_label_selection',
-          metadata: {
-            input: trimmedInput,
-            matchedLabel: matchedOption.label,
-            hasFullOption: !!fullOption,
-            matchCount: 1,
-          },
-        })
+        // Route through shared gate — same contract as Sites 1-3 in routing-dispatcher.ts
+        const gateDecision = evaluateDeterministicDecision(
+          trimmedInput,
+          [{ id: matchedOption.id, label: matchedOption.label, sublabel: matchedOption.sublabel }],
+          'active_option'
+        )
 
-        // Save clarification snapshot for post-action repair window (per plan §153-161)
-        saveClarificationSnapshot(lastClarification)
-        // Set repair memory for label selection (enables "the other one" after label match)
-        setRepairMemory(matchedOption.id, lastClarification.options)
-        setLastClarification(null)
-        setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+        // Single-match upgrade: when findMatchingOptions returned exactly 1 match
+        // from ALL available options AND the input contains the complete label
+        // (soft_contains), this is unambiguous — execute it.
+        // The gate's soft_contains is medium-confidence when candidate count is unknown,
+        // but the caller verified uniqueness across all options.
+        const singleMatchExecute = gateDecision.outcome === 'execute' ||
+          gateDecision.reason === 'soft_contains'
 
-        if (fullOption) {
-          const optionToSelect: SelectionOption = {
-            type: fullOption.type as SelectionOption['type'],
-            id: fullOption.id,
-            label: fullOption.label,
-            sublabel: fullOption.sublabel,
-            data: fullOption.data as SelectionOption['data'],
+        if (singleMatchExecute) {
+          const fullOption = pendingOptions.find(opt => opt.id === matchedOption.id)
+
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'clarification_tier1b3_label_selection',
+            metadata: {
+              input: trimmedInput,
+              matchedLabel: matchedOption.label,
+              hasFullOption: !!fullOption,
+              matchCount: 1,
+              confidence: gateDecision.confidence,
+              reason: gateDecision.reason,
+              singleMatchUpgrade: gateDecision.outcome !== 'execute',
+            },
+          })
+
+          // Save clarification snapshot for post-action repair window (per plan §153-161)
+          saveClarificationSnapshot(lastClarification)
+          // Set repair memory for label selection (enables "the other one" after label match)
+          setRepairMemory(matchedOption.id, lastClarification.options)
+          setLastClarification(null)
+          setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+
+          if (fullOption) {
+            const optionToSelect: SelectionOption = {
+              type: fullOption.type as SelectionOption['type'],
+              id: fullOption.id,
+              label: fullOption.label,
+              sublabel: fullOption.sublabel,
+              data: fullOption.data as SelectionOption['data'],
+            }
+            setIsLoading(false)
+            handleSelectOption(optionToSelect)
+            return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
+          } else {
+            const optionToSelect: SelectionOption = {
+              type: matchedOption.type as SelectionOption['type'],
+              id: matchedOption.id,
+              label: matchedOption.label,
+              sublabel: matchedOption.sublabel,
+              data: matchedOption.type === 'doc'
+                ? { docSlug: matchedOption.id }
+                : { term: matchedOption.id, action: 'doc' as const },
+            }
+            setIsLoading(false)
+            handleSelectOption(optionToSelect)
+            return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
           }
-          setIsLoading(false)
-          handleSelectOption(optionToSelect)
-          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
         } else {
-          const optionToSelect: SelectionOption = {
-            type: matchedOption.type as SelectionOption['type'],
-            id: matchedOption.id,
-            label: matchedOption.label,
-            sublabel: matchedOption.sublabel,
-            data: matchedOption.type === 'doc'
-              ? { docSlug: matchedOption.id }
-              : { term: matchedOption.id, action: 'doc' as const },
-          }
-          setIsLoading(false)
-          handleSelectOption(optionToSelect)
-          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+          // Non-contains soft match (starts_with, label_contains, multi_match, no_match):
+          // Fall through to unresolved hook → runBoundedArbitrationLoop
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'deterministic_gate_tier1b3_soft_match_to_llm',
+            metadata: {
+              input: trimmedInput,
+              matchedLabel: matchedOption.label,
+              confidence: gateDecision.confidence,
+              reason: gateDecision.reason,
+              outcome: gateDecision.outcome,
+            },
+          })
+          // Do NOT clear pendingOptions or lastClarification — preserve for LLM
         }
       } else if (matchingOptions.length > 1) {
         // Multiple options match (e.g., "links panel" matches both D and E)
@@ -4741,42 +4779,73 @@ export async function handleClarificationIntercept(
         const exactMatches = exactOriginal
 
         if (exactMatches.length === 1) {
-          // Exact-first winner: one option matches exactly
+          // Exact-first winner: one option matches exactly on canonical tokens.
+          // Route through shared gate — gate outcome is authoritative.
           const matchedOption = exactMatches[0]
-          const fullOption = pendingOptions.find(opt => opt.id === matchedOption.id)
+          // Pass verb-stripped input so the gate sees "links panel" not "open links panel"
+          // — canonical token matching handles singular/plural normalization.
+          const exactNormGateDecision = evaluateDeterministicDecision(
+            inputForMatching,
+            [{ id: matchedOption.id, label: matchedOption.label, sublabel: matchedOption.sublabel }],
+            'active_option'
+          )
 
-          void debugLog({
-            component: 'ChatNavigation',
-            action: 'clarification_exact_normalized_match_selected',
-            metadata: {
-              input: trimmedInput,
-              matchedLabel: matchedOption.label,
-              hasFullOption: !!fullOption,
-              broadMatchCount: matchingOptions.length,
-              exactMatchCount: 1,
-              activeOptionsCount: lastClarification.options.length,
-              isExplicitCommand: inputIsExplicitCommand,
-              isSelectionLike: inputIsSelectionLike,
-            },
-          })
+          if (exactNormGateDecision.outcome === 'execute') {
+            // Gate confirms high-confidence → deterministic execute
+            const fullOption = pendingOptions.find(opt => opt.id === matchedOption.id)
 
-          // Save clarification snapshot for post-action repair window
-          saveClarificationSnapshot(lastClarification)
-          setRepairMemory(matchedOption.id, lastClarification.options)
-          setLastClarification(null)
-          setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'clarification_exact_normalized_match_selected',
+              metadata: {
+                input: trimmedInput,
+                matchedLabel: matchedOption.label,
+                hasFullOption: !!fullOption,
+                broadMatchCount: matchingOptions.length,
+                exactMatchCount: 1,
+                activeOptionsCount: lastClarification.options.length,
+                isExplicitCommand: inputIsExplicitCommand,
+                isSelectionLike: inputIsSelectionLike,
+                gateOutcome: exactNormGateDecision.outcome,
+                gateConfidence: exactNormGateDecision.confidence,
+                gateReason: exactNormGateDecision.reason,
+              },
+            })
 
-          const optionToSelect: SelectionOption = {
-            type: (fullOption?.type ?? matchedOption.type) as SelectionOption['type'],
-            id: matchedOption.id,
-            label: matchedOption.label,
-            sublabel: matchedOption.sublabel,
-            data: fullOption?.data as SelectionOption['data'] ??
-              reconstructSnapshotData(matchedOption),
+            // Save clarification snapshot for post-action repair window
+            saveClarificationSnapshot(lastClarification)
+            setRepairMemory(matchedOption.id, lastClarification.options)
+            setLastClarification(null)
+            setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+
+            const optionToSelect: SelectionOption = {
+              type: (fullOption?.type ?? matchedOption.type) as SelectionOption['type'],
+              id: matchedOption.id,
+              label: matchedOption.label,
+              sublabel: matchedOption.sublabel,
+              data: fullOption?.data as SelectionOption['data'] ??
+                reconstructSnapshotData(matchedOption),
+            }
+            setIsLoading(false)
+            handleSelectOption(optionToSelect)
+            return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
+          } else {
+            // Gate says not high-confidence (token-exact but not string-exact)
+            // → fall through to unresolved hook (bounded LLM). Do NOT execute.
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'deterministic_gate_exact_normalized_to_llm',
+              metadata: {
+                input: trimmedInput,
+                matchedLabel: matchedOption.label,
+                broadMatchCount: matchingOptions.length,
+                gateOutcome: exactNormGateDecision.outcome,
+                gateConfidence: exactNormGateDecision.confidence,
+                gateReason: exactNormGateDecision.reason,
+              },
+            })
+            // Do NOT clear state — preserve for LLM
           }
-          setIsLoading(false)
-          handleSelectOption(optionToSelect)
-          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
         }
 
         // No exact winner — hoist count for unresolved hook, then fall through
@@ -4889,7 +4958,7 @@ export async function handleClarificationIntercept(
             isError: false,
           })
           setIsLoading(false)
-          return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+          return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected, _devProvenanceHint: 'safe_clarifier' as const }
         }
 
         if (llmResult.fallbackReason === 'question_intent') {
@@ -5064,7 +5133,7 @@ export async function handleClarificationIntercept(
             pendingClarifierType: 'selection_disambiguation',
           })
           setIsLoading(false)
-          return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected, _devProvenanceHint: llmResult.suggestedId ? 'llm_influenced' : undefined }
+          return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected, _devProvenanceHint: llmResult.suggestedId ? 'llm_influenced' : 'safe_clarifier' as const }
         }
       }
       // ordinal → skip hook, Tier 1b.3a handles it

@@ -303,7 +303,7 @@ export type GroundingAction = NonNullable<RoutingDispatcherResult['groundingActi
 // =============================================================================
 
 // Import from shared utility (extracted to avoid circular dependency with chat-routing.ts)
-import { isExplicitCommand, isSelectionOnly, normalizeOrdinalTypos, isSemanticQuestionInput, classifyExecutionMeta, isStrictExactMatch, isVerifyOpenQuestion } from '@/lib/chat/input-classifiers'
+import { isExplicitCommand, isSelectionOnly, normalizeOrdinalTypos, isSemanticQuestionInput, classifyExecutionMeta, isStrictExactMatch, isVerifyOpenQuestion, evaluateDeterministicDecision, type MatchConfidence } from '@/lib/chat/input-classifiers'
 // Re-export to avoid breaking existing imports from this file
 export { isExplicitCommand }
 
@@ -418,61 +418,96 @@ function extractOrdinalIndex(input: string, optionCount: number): number | undef
 }
 
 
+// =============================================================================
+// Structured Option Candidate Matching
+// =============================================================================
+
+/** Aligns with DecisionReason — same keys minus 'no_match' and 'soft_multi_match' (aggregated) */
+type OptionMatchType = 'exact_label' | 'exact_sublabel' | 'soft_contains' | 'soft_starts_with' | 'soft_label_contains'
+
+interface OptionCandidate {
+  option: PendingOptionState
+  matchType: OptionMatchType
+}
+
 /**
- * Find exact match in pending options by label or sublabel.
- * Returns the matched option or undefined if no exact match.
+ * Returns ALL matches with their match type — structured array for LLM arbitration.
+ * Each candidate carries its matchType so callers can distinguish high-confidence
+ * (exact_label, exact_sublabel) from soft matches.
  */
-function findExactOptionMatch(
+function findOptionCandidates(
   input: string,
   options: PendingOptionState[]
-): PendingOptionState | undefined {
+): OptionCandidate[] {
   const normalized = input.trim().toLowerCase()
+  if (!normalized) return []
 
-  // Try exact label match first
-  const labelMatch = options.find(opt => opt.label.toLowerCase() === normalized)
-  if (labelMatch) return labelMatch
+  const candidates: OptionCandidate[] = []
 
-  // Try exact sublabel match
-  const sublabelMatch = options.find(
-    opt => opt.sublabel && opt.sublabel.toLowerCase() === normalized
-  )
-  if (sublabelMatch) return sublabelMatch
+  for (const opt of options) {
+    const label = opt.label.toLowerCase().trim()
 
-  // Try "contains" match - input contains the option label
-  // e.g., "pls show the Links Panel D" contains "Links Panel D"
-  // Only match if exactly one option label is found (avoid ambiguity)
-  const containsMatches = options.filter(opt =>
-    normalized.includes(opt.label.toLowerCase())
-  )
-  if (containsMatches.length === 1) {
-    return containsMatches[0]
-  }
+    // Exact label match
+    if (label === normalized) {
+      candidates.push({ option: opt, matchType: 'exact_label' })
+      continue
+    }
 
-  // Phase 2a.1: Label matching for visible options
-  // Try "starts with" match - label starts with input
-  // e.g., "workspace 6" matches "Workspace 6 (Home)"
-  // Only match if exactly one option starts with the input (avoid ambiguity)
-  const startsWithMatches = options.filter(opt =>
-    opt.label.toLowerCase().startsWith(normalized)
-  )
-  if (startsWithMatches.length === 1) {
-    return startsWithMatches[0]
-  }
+    // Exact sublabel match
+    if (opt.sublabel && opt.sublabel.toLowerCase().trim() === normalized) {
+      candidates.push({ option: opt, matchType: 'exact_sublabel' })
+      continue
+    }
 
-  // Phase 2a.1: Try "label contains input" match
-  // e.g., "workspace 6" is found within "Workspace 6 (Home)"
-  // Require minimum 3 chars to avoid false positives
-  // Only match if exactly one option contains the input (avoid ambiguity)
-  if (normalized.length >= 3) {
-    const labelContainsMatches = options.filter(opt =>
-      opt.label.toLowerCase().includes(normalized)
-    )
-    if (labelContainsMatches.length === 1) {
-      return labelContainsMatches[0]
+    // Contains: input contains the option label
+    // e.g., "pls show the Links Panel D" contains "links panel d"
+    if (normalized.includes(label) && label.length >= 2) {
+      candidates.push({ option: opt, matchType: 'soft_contains' })
+      continue
+    }
+
+    // Starts with: label starts with input
+    // e.g., "workspace 6" → "Workspace 6 (Home)"
+    if (label.startsWith(normalized) && normalized.length >= 2) {
+      candidates.push({ option: opt, matchType: 'soft_starts_with' })
+      continue
+    }
+
+    // Label contains input: label contains input (min 3 chars)
+    // e.g., "panel" found in "Links Panel D"
+    if (normalized.length >= 3 && label.includes(normalized)) {
+      candidates.push({ option: opt, matchType: 'soft_label_contains' })
+      continue
     }
   }
 
-  return undefined
+  return candidates
+}
+
+/**
+ * Gated wrapper: delegates to evaluateDeterministicDecision.
+ * Returns non-null only for outcome === 'execute' (high-confidence).
+ */
+function findHighConfidenceMatch(
+  input: string,
+  options: PendingOptionState[]
+): { match: PendingOptionState; confidence: MatchConfidence; reason: string } | null {
+  const decision = evaluateDeterministicDecision(
+    input,
+    options.map(o => ({ id: o.id, label: o.label, sublabel: o.sublabel })),
+    'active_option'
+  )
+
+  if (decision.outcome !== 'execute' || !decision.match) return null
+
+  const matchedOption = options.find(o => o.id === decision.match!.id)
+  if (!matchedOption) return null
+
+  return {
+    match: matchedOption,
+    confidence: decision.confidence,
+    reason: decision.reason,
+  }
 }
 
 // =============================================================================
@@ -524,10 +559,10 @@ function resolveSelectionFollowUp(
       return { handled: true, matchedChatOption: match }
     }
 
-    // Try label match (reuse existing helper)
-    const labelMatch = findExactOptionMatch(input, chatContext.pendingOptions)
-    if (labelMatch) {
-      return { handled: true, matchedChatOption: labelMatch }
+    // Try label match — gated by confidence gate (high-confidence only)
+    const chatLabelMatch = findHighConfidenceMatch(input, chatContext.pendingOptions)
+    if (chatLabelMatch) {
+      return { handled: true, matchedChatOption: chatLabelMatch.match }
     }
   }
 
@@ -551,7 +586,7 @@ function resolveSelectionFollowUp(
       }
     }
 
-    // Try label match for widget options — convert to PendingOptionState format
+    // Try label match for widget options — gated by confidence gate (high-confidence only)
     const widgetOptionsAsPending: PendingOptionState[] = widgetContext.options.map((opt, idx) => ({
       index: idx + 1,
       type: 'widget_option' as const,
@@ -560,16 +595,16 @@ function resolveSelectionFollowUp(
       sublabel: opt.sublabel,
       data: undefined, // Widget options don't carry data payload
     }))
-    const labelMatch = findExactOptionMatch(input, widgetOptionsAsPending)
-    if (labelMatch) {
+    const widgetLabelMatch = findHighConfidenceMatch(input, widgetOptionsAsPending)
+    if (widgetLabelMatch) {
       return {
         handled: true,
         groundingAction: {
           type: 'execute_widget_item',
           widgetId: widgetContext.widgetId,
           segmentId: widgetContext.segmentId,
-          itemId: labelMatch.id,
-          itemLabel: labelMatch.label,
+          itemId: widgetLabelMatch.match.id,
+          itemLabel: widgetLabelMatch.match.label,
           action: 'open',
         },
       }
@@ -1717,6 +1752,7 @@ export async function dispatchRouting(
             handled: true,
             handledByTier: 3,
             tierLabel: 'selection_only_widget_option',
+            _devProvenanceHint: 'deterministic',
             clarificationCleared,
             isNewQuestionOrCommandDetected,
             classifierCalled,
@@ -1753,6 +1789,7 @@ export async function dispatchRouting(
         handled: true,
         handledByTier: 3,
         tierLabel: 'selection_only_guard',
+        _devProvenanceHint: 'deterministic',
         clarificationCleared,
         isNewQuestionOrCommandDetected,
         classifierCalled,
@@ -1764,16 +1801,19 @@ export async function dispatchRouting(
       }
     }
 
-    // Phase 2a.1: Try label matching for visible options
-    // e.g., "workspace 6" matches "Workspace 6 (Home)"
-    const labelMatch = findExactOptionMatch(ctx.trimmedInput, ctx.pendingOptions)
-    if (labelMatch) {
+    // Phase 2a.1: Try label matching for visible options — gated by confidence gate
+    // High-confidence only executes deterministically; soft matches fall to LLM.
+    const highConfidence = findHighConfidenceMatch(ctx.trimmedInput, ctx.pendingOptions)
+    if (highConfidence) {
+      const labelMatch = highConfidence.match
       void debugLog({
         component: 'ChatNavigation',
         action: 'label_match_selection',
         metadata: {
           input: ctx.trimmedInput,
           matchedLabel: labelMatch.label,
+          confidence: highConfidence.confidence,
+          reason: highConfidence.reason,
           tier: '3a',
         },
         // V5 Metrics: Track clarification resolved via label match
@@ -1797,6 +1837,7 @@ export async function dispatchRouting(
             handled: true,
             handledByTier: 3,
             tierLabel: 'label_match_widget_option',
+            _devProvenanceHint: 'deterministic',
             clarificationCleared,
             isNewQuestionOrCommandDetected,
             classifierCalled,
@@ -1833,6 +1874,7 @@ export async function dispatchRouting(
         handled: true,
         handledByTier: 3,
         tierLabel: 'label_match_selection',
+        _devProvenanceHint: 'deterministic',
         clarificationCleared,
         isNewQuestionOrCommandDetected,
         classifierCalled,
@@ -1844,11 +1886,30 @@ export async function dispatchRouting(
       }
     }
 
+    // Soft-match candidate detection: bypass looksSelectionLike word-count gate
+    // to ensure noisy inputs with a plausible match always reach the bounded LLM.
+    const softCandidates = findOptionCandidates(ctx.trimmedInput, ctx.pendingOptions)
+    const hasSoftMatchCandidate = softCandidates.length > 0
+
+    if (hasSoftMatchCandidate) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'deterministic_gate_soft_match_to_llm',
+        metadata: {
+          input: ctx.trimmedInput,
+          softCandidateCount: softCandidates.length,
+          softCandidates: softCandidates.map(c => ({ label: c.option.label, matchType: c.matchType })),
+          tier: '3a',
+        },
+      })
+    }
+
     // Not a pure selection or label match.
     // Per clarification-response-fit-plan.md "Selection-Like Typos (NEW)":
     // Step 2: If input looks selection-like, call constrained LLM before falling through.
     // Step 3: If LLM abstains/low confidence → ask_clarify (NOT route to docs).
-    if (looksSelectionLike(ctx.trimmedInput) && isLLMFallbackEnabledClient()) {
+    // hasSoftMatchCandidate bypass: ensures noisy inputs with soft matches always reach LLM.
+    if ((hasSoftMatchCandidate || looksSelectionLike(ctx.trimmedInput)) && isLLMFallbackEnabledClient()) {
       void debugLog({
         component: 'ChatNavigation',
         action: 'selection_typo_llm_fallback_attempt',
@@ -2007,6 +2068,7 @@ export async function dispatchRouting(
           handled: true,
           handledByTier: 3,
           tierLabel: 'selection_from_message',
+          _devProvenanceHint: 'deterministic',
           clarificationCleared,
           isNewQuestionOrCommandDetected,
           classifierCalled,
@@ -2018,18 +2080,19 @@ export async function dispatchRouting(
         }
       }
 
-      // Tier 3a (cont.): Label/shorthand matching for message-derived options
-      // isSelectionOnly only matches ordinals ("first", "2", "d").
-      // findExactOptionMatch handles shorthand like "panel e", "workspace 6",
-      // "links panel d" via label contains/startsWith/exact matching.
-      const labelMatch = findExactOptionMatch(ctx.trimmedInput, lastOptionsMessage.options)
-      if (labelMatch) {
+      // Tier 3a (cont.): Label/shorthand matching for message-derived options — gated by confidence gate.
+      // High-confidence only executes deterministically; soft matches fall through to LLM.
+      const messageLabelMatch = findHighConfidenceMatch(ctx.trimmedInput, lastOptionsMessage.options)
+      if (messageLabelMatch) {
+        const labelMatch = messageLabelMatch.match
         void debugLog({
           component: 'ChatNavigation',
           action: 'label_match_from_message',
           metadata: {
             input: ctx.trimmedInput,
             matchedLabel: labelMatch.label,
+            confidence: messageLabelMatch.confidence,
+            reason: messageLabelMatch.reason,
             tier: '3a',
           },
         })
@@ -2052,6 +2115,7 @@ export async function dispatchRouting(
           handled: true,
           handledByTier: 3,
           tierLabel: 'label_match_from_message',
+          _devProvenanceHint: 'deterministic',
           clarificationCleared,
           isNewQuestionOrCommandDetected,
           classifierCalled,
@@ -2258,6 +2322,7 @@ export async function dispatchRouting(
         handled: true,
         handledByTier: 3,
         tierLabel: 'universal_resolver_widget',
+        _devProvenanceHint: 'deterministic',
         groundingAction: selectionResult.groundingAction,
         clarificationCleared,
         isNewQuestionOrCommandDetected,
@@ -2295,6 +2360,7 @@ export async function dispatchRouting(
             handled: true,
             handledByTier: 3,
             tierLabel: 'universal_resolver_chat_widget_option',
+            _devProvenanceHint: 'deterministic',
             groundingAction: {
               type: 'execute_widget_item',
               widgetId: widgetInfo.widgetId,
@@ -2330,6 +2396,7 @@ export async function dispatchRouting(
         handled: true,
         handledByTier: 3,
         tierLabel: 'universal_resolver_chat',
+        _devProvenanceHint: 'deterministic',
         clarificationCleared,
         isNewQuestionOrCommandDetected,
         classifierCalled,

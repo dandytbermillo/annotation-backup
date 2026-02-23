@@ -8,8 +8,15 @@
 - `resolveExplainLastAction` is now read-only over persisted trace/history (no retroactive LLM recovery in explain path).
 - Shared classifier (`classifyExecutionMeta`) is now the single reason classifier used by resolver + dispatch paths.
 - Active-clarification semantic-question guard is implemented in dispatcher: semantic questions with visible pending options return clarification guidance and preserve options (no API call, no state clear).
+- Phase E1 verify-action panel matching reliability fix is implemented in resolver (`resolveVerifyAction`) with strict 4-step matching and contradiction-safe no-match responses.
+- Layer 1 verify-question no-execution guard is implemented:
+  - shared detector (`isVerifyOpenQuestion`),
+  - Tier 4.5 grounding bypass for verify-open questions,
+  - server-side remap/re-resolve guard for misclassified panel-navigation and `verify_request`,
+  - prompt hardening for `did I open [panel]?` vs `open [panel]`.
 - Known follow-up: reason labeling remains coarse for some label-text selection paths (can appear as `ordinal` where `explicit_label_match`/`disambiguation_resolved` may be preferable).
-- Known post-Phase C regression (open): `resolveVerifyAction` panel checks still assume semantic-style ids in `targetId`, while commit recording now stores DB panel ids; this can produce `"did I open ..."` false negatives/positives and contradictory wording.
+- Known follow-up (deferred hardening): add `target.semanticId` threading end-to-end (Phase E2) for additive compatibility and future-proofing.
+- Residual test gap: verify-question guard integration tests currently mirror route guard logic; add one route-handler level integration test to prevent route/test drift.
 
 ## Goal
 
@@ -21,6 +28,7 @@ Stop stale semantic responses (`"explain what just happened"`, `"why did I do th
 - Phase A implementation report: `docs/proposal/chat-navigation/plan/panels/chat/meta/orchestrator/report/2026-02-20-phase-a-actiontrace-foundation-implementation-report.md`
 - Phase B commit wiring report: `docs/proposal/chat-navigation/plan/panels/chat/meta/orchestrator/report/2026-02-20-phase-b-actiontrace-commit-wiring-report.md`
 - Phase B semantic fallback guard report: `docs/proposal/chat-navigation/plan/panels/chat/meta/orchestrator/report/2026-02-21-phase-b-semantic-fallback-guard-report.md`
+- Layer 1 verify-open execution guard report: `docs/proposal/chat-navigation/plan/panels/chat/meta/reports/2026-02-22-verify-open-question-execution-guard-implementation-report.md`
 
 ## Problem
 
@@ -228,22 +236,23 @@ Deterministic rubric (apply uniformly):
 3. Add defensive commit-point telemetry when chat-sourced commit arrives without `executionMeta`.
 4. Add classifier/resolver/dispatcher regression coverage for execution provenance.
 
-## Phase E (Verify-Action Panel Matching Reliability, Planned)
+## Phase E (Verify-Action Panel Matching Reliability, Status Update)
 
-### Problem
-- `resolveVerifyAction` open-panel branch currently compares semantic-like query ids against `actionHistory[].targetId`; after Phase C, `targetId` is often a DB id.
-- Existing substring-based id matching is unsafe and can produce false positives.
-- No-match wording can contradict listed opened panels.
+### Problem (addressed in E1)
+- After Phase C, commit recording stores DB panel ids in `targetId`, while verify queries may provide semantic-like names.
+- Substring-based id matching was unsafe and could produce false positives.
+- No-match wording could contradict listed opened panels.
 
-### Phase E1 (Immediate, low blast radius)
-1. Replace open-panel verify matching with strict 4-step order:
+### Phase E1 (Implemented, low blast radius)
+1. Replaced open-panel verify matching with strict 4-step order:
    - exact normalized `targetName` match (primary),
    - exact semantic-id/legacy-id equality match,
    - family-match list response for generic panel names,
    - true no-match response (contradiction-safe wording).
-2. Remove bidirectional `includes` id checks; use strict equality only.
-3. Filter empty/null `targetName` in no-match panel listings.
-4. Keep changes resolver-local (`lib/chat/intent-resolver.ts`) to minimize system-wide risk.
+2. Removed bidirectional `includes` id checks; strict equality only.
+3. Added empty/null `targetName` filtering in no-match panel listings.
+4. Kept changes resolver-local (`lib/chat/intent-resolver.ts`) to minimize blast radius.
+5. Added dedicated resolver tests for 4-step order and contradiction regression.
 
 ### Phase E2 (Deferred hardening)
 1. Add optional `target.semanticId` to trace model.
@@ -273,6 +282,7 @@ Deterministic rubric (apply uniformly):
 - commit coverage matrix asserts each user-meaningful execution has exactly one recorder write
 - active clarification + semantic question keeps options visible and does not route to stale-history semantic response
 - verify-action API path remains stable with mixed historical id formats (DB ids + legacy semantic ids).
+- verify-question inputs (`did I open ...?`) never execute panel actions when the LLM misclassifies to panel-navigation intents.
 
 ### Manual
 1. Open panel (chat and UI), then ask `"explain what just happened"` -> latest panel action.
@@ -308,4 +318,4 @@ Deterministic rubric (apply uniformly):
 
 - `npx tsc --noEmit -p tsconfig.type-check.json`
 - `npm test -- --testPathPattern="semantic-answer-lane|semantic-lane-routing-bypass|panel-disambiguation-tier-ordering|selection-intent-arbitration-dispatcher"`
-- `npm test -- --testPathPattern="resolve-verify-action|semantic-answer-lane-api"`
+- `npm test -- --testPathPattern="resolve-verify-action|verify-open-question|verify-question-no-execution|semantic-answer-lane-api"`

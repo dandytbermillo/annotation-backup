@@ -626,6 +626,168 @@ export function isStrictExactMatch(rawInput: string, candidateLabel: string): bo
 }
 
 // =============================================================================
+// Universal Deterministic Confidence Gate
+// =============================================================================
+
+export type DeterministicOutcome = 'execute' | 'llm' | 'clarify'
+export type MatchConfidence = 'high' | 'medium' | 'low' | 'none'
+
+/** Fixed reason allowlist — telemetry and tests key on these, no free-form strings */
+export type DecisionReason =
+  | 'exact_label'
+  | 'exact_sublabel'
+  | 'exact_canonical'
+  | 'soft_contains'
+  | 'soft_starts_with'
+  | 'soft_label_contains'
+  | 'soft_multi_match'
+  | 'no_match'
+
+export interface DeterministicDecision {
+  outcome: DeterministicOutcome
+  confidence: MatchConfidence
+  reason: DecisionReason
+  match?: { id: string; label: string }
+}
+
+/**
+ * Single shared gate for all option-selection paths.
+ *
+ * Confidence tiers:
+ *   high → execute: exact label or exact sublabel (unique, normalized)
+ *   medium → llm: soft single match (contains, startsWith, labelContainsInput)
+ *   low → llm: soft multi-match
+ *   none → llm (active_option) or clarify (command): zero matches
+ *
+ * mode='active_option': no_match → llm (bounded LLM can still evaluate active options)
+ * mode='command': no_match → clarify (no active context to evaluate against)
+ */
+export function evaluateDeterministicDecision(
+  input: string,
+  candidates: Array<{ id: string; label: string; sublabel?: string }>,
+  mode: 'active_option' | 'command'
+): DeterministicDecision {
+  const normalized = input.trim().toLowerCase()
+
+  if (!normalized || candidates.length === 0) {
+    return {
+      outcome: mode === 'active_option' ? 'llm' : 'clarify',
+      confidence: 'none',
+      reason: 'no_match',
+    }
+  }
+
+  // --- High confidence: exact label match ---
+  const exactLabelMatches = candidates.filter(
+    c => c.label.toLowerCase().trim() === normalized
+  )
+  if (exactLabelMatches.length === 1) {
+    return {
+      outcome: 'execute',
+      confidence: 'high',
+      reason: 'exact_label',
+      match: { id: exactLabelMatches[0].id, label: exactLabelMatches[0].label },
+    }
+  }
+
+  // --- High confidence: exact sublabel match ---
+  const exactSublabelMatches = candidates.filter(
+    c => c.sublabel && c.sublabel.toLowerCase().trim() === normalized
+  )
+  if (exactSublabelMatches.length === 1) {
+    return {
+      outcome: 'execute',
+      confidence: 'high',
+      reason: 'exact_sublabel',
+      match: { id: exactSublabelMatches[0].id, label: exactSublabelMatches[0].label },
+    }
+  }
+
+  // --- High confidence: canonical token match (bidirectional token-set equality) ---
+  // Handles singular/plural normalization: "links panel" matches "Links Panels"
+  // because canonical tokens {links, panel} === {links, panel}.
+  const CANONICAL_TOKEN_MAP: Record<string, string> = {
+    panel: 'panel', panels: 'panel',
+    widget: 'widget', widgets: 'widget',
+    link: 'links', links: 'links',
+  }
+  const toCanonicalTokenSet = (s: string): Set<string> => {
+    const tokens = s.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean)
+    return new Set(tokens.map(t => CANONICAL_TOKEN_MAP[t] ?? t))
+  }
+  const inputCanonical = toCanonicalTokenSet(normalized)
+  if (inputCanonical.size > 0) {
+    const canonicalMatches = candidates.filter(c => {
+      const labelCanonical = toCanonicalTokenSet(c.label)
+      if (inputCanonical.size !== labelCanonical.size) return false
+      for (const t of inputCanonical) {
+        if (!labelCanonical.has(t)) return false
+      }
+      return true
+    })
+    if (canonicalMatches.length === 1) {
+      return {
+        outcome: 'execute',
+        confidence: 'high',
+        reason: 'exact_canonical',
+        match: { id: canonicalMatches[0].id, label: canonicalMatches[0].label },
+      }
+    }
+  }
+
+  // --- Soft matching: collect all soft candidates ---
+  type SoftMatch = { id: string; label: string; reason: DecisionReason }
+  const softMatches: SoftMatch[] = []
+
+  for (const c of candidates) {
+    const label = c.label.toLowerCase().trim()
+
+    // contains: input contains the label (e.g., "open links panels" contains "links panels")
+    if (normalized.includes(label) && label.length >= 2) {
+      softMatches.push({ id: c.id, label: c.label, reason: 'soft_contains' })
+      continue
+    }
+
+    // starts_with: label starts with input (e.g., "Links" → "Links Panel D")
+    if (label.startsWith(normalized) && normalized.length >= 2) {
+      softMatches.push({ id: c.id, label: c.label, reason: 'soft_starts_with' })
+      continue
+    }
+
+    // label_contains_input: label contains input (e.g., "panel" found in "Links Panel D")
+    if (normalized.length >= 3 && label.includes(normalized)) {
+      softMatches.push({ id: c.id, label: c.label, reason: 'soft_label_contains' })
+      continue
+    }
+  }
+
+  // --- Classify soft matches ---
+  if (softMatches.length === 1) {
+    return {
+      outcome: 'llm',
+      confidence: 'medium',
+      reason: softMatches[0].reason,
+      match: { id: softMatches[0].id, label: softMatches[0].label },
+    }
+  }
+
+  if (softMatches.length > 1) {
+    return {
+      outcome: 'llm',
+      confidence: 'low',
+      reason: 'soft_multi_match',
+    }
+  }
+
+  // --- No match ---
+  return {
+    outcome: mode === 'active_option' ? 'llm' : 'clarify',
+    confidence: 'none',
+    reason: 'no_match',
+  }
+}
+
+// =============================================================================
 // Verify-Open Question Detection
 // =============================================================================
 
