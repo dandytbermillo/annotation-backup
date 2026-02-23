@@ -17,6 +17,7 @@ export interface ClarificationLLMRequest {
   userInput: string
   options: { id: string; label: string; sublabel?: string }[]
   context?: string // Optional: clarification context (e.g., "cross-corpus search")
+  preferredCandidateId?: string // Structured hint from badge/polite-wrapper/continuity/ordinal — advisory only
 }
 
 export interface ClarificationLLMResponse {

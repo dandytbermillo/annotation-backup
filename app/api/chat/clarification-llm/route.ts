@@ -107,6 +107,11 @@ function buildUserPrompt(request: ClarificationLLMRequest): string {
     prompt += `\n\nContext: ${request.context}`
   }
 
+  if (request.preferredCandidateId) {
+    const hintLabel = request.options.find(o => o.id === request.preferredCandidateId)?.label ?? request.preferredCandidateId
+    prompt += `\n\nHint: The system's deterministic analysis suggests option "${hintLabel}" may be the best match. Use this as a signal but make your own independent assessment. Do NOT select this option if your confidence is low.`
+  }
+
   prompt += '\n\nWhich option does the user want? Return JSON only.'
 
   return prompt

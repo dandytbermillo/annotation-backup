@@ -80,9 +80,20 @@ import {
   isLLMAutoExecuteEnabledClient,
   type NeededContextType,
 } from '@/lib/chat/clarification-llm-fallback'
-import { isExplicitCommand, isSelectionOnly, resolveScopeCue, canonicalizeCommandInput, classifyArbitrationConfidence, classifyExecutionMeta, isStrictExactMatch, evaluateDeterministicDecision, isVerifyOpenQuestion, findPoliteWrapperExactMatch } from '@/lib/chat/input-classifiers'
+import { isExplicitCommand, isSelectionOnly, resolveScopeCue, canonicalizeCommandInput, classifyArbitrationConfidence, classifyExecutionMeta, isStrictExactMatch, evaluateDeterministicDecision, isVerifyOpenQuestion, findPoliteWrapperExactMatch, isStrictExactMode } from '@/lib/chat/input-classifiers'
 import { isSelectionLike } from '@/lib/chat/grounding-set'
 import type { LastOptionsShown } from '@/lib/chat/chat-navigation-context'
+
+// =============================================================================
+// Preferred Candidate Hint (strict-exact policy)
+// Non-exact signals become advisory hints for the LLM, not execution triggers.
+// =============================================================================
+
+type PreferredCandidateHint = {
+  id: string
+  label: string
+  source: 'badge' | 'polite_wrapper' | 'continuity' | 'ordinal_embedded'
+} | null
 
 // =============================================================================
 // Recoverable Chat Options Helper
@@ -1273,6 +1284,7 @@ async function tryLLMLastChance(params: {
   matchCount?: number       // deterministic match count (default 0)
   exactMatchCount?: number  // exact match count (default 0)
   enrichedContext?: string  // Retry-only: enriched evidence from context-enrichment loop
+  preferredCandidateHint?: PreferredCandidateHint  // Advisory hint from badge/polite/continuity/ordinal
 }): Promise<{
   attempted: boolean
   suggestedId: string | null
@@ -1283,7 +1295,8 @@ async function tryLLMLastChance(params: {
 }> {
   const { trimmedInput, candidates, context, clarificationMessageId,
     inputIsExplicitCommand, isNewQuestionOrCommandDetected,
-    matchCount = 0, exactMatchCount = 0, enrichedContext } = params
+    matchCount = 0, exactMatchCount = 0, enrichedContext,
+    preferredCandidateHint } = params
 
   // --- Question-intent exclusion (hard exclusion per Rule G) ---
   // Strip trailing punctuation before check: "ope panel d pls?" is a polite command,
@@ -1336,6 +1349,7 @@ async function tryLLMLastChance(params: {
     userInput: trimmedInput,
     options: candidates,
     context: llmContext,
+    preferredCandidateId: preferredCandidateHint?.id,
   })
   const llmElapsedMs = Date.now() - llmStartTime
 
@@ -1519,10 +1533,12 @@ export async function runBoundedArbitrationLoop(params: {
   exactMatchCount?: number
   scope: import('@/lib/chat/input-classifiers').ScopeCueResult['scope']
   enrichmentCallback: ContextEnrichmentCallback
+  preferredCandidateHint?: PreferredCandidateHint  // Advisory hint from badge/polite/continuity/ordinal
 }): Promise<BoundedArbitrationResult> {
   const { trimmedInput, initialCandidates, context, clarificationMessageId,
     inputIsExplicitCommand, isNewQuestionOrCommandDetected,
-    matchCount, exactMatchCount, scope, enrichmentCallback } = params
+    matchCount, exactMatchCount, scope, enrichmentCallback,
+    preferredCandidateHint } = params
 
   const loopStartTime = Date.now()
   const frozenCandidateIds = initialCandidates.map(c => c.id)
@@ -1543,6 +1559,7 @@ export async function runBoundedArbitrationLoop(params: {
     isNewQuestionOrCommandDetected,
     matchCount,
     exactMatchCount,
+    preferredCandidateHint,
   })
 
   // --- Step 2: Handle attempt-1 result with explicit reason branching ---
@@ -1711,6 +1728,7 @@ export async function runBoundedArbitrationLoop(params: {
     matchCount,
     exactMatchCount,
     enrichedContext: enrichedContextStr,  // Pass enriched evidence to retry LLM call
+    preferredCandidateHint,
   })
 
   // Update loop guard with retry state.
@@ -3381,6 +3399,9 @@ export async function handleClarificationIntercept(
         // (question_intent, interrupt) are handled inside tryLLMLastChance
         // or before this block (early returns in the scope-cue flow).
         if (recoverableOptions.length > 0) {
+          // Strict-exact policy: non-exact signals become advisory hints for the LLM
+          let scopeCuePreferredHint: PreferredCandidateHint = null
+
           // --- Continuity deterministic resolver (Plan 20, Site 1: scope-cue Phase 2b) ---
           // Try deterministic resolution with continuity state before LLM arbitration.
           const isContinuityEnabled = process.env.NEXT_PUBLIC_SELECTION_CONTINUITY_LANE_ENABLED === 'true'
@@ -3399,32 +3420,44 @@ export async function handleClarificationIntercept(
             if (continuityResult.resolved && continuityResult.winnerId) {
               const winnerCandidate = recoverableOptions.find(o => o.id === continuityResult.winnerId)
               if (winnerCandidate) {
-                const optionToSelect: SelectionOption = {
-                  type: winnerCandidate.type as SelectionOption['type'],
-                  id: winnerCandidate.id,
-                  label: winnerCandidate.label,
-                  sublabel: winnerCandidate.sublabel,
-                  data: reconstructSnapshotData(winnerCandidate),
+                if (isStrictExactMode()) {
+                  // Strict policy: continuity is non-exact → set advisory hint, fall through to LLM
+                  scopeCuePreferredHint = { id: winnerCandidate.id, label: winnerCandidate.label, source: 'continuity' }
+                  void debugLog({
+                    component: 'ChatNavigation',
+                    action: 'continuity_hint_deferred_to_llm',
+                    metadata: { site: 'scope_cue_phase_2b', winnerId: continuityResult.winnerId, winnerLabel: winnerCandidate.label },
+                  })
+                  // Fall through to LLM arbitration
+                } else {
+                  // Legacy: direct execute
+                  const optionToSelect: SelectionOption = {
+                    type: winnerCandidate.type as SelectionOption['type'],
+                    id: winnerCandidate.id,
+                    label: winnerCandidate.label,
+                    sublabel: winnerCandidate.sublabel,
+                    data: reconstructSnapshotData(winnerCandidate),
+                  }
+                  void debugLog({
+                    component: 'ChatNavigation',
+                    action: 'selection_deterministic_continuity_resolve',
+                    metadata: {
+                      site: 'scope_cue_phase_2b',
+                      winnerId: continuityResult.winnerId,
+                      winnerLabel: winnerCandidate.label,
+                      activeOptionSetId: ctx.selectionContinuity.activeOptionSetId,
+                      activeScope: ctx.selectionContinuity.activeScope,
+                      candidateCount: recoverableOptions.length,
+                    },
+                  })
+                  setPendingOptions([])
+                  setPendingOptionsMessageId(null)
+                  setPendingOptionsGraceCount(0)
+                  setActiveOptionSetId(null)
+                  setIsLoading(false)
+                  handleSelectOption(optionToSelect)
+                  return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
                 }
-                void debugLog({
-                  component: 'ChatNavigation',
-                  action: 'selection_deterministic_continuity_resolve',
-                  metadata: {
-                    site: 'scope_cue_phase_2b',
-                    winnerId: continuityResult.winnerId,
-                    winnerLabel: winnerCandidate.label,
-                    activeOptionSetId: ctx.selectionContinuity.activeOptionSetId,
-                    activeScope: ctx.selectionContinuity.activeScope,
-                    candidateCount: recoverableOptions.length,
-                  },
-                })
-                setPendingOptions([])
-                setPendingOptionsMessageId(null)
-                setPendingOptionsGraceCount(0)
-                setActiveOptionSetId(null)
-                setIsLoading(false)
-                handleSelectOption(optionToSelect)
-                return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
               }
             }
           }
@@ -3446,6 +3479,7 @@ export async function handleClarificationIntercept(
             exactMatchCount: 0,
             scope: scopeCue.scope,
             enrichmentCallback: createEnrichmentCallback(scopeCue.scope, 'scope_cue_unresolved', ctx),
+            preferredCandidateHint: scopeCuePreferredHint,
           })
 
           // Scope-specific fallback (per context-enrichment-retry-loop-plan §Binding Hardening)
@@ -3531,30 +3565,42 @@ export async function handleClarificationIntercept(
               if (vetoResult.resolved && vetoResult.winnerId) {
                 const vetoWinner = recoverableOptions.find(o => o.id === vetoResult.winnerId)
                 if (vetoWinner) {
-                  void debugLog({
-                    component: 'ChatNavigation',
-                    action: 'selection_need_more_info_veto_applied',
-                    metadata: {
-                      site: 'scope_cue_phase_2b',
-                      winnerId: vetoResult.winnerId,
-                      winnerLabel: vetoWinner.label,
-                      activeOptionSetId: ctx.selectionContinuity.activeOptionSetId,
-                    },
-                  })
-                  const optionToSelect: SelectionOption = {
-                    type: vetoWinner.type as SelectionOption['type'],
-                    id: vetoWinner.id,
-                    label: vetoWinner.label,
-                    sublabel: vetoWinner.sublabel,
-                    data: reconstructSnapshotData(vetoWinner),
+                  if (isStrictExactMode()) {
+                    // Strict policy: veto is non-exact → use as reorder hint for safe clarifier
+                    scopeCuePreferredHint = scopeCuePreferredHint ?? { id: vetoWinner.id, label: vetoWinner.label, source: 'continuity' }
+                    void debugLog({
+                      component: 'ChatNavigation',
+                      action: 'need_more_info_veto_hint_deferred_to_safe_clarifier',
+                      metadata: { site: 'scope_cue_phase_2b', winnerId: vetoResult.winnerId, winnerLabel: vetoWinner.label },
+                    })
+                    // Fall through to safe clarifier below
+                  } else {
+                    // Legacy: direct execute
+                    void debugLog({
+                      component: 'ChatNavigation',
+                      action: 'selection_need_more_info_veto_applied',
+                      metadata: {
+                        site: 'scope_cue_phase_2b',
+                        winnerId: vetoResult.winnerId,
+                        winnerLabel: vetoWinner.label,
+                        activeOptionSetId: ctx.selectionContinuity.activeOptionSetId,
+                      },
+                    })
+                    const optionToSelect: SelectionOption = {
+                      type: vetoWinner.type as SelectionOption['type'],
+                      id: vetoWinner.id,
+                      label: vetoWinner.label,
+                      sublabel: vetoWinner.sublabel,
+                      data: reconstructSnapshotData(vetoWinner),
+                    }
+                    setPendingOptions([])
+                    setPendingOptionsMessageId(null)
+                    setPendingOptionsGraceCount(0)
+                    setActiveOptionSetId(null)
+                    setIsLoading(false)
+                    handleSelectOption(optionToSelect)
+                    return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
                   }
-                  setPendingOptions([])
-                  setPendingOptionsMessageId(null)
-                  setPendingOptionsGraceCount(0)
-                  setActiveOptionSetId(null)
-                  setIsLoading(false)
-                  handleSelectOption(optionToSelect)
-                  return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
                 }
               }
               if (!vetoResult.resolved) {
@@ -3566,11 +3612,12 @@ export async function handleClarificationIntercept(
               }
             }
 
-            // Safe clarifier — reorder if LLM suggested (Rules C, D, F)
-            const reorderSource = llmResult.suggestedId
+            // Safe clarifier — reorder if LLM suggested or hint available (Rules C, D, F)
+            const scopeCueReorderHintId = llmResult.suggestedId ?? scopeCuePreferredHint?.id ?? null
+            const reorderSource = scopeCueReorderHintId
               ? [
-                  ...recoverableOptions.filter(o => o.id === llmResult.suggestedId),
-                  ...recoverableOptions.filter(o => o.id !== llmResult.suggestedId),
+                  ...recoverableOptions.filter(o => o.id === scopeCueReorderHintId),
+                  ...recoverableOptions.filter(o => o.id !== scopeCueReorderHintId),
                 ]
               : recoverableOptions
 
@@ -3584,6 +3631,9 @@ export async function handleClarificationIntercept(
                 fallbackReason: llmResult.fallbackReason,
                 source: recoverable.source,
                 matchCount: labelMatches.length,
+                strictExactMode: isStrictExactMode(),
+                hintSource: scopeCuePreferredHint?.source ?? null,
+                hintId: scopeCuePreferredHint?.id ?? null,
               },
             })
 
@@ -3630,7 +3680,7 @@ export async function handleClarificationIntercept(
               pendingClarifierType: 'selection_disambiguation',
             })
             setIsLoading(false)
-            return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected, _devProvenanceHint: llmResult.suggestedId ? 'llm_influenced' : 'safe_clarifier' as const }
+            return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected, _devProvenanceHint: (llmResult.suggestedId || scopeCuePreferredHint) ? 'llm_influenced' : 'safe_clarifier' as const }
           }
         }
         // No recoverable options or question-intent → fall through to Phase 3
@@ -3984,7 +4034,14 @@ export async function handleClarificationIntercept(
     // Tier -1: Noise pre-check (FIRST check per clarification-response-fit-plan.md)
     // Noise should never trigger selection or zero-overlap escape.
     // Treat input as noise if: alphabetic ratio < 50%, short token, no vowels, emoji-only
-    if (isNoise(trimmedInput)) {
+    //
+    // Exemption: strict ordinals ("1", "2", "a", "b", "first", "last", etc.) bypass noise.
+    // Without this, bare digits like "2" hit isNoise (single short token + zero alphabetic
+    // ratio) and never reach the ordinal execution path at Tier 1d.
+    const noiseOrdinalExempt = lastClarification?.options && lastClarification.options.length > 0
+      && isSelectionOnly(trimmedInput, lastClarification.options.length, lastClarification.options.map(o => o.label), 'strict').isSelection
+
+    if (!noiseOrdinalExempt && isNoise(trimmedInput)) {
       void debugLog({
         component: 'ChatNavigation',
         action: 'clarification_tier_noise_detected',
@@ -4632,6 +4689,9 @@ export async function handleClarificationIntercept(
       // Also prepare verb-stripped version for matching (per plan §215-218)
       const inputForMatching = inputWithoutVerb.toLowerCase().trim()
 
+      // Strict-exact policy: non-exact signals become advisory hints for the LLM
+      let preferredCandidateHint: PreferredCandidateHint = null
+
       // ==========================================================================
       // Badge-aware Selection (per plan §220-222)
       // If input has a badge suffix (d, e, 1, 2), match against option labels
@@ -4651,35 +4711,48 @@ export async function handleClarificationIntercept(
 
         if (badgeMatchingOptions.length === 1) {
           const matchedOption = badgeMatchingOptions[0]
-          const fullOption = pendingOptions.find(opt => opt.id === matchedOption.id)
 
-          void debugLog({
-            component: 'ChatNavigation',
-            action: 'clarification_badge_aware_selection',
-            metadata: {
-              input: trimmedInput,
-              badge: extractedBadge,
-              matchedLabel: matchedOption.label,
-            },
-          })
+          if (isStrictExactMode()) {
+            // Strict policy: badge is non-exact → set advisory hint, fall through to unresolved hook
+            preferredCandidateHint = { id: matchedOption.id, label: matchedOption.label, source: 'badge' }
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'badge_hint_deferred_to_llm',
+              metadata: { input: trimmedInput, badge: extractedBadge, matchedLabel: matchedOption.label },
+            })
+            // Fall through — do NOT execute, do NOT clear state
+          } else {
+            // Legacy: direct execute
+            const fullOption = pendingOptions.find(opt => opt.id === matchedOption.id)
 
-          // Save clarification snapshot for post-action repair window
-          saveClarificationSnapshot(lastClarification)
-          setRepairMemory(matchedOption.id, lastClarification.options)
-          setLastClarification(null)
-          setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'clarification_badge_aware_selection',
+              metadata: {
+                input: trimmedInput,
+                badge: extractedBadge,
+                matchedLabel: matchedOption.label,
+              },
+            })
 
-          const optionToSelect: SelectionOption = {
-            type: (fullOption?.type ?? matchedOption.type) as SelectionOption['type'],
-            id: matchedOption.id,
-            label: matchedOption.label,
-            sublabel: matchedOption.sublabel,
-            data: fullOption?.data as SelectionOption['data'] ??
-              reconstructSnapshotData(matchedOption),
+            // Save clarification snapshot for post-action repair window
+            saveClarificationSnapshot(lastClarification)
+            setRepairMemory(matchedOption.id, lastClarification.options)
+            setLastClarification(null)
+            setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+
+            const optionToSelect: SelectionOption = {
+              type: (fullOption?.type ?? matchedOption.type) as SelectionOption['type'],
+              id: matchedOption.id,
+              label: matchedOption.label,
+              sublabel: matchedOption.sublabel,
+              data: fullOption?.data as SelectionOption['data'] ??
+                reconstructSnapshotData(matchedOption),
+            }
+            setIsLoading(false)
+            handleSelectOption(optionToSelect)
+            return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
           }
-          setIsLoading(false)
-          handleSelectOption(optionToSelect)
-          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
         }
       }
 
@@ -4694,35 +4767,47 @@ export async function handleClarificationIntercept(
       // ==========================================================================
       const politeExactMatch = findPoliteWrapperExactMatch(trimmedInput, lastClarification.options)
       if (politeExactMatch) {
-        const fullOption = pendingOptions.find(opt => opt.id === politeExactMatch.id)
+        if (isStrictExactMode()) {
+          // Strict policy: polite-wrapper is non-exact → set advisory hint, fall through to unresolved hook
+          preferredCandidateHint = preferredCandidateHint ?? { id: politeExactMatch.id, label: politeExactMatch.label, source: 'polite_wrapper' }
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'polite_wrapper_hint_deferred_to_llm',
+            metadata: { input: trimmedInput, canonical: canonicalizeCommandInput(trimmedInput), matchedLabel: politeExactMatch.label },
+          })
+          // Fall through — do NOT execute, do NOT clear state
+        } else {
+          // Legacy: direct execute
+          const fullOption = pendingOptions.find(opt => opt.id === politeExactMatch.id)
 
-        void debugLog({
-          component: 'ChatNavigation',
-          action: 'clarification_polite_wrapper_exact_pass',
-          metadata: {
-            input: trimmedInput,
-            canonical: canonicalizeCommandInput(trimmedInput),
-            matchedLabel: politeExactMatch.label,
-          },
-        })
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'clarification_polite_wrapper_exact_pass',
+            metadata: {
+              input: trimmedInput,
+              canonical: canonicalizeCommandInput(trimmedInput),
+              matchedLabel: politeExactMatch.label,
+            },
+          })
 
-        saveClarificationSnapshot(lastClarification)
-        setRepairMemory(politeExactMatch.id, lastClarification.options)
-        setLastClarification(null)
-        setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+          saveClarificationSnapshot(lastClarification)
+          setRepairMemory(politeExactMatch.id, lastClarification.options)
+          setLastClarification(null)
+          setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
 
-        const matchedClarificationOption = lastClarification.options.find(opt => opt.id === politeExactMatch.id)
-        const optionToSelect: SelectionOption = {
-          type: (fullOption?.type ?? matchedClarificationOption?.type ?? 'panel_drawer') as SelectionOption['type'],
-          id: politeExactMatch.id,
-          label: politeExactMatch.label,
-          sublabel: matchedClarificationOption?.sublabel,
-          data: fullOption?.data as SelectionOption['data'] ??
-            reconstructSnapshotData(matchedClarificationOption ?? { id: politeExactMatch.id, label: politeExactMatch.label, type: 'panel_drawer' }),
+          const matchedClarificationOption = lastClarification.options.find(opt => opt.id === politeExactMatch.id)
+          const optionToSelect: SelectionOption = {
+            type: (fullOption?.type ?? matchedClarificationOption?.type ?? 'panel_drawer') as SelectionOption['type'],
+            id: politeExactMatch.id,
+            label: politeExactMatch.label,
+            sublabel: matchedClarificationOption?.sublabel,
+            data: fullOption?.data as SelectionOption['data'] ??
+              reconstructSnapshotData(matchedClarificationOption ?? { id: politeExactMatch.id, label: politeExactMatch.label, type: 'panel_drawer' }),
+          }
+          setIsLoading(false)
+          handleSelectOption(optionToSelect)
+          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
         }
-        setIsLoading(false)
-        handleSelectOption(optionToSelect)
-        return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
       }
 
       // Track exact match count for unresolved hook (hoisted for Step 4)
@@ -4919,15 +5004,17 @@ export async function handleClarificationIntercept(
       // Ordinal guard — skip hook for ordinal inputs
       // Ordinals like "first", "2", "the second one" should be handled
       // by Tier 1b.3a (deterministic), not by LLM.
+      // Strict mode: only bare ordinals ("first", "2") skip; embedded
+      // ordinals ("can you open the first one pls") enter the hook.
       // =================================================================
       const ordinalCheck = isSelectionOnly(
         trimmedInput,
         lastClarification.options.length,
         lastClarification.options.map(o => o.label),
-        'embedded'
+        isStrictExactMode() ? 'strict' : 'embedded'
       )
 
-      if (!ordinalCheck.isSelection) {
+      if (!ordinalCheck.isSelection || preferredCandidateHint) {
         // =================================================================
         // UNRESOLVED HOOK (Rule E: single post-deterministic arbitration)
         // Reached when:
@@ -4961,34 +5048,46 @@ export async function handleClarificationIntercept(
           if (continuityResult.resolved && continuityResult.winnerId) {
             const winnerCandidate = lastClarification.options.find(o => o.id === continuityResult.winnerId)
             if (winnerCandidate) {
-              const fullOption = pendingOptions.find(opt => opt.id === winnerCandidate.id)
-              const optionToSelect: SelectionOption = {
-                type: (fullOption?.type ?? winnerCandidate.type) as SelectionOption['type'],
-                id: winnerCandidate.id,
-                label: winnerCandidate.label,
-                sublabel: winnerCandidate.sublabel,
-                data: fullOption?.data as SelectionOption['data'] ??
-                  reconstructSnapshotData(winnerCandidate),
+              if (isStrictExactMode()) {
+                // Strict policy: continuity is non-exact → set advisory hint, fall through to LLM
+                preferredCandidateHint = preferredCandidateHint ?? { id: winnerCandidate.id, label: winnerCandidate.label, source: 'continuity' }
+                void debugLog({
+                  component: 'ChatNavigation',
+                  action: 'continuity_hint_deferred_to_llm',
+                  metadata: { site: 'tier1b3_unresolved', winnerId: continuityResult.winnerId, winnerLabel: winnerCandidate.label },
+                })
+                // Fall through to LLM arbitration
+              } else {
+                // Legacy: direct execute
+                const fullOption = pendingOptions.find(opt => opt.id === winnerCandidate.id)
+                const optionToSelect: SelectionOption = {
+                  type: (fullOption?.type ?? winnerCandidate.type) as SelectionOption['type'],
+                  id: winnerCandidate.id,
+                  label: winnerCandidate.label,
+                  sublabel: winnerCandidate.sublabel,
+                  data: fullOption?.data as SelectionOption['data'] ??
+                    reconstructSnapshotData(winnerCandidate),
+                }
+                void debugLog({
+                  component: 'ChatNavigation',
+                  action: 'selection_deterministic_continuity_resolve',
+                  metadata: {
+                    site: 'tier1b3_unresolved',
+                    winnerId: continuityResult.winnerId,
+                    winnerLabel: winnerCandidate.label,
+                    activeOptionSetId: ctx.selectionContinuity.activeOptionSetId,
+                    activeScope: ctx.selectionContinuity.activeScope,
+                    candidateCount: lastClarification.options.length,
+                  },
+                })
+                saveClarificationSnapshot(lastClarification)
+                setRepairMemory(winnerCandidate.id, lastClarification.options)
+                setLastClarification(null)
+                setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+                setIsLoading(false)
+                handleSelectOption(optionToSelect)
+                return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
               }
-              void debugLog({
-                component: 'ChatNavigation',
-                action: 'selection_deterministic_continuity_resolve',
-                metadata: {
-                  site: 'tier1b3_unresolved',
-                  winnerId: continuityResult.winnerId,
-                  winnerLabel: winnerCandidate.label,
-                  activeOptionSetId: ctx.selectionContinuity.activeOptionSetId,
-                  activeScope: ctx.selectionContinuity.activeScope,
-                  candidateCount: lastClarification.options.length,
-                },
-              })
-              saveClarificationSnapshot(lastClarification)
-              setRepairMemory(winnerCandidate.id, lastClarification.options)
-              setLastClarification(null)
-              setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
-              setIsLoading(false)
-              handleSelectOption(optionToSelect)
-              return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
             }
           }
         }
@@ -5011,6 +5110,7 @@ export async function handleClarificationIntercept(
           exactMatchCount: 0,
           scope: scopeCue.scope,
           enrichmentCallback: createEnrichmentCallback(scopeCue.scope, 'tier1b3_unresolved', ctx),
+          preferredCandidateHint,
         })
 
         // Scope-specific fallback (per context-enrichment-retry-loop-plan §Binding Hardening)
@@ -5093,31 +5193,43 @@ export async function handleClarificationIntercept(
             if (vetoResult.resolved && vetoResult.winnerId) {
               const vetoWinner = lastClarification.options.find(o => o.id === vetoResult.winnerId)
               if (vetoWinner) {
-                const fullOption = pendingOptions.find(opt => opt.id === vetoWinner.id)
-                void debugLog({
-                  component: 'ChatNavigation',
-                  action: 'selection_need_more_info_veto_applied',
-                  metadata: {
-                    site: 'tier1b3_unresolved',
-                    winnerId: vetoResult.winnerId,
-                    winnerLabel: vetoWinner.label,
-                    activeOptionSetId: ctx.selectionContinuity.activeOptionSetId,
-                  },
-                })
-                saveClarificationSnapshot(lastClarification)
-                setRepairMemory(vetoWinner.id, lastClarification.options)
-                setLastClarification(null)
-                setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
-                const optionToSelect: SelectionOption = {
-                  type: (fullOption?.type ?? vetoWinner.type) as SelectionOption['type'],
-                  id: vetoWinner.id,
-                  label: vetoWinner.label,
-                  sublabel: vetoWinner.sublabel,
-                  data: fullOption?.data as SelectionOption['data'] ?? reconstructSnapshotData(vetoWinner),
+                if (isStrictExactMode()) {
+                  // Strict policy: veto is non-exact → use as reorder hint for safe clarifier
+                  preferredCandidateHint = preferredCandidateHint ?? { id: vetoWinner.id, label: vetoWinner.label, source: 'continuity' }
+                  void debugLog({
+                    component: 'ChatNavigation',
+                    action: 'need_more_info_veto_hint_deferred_to_safe_clarifier',
+                    metadata: { site: 'tier1b3_unresolved', winnerId: vetoResult.winnerId, winnerLabel: vetoWinner.label },
+                  })
+                  // Fall through to safe clarifier below
+                } else {
+                  // Legacy: direct execute
+                  const fullOption = pendingOptions.find(opt => opt.id === vetoWinner.id)
+                  void debugLog({
+                    component: 'ChatNavigation',
+                    action: 'selection_need_more_info_veto_applied',
+                    metadata: {
+                      site: 'tier1b3_unresolved',
+                      winnerId: vetoResult.winnerId,
+                      winnerLabel: vetoWinner.label,
+                      activeOptionSetId: ctx.selectionContinuity.activeOptionSetId,
+                    },
+                  })
+                  saveClarificationSnapshot(lastClarification)
+                  setRepairMemory(vetoWinner.id, lastClarification.options)
+                  setLastClarification(null)
+                  setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+                  const optionToSelect: SelectionOption = {
+                    type: (fullOption?.type ?? vetoWinner.type) as SelectionOption['type'],
+                    id: vetoWinner.id,
+                    label: vetoWinner.label,
+                    sublabel: vetoWinner.sublabel,
+                    data: fullOption?.data as SelectionOption['data'] ?? reconstructSnapshotData(vetoWinner),
+                  }
+                  setIsLoading(false)
+                  handleSelectOption(optionToSelect)
+                  return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
                 }
-                setIsLoading(false)
-                handleSelectOption(optionToSelect)
-                return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
               }
             }
             if (!vetoResult.resolved) {
@@ -5129,11 +5241,12 @@ export async function handleClarificationIntercept(
             }
           }
 
-          // Safe clarifier — reorder if LLM suggested (Rules C, D, F)
-          const reorderSource = llmResult.suggestedId
+          // Safe clarifier — reorder if LLM suggested or hint available (Rules C, D, F)
+          const reorderHintId = llmResult.suggestedId ?? preferredCandidateHint?.id ?? null
+          const reorderSource = reorderHintId
             ? [
-                ...lastClarification.options.filter(o => o.id === llmResult.suggestedId),
-                ...lastClarification.options.filter(o => o.id !== llmResult.suggestedId),
+                ...lastClarification.options.filter(o => o.id === reorderHintId),
+                ...lastClarification.options.filter(o => o.id !== reorderHintId),
               ]
             : lastClarification.options
 
@@ -5148,6 +5261,9 @@ export async function handleClarificationIntercept(
               llmSuggestedId: llmResult.suggestedId,
               fallbackReason: llmResult.fallbackReason,
               activeOptionsCount: lastClarification.options.length,
+              strictExactMode: isStrictExactMode(),
+              hintSource: preferredCandidateHint?.source ?? null,
+              hintId: preferredCandidateHint?.id ?? null,
             },
           })
 
@@ -5199,7 +5315,7 @@ export async function handleClarificationIntercept(
             pendingClarifierType: 'selection_disambiguation',
           })
           setIsLoading(false)
-          return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected, _devProvenanceHint: llmResult.suggestedId ? 'llm_influenced' : 'safe_clarifier' as const }
+          return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected, _devProvenanceHint: (llmResult.suggestedId || preferredCandidateHint) ? 'llm_influenced' : 'safe_clarifier' as const }
         }
       }
       // ordinal → skip hook, Tier 1b.3a handles it
@@ -5208,16 +5324,17 @@ export async function handleClarificationIntercept(
     // Tier 1b.3a: Ordinal selection (BEFORE off-menu mapping)
     // "first", "1", "second", "2", etc. should select the corresponding option
     // Must come BEFORE off-menu mapping to prevent ordinals from being treated as no_match
+    // Strict mode: only strict ordinals execute; embedded ordinals → hint → unresolved hook
     if (lastClarification?.options && lastClarification.options.length > 0) {
-      const ordinalResult = isSelectionOnly(
+      const tier1b3aOrdinalResult = isSelectionOnly(
         trimmedInput,
         lastClarification.options.length,
         lastClarification.options.map(opt => opt.label),
-        'embedded'
+        isStrictExactMode() ? 'strict' : 'embedded'
       )
 
-      if (ordinalResult.isSelection && ordinalResult.index !== undefined) {
-        const selectedOption = lastClarification.options[ordinalResult.index]
+      if (tier1b3aOrdinalResult.isSelection && tier1b3aOrdinalResult.index !== undefined) {
+        const selectedOption = lastClarification.options[tier1b3aOrdinalResult.index]
         const fullOption = pendingOptions.find(opt => opt.id === selectedOption.id)
 
         void debugLog({
@@ -5225,7 +5342,7 @@ export async function handleClarificationIntercept(
           action: 'clarification_tier1b3a_ordinal_selection',
           metadata: {
             input: trimmedInput,
-            index: ordinalResult.index,
+            index: tier1b3aOrdinalResult.index,
             selectedLabel: selectedOption.label,
             clarificationType: lastClarification.type,
           },

@@ -727,8 +727,8 @@ export function evaluateDeterministicDecision(
     })
     if (canonicalMatches.length === 1) {
       return {
-        outcome: 'execute',
-        confidence: 'high',
+        outcome: isStrictExactMode() ? 'llm' : 'execute',
+        confidence: isStrictExactMode() ? 'medium' : 'high',
         reason: 'exact_canonical',
         match: { id: canonicalMatches[0].id, label: canonicalMatches[0].label },
       }
@@ -819,6 +819,21 @@ export function findPoliteWrapperExactMatch(
   return exactMatches.length === 1
     ? { id: exactMatches[0].id, label: exactMatches[0].label }
     : null
+}
+
+// =============================================================================
+// Strict Exact Mode Feature Flag
+// =============================================================================
+
+/**
+ * Check if strict exact deterministic mode is enabled.
+ * When true: not-exact → never deterministic execute.
+ * Non-exact signals become LLM hints instead of execution triggers.
+ * Feature flag: NEXT_PUBLIC_STRICT_EXACT_DETERMINISTIC
+ */
+export function isStrictExactMode(): boolean {
+  return typeof process !== 'undefined'
+    && process.env?.NEXT_PUBLIC_STRICT_EXACT_DETERMINISTIC === 'true'
 }
 
 // =============================================================================

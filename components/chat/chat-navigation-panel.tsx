@@ -1655,7 +1655,7 @@ function ChatNavigationPanelContent({
 
         // Dev provenance: tag before early return (Tier S suggestion affirm)
         if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current) {
-          setProvenance(lastAddedAssistantIdRef.current, routingResult._devProvenanceHint ?? 'deterministic')
+          setProvenance(lastAddedAssistantIdRef.current, routingResult._devProvenanceHint ?? 'safe_clarifier')
         }
         setIsLoading(false)
         return
@@ -1732,7 +1732,7 @@ function ChatNavigationPanelContent({
 
         // Dev provenance: tag before early return (Tier 4.5 grounding referent)
         if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current) {
-          setProvenance(lastAddedAssistantIdRef.current, routingResult._devProvenanceHint ?? 'deterministic')
+          setProvenance(lastAddedAssistantIdRef.current, routingResult._devProvenanceHint ?? 'safe_clarifier')
         }
         setIsLoading(false)
         return
@@ -1817,7 +1817,7 @@ function ChatNavigationPanelContent({
 
         // Dev provenance: tag before early return (Tier 4.5 widget item)
         if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current) {
-          setProvenance(lastAddedAssistantIdRef.current, routingResult._devProvenanceHint ?? 'deterministic')
+          setProvenance(lastAddedAssistantIdRef.current, routingResult._devProvenanceHint ?? 'safe_clarifier')
         }
         setIsLoading(false)
         return
@@ -1828,7 +1828,7 @@ function ChatNavigationPanelContent({
         // lastAddedAssistantIdRef was set by addMessage (context-level) — works even when
         // the message came from handleSelectOption (auto-execute path).
         if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current) {
-          setProvenance(lastAddedAssistantIdRef.current, routingResult._devProvenanceHint ?? 'deterministic')
+          setProvenance(lastAddedAssistantIdRef.current, routingResult._devProvenanceHint ?? 'safe_clarifier')
         }
         // Per plan §10: if a non-suggestion tier handled the input while a
         // suggestion was active, clear stale suggestion state to prevent

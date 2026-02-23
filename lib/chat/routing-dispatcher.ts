@@ -303,7 +303,7 @@ export type GroundingAction = NonNullable<RoutingDispatcherResult['groundingActi
 // =============================================================================
 
 // Import from shared utility (extracted to avoid circular dependency with chat-routing.ts)
-import { isExplicitCommand, isSelectionOnly, normalizeOrdinalTypos, isSemanticQuestionInput, classifyExecutionMeta, isStrictExactMatch, isVerifyOpenQuestion, evaluateDeterministicDecision, type MatchConfidence } from '@/lib/chat/input-classifiers'
+import { isExplicitCommand, isSelectionOnly, normalizeOrdinalTypos, isSemanticQuestionInput, classifyExecutionMeta, isStrictExactMatch, isVerifyOpenQuestion, evaluateDeterministicDecision, isStrictExactMode, type MatchConfidence } from '@/lib/chat/input-classifiers'
 // Re-export to avoid breaking existing imports from this file
 export { isExplicitCommand }
 
@@ -359,8 +359,18 @@ function looksSelectionLike(input: string): boolean {
  *
  * Strict patterns: "first", "the second one", "option 3"
  * Embedded patterns: "can you open that second one pls", "open the first option in the widget"
+ *
+ * When isStrictExactMode() is ON: delegates to unified isSelectionOnly('strict') parser —
+ * only whole-string ordinals match. Embedded ordinals are not deterministic.
  */
-function extractOrdinalIndex(input: string, optionCount: number): number | undefined {
+function extractOrdinalIndex(input: string, optionCount: number, optionLabels: string[] = []): number | undefined {
+  // Strict mode: delegate to unified parser (single canonical definition)
+  if (isStrictExactMode()) {
+    const result = isSelectionOnly(input, optionCount, optionLabels, 'strict')
+    return result.isSelection ? result.index : undefined
+  }
+
+  // Legacy: full embedded extraction
   const normalized = normalizeOrdinalTypos(input).toLowerCase()
 
   const ordinalMap: Record<string, number> = {
@@ -551,8 +561,8 @@ function resolveSelectionFollowUp(
 
   // Precedence 1: Chat context first
   if (chatContext.pendingOptions.length > 0 && chatContext.activeOptionSetId !== null) {
-    // Use extractOrdinalIndex for embedded ordinal support (e.g., "can you open the second one")
-    const ordinalIndex = extractOrdinalIndex(input, chatContext.pendingOptions.length)
+    // Use extractOrdinalIndex for ordinal support (strict-only when isStrictExactMode)
+    const ordinalIndex = extractOrdinalIndex(input, chatContext.pendingOptions.length, chatContext.pendingOptions.map(o => o.label))
 
     if (ordinalIndex !== undefined) {
       const match = chatContext.pendingOptions[ordinalIndex]
@@ -568,8 +578,8 @@ function resolveSelectionFollowUp(
 
   // Precedence 2: Widget context (only if chat context didn't match)
   if (widgetContext && widgetContext.turnsSinceShown < WIDGET_SELECTION_TTL) {
-    // Use extractOrdinalIndex for embedded ordinal support (e.g., "can you open that second one pls")
-    const ordinalIndex = extractOrdinalIndex(input, widgetContext.options.length)
+    // Use extractOrdinalIndex for ordinal support (strict-only when isStrictExactMode)
+    const ordinalIndex = extractOrdinalIndex(input, widgetContext.options.length, widgetContext.options.map(o => o.label))
 
     if (ordinalIndex !== undefined) {
       const match = widgetContext.options[ordinalIndex]
