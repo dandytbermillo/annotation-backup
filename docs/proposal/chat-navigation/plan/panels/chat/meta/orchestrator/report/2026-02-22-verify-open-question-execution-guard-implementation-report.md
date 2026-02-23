@@ -1,4 +1,4 @@
-# Layer 1 Fix: Verify-Open Question Execution Guard
+wh# Layer 1 Fix: Verify-Open Question Execution Guard
 
 **Date**: 2026-02-22
 **Slug**: chat-navigation / verify-open-question-execution-guard

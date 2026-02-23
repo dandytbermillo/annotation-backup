@@ -80,7 +80,7 @@ import {
   isLLMAutoExecuteEnabledClient,
   type NeededContextType,
 } from '@/lib/chat/clarification-llm-fallback'
-import { isExplicitCommand, isSelectionOnly, resolveScopeCue, canonicalizeCommandInput, classifyArbitrationConfidence, classifyExecutionMeta, isStrictExactMatch, evaluateDeterministicDecision } from '@/lib/chat/input-classifiers'
+import { isExplicitCommand, isSelectionOnly, resolveScopeCue, canonicalizeCommandInput, classifyArbitrationConfidence, classifyExecutionMeta, isStrictExactMatch, evaluateDeterministicDecision, isVerifyOpenQuestion, findPoliteWrapperExactMatch } from '@/lib/chat/input-classifiers'
 import { isSelectionLike } from '@/lib/chat/grounding-set'
 import type { LastOptionsShown } from '@/lib/chat/chat-navigation-context'
 
@@ -3287,36 +3287,12 @@ export async function handleClarificationIntercept(
         const labelMatches = findMatchingOptions(candidateForLabelMatch, recoverableOptions)
 
         if (labelMatches.length === 1) {
-          // Unique match → execute (same pattern as ordinal selection above)
-          const selectedOption = labelMatches[0]
-          const optionToSelect: SelectionOption = {
-            type: selectedOption.type as SelectionOption['type'],
-            id: selectedOption.id,
-            label: selectedOption.label,
-            sublabel: selectedOption.sublabel,
-            data: reconstructSnapshotData(selectedOption),
-          }
-          void debugLog({
-            component: 'ChatNavigation',
-            action: 'scope_cue_chat_label_match_select',
-            metadata: { label: selectedOption.label, candidate: candidateForLabelMatch, source: recoverable.source },
-          })
-          setPendingOptions([])
-          setPendingOptionsMessageId(null)
-          setPendingOptionsGraceCount(0)
-          setActiveOptionSetId(null)
-          setIsLoading(false)
-          handleSelectOption(optionToSelect)
-          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
-        }
+          // Universal gate: single-match must be high-confidence to execute deterministically
+          const scopeCueSingleCandidate = { id: labelMatches[0].id, label: labelMatches[0].label, sublabel: labelMatches[0].sublabel }
+          const scopeCueSingleGate = evaluateDeterministicDecision(candidateForLabelMatch, [scopeCueSingleCandidate], 'active_option')
 
-        if (labelMatches.length > 1) {
-          // Multi-match → try exact-first (same findExactNormalizedMatches as Tier 1b.3)
-          const exactMatches = findExactNormalizedMatches(candidateForLabelMatch, labelMatches)
-
-          if (exactMatches.length === 1) {
-            // Exact-first winner → execute
-            const selectedOption = exactMatches[0]
+          if (scopeCueSingleGate.outcome === 'execute') {
+            const selectedOption = labelMatches[0]
             const optionToSelect: SelectionOption = {
               type: selectedOption.type as SelectionOption['type'],
               id: selectedOption.id,
@@ -3326,8 +3302,8 @@ export async function handleClarificationIntercept(
             }
             void debugLog({
               component: 'ChatNavigation',
-              action: 'scope_cue_chat_label_exact_first_select',
-              metadata: { label: selectedOption.label, candidate: candidateForLabelMatch, totalMatches: labelMatches.length },
+              action: 'scope_cue_chat_label_match_select',
+              metadata: { label: selectedOption.label, candidate: candidateForLabelMatch, source: recoverable.source, confidence: scopeCueSingleGate.confidence, reason: scopeCueSingleGate.reason },
             })
             setPendingOptions([])
             setPendingOptionsMessageId(null)
@@ -3335,10 +3311,59 @@ export async function handleClarificationIntercept(
             setActiveOptionSetId(null)
             setIsLoading(false)
             handleSelectOption(optionToSelect)
-            return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+            return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
+          } else {
+            // Gate says not high-confidence → fall through to unresolved hook
+            // (bounded LLM → safe clarifier). Gate outcome is authoritative.
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'deterministic_gate_scope_cue_single_soft_match_to_llm',
+              metadata: { input: candidateForLabelMatch, matchLabel: labelMatches[0].label, reason: scopeCueSingleGate.reason, confidence: scopeCueSingleGate.confidence },
+            })
+          }
+        }
+
+        if (labelMatches.length > 1) {
+          // Multi-match → try exact-first (same findExactNormalizedMatches as Tier 1b.3)
+          const exactMatches = findExactNormalizedMatches(candidateForLabelMatch, labelMatches)
+
+          if (exactMatches.length === 1) {
+            // Universal gate: exact-normalized must be high-confidence to execute deterministically
+            const scopeCueExactCandidate = { id: exactMatches[0].id, label: exactMatches[0].label, sublabel: exactMatches[0].sublabel }
+            const scopeCueExactGate = evaluateDeterministicDecision(candidateForLabelMatch, [scopeCueExactCandidate], 'active_option')
+
+            if (scopeCueExactGate.outcome === 'execute') {
+              const selectedOption = exactMatches[0]
+              const optionToSelect: SelectionOption = {
+                type: selectedOption.type as SelectionOption['type'],
+                id: selectedOption.id,
+                label: selectedOption.label,
+                sublabel: selectedOption.sublabel,
+                data: reconstructSnapshotData(selectedOption),
+              }
+              void debugLog({
+                component: 'ChatNavigation',
+                action: 'scope_cue_chat_label_exact_first_select',
+                metadata: { label: selectedOption.label, candidate: candidateForLabelMatch, totalMatches: labelMatches.length, confidence: scopeCueExactGate.confidence, reason: scopeCueExactGate.reason },
+              })
+              setPendingOptions([])
+              setPendingOptionsMessageId(null)
+              setPendingOptionsGraceCount(0)
+              setActiveOptionSetId(null)
+              setIsLoading(false)
+              handleSelectOption(optionToSelect)
+              return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
+            } else {
+              // Gate says not high-confidence → fall through to unresolved hook
+              void debugLog({
+                component: 'ChatNavigation',
+                action: 'deterministic_gate_scope_cue_exact_soft_match_to_llm',
+                metadata: { input: candidateForLabelMatch, matchLabel: exactMatches[0].label, reason: scopeCueExactGate.reason, confidence: scopeCueExactGate.confidence },
+              })
+            }
           }
 
-          // No exact winner → fall through to unified hook below
+          // No exact winner or gate blocked → fall through to unified hook below
         }
 
         // Shared classifiers for continuity resolver (used inside UNIFIED HOOK)
@@ -3399,7 +3424,7 @@ export async function handleClarificationIntercept(
                 setActiveOptionSetId(null)
                 setIsLoading(false)
                 handleSelectOption(optionToSelect)
-                return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+                return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
               }
             }
           }
@@ -3408,6 +3433,8 @@ export async function handleClarificationIntercept(
           const scopeCueCandidates = recoverableOptions.map(o => ({
             id: o.id, label: o.label, sublabel: o.sublabel,
           }))
+          // Same fix as Tier 1b.3: if we reach the unresolved hook, the gate blocked all matches.
+          // Pass matchCount: 0 so the classifier routes to bounded LLM instead of classifier_not_eligible.
           const llmResult = await runBoundedArbitrationLoop({
             trimmedInput,
             initialCandidates: scopeCueCandidates,
@@ -3415,7 +3442,7 @@ export async function handleClarificationIntercept(
             clarificationMessageId: originalMessageId,
             inputIsExplicitCommand: isExplicitCommand(trimmedInput),
             isNewQuestionOrCommandDetected,
-            matchCount: labelMatches.length,
+            matchCount: 0,
             exactMatchCount: 0,
             scope: scopeCue.scope,
             enrichmentCallback: createEnrichmentCallback(scopeCue.scope, 'scope_cue_unresolved', ctx),
@@ -3432,7 +3459,7 @@ export async function handleClarificationIntercept(
               isError: false,
             })
             setIsLoading(false)
-            return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+            return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected, _devProvenanceHint: 'safe_clarifier' as const }
           }
 
           if (llmResult.fallbackReason === 'question_intent') {
@@ -3527,7 +3554,7 @@ export async function handleClarificationIntercept(
                   setActiveOptionSetId(null)
                   setIsLoading(false)
                   handleSelectOption(optionToSelect)
-                  return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+                  return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
                 }
               }
               if (!vetoResult.resolved) {
@@ -4609,8 +4636,10 @@ export async function handleClarificationIntercept(
       // Badge-aware Selection (per plan §220-222)
       // If input has a badge suffix (d, e, 1, 2), match against option labels
       // e.g., "open link panel d" → badge "d" → match "Links Panel D"
+      // Guard: verify-open questions skip badge execution → fall through to LLM.
+      // "did i open the links panel d?" → isVerifyOpenQuestion → skip badge → LLM answers.
       // ==========================================================================
-      if (extractedBadge && inputWithoutBadge) {
+      if (extractedBadge && inputWithoutBadge && !isVerifyOpenQuestion(trimmedInput)) {
         const badgeMatchingOptions = lastClarification.options.filter(opt => {
           const normalizedLabel = opt.label.toLowerCase()
           // Check if label ends with the badge (case-insensitive)
@@ -4650,8 +4679,50 @@ export async function handleClarificationIntercept(
           }
           setIsLoading(false)
           handleSelectOption(optionToSelect)
-          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
         }
+      }
+
+      // ==========================================================================
+      // Polite-wrapper exact pass (pre-gate)
+      // Canonicalize input (strip polite phrases, verbs, articles, punctuation),
+      // then check for strict exact label match (case-insensitive) among active options.
+      // "can you open links panels?" → canonical "links panels" === "Links Panels" → execute.
+      // Only fires on strict label equality — no canonical token or soft matching.
+      // Guard: verify-open questions skip this pass entirely.
+      // Scoped exception: active-option clarification context (Tier 1b.3) only.
+      // ==========================================================================
+      const politeExactMatch = findPoliteWrapperExactMatch(trimmedInput, lastClarification.options)
+      if (politeExactMatch) {
+        const fullOption = pendingOptions.find(opt => opt.id === politeExactMatch.id)
+
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'clarification_polite_wrapper_exact_pass',
+          metadata: {
+            input: trimmedInput,
+            canonical: canonicalizeCommandInput(trimmedInput),
+            matchedLabel: politeExactMatch.label,
+          },
+        })
+
+        saveClarificationSnapshot(lastClarification)
+        setRepairMemory(politeExactMatch.id, lastClarification.options)
+        setLastClarification(null)
+        setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+
+        const matchedClarificationOption = lastClarification.options.find(opt => opt.id === politeExactMatch.id)
+        const optionToSelect: SelectionOption = {
+          type: (fullOption?.type ?? matchedClarificationOption?.type ?? 'panel_drawer') as SelectionOption['type'],
+          id: politeExactMatch.id,
+          label: politeExactMatch.label,
+          sublabel: matchedClarificationOption?.sublabel,
+          data: fullOption?.data as SelectionOption['data'] ??
+            reconstructSnapshotData(matchedClarificationOption ?? { id: politeExactMatch.id, label: politeExactMatch.label, type: 'panel_drawer' }),
+        }
+        setIsLoading(false)
+        handleSelectOption(optionToSelect)
+        return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
       }
 
       // Track exact match count for unresolved hook (hoisted for Step 4)
@@ -4686,15 +4757,7 @@ export async function handleClarificationIntercept(
           'active_option'
         )
 
-        // Single-match upgrade: when findMatchingOptions returned exactly 1 match
-        // from ALL available options AND the input contains the complete label
-        // (soft_contains), this is unambiguous — execute it.
-        // The gate's soft_contains is medium-confidence when candidate count is unknown,
-        // but the caller verified uniqueness across all options.
-        const singleMatchExecute = gateDecision.outcome === 'execute' ||
-          gateDecision.reason === 'soft_contains'
-
-        if (singleMatchExecute) {
+        if (gateDecision.outcome === 'execute') {
           const fullOption = pendingOptions.find(opt => opt.id === matchedOption.id)
 
           void debugLog({
@@ -4707,7 +4770,6 @@ export async function handleClarificationIntercept(
               matchCount: 1,
               confidence: gateDecision.confidence,
               reason: gateDecision.reason,
-              singleMatchUpgrade: gateDecision.outcome !== 'execute',
             },
           })
 
@@ -4744,8 +4806,8 @@ export async function handleClarificationIntercept(
             return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
           }
         } else {
-          // Non-contains soft match (starts_with, label_contains, multi_match, no_match):
-          // Fall through to unresolved hook → runBoundedArbitrationLoop
+          // Gate says not high-confidence → fall through to unresolved hook
+          // (bounded LLM → safe clarifier). Gate outcome is authoritative.
           void debugLog({
             component: 'ChatNavigation',
             action: 'deterministic_gate_tier1b3_soft_match_to_llm',
@@ -4931,6 +4993,10 @@ export async function handleClarificationIntercept(
           }
         }
 
+        // If we reach here, no match survived the gate (deterministic, badge, or polite-wrapper).
+        // Pass matchCount: 0 so the arbitration classifier treats this as "no viable deterministic match"
+        // and routes to bounded LLM. Without this, matchCount=1 (a soft match the gate rejected)
+        // causes classifier_not_eligible, preventing the LLM from ever being called.
         const tier1b3Candidates = lastClarification.options.map(o => ({
           id: o.id, label: o.label, sublabel: o.sublabel,
         }))
@@ -4941,8 +5007,8 @@ export async function handleClarificationIntercept(
           clarificationMessageId: lastClarification.messageId ?? '',
           inputIsExplicitCommand,
           isNewQuestionOrCommandDetected,
-          matchCount: matchingOptions.length,
-          exactMatchCount: lastExactMatchCount,
+          matchCount: 0,
+          exactMatchCount: 0,
           scope: scopeCue.scope,
           enrichmentCallback: createEnrichmentCallback(scopeCue.scope, 'tier1b3_unresolved', ctx),
         })

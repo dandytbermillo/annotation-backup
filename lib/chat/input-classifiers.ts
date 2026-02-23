@@ -788,6 +788,40 @@ export function evaluateDeterministicDecision(
 }
 
 // =============================================================================
+// Polite-Wrapper Exact Pass
+// =============================================================================
+
+/**
+ * Polite-wrapper exact pass: canonicalize input then check for strict
+ * exact label match (case-insensitive) among candidates.
+ *
+ * Returns the matched candidate if exactly one label matches, null otherwise.
+ * Guarded: returns null for verify-open questions.
+ * Uses strict label equality only — no canonical token or soft matching.
+ *
+ * Scoped policy exception: this introduces deterministic execution after
+ * polite-wrapper stripping, which is an exception to the strict "raw exact only"
+ * rule enforced by evaluateDeterministicDecision. Applies ONLY to the
+ * active-option clarification context (Tier 1b.3 in chat-routing.ts).
+ */
+export function findPoliteWrapperExactMatch(
+  input: string,
+  candidates: Array<{ id: string; label: string; sublabel?: string }>
+): { id: string; label: string } | null {
+  if (isVerifyOpenQuestion(input)) return null
+
+  const canonical = canonicalizeCommandInput(input)
+  if (!canonical) return null
+
+  const exactMatches = candidates.filter(
+    c => c.label.toLowerCase().trim() === canonical.trim()
+  )
+  return exactMatches.length === 1
+    ? { id: exactMatches[0].id, label: exactMatches[0].label }
+    : null
+}
+
+// =============================================================================
 // Verify-Open Question Detection
 // =============================================================================
 
