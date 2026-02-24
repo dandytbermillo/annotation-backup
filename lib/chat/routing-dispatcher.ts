@@ -38,7 +38,8 @@ import type { ChatMessage, SelectionOption, ViewPanelContent } from '@/lib/chat'
 import type { UIContext } from '@/lib/chat/intent-prompt'
 import type { LastClarificationState } from '@/lib/chat/chat-navigation-context'
 import type { DocRetrievalState } from '@/lib/docs/doc-retrieval-state'
-import { matchVisiblePanelCommand, type VisibleWidget } from '@/lib/chat/panel-command-matcher'
+// matchVisiblePanelCommand import removed — Tier 4.5 command-panel skip deleted.
+// Tier 2c in chat-routing.ts still imports and uses it directly.
 import type { RepairMemoryState, ClarificationSnapshot, ClarificationOption, LastSuggestionState, SuggestionCandidate, ChatSuggestions, WidgetSelectionContext, ChatProvenance } from '@/lib/chat/chat-navigation-context'
 import { WIDGET_SELECTION_TTL, SOFT_ACTIVE_TURN_LIMIT } from '@/lib/chat/chat-navigation-context'
 import type {
@@ -3048,29 +3049,18 @@ export async function dispatchRouting(
 
     // LLM fallback needed
     if (groundingResult.needsLLM && groundingResult.llmCandidates && groundingResult.llmCandidates.length > 0) {
-      // Narrow gate: skip LLM only for command-like panel intents
-      // (explicit command + matches visible panel). Other non-selection inputs still get LLM.
-      const isCommandPanelIntent =
-        isExplicitCommand(ctx.trimmedInput) &&
-        matchVisiblePanelCommand(ctx.trimmedInput, ctx.uiContext?.dashboard?.visibleWidgets).type !== 'none'
-
       // Verify-question bypass: "did/have I/we/you open(ed)..." should NOT enter grounding LLM.
       // These are historical queries, not selection attempts. Send to main API for intent classification.
       const isVerifyBypass = isVerifyOpenQuestion(ctx.trimmedInput)
 
-      if (isCommandPanelIntent) {
-        void debugLog({
-          component: 'ChatNavigation',
-          action: 'grounding_llm_skipped_command_panel_intent',
-          metadata: {
-            input: ctx.trimmedInput,
-            candidateCount: groundingResult.llmCandidates.length,
-            reason: 'routing_continues_to_panel_command_path',
-          },
-        })
-        // Fall through — panel command should be handled by Tier 2c, not grounding LLM.
-        // Routing continues to subsequent tiers.
-      } else if (isVerifyBypass) {
+      // Previous `isCommandPanelIntent` skip removed: Tier 2c already runs before Tier 4.5 and
+      // handles strict-exact panel matches. If Tier 2c returned handled:false, the input is
+      // non-exact — it should enter bounded grounding LLM, not bypass it.
+      // The loose `matchVisiblePanelCommand().type !== 'none'` check let normalized/partial
+      // matches (e.g., "plsss" token pollution) skip grounding LLM entirely, falling to
+      // unbounded API LLM with variable results.
+
+      if (isVerifyBypass) {
         void debugLog({
           component: 'ChatNavigation',
           action: 'grounding_llm_skipped_verify_question',

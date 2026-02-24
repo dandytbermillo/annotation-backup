@@ -127,9 +127,12 @@ function normalizeToTokenSet(s: string): Set<string> {
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, '')
     .split(/\s+/)
-    .filter(t => t && !STOPWORDS.has(t))
+    .filter(t => t.length > 0)
+    // Normalize FIRST (dedup, canonical, fuzzy), THEN filter stopwords.
+    // Previous order (filter → normalize) let "plsss" bypass stopword filter,
+    // normalize to "pls", and pollute the token set.
     .map(t => {
-      // Step 1: Normalize repeated letters (e.g., "llink" → "link")
+      // Step 1: Normalize repeated letters (e.g., "llink" → "link", "plsss" → "pls")
       const deduped = normalizeRepeatedLetters(t)
 
       // Step 2: Check canonical tokens first (exact match after dedup)
@@ -147,6 +150,7 @@ function normalizeToTokenSet(s: string): Set<string> {
       // Step 4: Return original (possibly deduped) token
       return canonicalTokens[t] ?? deduped
     })
+    .filter(t => !STOPWORDS.has(t))
   return new Set(tokens)
 }
 
