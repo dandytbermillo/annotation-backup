@@ -1877,7 +1877,7 @@ function ChatNavigationPanelContent({
       const contextPayload = buildContextPayload(messages, conversationSummary)
 
       // Build pending options for LLM context (for free-form selection fallback)
-      const pendingOptionsForContext = pendingOptions.length > 0
+      let pendingOptionsForContext = pendingOptions.length > 0
         ? pendingOptions.map((opt) => ({
             index: opt.index,
             label: opt.label,
@@ -1885,6 +1885,14 @@ function ChatNavigationPanelContent({
             type: opt.type,
           }))
         : undefined
+
+      // Sanitize stale closure values when clarification was cleared this turn.
+      // React state setters are async — pendingOptions/lastClarification still hold
+      // pre-clear values in this render. Override to prevent server-side stale candidates.
+      const sanitizedLastClarification = clarificationCleared ? null : lastClarification
+      if (clarificationCleared) {
+        pendingOptionsForContext = undefined
+      }
 
       // Build chat context for LLM clarification answers (per llm-chat-context-first-plan.md)
       // DEBUG: Trace uiContext to diagnose stale closure issue
@@ -1994,7 +2002,7 @@ function ChatNavigationPanelContent({
             // UI context for current screen visibility
             uiContext,
             // Phase 2a: Clarification context for "yes please" / affirmation handling
-            lastClarification,
+            lastClarification: sanitizedLastClarification,
             // Full chat history for need_context retrieval loop
             // Per llm-context-retrieval-general-answers-plan.md
             fullChatHistory: messages.slice(-50).map(m => ({

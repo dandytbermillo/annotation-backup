@@ -1185,6 +1185,17 @@ export async function dispatchRouting(
     }
   }
 
+  // When commandBypassesLabelMatching cleared state but intercept didn't handle,
+  // nullify stale ctx references so downstream tiers (esp. Tier 4.5 grounding) don't
+  // inherit phantom options. React state setters are async — ctx still holds old values.
+  // Direct field mutation only — setters are async and don't protect same-turn reads.
+  if (clarificationCleared) {
+    ctx.lastClarification = null
+    ctx.pendingOptions = []
+    ctx.activeOptionSetId = null
+    ctx.setPendingOptionsGraceCount(0)
+  }
+
   // =========================================================================
   // TIER 2 — New Topic / Interrupt Commands
   //
