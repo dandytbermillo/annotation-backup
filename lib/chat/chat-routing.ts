@@ -4545,9 +4545,16 @@ export async function handleClarificationIntercept(
     // IMPORTANT: If input matches MULTIPLE options (e.g., "links panel" matches both D and E),
     // do NOT auto-select - fall through to re-show options instead.
     if (commandBypassesLabelMatching) {
-      // Pre-gate: escape-only (Rule E — no LLM here)
-      // commandBypassesLabelMatching = !isSelectionLike && !inputTargetsActiveOption
-      // → input genuinely isn't about active options, so escape is correct.
+      // Clear stale clarification state so downstream tiers don't inherit it.
+      // Without this, Tier 4.5 grounding LLM picks up stale options as candidates.
+      // MUST return immediately — local lastClarification param stays stale otherwise.
+      if (lastClarification?.options?.length) {
+        saveClarificationSnapshot(lastClarification)
+        setLastClarification(null)
+        setPendingOptions([])
+        setPendingOptionsMessageId(null)
+        setPendingOptionsGraceCount(0)
+      }
       void debugLog({
         component: 'ChatNavigation',
         action: 'clarification_selection_bypassed_command_intent',
@@ -4557,12 +4564,17 @@ export async function handleClarificationIntercept(
           isExplicitCommand: inputIsExplicitCommand,
           isNewQuestionOrCommandDetected,
           inputTargetsActiveOption,
+          clarificationCleared: !!lastClarification?.options?.length,
           escapeReason: inputIsExplicitCommand ? 'explicit_command_priority'
             : !lastClarification?.options?.length ? 'no_active_options'
             : 'command_bypass_not_selection_like',
         },
       })
-      // Fall through to downstream tiers
+      return {
+        handled: false,
+        clarificationCleared: !!lastClarification?.options?.length,
+        isNewQuestionOrCommandDetected,
+      }
     } else if (lastClarification?.options && lastClarification.options.length > 0) {
       void debugLog({
         component: 'ChatNavigation',
