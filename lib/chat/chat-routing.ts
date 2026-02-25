@@ -4524,14 +4524,13 @@ export async function handleClarificationIntercept(
     const inputIsExplicitCommand = isExplicitCommand(trimmedInput)
     const inputIsSelectionLike = isSelectionLike(trimmedInput)
 
-    // Candidate-aware label check: does the canonicalized input match ANY active option?
-    // Uses the SAME matching semantics as Tier 1b.3 via findMatchingOptions.
+    // Candidate-aware label check: does the RAW input strictly match ANY active option?
+    // Per raw-strict-exact plan (Contract rule 1): no stripping/canonicalization for routing decisions.
+    // Only raw strict exact match (case-insensitive) qualifies as "targeting" an active option.
     const inputTargetsActiveOption = (() => {
       if (!lastClarification?.options?.length) return false
       if (!inputIsExplicitCommand && !isNewQuestionOrCommandDetected) return false
-      const canonicalized = canonicalizeCommandInput(trimmedInput)
-      if (!canonicalized) return false
-      return findMatchingOptions(canonicalized, lastClarification.options).length > 0
+      return lastClarification.options.some(opt => isStrictExactMatch(trimmedInput, opt.label))
     })()
 
     const commandBypassesLabelMatching =
@@ -4777,69 +4776,25 @@ export async function handleClarificationIntercept(
       // Guard: verify-open questions skip this pass entirely.
       // Scoped exception: active-option clarification context (Tier 1b.3) only.
       // ==========================================================================
+      // Per raw-strict-exact plan (Contract rule 1): polite-wrapper stripping is advisory only.
+      // Never deterministic-execute from stripped match. Always set as hint for bounded LLM.
       const politeExactMatch = findPoliteWrapperExactMatch(trimmedInput, lastClarification.options)
       if (politeExactMatch) {
-        if (isStrictExactMode()) {
-          // Strict policy: polite-wrapper is non-exact → set advisory hint, fall through to unresolved hook
-          preferredCandidateHint = preferredCandidateHint ?? { id: politeExactMatch.id, label: politeExactMatch.label, source: 'polite_wrapper' }
-          void debugLog({
-            component: 'ChatNavigation',
-            action: 'polite_wrapper_hint_deferred_to_llm',
-            metadata: { input: trimmedInput, canonical: canonicalizeCommandInput(trimmedInput), matchedLabel: politeExactMatch.label },
-          })
-          // Fall through — do NOT execute, do NOT clear state
-        } else {
-          // Legacy: direct execute
-          const fullOption = pendingOptions.find(opt => opt.id === politeExactMatch.id)
-
-          void debugLog({
-            component: 'ChatNavigation',
-            action: 'clarification_polite_wrapper_exact_pass',
-            metadata: {
-              input: trimmedInput,
-              canonical: canonicalizeCommandInput(trimmedInput),
-              matchedLabel: politeExactMatch.label,
-            },
-          })
-
-          saveClarificationSnapshot(lastClarification)
-          setRepairMemory(politeExactMatch.id, lastClarification.options)
-          setLastClarification(null)
-          setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
-
-          const matchedClarificationOption = lastClarification.options.find(opt => opt.id === politeExactMatch.id)
-          const optionToSelect: SelectionOption = {
-            type: (fullOption?.type ?? matchedClarificationOption?.type ?? 'panel_drawer') as SelectionOption['type'],
-            id: politeExactMatch.id,
-            label: politeExactMatch.label,
-            sublabel: matchedClarificationOption?.sublabel,
-            data: fullOption?.data as SelectionOption['data'] ??
-              reconstructSnapshotData(matchedClarificationOption ?? { id: politeExactMatch.id, label: politeExactMatch.label, type: 'panel_drawer' }),
-          }
-          setIsLoading(false)
-          handleSelectOption(optionToSelect)
-          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
-        }
+        preferredCandidateHint = preferredCandidateHint ?? { id: politeExactMatch.id, label: politeExactMatch.label, source: 'polite_wrapper' }
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'polite_wrapper_hint_deferred_to_llm',
+          metadata: { input: trimmedInput, canonical: canonicalizeCommandInput(trimmedInput), matchedLabel: politeExactMatch.label },
+        })
+        // Fall through — do NOT execute, do NOT clear state
       }
 
       // Track exact match count for unresolved hook (hoisted for Step 4)
       let lastExactMatchCount = 0
 
       // Find ALL matching options using shared findMatchingOptions helper.
-      // Try both original input AND verb-stripped input for matching (union results).
-      const matchesOriginal = findMatchingOptions(normalizedInput, lastClarification.options)
-      const matchesVerbStripped = findMatchingOptions(inputForMatching, lastClarification.options)
-      // Dedupe by option id
-      const matchedIds = new Set(matchesOriginal.map(o => o.id))
-      for (const m of matchesVerbStripped) {
-        if (!matchedIds.has(m.id)) matchesOriginal.push(m)
-      }
-      const matchingOptions = matchesOriginal
-
-      // Note: findMatchingOptions uses the same matching semantics as the original
-      // inline code (exact/substring/word-boundary + canonical token matching).
-      // Trying both normalizedInput and inputForMatching preserves the original
-      // dual-path behavior.
+      // Per raw-strict-exact contract Rule 1: raw input only, no verb-stripped union.
+      const matchingOptions = findMatchingOptions(normalizedInput, lastClarification.options)
 
       // Only auto-select if EXACTLY ONE option matches AND it's high-confidence.
       // If multiple match (e.g., "links panel" matches both D and E), fall through to re-show.
@@ -4928,23 +4883,16 @@ export async function handleClarificationIntercept(
         // e.g., "open links panel" → {links,panel} matches "Links Panels"
         //        exactly but NOT "Links Panel D" (superset).
         // =================================================================
-        const exactOriginal = findExactNormalizedMatches(normalizedInput, matchingOptions)
-        const exactVerbStripped = findExactNormalizedMatches(inputForMatching, matchingOptions)
-        // Dedupe
-        const exactIds = new Set(exactOriginal.map(o => o.id))
-        for (const m of exactVerbStripped) {
-          if (!exactIds.has(m.id)) exactOriginal.push(m)
-        }
-        const exactMatches = exactOriginal
+        // Per raw-strict-exact contract Rule 1: raw input only, no verb-stripped union.
+        const exactMatches = findExactNormalizedMatches(normalizedInput, matchingOptions)
 
         if (exactMatches.length === 1) {
           // Exact-first winner: one option matches exactly on canonical tokens.
           // Route through shared gate — gate outcome is authoritative.
           const matchedOption = exactMatches[0]
-          // Pass verb-stripped input so the gate sees "links panel" not "open links panel"
-          // — canonical token matching handles singular/plural normalization.
+          // Per raw-strict-exact contract Rule 1: use raw input, no verb stripping.
           const exactNormGateDecision = evaluateDeterministicDecision(
-            inputForMatching,
+            trimmedInput,
             [{ id: matchedOption.id, label: matchedOption.label, sublabel: matchedOption.sublabel }],
             'active_option'
           )
@@ -5382,7 +5330,7 @@ export async function handleClarificationIntercept(
         }
         setIsLoading(false)
         handleSelectOption(optionToSelect)
-        return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+        return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
       }
     }
 
@@ -6175,7 +6123,7 @@ export async function handleClarificationIntercept(
           }
           setIsLoading(false)
           handleSelectOption(optionToSelect)
-          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
         } else {
           const optionToSelect: SelectionOption = {
             type: selectedClarificationOption.type as SelectionOption['type'],
@@ -6188,7 +6136,7 @@ export async function handleClarificationIntercept(
           }
           setIsLoading(false)
           handleSelectOption(optionToSelect)
-          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
         }
       }
     }

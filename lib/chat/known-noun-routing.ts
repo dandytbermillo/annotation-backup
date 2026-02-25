@@ -17,7 +17,7 @@ import type { PendingOptionState } from '@/lib/chat/chat-routing'
 import type { LastClarificationState } from '@/lib/chat/chat-navigation-context'
 import { hasQuestionIntent } from '@/lib/chat/query-patterns'
 import { matchVisiblePanelCommand } from '@/lib/chat/panel-command-matcher'
-import { canonicalizeCommandInput, classifyExecutionMeta, isStrictExactMatch } from '@/lib/chat/input-classifiers'
+import { canonicalizeCommandInput, classifyExecutionMeta, isExplicitCommand, isStrictExactMatch } from '@/lib/chat/input-classifiers'
 
 // =============================================================================
 // Known-Noun Allowlist
@@ -83,8 +83,13 @@ const KNOWN_NOUN_KEYS = new Set(Object.keys(KNOWN_NOUN_MAP))
 // =============================================================================
 
 /**
- * Normalize input for noun matching.
+ * Normalize input for noun matching (ADVISORY ONLY — candidate discovery).
  * Strips action verbs, punctuation, and normalizes whitespace.
+ *
+ * Per raw-strict-exact plan (Contract rule 5): this normalization is advisory only.
+ * It aids candidate discovery in matchKnownNoun() — the actual execution gate
+ * is isStrictExactMatch() on raw input (line 507), which prevents deterministic
+ * execution from stripped input.
  */
 function normalizeForNounMatch(input: string): string {
   return canonicalizeCommandInput(input)
@@ -445,12 +450,16 @@ export function handleKnownNounRouting(
     if (!realPanel) {
       // Rule 4: Do not hard-stop with handled: true when there is viable
       // downstream disambiguation evidence. Check if visible panels show
-      // ambiguous partial-match evidence (multiple family members) for this input.
+      // any match evidence for this input.
+      // Per raw-strict-exact plan Fix 3b: use raw input (token-subset matching
+      // naturally handles extra tokens — "open links panel" matches "Links Panels"
+      // because title tokens {links, panel} ⊂ input tokens {open, links, panel}).
+      // Also check if command-form input with panel evidence → defer to Tier 4.5.
       const visibleMatch = matchVisiblePanelCommand(ctx.trimmedInput, ctx.visibleWidgets)
-      const hasAmbiguousEvidence =
-        visibleMatch.type === 'partial' && visibleMatch.matches.length > 1
+      const hasVisiblePanelEvidence =
+        visibleMatch.type !== 'none' && visibleMatch.matches.length > 0
 
-      if (hasAmbiguousEvidence) {
+      if (hasVisiblePanelEvidence) {
         void debugLog({
           component: 'ChatNavigation',
           action: 'known_noun_fallthrough_ambiguous_evidence',
@@ -556,6 +565,18 @@ export function handleKnownNounRouting(
       metadata: { input: ctx.trimmedInput, reason: 'active_option_set', tier: 4 },
     })
     // Fall through to Tier 5 (LLM can handle contextually with the active list)
+    return { handled: false }
+  }
+
+  // Per raw-strict-exact plan Fix 3a: skip near-match for command-form inputs.
+  // "open links panels" is command-form → near-match would hijack to Quick Links.
+  // Defer to Tier 4.5 where visible_panels grounding catches with panel candidates.
+  if (isExplicitCommand(ctx.trimmedInput)) {
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'skip_noun_near_match_command_form',
+      metadata: { input: ctx.trimmedInput, reason: 'imperative_command', tier: 4 },
+    })
     return { handled: false }
   }
 

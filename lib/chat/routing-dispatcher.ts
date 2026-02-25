@@ -1316,6 +1316,20 @@ export async function dispatchRouting(
   // Polite commands ("can you open links panel") now fall through to LLM tier.
   const questionIntentBlocks = (() => {
     if (!hasQuestionIntent(ctx.trimmedInput)) return false
+
+    // Per raw-strict-exact plan Phase 3: imperative-command precedence.
+    // "open the links panel plsss??" starts with imperative verb → NOT a question.
+    // isExplicitCommand now uses verb-initial matching only, so "what did you open?" → false,
+    // but "open the links panel plsss??" → true. Bypass question-intent gate for commands.
+    if (isExplicitCommand(ctx.trimmedInput)) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'question_intent_bypassed_imperative_command',
+        metadata: { input: ctx.trimmedInput, tier: '2c' },
+      })
+      return false // Imperative command form — don't block as question
+    }
+
     // Addendum Rule B: only strict exact panel name match overrides question intent.
     // Token-containment evidence is NOT sufficient to convert a question into a command.
     const dw = ctx.uiContext?.mode === 'dashboard' ? ctx.uiContext?.dashboard?.visibleWidgets : undefined
@@ -2806,6 +2820,12 @@ export async function dispatchRouting(
     }
 
     // Build grounding context from existing state
+    // Per raw-strict-exact plan Phase 3: pass visibleWidgets as visible_panels
+    // so bounded LLM can resolve non-exact panel commands.
+    // No mode guard — match Tier 2c (line 1359) which accesses
+    // dashboard?.visibleWidgets without mode check. Presence of
+    // visibleWidgets is the real signal, not the mode field.
+    const dashboardVisibleWidgets = ctx.uiContext?.dashboard?.visibleWidgets
     const groundingCtx = buildGroundingContext({
       // If soft-active, treat as having an active option set
       activeOptionSetId: isSoftActive ? 'soft-active' : ctx.activeOptionSetId,
@@ -2816,6 +2836,7 @@ export async function dispatchRouting(
       sessionState: ctx.sessionState,
       repairMemory: ctx.repairMemory,
       openWidgets: turnSnapshot.openWidgets,
+      visiblePanels: dashboardVisibleWidgets,
     })
 
     // Determine activeWidgetId with correct pre-latch guard

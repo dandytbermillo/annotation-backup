@@ -14,6 +14,8 @@
 
 import { debugLog } from '@/lib/utils/debug-logger'
 import { levenshteinDistance } from '@/lib/chat/typo-suggestions'
+import { matchVisiblePanelCommand, STOPWORDS } from '@/lib/chat/panel-command-matcher'
+import { isExplicitCommand } from '@/lib/chat/input-classifiers'
 import type { ClarificationOption, ClarificationSnapshot, LastClarificationState, RepairMemoryState, SessionState } from '@/lib/chat/chat-navigation-context'
 
 // =============================================================================
@@ -34,6 +36,7 @@ export interface GroundingCandidate {
 /** Types of grounding sets, in priority order per plan §Decision Flow Step 1 */
 export type GroundingSetType =
   | 'active_options'
+  | 'visible_panels'
   | 'paused_snapshot'
   | 'widget_list'
   | 'recent_referent'
@@ -63,6 +66,13 @@ export interface GroundingSetBuildContext {
   openWidgets: OpenWidgetState[]
   /** Recent referents from session state */
   recentReferents: RecentReferent[]
+  /**
+   * Visible panels from the dashboard (per raw-strict-exact plan Phase 3).
+   * Used as LLM-only candidates — NOT eligible for resolveUniqueDeterministic.
+   * When a non-exact panel command falls to grounding, these candidates let
+   * the bounded LLM resolve "open the links panel plsss" to the correct panel.
+   */
+  visiblePanels?: Array<{ id: string; title: string; type: string }>
 }
 
 /** Open widget state for multi-list grounding */
@@ -160,6 +170,22 @@ export function buildGroundingSets(ctx: GroundingSetBuildContext): GroundingSet[
       source: 'active_options' as const,
     }))
     sets.push({ type: 'active_options', candidates, isList: true })
+  }
+
+  // 1.5) Visible panels (per raw-strict-exact plan Phase 3):
+  // Injected as LLM-only candidates when visible panels exist.
+  // Priority: after active_options, before widget_list.
+  // CRITICAL: These are NOT eligible for resolveUniqueDeterministic — they are
+  // LLM-only candidates to prevent non-exact panel text from being deterministic-executed.
+  if (ctx.visiblePanels && ctx.visiblePanels.length > 0) {
+    const panelCandidates = ctx.visiblePanels.slice(0, NON_LIST_CANDIDATE_CAP).map(panel => ({
+      id: panel.id,
+      label: panel.title,
+      type: 'option' as const,
+      actionHint: 'open panel',
+      source: 'visible_panels' as const,
+    }))
+    sets.push({ type: 'visible_panels', candidates: panelCandidates, isList: false })
   }
 
   // 2) Active widget lists (from openWidgets[])
@@ -378,6 +404,85 @@ export function resolveUniqueDeterministic(
         index: subsetMatches[0].index,
         matchMethod: 'unique_token_subset',
       }
+    }
+  }
+
+  return { matched: false }
+}
+
+// =============================================================================
+// E2) Strict Raw Deterministic Match (no verb stripping, no fuzzy)
+// =============================================================================
+
+/**
+ * Strict whole-string ordinal parser.
+ * Only matches when ENTIRE input is an ordinal — no embedded extraction.
+ * "first" → 0 ✓, "the first one" → 0 ✓, "open the first one" → undefined ✓ (rejected)
+ */
+function resolveStrictOrdinalIndex(normalized: string, optionCount: number): number | undefined {
+  const ordinalMap: Record<string, number> = {
+    'first': 0, '1st': 0, '1': 0,
+    'second': 1, '2nd': 1, '2': 1,
+    'third': 2, '3rd': 2, '3': 2,
+    'fourth': 3, '4th': 3, '4': 3,
+    'fifth': 4, '5th': 4, '5': 4,
+    'sixth': 5, '6': 5,
+    'seventh': 6, '7': 6,
+    'eighth': 7, '8': 7,
+    'ninth': 8, '9': 8,
+    'last': optionCount - 1,
+    'the first': 0, 'the second': 1, 'the third': 2,
+    'the fourth': 3, 'the fifth': 4, 'the last': optionCount - 1,
+    'the first one': 0, 'the second one': 1, 'the third one': 2,
+    'the fourth one': 3, 'the fifth one': 4, 'the last one': optionCount - 1,
+    'option 1': 0, 'option 2': 1, 'option 3': 2,
+    'option 4': 3, 'option 5': 4,
+  }
+  // Whole-string only — NO embedded ordinal extraction
+  if (ordinalMap[normalized] !== undefined) return ordinalMap[normalized]
+  // Strip "panel X" / "item X" shorthand prefix, then re-check
+  const stripped = normalized.replace(/^(option|panel|item|choice)\s+/i, '').trim()
+  if (ordinalMap[stripped] !== undefined) return ordinalMap[stripped]
+  if (/^[1-9]$/.test(stripped)) return parseInt(stripped, 10) - 1
+  return undefined
+}
+
+/**
+ * Strict raw deterministic resolver for widget-list Step 2.5.
+ * Per raw-strict-exact contract Rule 2: deterministic execute only on raw strict exact.
+ *
+ * Match methods (in order):
+ *   1. Strict whole-string ordinal (no embedded extraction)
+ *   2. Raw exact label match (case-insensitive only)
+ *   3. Badge letter (when UI displays badge letters)
+ *
+ * NO: verb stripping, fuzzy token-subset, embedded ordinal extraction.
+ */
+function resolveStrictRawDeterministic(
+  input: string,
+  candidates: GroundingCandidate[],
+  options?: { hasBadgeLetters?: boolean }
+): DeterministicMatchResult {
+  const normalized = input.trim().toLowerCase()
+  if (candidates.length === 0) return { matched: false }
+
+  // 1. Strict whole-string ordinal (no embedded extraction)
+  const ordinalIndex = resolveStrictOrdinalIndex(normalized, candidates.length)
+  if (ordinalIndex !== undefined && ordinalIndex >= 0 && ordinalIndex < candidates.length) {
+    return { matched: true, candidate: candidates[ordinalIndex], index: ordinalIndex, matchMethod: 'ordinal' }
+  }
+
+  // 2. Raw exact label match (case-insensitive only — no verb stripping, no fuzzy)
+  const exactMatch = candidates.find(c => c.label.toLowerCase() === normalized)
+  if (exactMatch) {
+    return { matched: true, candidate: exactMatch, index: candidates.indexOf(exactMatch), matchMethod: 'shorthand_keyword' }
+  }
+
+  // 3. Badge letter (only when UI displays badge letters)
+  if (options?.hasBadgeLetters && /^[a-e]$/i.test(normalized)) {
+    const badgeIndex = normalized.charCodeAt(0) - 'a'.charCodeAt(0)
+    if (badgeIndex >= 0 && badgeIndex < candidates.length) {
+      return { matched: true, candidate: candidates[badgeIndex], index: badgeIndex, matchMethod: 'ordinal' }
     }
   }
 
@@ -637,7 +742,10 @@ export function handleGroundingSetFallback(
 
   // Check if user explicitly references a widget
   // When widget is explicitly mentioned, force widget-scoped selection (don't fall through to panel commands)
-  if (ctx.openWidgets.length > 0) {
+  // GUARD: Skip for command-form inputs (e.g., "open links panel", "show recent").
+  // Command-form inputs should route through Steps 2.5–2.7 where visible_panels
+  // evidence can fire — substring matching here would wrongly scope to widget items.
+  if (ctx.openWidgets.length > 0 && !isExplicitCommand(trimmed)) {
     const normalizedInput = trimmed.toLowerCase()
     for (const widget of ctx.openWidgets) {
       if (normalizedInput.includes(widget.label.toLowerCase()) && widget.options.length > 0) {
@@ -681,8 +789,10 @@ export function handleGroundingSetFallback(
     }
   }
 
-  // Step 2.5: Widget-list direct match (widget-ui-snapshot-plan.md)
-  // Try to match input against visible widget lists WITHOUT requiring selection-like input.
+  // Step 2.5: Widget-list strict raw direct match (widget-ui-snapshot-plan.md)
+  // Uses resolveStrictRawDeterministic: ordinal + raw exact label + badge only.
+  // NO verb stripping, NO fuzzy token-subset, NO embedded ordinal extraction.
+  // Per raw-strict-exact contract Rule 2: deterministic execute only on raw strict exact.
   // Priority: (1) activeWidgetId's list, (2) any list with unique match
   const widgetListSets = groundingSets.filter(s => s.type === 'widget_list')
   if (widgetListSets.length > 0) {
@@ -694,7 +804,7 @@ export function handleGroundingSetFallback(
         : undefined)
 
     if (activeWidgetList) {
-      const matchResult = resolveUniqueDeterministic(trimmed, activeWidgetList.candidates)
+      const matchResult = resolveStrictRawDeterministic(trimmed, activeWidgetList.candidates, options)
       if (matchResult.matched) {
         void debugLog({
           component: 'ChatNavigation',
@@ -718,7 +828,7 @@ export function handleGroundingSetFallback(
     // (2) Try all widget lists - if exactly one has a unique match, use it
     const matchingResults: Array<{ set: GroundingSet; result: DeterministicMatchResult }> = []
     for (const listSet of widgetListSets) {
-      const matchResult = resolveUniqueDeterministic(trimmed, listSet.candidates)
+      const matchResult = resolveStrictRawDeterministic(trimmed, listSet.candidates, options)
       if (matchResult.matched) {
         matchingResults.push({ set: listSet, result: matchResult })
       }
@@ -756,15 +866,79 @@ export function handleGroundingSetFallback(
         },
       })
     }
+  }
 
-    // Step 3b: Deterministic failed but widget lists exist → trigger LLM fallback
-    // Per widget-ui-snapshot-plan.md §Canonical Resolver Path:
-    //   "If deterministic matching failed/ambiguous AND widget lists are visible
-    //    THEN → Call constrained LLM with candidates from widget lists"
-    // Scope to the active widget first when available to avoid mixing other widget items
-    // into the candidate set (e.g., Links Panel D vs Links Panel E).
-    const widgetCandidates = activeWidgetList?.candidates?.length
-      ? activeWidgetList.candidates
+  // Step 2.6: Visible-panels LLM fallback (independent of widget lists).
+  // Advisory panel-intent gate: token-subset match on raw input via matchVisiblePanelCommand.
+  // (normalizeToTokenSet is advisory — selects LLM candidates, never deterministic execution)
+  // Per raw-strict-exact contract Rule 1 (refined): advisory normalization for LLM candidate
+  // selection is permitted since the LLM makes the final routing decision.
+  // NOTE: Runs whenever visible_panels exists — NOT coupled to widgetListSets.
+  const visiblePanelSet = groundingSets.find(s => s.type === 'visible_panels')
+  if (visiblePanelSet && visiblePanelSet.candidates.length > 0) {
+    const hasActiveOptions = groundingSets.some(s => s.type === 'active_options' && s.candidates.length > 0)
+    if (!hasActiveOptions) {
+      const panelWidgets = visiblePanelSet.candidates.map(c => ({
+        id: c.id, title: c.label, type: 'panel'
+      }))
+      const rawPanelEvidence = matchVisiblePanelCommand(trimmed, panelWidgets)
+      if (rawPanelEvidence.type !== 'none') {
+        // Hard guard: substantive match over ALL matched panels.
+        // Prevents single-token incidental overlap from stealing mixed-intent inputs.
+        // Multi-word title → almost certainly intentional.
+        // Single-word title → only if input is short (not incidental in long sentence).
+        // Filter politeness/filler words before counting — they inflate word count
+        // but carry no domain signal. Verbs are NOT filtered (they carry intent).
+        // Uses shared STOPWORDS from panel-command-matcher (single source of truth).
+        const inputWordCount = trimmed.split(/\s+/).filter(w => {
+          const norm = w.toLowerCase().replace(/[^a-z0-9]/g, '')
+          return norm.length > 0 && !STOPWORDS.has(norm)
+        }).length
+        const isSubstantive = rawPanelEvidence.matches.some(m => {
+          const titleWordCount = m.title.trim().split(/\s+/).length
+          return titleWordCount >= 2 || inputWordCount <= titleWordCount + 1
+        })
+        if (isSubstantive) {
+          // Return ONLY matched candidates — not all visible panel candidates.
+          const matchedIds = new Set(rawPanelEvidence.matches.map(m => m.id))
+          const matchedCandidates = visiblePanelSet.candidates.filter(c => matchedIds.has(c.id))
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'visible_panels_evidence_gated_llm_fallback',
+            metadata: {
+              input: trimmed,
+              matchType: rawPanelEvidence.type,
+              matchedCount: matchedCandidates.length,
+              matchedLabels: matchedCandidates.map(c => c.label),
+              inputWordCount,
+              isSubstantive,
+            },
+          })
+          return {
+            handled: false,
+            needsLLM: true,
+            llmCandidates: matchedCandidates,
+          }
+        }
+      }
+    }
+  }
+
+  // Step 2.7: Widget-list LLM fallback (demoted — after visible_panels).
+  // Per widget-ui-snapshot-plan.md §Canonical Resolver Path:
+  //   "If deterministic matching failed/ambiguous AND widget lists are visible
+  //    THEN → Call constrained LLM with candidates from widget lists"
+  // Scope to the active widget first when available to avoid mixing other widget items
+  // into the candidate set (e.g., Links Panel D vs Links Panel E).
+  if (widgetListSets.length > 0) {
+    // Recompute activeWidgetList for scoping (same logic as Step 2.5)
+    const activeWidgetListForLLM = options?.activeWidgetId
+      ? widgetListSets.find(s => s.widgetId === options.activeWidgetId)
+      : (ctx.openWidgets.length > 0
+        ? widgetListSets.find(s => s.widgetId === ctx.openWidgets[0]?.id)
+        : undefined)
+    const widgetCandidates = activeWidgetListForLLM?.candidates?.length
+      ? activeWidgetListForLLM.candidates
       : widgetListSets.flatMap(s => s.candidates)
     if (widgetCandidates.length > 0) {
       void debugLog({
@@ -773,9 +947,9 @@ export function handleGroundingSetFallback(
         metadata: {
           input: trimmed,
           candidateCount: widgetCandidates.length,
-          candidateScope: activeWidgetList?.candidates?.length ? 'active_widget' : 'all_widgets',
-          activeWidgetId: activeWidgetList?.widgetId,
-          activeWidgetLabel: activeWidgetList?.widgetLabel,
+          candidateScope: activeWidgetListForLLM?.candidates?.length ? 'active_widget' : 'all_widgets',
+          activeWidgetId: activeWidgetListForLLM?.widgetId,
+          activeWidgetLabel: activeWidgetListForLLM?.widgetLabel,
           widgetIds: widgetListSets.map(s => s.widgetId),
         },
       })
@@ -868,6 +1042,7 @@ export function buildGroundingContext(params: {
   sessionState: SessionState
   repairMemory: RepairMemoryState | null
   openWidgets?: OpenWidgetState[]
+  visiblePanels?: Array<{ id: string; title: string; type: string }>
 }): GroundingSetBuildContext {
   // Derive active options from lastClarification
   const activeOptions: ClarificationOption[] =
@@ -928,6 +1103,7 @@ export function buildGroundingContext(params: {
     // Currently always [] — multi-list guard (§E) is a no-op until then.
     openWidgets: params.openWidgets ?? [],
     recentReferents,
+    visiblePanels: params.visiblePanels,
   }
 }
 

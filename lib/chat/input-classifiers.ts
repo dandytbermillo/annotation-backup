@@ -23,7 +23,7 @@ import { hasQuestionIntent } from '@/lib/chat/query-patterns'
  * Used by focus-latch bypass to prevent selection binding on commands (Rule 4).
  */
 export function isExplicitCommand(input: string): boolean {
-  const normalized = input.toLowerCase()
+  const normalized = input.toLowerCase().trim()
 
   // Phase 2b: Ordinal/number language bypass
   const hasOrdinal = /\b(first|second|third|fourth|fifth|last|[1-9])\b/i.test(normalized)
@@ -31,13 +31,13 @@ export function isExplicitCommand(input: string): boolean {
     return false
   }
 
-  // Action verbs that indicate a new command
-  const actionVerbs = [
-    'open', 'show', 'list', 'view', 'go', 'back', 'home',
-    'create', 'rename', 'delete', 'remove',
-  ]
+  // Verb-initial imperative form only (per raw-strict-exact plan Phase 3):
+  // Matches "open ...", "show ...", "please open ...", "can you open ...", etc.
+  // Does NOT match verbs appearing mid-sentence ("what did you open?", "should I show this?")
+  // This prevents question-form inputs from being misclassified as commands.
+  const IMPERATIVE_VERB_INITIAL = /^(?:(?:hey\s+)?(?:can|could|would)\s+you\s+(?:please\s+|pls\s+)?|(?:please|pls)\s+)?(open|show|list|view|go|back|home|create|rename|delete|remove)\b/i
 
-  return actionVerbs.some(verb => normalized.includes(verb))
+  return IMPERATIVE_VERB_INITIAL.test(normalized)
 }
 
 // =============================================================================
@@ -726,9 +726,12 @@ export function evaluateDeterministicDecision(
       return true
     })
     if (canonicalMatches.length === 1) {
+      // Per raw-strict-exact plan (Contract rule 2): exact_canonical is NOT raw strict exact.
+      // Canonical token matching (singular/plural normalization) is advisory only — never deterministic execute.
+      // Always route to bounded LLM for resolution.
       return {
-        outcome: isStrictExactMode() ? 'llm' : 'execute',
-        confidence: isStrictExactMode() ? 'medium' : 'high',
+        outcome: 'llm',
+        confidence: 'medium',
         reason: 'exact_canonical',
         match: { id: canonicalMatches[0].id, label: canonicalMatches[0].label },
       }
@@ -799,10 +802,10 @@ export function evaluateDeterministicDecision(
  * Guarded: returns null for verify-open questions.
  * Uses strict label equality only — no canonical token or soft matching.
  *
- * Scoped policy exception: this introduces deterministic execution after
- * polite-wrapper stripping, which is an exception to the strict "raw exact only"
- * rule enforced by evaluateDeterministicDecision. Applies ONLY to the
- * active-option clarification context (Tier 1b.3 in chat-routing.ts).
+ * ADVISORY ONLY (per raw-strict-exact plan Contract rule 1):
+ * Result is a hint for bounded LLM candidate ranking — callers MUST NOT
+ * auto-execute from this match. Only raw strict exact matches (via
+ * isStrictExactMatch) may produce deterministic execution.
  */
 export function findPoliteWrapperExactMatch(
   input: string,

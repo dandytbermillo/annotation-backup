@@ -15,6 +15,7 @@
  */
 
 import { levenshteinDistance } from './typo-suggestions'
+// canonicalizeCommandInput is only used by deprecated stripVerbPrefix — NOT by matchVisiblePanelCommand.
 import { canonicalizeCommandInput } from './input-classifiers'
 
 // =============================================================================
@@ -44,7 +45,7 @@ export interface PanelMatchResult {
  *
  * NOTE: Panel/widget terms are normalized (singular/plural) instead of removed.
  */
-const STOPWORDS = new Set([
+export const STOPWORDS = new Set([
   // Articles
   'a', 'an', 'the',
   // Possessives
@@ -169,13 +170,12 @@ function isSubset(setA: Set<string>, setB: Set<string>): boolean {
 // =============================================================================
 
 /**
- * Strip leading action verb prefixes from user input before panel token matching.
- * Same verb set as known-noun-routing.ts normalizeForNounMatch.
- * Applied to input only (not panel titles) so Tier 2c sees the same tokens
- * regardless of whether the user typed "links panel" or "open links panel".
+ * Strip leading action verb prefixes from user input.
  *
- * Exported as a shared utility — both panel-command-matcher (Tier 2c) and
- * known-noun-routing (Tier 4) import from here to prevent drift.
+ * @deprecated Per raw-strict-exact plan: verb stripping is no longer used for
+ * routing decisions. matchVisiblePanelCommand now uses raw input.
+ * This function remains exported for backward compatibility but should not
+ * be used in routing-authoritative paths.
  */
 export function stripVerbPrefix(input: string): string {
   return canonicalizeCommandInput(input)
@@ -204,7 +204,11 @@ export function matchVisiblePanelCommand(
     return { type: 'none', matches: [] }
   }
 
-  const inputTokens = normalizeToTokenSet(canonicalizeCommandInput(input))
+  // Per raw-strict-exact plan (Contract rule 1): use raw input, no verb stripping.
+  // "open links panel d" → tokens include "open" → no panel title contains "open" → type: 'none'.
+  // "links panel d" (raw, no verb) → tokens {links, panel, d} → matches "Links Panel D" → type: 'exact'.
+  // normalizeToTokenSet still handles advisory normalization (repeated letters, fuzzy, stopwords).
+  const inputTokens = normalizeToTokenSet(input)
   if (inputTokens.size === 0) {
     return { type: 'none', matches: [] }
   }
