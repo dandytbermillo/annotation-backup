@@ -561,7 +561,9 @@ export function resolveWidgetSelection(
     source: 'widget_list' as const,
   }))
 
-  return resolveUniqueDeterministic(normalizedInput, candidates)
+  // Per raw-strict-exact policy: deterministic execute ONLY on raw strict exact match.
+  // No verb stripping, no fuzzy, no token-subset — those violate the policy.
+  return resolveStrictRawDeterministic(normalizedInput, candidates, { hasBadgeLetters: true })
 }
 
 // =============================================================================
@@ -742,51 +744,32 @@ export function handleGroundingSetFallback(
     }
   }
 
-  // Check if user explicitly references a widget
-  // When widget is explicitly mentioned, force widget-scoped selection (don't fall through to panel commands)
-  // GUARD: Skip for command-form inputs (e.g., "open links panel", "show recent").
-  // Command-form inputs should route through Steps 2.5–2.7 where visible_panels
-  // evidence can fire — substring matching here would wrongly scope to widget items.
+  // Widget-reference detection: log when input contains a widget label.
+  // Per raw-strict-exact policy: NO deterministic execution here. The widget label
+  // substring match is NOT a raw exact match, and resolveWidgetSelection rewrites
+  // the input (strips widget label/prepositions) before matching — that violates
+  // "non-exact → never deterministic."
+  //
+  // Instead: log the widget reference for diagnostics and fall through.
+  // Step 2.5 handles raw strict exact matches (ordinal, exact label, badge).
+  // Step 2.6 handles panel evidence → bounded LLM.
+  // Step 2.7 handles widget-list → bounded LLM.
   if (ctx.openWidgets.length > 0 && !isExplicitCommand(trimmed)) {
     const normalizedInput = trimmed.toLowerCase()
     for (const widget of ctx.openWidgets) {
       if (normalizedInput.includes(widget.label.toLowerCase()) && widget.options.length > 0) {
-        const widgetResult = resolveWidgetSelection(trimmed, widget)
-        if (widgetResult.matched) {
-          return {
-            handled: true,
-            resolvedBy: 'widget_list',
-            selectedCandidate: widgetResult.candidate,
-          }
-        }
-
-        // Widget explicitly referenced but item not uniquely matched
-        // → Force LLM selection scoped to this widget's items (don't fall through to panel commands)
+        // Diagnostic only — no deterministic return.
         void debugLog({
           component: 'ChatNavigation',
-          action: 'widget_reference_detected_no_unique_match',
+          action: 'widget_reference_detected',
           metadata: {
             input: trimmed,
             widgetId: widget.id,
             widgetLabel: widget.label,
             optionCount: widget.options.length,
+            reason: 'falling_through_to_strict_and_llm_paths',
           },
         })
-
-        // Build candidates from this widget only
-        const widgetCandidates: GroundingCandidate[] = widget.options.map(opt => ({
-          id: opt.id,
-          label: opt.label,
-          type: 'widget_option' as const,
-          source: 'widget_list' as const,
-        }))
-
-        return {
-          handled: true,
-          resolvedBy: 'widget_list',
-          needsLLM: true,
-          llmCandidates: widgetCandidates,
-        }
       }
     }
   }
@@ -884,64 +867,26 @@ export function handleGroundingSetFallback(
     }))
     const rawPanelEvidence = matchVisiblePanelCommand(trimmed, panelWidgets)
     if (rawPanelEvidence.type !== 'none') {
-      const hasActiveOptions = groundingSets.some(s => s.type === 'active_options' && s.candidates.length > 0)
-
-      // Strong panel evidence: exact match on multi-word title (≥2 words) overrides stale active options.
-      // Rationale: "can you open the link panel d pls" explicitly names a 3-word panel
-      // ("Links Panel D") — the user is navigating, not selecting from stale widget options.
-      // Single-word titles are NOT strong enough to override (risk of incidental overlap).
-      // When we reach Step 2.6, deterministic resolution (Step 2.2) already failed to match
-      // against active_options, so those options are likely from a different context.
-      const hasStrongMultiWordMatch = rawPanelEvidence.type === 'exact' &&
-        rawPanelEvidence.matches.some(m => m.title.trim().split(/\s+/).length >= 2)
-
-      if (!hasActiveOptions || hasStrongMultiWordMatch) {
-        // Hard guard: substantive match over ALL matched panels.
-        // Prevents single-token incidental overlap from stealing mixed-intent inputs.
-        // Multi-word title → almost certainly intentional.
-        // Single-word title → only if input is short (not incidental in long sentence).
-        //
-        // Filters applied to inputWordCount (all carry no domain signal for panel matching):
-        // 1. STOPWORDS — politeness/filler (pls, please, the, a, my)
-        // 2. Question-intent markers — grammatical scaffolding for "can you..." phrasing
-        //    (can, could, would, should, will, you, me, i)
-        // 3. Panel-domain keywords — structural terms indicating panel domain, not panel identity
-        //    (panel, panels, widget, widgets)
-        // Action verbs (open, show, go) are deliberately NOT filtered — they carry domain intent
-        // and prevent over-admission (e.g., "open a recent document" → 3 content words → rejected).
-        const QUESTION_INTENT_MARKERS = new Set(['can', 'could', 'would', 'should', 'will', 'you', 'me', 'i'])
-        const PANEL_DOMAIN_KEYWORDS = new Set(['panel', 'panels', 'widget', 'widgets'])
-        const inputWordCount = trimmed.split(/\s+/).filter(w => {
-          const norm = w.toLowerCase().replace(/[^a-z0-9]/g, '')
-          return norm.length > 0 && !STOPWORDS.has(norm) && !QUESTION_INTENT_MARKERS.has(norm) && !PANEL_DOMAIN_KEYWORDS.has(norm)
-        }).length
-        const isSubstantive = rawPanelEvidence.matches.some(m => {
-          const titleWordCount = m.title.trim().split(/\s+/).length
-          return titleWordCount >= 2 || inputWordCount <= titleWordCount + 1
-        })
-        if (isSubstantive) {
-          // Return ONLY matched candidates — not all visible panel candidates.
-          const matchedIds = new Set(rawPanelEvidence.matches.map(m => m.id))
-          const matchedCandidates = visiblePanelSet.candidates.filter(c => matchedIds.has(c.id))
-          void debugLog({
-            component: 'ChatNavigation',
-            action: 'visible_panels_evidence_gated_llm_fallback',
-            metadata: {
-              input: trimmed,
-              matchType: rawPanelEvidence.type,
-              matchedCount: matchedCandidates.length,
-              matchedLabels: matchedCandidates.map(c => c.label),
-              inputWordCount,
-              isSubstantive,
-              hasActiveOptionsBypassed: hasActiveOptions && hasStrongMultiWordMatch,
-            },
-          })
-          return {
-            handled: false,
-            needsLLM: true,
-            llmCandidates: matchedCandidates,
-          }
-        }
+      // Per policy: non-exact → bounded LLM → safe clarifier.
+      // No substantive guard, no hasActiveOptions gate. matchVisiblePanelCommand
+      // found token-subset evidence — pass matched candidates to the bounded LLM
+      // and let the LLM decide. The LLM handles all non-exact resolution.
+      const matchedIds = new Set(rawPanelEvidence.matches.map(m => m.id))
+      const matchedCandidates = visiblePanelSet.candidates.filter(c => matchedIds.has(c.id))
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'visible_panels_evidence_gated_llm_fallback',
+        metadata: {
+          input: trimmed,
+          matchType: rawPanelEvidence.type,
+          matchedCount: matchedCandidates.length,
+          matchedLabels: matchedCandidates.map(c => c.label),
+        },
+      })
+      return {
+        handled: false,
+        needsLLM: true,
+        llmCandidates: matchedCandidates,
       }
     }
   }
@@ -985,9 +930,10 @@ export function handleGroundingSetFallback(
   }
 
   // Step 3: Deterministic unique match on first list-type set (selection-like required)
+  // Per raw-strict-exact policy: use strict resolver — no verb stripping, no fuzzy, no token-subset.
   const firstListSet = groundingSets.find(s => s.isList)
   if (firstListSet && isSelectionLike(trimmed, options)) {
-    const deterministicResult = resolveUniqueDeterministic(trimmed, firstListSet.candidates)
+    const deterministicResult = resolveStrictRawDeterministic(trimmed, firstListSet.candidates, options)
     if (deterministicResult.matched) {
       return {
         handled: true,

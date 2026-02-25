@@ -35,7 +35,9 @@ export function isExplicitCommand(input: string): boolean {
   // Matches "open ...", "show ...", "please open ...", "can you open ...", etc.
   // Does NOT match verbs appearing mid-sentence ("what did you open?", "should I show this?")
   // This prevents question-form inputs from being misclassified as commands.
-  const IMPERATIVE_VERB_INITIAL = /^(?:(?:hey\s+)?(?:can|could|would)\s+you\s+(?:please\s+|pls\s+)?|(?:please|pls)\s+)?(open|show|list|view|go|back|home|create|rename|delete|remove)\b/i
+  // "you open ..." is a directed imperative ("you, open that") — recognized as command
+  // to prevent the widget-reference branch (grounding-set.ts:750) from hijacking panel commands.
+  const IMPERATIVE_VERB_INITIAL = /^(?:(?:hey\s+)?(?:can|could|would)\s+you\s+(?:please\s+|pls\s+)?|you\s+(?:please\s+|pls\s+)?|(?:please|pls)\s+)?(open|show|list|view|go|back|home|create|rename|delete|remove)\b/i
 
   return IMPERATIVE_VERB_INITIAL.test(normalized)
 }
