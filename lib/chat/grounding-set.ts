@@ -538,19 +538,20 @@ export function checkMultiListAmbiguity(
  * Resolve a selection-like input against a specific widget's options.
  * Used when user explicitly references a widget (e.g., "first option in Recent").
  */
+/**
+ * @deprecated Per raw-strict-exact policy: this function rewrites input (strips widget
+ * label/prepositions) before matching, which violates "non-exact → never deterministic."
+ * No runtime code calls this — handleGroundingSetFallback's widget-reference branch
+ * is diagnostic-only. Retained for test compatibility only. Do NOT use for routing.
+ */
 export function resolveWidgetSelection(
   input: string,
   widget: OpenWidgetState
 ): DeterministicMatchResult {
-  // Strip widget name reference from input
-  // Handle patterns: "in the links panel d", "in links panel d", "from the recent"
   const widgetPattern = escapeRegex(widget.label.toLowerCase())
   const normalizedInput = input.trim().toLowerCase()
-    // Strip "in/from (the) <widget>" patterns
     .replace(new RegExp(`\\b(in|from)\\s+(the\\s+)?${widgetPattern}\\b`, 'gi'), '')
-    // Strip standalone "(the) <widget>" if no preposition
     .replace(new RegExp(`\\b(the\\s+)?${widgetPattern}\\b`, 'gi'), '')
-    // Normalize whitespace
     .replace(/\s+/g, ' ')
     .trim()
 
@@ -561,8 +562,6 @@ export function resolveWidgetSelection(
     source: 'widget_list' as const,
   }))
 
-  // Per raw-strict-exact policy: deterministic execute ONLY on raw strict exact match.
-  // No verb stripping, no fuzzy, no token-subset — those violate the policy.
   return resolveStrictRawDeterministic(normalizedInput, candidates, { hasBadgeLetters: true })
 }
 
