@@ -876,9 +876,15 @@ export function isVerifyOpenQuestion(input: string): boolean {
 const SEMANTIC_LANE_PATTERN = /\b(why did|explain|what (just )?happened|what was that|summarize|recap|what have i been doing|what did we do|my (recent )?activity|my session)\b/i
 
 /**
+ * Definitional patterns that meta-explain/docs should handle, not the semantic lane.
+ * Includes what's/whats contractions. Applied after stripping greeting prefixes.
+ */
+const DEFINITIONAL_QUERY_PATTERN = /^(what\s+is\s+|what\s+are\s+|what'?s\s+|define\s+|how\s+does\s+)/i
+
+/**
  * Detect semantic question/imperative inputs for the semantic answer lane.
  * Catches both question-form ("why did I do that?") and imperative-form ("summarize my session").
- * Excludes command-like and selection-like inputs to avoid false positives on mixed prompts.
+ * Excludes command-like, selection-like, and definitional inputs to avoid false positives.
  */
 export function isSemanticQuestionInput(
   input: string,
@@ -891,6 +897,12 @@ export function isSemanticQuestionInput(
   // isSelectionOnly signature: (input, optionCount, optionLabels, mode) → { isSelection, index? }
   const sel = isSelectionOnly(input, optionCount ?? 0, optionLabels ?? [], 'strict')
   if (sel.isSelection) return false
+
+  // Exclude definitional queries — meta-explain/docs should handle these.
+  // Strip common greeting prefixes so "hi what is workspace?" is caught.
+  const trimmed = input.trim().toLowerCase()
+  const stripped = trimmed.replace(/^(hi|hey|hello|yo)\s+/, '')
+  if (DEFINITIONAL_QUERY_PATTERN.test(stripped)) return false
 
   return hasQuestionIntent(input) || SEMANTIC_LANE_PATTERN.test(input)
 }

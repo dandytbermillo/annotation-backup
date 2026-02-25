@@ -2287,9 +2287,9 @@ function ChatNavigationPanelContent({
             isError: false,
           }
           addMessage(assistantMessage)
-          // Dev provenance: tag before early return (LLM select_option no match)
+          // Dev provenance: tag before early return (LLM select_option no match — clarifier, not execution)
           if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current) {
-            setProvenance(lastAddedAssistantIdRef.current, 'llm_executed')
+            setProvenance(lastAddedAssistantIdRef.current, 'safe_clarifier')
           }
           setIsLoading(false)
           return
@@ -2365,9 +2365,9 @@ function ChatNavigationPanelContent({
           // Grounding-set soft-active: persist re-shown options
           saveLastOptionsShown(reshowOpts, messageId)
 
-          // Dev provenance: tag before early return (LLM reshow_options)
+          // Dev provenance: tag before early return (LLM reshow_options — informative, not execution)
           if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current) {
-            setProvenance(lastAddedAssistantIdRef.current, 'llm_executed')
+            setProvenance(lastAddedAssistantIdRef.current, 'llm_influenced')
           }
           setIsLoading(false)
           return
@@ -2387,9 +2387,9 @@ function ChatNavigationPanelContent({
             isError: false,
           }
           addMessage(assistantMessage)
-          // Dev provenance: tag before early return (LLM reshow_options expired)
+          // Dev provenance: tag before early return (LLM reshow_options expired — clarifier, not execution)
           if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current) {
-            setProvenance(lastAddedAssistantIdRef.current, 'llm_executed')
+            setProvenance(lastAddedAssistantIdRef.current, 'safe_clarifier')
           }
           setIsLoading(false)
           return
@@ -2678,9 +2678,20 @@ function ChatNavigationPanelContent({
         openPanelWithTracking(resolution.viewPanelContent, resolution.panelId)
       }
 
-      // Dev provenance: LLM API fallthrough — all messages from this path are LLM-executed
+      // Dev provenance: LLM API fallthrough — action-aware tagging per strict exact policy.
+      //   llm_executed  (blue)  — LLM decided + action executed (navigate, open panel, etc.)
+      //   llm_influenced (yellow) — LLM answered informatively, no execution
+      //   safe_clarifier (grey)  — error/fallback, no useful output
       if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current) {
-        setProvenance(lastAddedAssistantIdRef.current, 'llm_executed')
+        const act = resolution.action ?? ''
+        const CLARIFIER_ACTIONS = new Set(['error', 'need_context'])
+        const INFORMATIVE_ACTIONS = new Set(['answer_from_context', 'general_answer', 'inform'])
+        const prov = CLARIFIER_ACTIONS.has(act)
+          ? 'safe_clarifier'
+          : INFORMATIVE_ACTIONS.has(act)
+            ? 'llm_influenced'
+            : 'llm_executed'
+        setProvenance(lastAddedAssistantIdRef.current, prov)
       }
     } catch (error) {
       // Check if this is an abort error (user canceled, navigation, etc.)

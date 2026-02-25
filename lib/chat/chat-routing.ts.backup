@@ -33,7 +33,7 @@ import {
 import { isBareNounQuery, maybeFormatSnippetWithHs3, dedupeHeaderPath, stripMarkdownHeadersForUI } from '@/lib/chat/doc-routing'
 import type { UIContext } from '@/lib/chat/intent-prompt'
 import type { ChatMessage, DocRetrievalState, SelectionOption, LastClarificationState, WorkspaceMatch, NoteMatch } from '@/lib/chat'
-import type { ClarificationOption, RepairMemoryState, ClarificationSnapshot, PanelDrawerData, DocData, ChatProvenance } from '@/lib/chat/chat-navigation-context'
+import type { ClarificationOption, RepairMemoryState, ClarificationSnapshot, PanelDrawerData, DocData, ChatProvenance, SelectionContinuityState } from '@/lib/chat/chat-navigation-context'
 import { REPAIR_MEMORY_TURN_LIMIT, STOP_SUPPRESSION_TURN_LIMIT, getLatchId } from '@/lib/chat/chat-navigation-context'
 import type { EntryMatch } from '@/lib/chat/resolution-types'
 import { matchVisiblePanelCommand, type VisibleWidget } from '@/lib/chat/panel-command-matcher'
@@ -80,9 +80,20 @@ import {
   isLLMAutoExecuteEnabledClient,
   type NeededContextType,
 } from '@/lib/chat/clarification-llm-fallback'
-import { isExplicitCommand, isSelectionOnly, resolveScopeCue, canonicalizeCommandInput, classifyArbitrationConfidence } from '@/lib/chat/input-classifiers'
+import { isExplicitCommand, isSelectionOnly, resolveScopeCue, canonicalizeCommandInput, classifyArbitrationConfidence, classifyExecutionMeta, isStrictExactMatch, evaluateDeterministicDecision, isVerifyOpenQuestion, findPoliteWrapperExactMatch, isStrictExactMode } from '@/lib/chat/input-classifiers'
 import { isSelectionLike } from '@/lib/chat/grounding-set'
 import type { LastOptionsShown } from '@/lib/chat/chat-navigation-context'
+
+// =============================================================================
+// Preferred Candidate Hint (strict-exact policy)
+// Non-exact signals become advisory hints for the LLM, not execution triggers.
+// =============================================================================
+
+type PreferredCandidateHint = {
+  id: string
+  label: string
+  source: 'badge' | 'polite_wrapper' | 'continuity' | 'ordinal_embedded'
+} | null
 
 // =============================================================================
 // Recoverable Chat Options Helper
@@ -1121,18 +1132,136 @@ export interface ClarificationInterceptResult extends HandlerResult {
 
 // Loop guard for LLM arbitration: prevent repeated LLM calls for same input+options.
 // Module-level singleton — reset when input or option set changes.
-let lastLLMArbitration: {
+interface LLMArbitrationGuardState {
   normalizedInput: string
   candidateIds: string
   clarificationMessageId: string
   suggestedId: string | null  // Rule F — loop-guard continuity
   enrichmentFingerprint?: string  // Context-enrichment retry loop
   retryAttempted?: boolean        // Context-enrichment retry loop — budget tracking
-} | null = null
+}
+let lastLLMArbitration: LLMArbitrationGuardState | null = null
+
+/**
+ * Read module-level guard state.
+ * NOTE: This is a TypeScript narrowing workaround, NOT concurrency protection.
+ * TS cannot track module-scope variable mutations through async calls, so
+ * `if (lastLLMArbitration)` after `await` narrows to `never`. A function call
+ * defeats this stale narrowing because TS cannot narrow through function
+ * return types. The underlying module-scope singleton is still single-threaded.
+ */
+function readLLMGuardState(): LLMArbitrationGuardState | null { return lastLLMArbitration }
+
+/** Centralized writer — all mutations to lastLLMArbitration go through here. */
+function writeLLMGuardState(state: LLMArbitrationGuardState | null): void {
+  lastLLMArbitration = state
+}
 
 /** Reset the LLM arbitration loop guard. Called on cycle boundary (clarification resolved) and chat clear. */
 export function resetLLMArbitrationGuard(): void {
-  lastLLMArbitration = null
+  writeLLMGuardState(null)
+}
+
+// =============================================================================
+// Selection Continuity Deterministic Resolver (Plan 20)
+// Per: selection-continuity-execution-lane-plan.md
+//
+// Attempts to resolve a selection deterministically using continuity state
+// (recent actions, rejected choices) before falling back to LLM arbitration.
+// All safety gates must pass — this is strictly additive (never bypasses
+// existing deterministic matching, only resolves when existing matching fails).
+// =============================================================================
+
+interface ContinuityResolveParams {
+  trimmedInput: string
+  candidates: { id: string; label: string; sublabel?: string }[]
+  continuityState: SelectionContinuityState
+  currentOptionSetId: string | null
+  currentScope: 'chat' | 'widget' | 'dashboard' | 'workspace' | 'none'
+  isCommandOrSelection: boolean
+  isQuestionIntent: boolean
+  labelMatchCount: number
+}
+
+interface ContinuityResolveResult {
+  resolved: boolean
+  winnerId: string | null
+  reason: string
+}
+
+/**
+ * Deterministic continuity resolver — pre-LLM tie-break using continuity state.
+ *
+ * Safety gates (ALL must pass for execution):
+ * 1. Feature flag enabled (checked by caller — not re-checked here)
+ * 2. isCommandOrSelection true (not pure question-intent)
+ * 3. !isQuestionIntent
+ * 4. currentOptionSetId !== null && continuityState.activeOptionSetId !== null
+ *    && continuityState.activeOptionSetId === currentOptionSetId (same option set)
+ * 5. continuityState.activeScope === currentScope (same scope)
+ * 6. Exactly one candidate remains after excluding recentRejectedChoiceIds
+ * 7. No loop-guard conflict (not same winnerId as last resolved action in same cycle)
+ *
+ * Returns { resolved: true, winnerId, reason } or { resolved: false, winnerId: null, reason }.
+ */
+function tryContinuityDeterministicResolve(params: ContinuityResolveParams): ContinuityResolveResult {
+  const {
+    candidates,
+    continuityState,
+    currentOptionSetId,
+    currentScope,
+    isCommandOrSelection,
+    isQuestionIntent,
+    labelMatchCount,
+  } = params
+
+  // Gate 2: Must be command or selection intent
+  if (!isCommandOrSelection) {
+    return { resolved: false, winnerId: null, reason: 'not_command_or_selection' }
+  }
+
+  // Gate 3: Must not be question intent
+  if (isQuestionIntent) {
+    return { resolved: false, winnerId: null, reason: 'question_intent' }
+  }
+
+  // Gate 4: Same option set — strict null check prevents empty-string matching (invariant 6)
+  if (currentOptionSetId === null || continuityState.activeOptionSetId === null) {
+    return { resolved: false, winnerId: null, reason: 'null_option_set_id' }
+  }
+  if (continuityState.activeOptionSetId !== currentOptionSetId) {
+    return { resolved: false, winnerId: null, reason: 'option_set_mismatch' }
+  }
+
+  // Gate 5: Same scope
+  if (continuityState.activeScope !== currentScope) {
+    return { resolved: false, winnerId: null, reason: 'scope_mismatch' }
+  }
+
+  // Gate 6: Filter out rejected choices, check for unique winner
+  const rejectedSet = new Set(continuityState.recentRejectedChoiceIds)
+  const eligibleCandidates = candidates.filter(c => !rejectedSet.has(c.id))
+
+  if (eligibleCandidates.length === 0) {
+    return { resolved: false, winnerId: null, reason: 'all_candidates_rejected' }
+  }
+  if (eligibleCandidates.length !== 1) {
+    return { resolved: false, winnerId: null, reason: `ambiguous_${eligibleCandidates.length}_candidates` }
+  }
+
+  const winner = eligibleCandidates[0]
+
+  // Gate 7: Loop-guard — don't re-select the same action that was just resolved
+  // in the same option set cycle (prevents infinite loops)
+  if (
+    continuityState.lastResolvedAction &&
+    continuityState.lastResolvedAction.optionSetId === currentOptionSetId &&
+    continuityState.lastResolvedAction.targetRef === winner.label
+  ) {
+    return { resolved: false, winnerId: null, reason: 'loop_guard_same_cycle' }
+  }
+
+  return { resolved: true, winnerId: winner.id, reason: 'continuity_deterministic' }
 }
 
 /**
@@ -1155,6 +1284,7 @@ async function tryLLMLastChance(params: {
   matchCount?: number       // deterministic match count (default 0)
   exactMatchCount?: number  // exact match count (default 0)
   enrichedContext?: string  // Retry-only: enriched evidence from context-enrichment loop
+  preferredCandidateHint?: PreferredCandidateHint  // Advisory hint from badge/polite/continuity/ordinal
 }): Promise<{
   attempted: boolean
   suggestedId: string | null
@@ -1165,7 +1295,8 @@ async function tryLLMLastChance(params: {
 }> {
   const { trimmedInput, candidates, context, clarificationMessageId,
     inputIsExplicitCommand, isNewQuestionOrCommandDetected,
-    matchCount = 0, exactMatchCount = 0, enrichedContext } = params
+    matchCount = 0, exactMatchCount = 0, enrichedContext,
+    preferredCandidateHint } = params
 
   // --- Question-intent exclusion (hard exclusion per Rule G) ---
   // Strip trailing punctuation before check: "ope panel d pls?" is a polite command,
@@ -1198,14 +1329,15 @@ async function tryLLMLastChance(params: {
   // --- Loop guard (Rule F: continuity) ---
   const normalizedInput = canonicalizeCommandInput(trimmedInput) ?? trimmedInput
   const candidateIds = candidates.map(c => c.id).sort().join(',')
+  const currentGuard = readLLMGuardState()
   const isRepeat =
-    lastLLMArbitration?.normalizedInput === normalizedInput
-    && lastLLMArbitration?.candidateIds === candidateIds
-    && lastLLMArbitration?.clarificationMessageId === clarificationMessageId
+    currentGuard?.normalizedInput === normalizedInput
+    && currentGuard?.candidateIds === candidateIds
+    && currentGuard?.clarificationMessageId === clarificationMessageId
   if (isRepeat) {
     // Rule F: reuse prior suggestion ordering for continuity — never auto-execute on repeat
-    if (lastLLMArbitration?.suggestedId) {
-      return { attempted: false, suggestedId: lastLLMArbitration.suggestedId, fallbackReason: 'loop_guard_continuity', autoExecute: false }
+    if (currentGuard?.suggestedId) {
+      return { attempted: false, suggestedId: currentGuard.suggestedId, fallbackReason: 'loop_guard_continuity', autoExecute: false }
     }
     return { attempted: false, suggestedId: null, fallbackReason: 'loop_guard', autoExecute: false }
   }
@@ -1217,6 +1349,7 @@ async function tryLLMLastChance(params: {
     userInput: trimmedInput,
     options: candidates,
     context: llmContext,
+    preferredCandidateId: preferredCandidateHint?.id,
   })
   const llmElapsedMs = Date.now() - llmStartTime
 
@@ -1230,7 +1363,7 @@ async function tryLLMLastChance(params: {
     && !llmAbstainsOnConfidence) {
     // LLM picked a winner — store suggestedId for Rule F continuity
     const suggestedId = llmResult.response.choiceId
-    lastLLMArbitration = { normalizedInput, candidateIds, clarificationMessageId, suggestedId }
+    writeLLMGuardState({ normalizedInput, candidateIds, clarificationMessageId, suggestedId })
 
     // Phase C: 3-gate auto-execute check
     // Gate 1: Kill switch enabled (NEXT_PUBLIC_LLM_AUTO_EXECUTE_ENABLED=true)
@@ -1264,7 +1397,7 @@ async function tryLLMLastChance(params: {
   // Must be handled BEFORE generic fallback mapping to prevent collapse into 'abstain'.
   // Server validates contractVersion + neededContext at boundary; client trusts the result.
   if (llmResult.success && llmResult.response?.decision === 'request_context') {
-    lastLLMArbitration = { normalizedInput, candidateIds, clarificationMessageId, suggestedId: null }
+    writeLLMGuardState({ normalizedInput, candidateIds, clarificationMessageId, suggestedId: null })
     void debugLog({
       component: 'ChatNavigation',
       action: 'llm_arbitration_request_context',
@@ -1286,7 +1419,7 @@ async function tryLLMLastChance(params: {
 
   // LLM failed/abstained/low-confidence → safe fallback (Rule D)
   // Store suggestedId: null for Rule F (no suggestion to reuse)
-  lastLLMArbitration = { normalizedInput, candidateIds, clarificationMessageId, suggestedId: null }
+  writeLLMGuardState({ normalizedInput, candidateIds, clarificationMessageId, suggestedId: null })
 
   // Extract server downgrade reason if present (e.g., 'Downgraded: contract_version_mismatch').
   // Server downgrade reasons take precedence over generic confidence/decision mapping because
@@ -1400,10 +1533,12 @@ export async function runBoundedArbitrationLoop(params: {
   exactMatchCount?: number
   scope: import('@/lib/chat/input-classifiers').ScopeCueResult['scope']
   enrichmentCallback: ContextEnrichmentCallback
+  preferredCandidateHint?: PreferredCandidateHint  // Advisory hint from badge/polite/continuity/ordinal
 }): Promise<BoundedArbitrationResult> {
   const { trimmedInput, initialCandidates, context, clarificationMessageId,
     inputIsExplicitCommand, isNewQuestionOrCommandDetected,
-    matchCount, exactMatchCount, scope, enrichmentCallback } = params
+    matchCount, exactMatchCount, scope, enrichmentCallback,
+    preferredCandidateHint } = params
 
   const loopStartTime = Date.now()
   const frozenCandidateIds = initialCandidates.map(c => c.id)
@@ -1424,6 +1559,7 @@ export async function runBoundedArbitrationLoop(params: {
     isNewQuestionOrCommandDetected,
     matchCount,
     exactMatchCount,
+    preferredCandidateHint,
   })
 
   // --- Step 2: Handle attempt-1 result with explicit reason branching ---
@@ -1503,7 +1639,7 @@ export async function runBoundedArbitrationLoop(params: {
   })
 
   // Check retry budget (single retry per cycle)
-  if (lastLLMArbitration?.retryAttempted) {
+  if (readLLMGuardState()?.retryAttempted) {
     void debugLog({
       component: 'ChatNavigation',
       action: 'arbitration_retry_fallback',
@@ -1579,8 +1715,8 @@ export async function runBoundedArbitrationLoop(params: {
   // tryLLMLastChance stores guard state after attempt 1 — the retry is an
   // intentional second call within the same orchestration loop, not a user repeat.
   // We'll restore/update guard state after attempt 2.
-  const guardStateBeforeRetry = lastLLMArbitration
-  lastLLMArbitration = null
+  const guardStateBeforeRetry = readLLMGuardState()
+  writeLLMGuardState(null)
 
   const attempt2 = await tryLLMLastChance({
     trimmedInput,
@@ -1592,18 +1728,20 @@ export async function runBoundedArbitrationLoop(params: {
     matchCount,
     exactMatchCount,
     enrichedContext: enrichedContextStr,  // Pass enriched evidence to retry LLM call
+    preferredCandidateHint,
   })
 
   // Update loop guard with retry state.
   // tryLLMLastChance stores a new guard entry from attempt 2.
   // We mark it as retryAttempted so future same-input calls know the budget is spent.
-  if (lastLLMArbitration) {
-    lastLLMArbitration.retryAttempted = true
-    lastLLMArbitration.enrichmentFingerprint = fingerprintAfter
+  const guardAfterRetry = readLLMGuardState()
+  if (guardAfterRetry) {
+    guardAfterRetry.retryAttempted = true
+    guardAfterRetry.enrichmentFingerprint = fingerprintAfter
   } else if (guardStateBeforeRetry) {
     // If attempt 2 didn't store guard state (e.g., classifier not eligible),
     // restore the original guard state with retry flag set.
-    lastLLMArbitration = { ...guardStateBeforeRetry, retryAttempted: true, enrichmentFingerprint: fingerprintAfter }
+    writeLLMGuardState({ ...guardStateBeforeRetry, retryAttempted: true, enrichmentFingerprint: fingerprintAfter })
   }
 
   const totalLatencyMs = Date.now() - loopStartTime
@@ -1687,7 +1825,7 @@ function enrichWidgetEvidence(ctx: ClarificationInterceptContext): { enrichedMet
 
   if (ctx.widgetSelectionContext) {
     metadata['widget_context'] = 'active'
-    metadata['widget_panelId'] = ctx.widgetSelectionContext.panelId ?? 'unknown'
+    metadata['widget_panelId'] = ctx.widgetSelectionContext.widgetId ?? 'unknown'
   }
 
   if (Object.keys(metadata).length === 0) return null
@@ -1799,6 +1937,14 @@ export interface ClarificationInterceptContext {
   // Scope-cue recovery memory (explicit-only, per scope-cue-recovery-plan)
   scopeCueRecoveryMemory: import('@/lib/chat/chat-navigation-context').ScopeCueRecoveryMemory | null
   clearScopeCueRecoveryMemory: () => void
+
+  // Selection continuity (Plan 20 — per Plan 19 canonical contract)
+  selectionContinuity: import('@/lib/chat/chat-navigation-context').SelectionContinuityState
+  updateSelectionContinuity: (updates: Partial<import('@/lib/chat/chat-navigation-context').SelectionContinuityState>) => void
+  resetSelectionContinuity: () => void
+
+  /** Phase 10: Semantic answer lane detected — escape clarification for semantic questions */
+  semanticLaneDetected?: boolean
 }
 
 /**
@@ -1905,6 +2051,9 @@ export async function handleClarificationIntercept(
     activeSnapshotWidgetId,
     scopeCueRecoveryMemory,
     clearScopeCueRecoveryMemory,
+    // Selection continuity (Plan 20)
+    updateSelectionContinuity,
+    resetSelectionContinuity,
   } = ctx
 
   void debugLog({
@@ -1925,7 +2074,7 @@ export async function handleClarificationIntercept(
   // After any resolution (option selection, exit, new intent), lastClarification is set to null.
   // The guard must not persist across clarification cycles.
   if (!lastClarification) {
-    lastLLMArbitration = null
+    writeLLMGuardState(null)
   }
 
   // Hard invariant: when latch is resolved or pending, stale-chat ordinal paths are blocked
@@ -1953,6 +2102,29 @@ export async function handleClarificationIntercept(
 
   // Track if clarification was cleared within this execution cycle
   let clarificationCleared = false
+
+  // =========================================================================
+  // Semantic Answer Lane: escape clarification handler for semantic question inputs.
+  // Clears stale clarification state and returns handled: false so the input reaches
+  // the LLM API via the normal routing path (which has semantic intent descriptions).
+  // =========================================================================
+  if (ctx.semanticLaneDetected) {
+    if (lastClarification) {
+      if (lastClarification.options && lastClarification.options.length > 0) {
+        saveClarificationSnapshot(lastClarification, true)
+      }
+      setLastClarification(null)
+      setPendingOptions([])
+      setPendingOptionsMessageId(null)
+      setPendingOptionsGraceCount(0)
+    }
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'semantic_lane_escape_clarification',
+      metadata: { userInput: trimmedInput, hadClarificationContext: !!lastClarification },
+    })
+    return { handled: false, clarificationCleared: !!lastClarification, isNewQuestionOrCommandDetected }
+  }
 
   // Reset stop suppression on any non-exit input (per stop-scope-plan §40-48).
   // Must run before any early-return path so the counter doesn't leak across
@@ -2780,6 +2952,8 @@ export async function handleClarificationIntercept(
     clearWidgetSelectionContext() // Phase 6: stop/exit clears widget selection context
     // Session boundary: stop-confirmed clears durable recovery memory (per scope-cue-recovery-plan)
     clearScopeCueRecoveryMemory()
+    // Session boundary: reset selection continuity (Plan 20, B9)
+    resetSelectionContinuity()
 
     // Set suppression counter for next N=2 turns
     setStopSuppressionCount(STOP_SUPPRESSION_TURN_LIMIT)
@@ -2860,13 +3034,27 @@ export async function handleClarificationIntercept(
     (lastClarification?.options && lastClarification.options.length > 0)
 
   // ==========================================================================
+  // Hoisted scope-cue resolution (needed before widget bypass decision).
+  // Chat scope cues ("from chat", "in chat") must override widget context
+  // to recover chat-origin options via getRecoverableChatOptionsWithIdentity().
+  // Gated on isLatchEnabled (feature flag), NOT on isLatchActive.
+  // ==========================================================================
+  const isLatchActive = focusLatch && !focusLatch.suspended
+  const scopeCue = isLatchEnabled ? resolveScopeCue(trimmedInput) : { scope: 'none' as const, cueText: null, confidence: 'none' as const }
+
+  // ==========================================================================
   // Widget Selection Context Bypass (per universal-selection-resolver-plan.md)
   //
   // When widgetSelectionContext is active, skip ALL clarification-mode handling
   // and defer to the universal resolver in the dispatcher. This MUST be before
   // any label-matching code to prevent widget_option → handleSelectOption path.
+  //
+  // EXCEPTION: Chat scope cues ("from chat", "in chat") override the widget
+  // bypass so the user can explicitly reach chat-origin options even when a
+  // widget clarifier is active (e.g., "open panel d from chat" after a widget
+  // LLM clarification created widgetSelectionContext for different items).
   // ==========================================================================
-  if (widgetSelectionContext !== null) {
+  if (widgetSelectionContext !== null && scopeCue.scope !== 'chat') {
     void debugLog({
       component: 'ChatNavigation',
       action: 'clarification_bypass_widget_context',
@@ -2979,11 +3167,8 @@ export async function handleClarificationIntercept(
   // ==========================================================================
   // FOCUS LATCH — Scope-Cue Normalization (per scope-cues-addendum-plan.md)
   // Explicit scope cues override latch default. Runs before latch bypass.
-  // Gated on isLatchEnabled (feature flag), NOT on isLatchActive.
-  // "from chat" works even when no latch is active, as long as the flag is on.
+  // NOTE: isLatchActive + scopeCue are hoisted above the widget bypass block.
   // ==========================================================================
-  const isLatchActive = focusLatch && !focusLatch.suspended
-  const scopeCue = isLatchEnabled ? resolveScopeCue(trimmedInput) : { scope: 'none' as const, cueText: null, confidence: 'none' as const }
 
   if (scopeCue.scope === 'chat') {
     /** Recoverable result with original message identity for option-set linkage. */
@@ -3047,6 +3232,12 @@ export async function handleClarificationIntercept(
         timestamp: Date.now(),
         options,
       })
+      // Update continuity state to track new active option set (Plan 20, B9)
+      updateSelectionContinuity({
+        activeOptionSetId: messageId,
+        activeScope: 'chat',
+        pendingClarifierType: 'selection_disambiguation',
+      })
     }
 
     const recoverable = getRecoverableChatOptionsWithIdentity()
@@ -3057,6 +3248,11 @@ export async function handleClarificationIntercept(
       clearWidgetSelectionContext()
       void debugLog({ component: 'ChatNavigation', action: 'scope_cue_applied_chat', metadata: { cueText: scopeCue.cueText, latchId: getLatchId(focusLatch), optionCount: recoverable?.options.length ?? 0, source: recoverable?.source } })
     } else {
+      // Clear widget selection context when chat scope cue overrides it (no latch case).
+      // Without this, stale widgetSelectionContext would re-trigger the bypass on next input.
+      if (widgetSelectionContext !== null) {
+        clearWidgetSelectionContext()
+      }
       void debugLog({ component: 'ChatNavigation', action: 'scope_cue_applied_chat_no_latch', metadata: { cueText: scopeCue.cueText, optionCount: recoverable?.options.length ?? 0, source: recoverable?.source } })
     }
 
@@ -3109,36 +3305,12 @@ export async function handleClarificationIntercept(
         const labelMatches = findMatchingOptions(candidateForLabelMatch, recoverableOptions)
 
         if (labelMatches.length === 1) {
-          // Unique match → execute (same pattern as ordinal selection above)
-          const selectedOption = labelMatches[0]
-          const optionToSelect: SelectionOption = {
-            type: selectedOption.type as SelectionOption['type'],
-            id: selectedOption.id,
-            label: selectedOption.label,
-            sublabel: selectedOption.sublabel,
-            data: reconstructSnapshotData(selectedOption),
-          }
-          void debugLog({
-            component: 'ChatNavigation',
-            action: 'scope_cue_chat_label_match_select',
-            metadata: { label: selectedOption.label, candidate: candidateForLabelMatch, source: recoverable.source },
-          })
-          setPendingOptions([])
-          setPendingOptionsMessageId(null)
-          setPendingOptionsGraceCount(0)
-          setActiveOptionSetId(null)
-          setIsLoading(false)
-          handleSelectOption(optionToSelect)
-          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
-        }
+          // Universal gate: single-match must be high-confidence to execute deterministically
+          const scopeCueSingleCandidate = { id: labelMatches[0].id, label: labelMatches[0].label, sublabel: labelMatches[0].sublabel }
+          const scopeCueSingleGate = evaluateDeterministicDecision(candidateForLabelMatch, [scopeCueSingleCandidate], 'active_option')
 
-        if (labelMatches.length > 1) {
-          // Multi-match → try exact-first (same findExactNormalizedMatches as Tier 1b.3)
-          const exactMatches = findExactNormalizedMatches(candidateForLabelMatch, labelMatches)
-
-          if (exactMatches.length === 1) {
-            // Exact-first winner → execute
-            const selectedOption = exactMatches[0]
+          if (scopeCueSingleGate.outcome === 'execute') {
+            const selectedOption = labelMatches[0]
             const optionToSelect: SelectionOption = {
               type: selectedOption.type as SelectionOption['type'],
               id: selectedOption.id,
@@ -3148,8 +3320,8 @@ export async function handleClarificationIntercept(
             }
             void debugLog({
               component: 'ChatNavigation',
-              action: 'scope_cue_chat_label_exact_first_select',
-              metadata: { label: selectedOption.label, candidate: candidateForLabelMatch, totalMatches: labelMatches.length },
+              action: 'scope_cue_chat_label_match_select',
+              metadata: { label: selectedOption.label, candidate: candidateForLabelMatch, source: recoverable.source, confidence: scopeCueSingleGate.confidence, reason: scopeCueSingleGate.reason },
             })
             setPendingOptions([])
             setPendingOptionsMessageId(null)
@@ -3157,22 +3329,145 @@ export async function handleClarificationIntercept(
             setActiveOptionSetId(null)
             setIsLoading(false)
             handleSelectOption(optionToSelect)
-            return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+            return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
+          } else {
+            // Gate says not high-confidence → fall through to unresolved hook
+            // (bounded LLM → safe clarifier). Gate outcome is authoritative.
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'deterministic_gate_scope_cue_single_soft_match_to_llm',
+              metadata: { input: candidateForLabelMatch, matchLabel: labelMatches[0].label, reason: scopeCueSingleGate.reason, confidence: scopeCueSingleGate.confidence },
+            })
           }
-
-          // No exact winner → fall through to unified hook below
         }
 
-        // =================================================================
-        // UNIFIED HOOK (scope-cue parity — Rule G: no explicit-command bypass)
-        // If recoverable options exist and deterministic didn't resolve,
-        // LLM is mandatory. Only question-intent escapes.
-        // Handles both multi-match-no-winner AND 0-match cases.
-        // =================================================================
+        if (labelMatches.length > 1) {
+          // Multi-match → try exact-first (same findExactNormalizedMatches as Tier 1b.3)
+          const exactMatches = findExactNormalizedMatches(candidateForLabelMatch, labelMatches)
+
+          if (exactMatches.length === 1) {
+            // Universal gate: exact-normalized must be high-confidence to execute deterministically
+            const scopeCueExactCandidate = { id: exactMatches[0].id, label: exactMatches[0].label, sublabel: exactMatches[0].sublabel }
+            const scopeCueExactGate = evaluateDeterministicDecision(candidateForLabelMatch, [scopeCueExactCandidate], 'active_option')
+
+            if (scopeCueExactGate.outcome === 'execute') {
+              const selectedOption = exactMatches[0]
+              const optionToSelect: SelectionOption = {
+                type: selectedOption.type as SelectionOption['type'],
+                id: selectedOption.id,
+                label: selectedOption.label,
+                sublabel: selectedOption.sublabel,
+                data: reconstructSnapshotData(selectedOption),
+              }
+              void debugLog({
+                component: 'ChatNavigation',
+                action: 'scope_cue_chat_label_exact_first_select',
+                metadata: { label: selectedOption.label, candidate: candidateForLabelMatch, totalMatches: labelMatches.length, confidence: scopeCueExactGate.confidence, reason: scopeCueExactGate.reason },
+              })
+              setPendingOptions([])
+              setPendingOptionsMessageId(null)
+              setPendingOptionsGraceCount(0)
+              setActiveOptionSetId(null)
+              setIsLoading(false)
+              handleSelectOption(optionToSelect)
+              return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
+            } else {
+              // Gate says not high-confidence → fall through to unresolved hook
+              void debugLog({
+                component: 'ChatNavigation',
+                action: 'deterministic_gate_scope_cue_exact_soft_match_to_llm',
+                metadata: { input: candidateForLabelMatch, matchLabel: exactMatches[0].label, reason: scopeCueExactGate.reason, confidence: scopeCueExactGate.confidence },
+              })
+            }
+          }
+
+          // No exact winner or gate blocked → fall through to unified hook below
+        }
+
+        // Shared classifiers for continuity resolver (used inside UNIFIED HOOK)
+        const strippedIsExplicitCommand = isExplicitCommand(scopeCueStripped)
+        const strippedIsSelection = isSelectionOnly(
+          scopeCueStripped, recoverableOptions.length,
+          recoverableOptions.map(o => o.label), 'embedded'
+        ).isSelection
+
+        // Per selection-continuity-execution-lane-plan.md:116 (binding #5):
+        // Scope-cue active arbitration with recoverable scoped options keeps
+        // one scoped unresolved entry path. Zero-match command phrasing must
+        // NOT bypass to downstream routing — stay in scoped unresolved ladder
+        // (deterministic → LLM → safe clarifier). Hard exclusions
+        // (question_intent, interrupt) are handled inside tryLLMLastChance
+        // or before this block (early returns in the scope-cue flow).
         if (recoverableOptions.length > 0) {
+          // Strict-exact policy: non-exact signals become advisory hints for the LLM
+          let scopeCuePreferredHint: PreferredCandidateHint = null
+
+          // --- Continuity deterministic resolver (Plan 20, Site 1: scope-cue Phase 2b) ---
+          // Try deterministic resolution with continuity state before LLM arbitration.
+          const isContinuityEnabled = process.env.NEXT_PUBLIC_SELECTION_CONTINUITY_LANE_ENABLED === 'true'
+          if (isContinuityEnabled) {
+            const inputForQuestionCheck = trimmedInput.replace(/[?!.]+$/, '').trim()
+            const continuityResult = tryContinuityDeterministicResolve({
+              trimmedInput: scopeCueStripped,
+              candidates: recoverableOptions.map(o => ({ id: o.id, label: o.label, sublabel: o.sublabel })),
+              continuityState: ctx.selectionContinuity,
+              currentOptionSetId: originalMessageId,
+              currentScope: scopeCue.scope,
+              isCommandOrSelection: strippedIsExplicitCommand || strippedIsSelection,
+              isQuestionIntent: hasQuestionIntent(inputForQuestionCheck) && !isPoliteImperativeRequest(trimmedInput),
+              labelMatchCount: labelMatches.length,
+            })
+            if (continuityResult.resolved && continuityResult.winnerId) {
+              const winnerCandidate = recoverableOptions.find(o => o.id === continuityResult.winnerId)
+              if (winnerCandidate) {
+                if (isStrictExactMode()) {
+                  // Strict policy: continuity is non-exact → set advisory hint, fall through to LLM
+                  scopeCuePreferredHint = { id: winnerCandidate.id, label: winnerCandidate.label, source: 'continuity' }
+                  void debugLog({
+                    component: 'ChatNavigation',
+                    action: 'continuity_hint_deferred_to_llm',
+                    metadata: { site: 'scope_cue_phase_2b', winnerId: continuityResult.winnerId, winnerLabel: winnerCandidate.label },
+                  })
+                  // Fall through to LLM arbitration
+                } else {
+                  // Legacy: direct execute
+                  const optionToSelect: SelectionOption = {
+                    type: winnerCandidate.type as SelectionOption['type'],
+                    id: winnerCandidate.id,
+                    label: winnerCandidate.label,
+                    sublabel: winnerCandidate.sublabel,
+                    data: reconstructSnapshotData(winnerCandidate),
+                  }
+                  void debugLog({
+                    component: 'ChatNavigation',
+                    action: 'selection_deterministic_continuity_resolve',
+                    metadata: {
+                      site: 'scope_cue_phase_2b',
+                      winnerId: continuityResult.winnerId,
+                      winnerLabel: winnerCandidate.label,
+                      activeOptionSetId: ctx.selectionContinuity.activeOptionSetId,
+                      activeScope: ctx.selectionContinuity.activeScope,
+                      candidateCount: recoverableOptions.length,
+                    },
+                  })
+                  setPendingOptions([])
+                  setPendingOptionsMessageId(null)
+                  setPendingOptionsGraceCount(0)
+                  setActiveOptionSetId(null)
+                  setIsLoading(false)
+                  handleSelectOption(optionToSelect)
+                  return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
+                }
+              }
+            }
+          }
+
+          // --- UNIFIED HOOK: LLM arbitration for unresolved scope-cue ---
           const scopeCueCandidates = recoverableOptions.map(o => ({
             id: o.id, label: o.label, sublabel: o.sublabel,
           }))
+          // Same fix as Tier 1b.3: if we reach the unresolved hook, the gate blocked all matches.
+          // Pass matchCount: 0 so the classifier routes to bounded LLM instead of classifier_not_eligible.
           const llmResult = await runBoundedArbitrationLoop({
             trimmedInput,
             initialCandidates: scopeCueCandidates,
@@ -3180,15 +3475,16 @@ export async function handleClarificationIntercept(
             clarificationMessageId: originalMessageId,
             inputIsExplicitCommand: isExplicitCommand(trimmedInput),
             isNewQuestionOrCommandDetected,
-            matchCount: labelMatches.length,
+            matchCount: 0,
             exactMatchCount: 0,
             scope: scopeCue.scope,
             enrichmentCallback: createEnrichmentCallback(scopeCue.scope, 'scope_cue_unresolved', ctx),
+            preferredCandidateHint: scopeCuePreferredHint,
           })
 
           // Scope-specific fallback (per context-enrichment-retry-loop-plan §Binding Hardening)
           if (llmResult.fallbackReason === 'scope_not_available') {
-            const scopeLabel = scopeCue.scope === 'dashboard' ? 'Dashboard' : scopeCue.scope === 'workspace' ? 'Workspace' : 'This scope'
+            const scopeLabel = 'This scope'
             addMessage({
               id: `assistant-${Date.now()}`,
               role: 'assistant',
@@ -3197,7 +3493,7 @@ export async function handleClarificationIntercept(
               isError: false,
             })
             setIsLoading(false)
-            return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+            return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected, _devProvenanceHint: 'safe_clarifier' as const }
           }
 
           if (llmResult.fallbackReason === 'question_intent') {
@@ -3249,11 +3545,79 @@ export async function handleClarificationIntercept(
             }
             // suggestedId not found in options → fall through to safe clarifier
           } else {
-            // Safe clarifier — reorder if LLM suggested (Rules C, D, F)
-            const reorderSource = llmResult.suggestedId
+            // --- need_more_info veto (Plan 20, Site 1) ---
+            // When LLM couldn't resolve but continuity deterministic can, execute.
+            // Note: veto does NOT directly execute. It returns to the existing
+            // auto-execute / safe-clarifier flow. autoExecute: false ensures the
+            // caller applies its own governing Phase C gates.
+            if (isContinuityEnabled && llmResult.attempted && !llmResult.suggestedId) {
+              const inputForQuestionCheck = trimmedInput.replace(/[?!.]+$/, '').trim()
+              const vetoResult = tryContinuityDeterministicResolve({
+                trimmedInput: scopeCueStripped,
+                candidates: recoverableOptions.map(o => ({ id: o.id, label: o.label, sublabel: o.sublabel })),
+                continuityState: ctx.selectionContinuity,
+                currentOptionSetId: originalMessageId,
+                currentScope: scopeCue.scope,
+                isCommandOrSelection: strippedIsExplicitCommand || strippedIsSelection,
+                isQuestionIntent: hasQuestionIntent(inputForQuestionCheck) && !isPoliteImperativeRequest(trimmedInput),
+                labelMatchCount: labelMatches.length,
+              })
+              if (vetoResult.resolved && vetoResult.winnerId) {
+                const vetoWinner = recoverableOptions.find(o => o.id === vetoResult.winnerId)
+                if (vetoWinner) {
+                  if (isStrictExactMode()) {
+                    // Strict policy: veto is non-exact → use as reorder hint for safe clarifier
+                    scopeCuePreferredHint = scopeCuePreferredHint ?? { id: vetoWinner.id, label: vetoWinner.label, source: 'continuity' }
+                    void debugLog({
+                      component: 'ChatNavigation',
+                      action: 'need_more_info_veto_hint_deferred_to_safe_clarifier',
+                      metadata: { site: 'scope_cue_phase_2b', winnerId: vetoResult.winnerId, winnerLabel: vetoWinner.label },
+                    })
+                    // Fall through to safe clarifier below
+                  } else {
+                    // Legacy: direct execute
+                    void debugLog({
+                      component: 'ChatNavigation',
+                      action: 'selection_need_more_info_veto_applied',
+                      metadata: {
+                        site: 'scope_cue_phase_2b',
+                        winnerId: vetoResult.winnerId,
+                        winnerLabel: vetoWinner.label,
+                        activeOptionSetId: ctx.selectionContinuity.activeOptionSetId,
+                      },
+                    })
+                    const optionToSelect: SelectionOption = {
+                      type: vetoWinner.type as SelectionOption['type'],
+                      id: vetoWinner.id,
+                      label: vetoWinner.label,
+                      sublabel: vetoWinner.sublabel,
+                      data: reconstructSnapshotData(vetoWinner),
+                    }
+                    setPendingOptions([])
+                    setPendingOptionsMessageId(null)
+                    setPendingOptionsGraceCount(0)
+                    setActiveOptionSetId(null)
+                    setIsLoading(false)
+                    handleSelectOption(optionToSelect)
+                    return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
+                  }
+                }
+              }
+              if (!vetoResult.resolved) {
+                void debugLog({
+                  component: 'ChatNavigation',
+                  action: 'selection_need_more_info_veto_blocked_reason',
+                  metadata: { site: 'scope_cue_phase_2b', reason: vetoResult.reason, activeOptionSetId: ctx.selectionContinuity.activeOptionSetId },
+                })
+              }
+            }
+
+            // Safe clarifier — reorder if LLM suggested or hint available (Rules C, D, F)
+            const scopeCueReorderHintId = llmResult.suggestedId ?? scopeCuePreferredHint?.id ?? null
+            const reorderSource = scopeCueReorderHintId
               ? [
-                  ...recoverableOptions.filter(o => o.id === llmResult.suggestedId),
-                  ...recoverableOptions.filter(o => o.id !== llmResult.suggestedId),
+                  ...recoverableOptions.filter(o => o.id === scopeCueReorderHintId),
+                  ...recoverableOptions.filter(o => o.id !== scopeCueReorderHintId),
                 ]
               : recoverableOptions
 
@@ -3267,6 +3631,9 @@ export async function handleClarificationIntercept(
                 fallbackReason: llmResult.fallbackReason,
                 source: recoverable.source,
                 matchCount: labelMatches.length,
+                strictExactMode: isStrictExactMode(),
+                hintSource: scopeCuePreferredHint?.source ?? null,
+                hintId: scopeCuePreferredHint?.id ?? null,
               },
             })
 
@@ -3305,8 +3672,15 @@ export async function handleClarificationIntercept(
               timestamp: Date.now(),
               options: reorderSource,
             })
+            // Update continuity state to track new active option set (Plan 20, B9)
+            // Note: inside scopeCue.scope === 'chat' branch, scope is already 'chat'
+            updateSelectionContinuity({
+              activeOptionSetId: clarifierMessageId,
+              activeScope: 'chat',
+              pendingClarifierType: 'selection_disambiguation',
+            })
             setIsLoading(false)
-            return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected, _devProvenanceHint: llmResult.suggestedId ? 'llm_influenced' : undefined }
+            return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected, _devProvenanceHint: (llmResult.suggestedId || scopeCuePreferredHint) ? 'llm_influenced' : 'safe_clarifier' as const }
           }
         }
         // No recoverable options or question-intent → fall through to Phase 3
@@ -3660,7 +4034,14 @@ export async function handleClarificationIntercept(
     // Tier -1: Noise pre-check (FIRST check per clarification-response-fit-plan.md)
     // Noise should never trigger selection or zero-overlap escape.
     // Treat input as noise if: alphabetic ratio < 50%, short token, no vowels, emoji-only
-    if (isNoise(trimmedInput)) {
+    //
+    // Exemption: strict ordinals ("1", "2", "a", "b", "first", "last", etc.) bypass noise.
+    // Without this, bare digits like "2" hit isNoise (single short token + zero alphabetic
+    // ratio) and never reach the ordinal execution path at Tier 1d.
+    const noiseOrdinalExempt = lastClarification?.options && lastClarification.options.length > 0
+      && isSelectionOnly(trimmedInput, lastClarification.options.length, lastClarification.options.map(o => o.label), 'strict').isSelection
+
+    if (!noiseOrdinalExempt && isNoise(trimmedInput)) {
       void debugLog({
         component: 'ChatNavigation',
         action: 'clarification_tier_noise_detected',
@@ -3834,6 +4215,7 @@ export async function handleClarificationIntercept(
         }
         clearFocusLatch() // Latch-off: stop clears focus latch (Phase 6b)
         clearWidgetSelectionContext() // Phase 6: stop/exit clears widget selection context
+        resetSelectionContinuity() // Plan 20, B9: Tier 1a exit clears continuity
         setStopSuppressionCount(STOP_SUPPRESSION_TURN_LIMIT) // Per stop-scope-plan §40-48
         const exitMessage: ChatMessage = {
           id: `assistant-${Date.now()}`,
@@ -4142,14 +4524,13 @@ export async function handleClarificationIntercept(
     const inputIsExplicitCommand = isExplicitCommand(trimmedInput)
     const inputIsSelectionLike = isSelectionLike(trimmedInput)
 
-    // Candidate-aware label check: does the canonicalized input match ANY active option?
-    // Uses the SAME matching semantics as Tier 1b.3 via findMatchingOptions.
+    // Candidate-aware label check: does the RAW input strictly match ANY active option?
+    // Per raw-strict-exact plan (Contract rule 1): no stripping/canonicalization for routing decisions.
+    // Only raw strict exact match (case-insensitive) qualifies as "targeting" an active option.
     const inputTargetsActiveOption = (() => {
       if (!lastClarification?.options?.length) return false
       if (!inputIsExplicitCommand && !isNewQuestionOrCommandDetected) return false
-      const canonicalized = canonicalizeCommandInput(trimmedInput)
-      if (!canonicalized) return false
-      return findMatchingOptions(canonicalized, lastClarification.options).length > 0
+      return lastClarification.options.some(opt => isStrictExactMatch(trimmedInput, opt.label))
     })()
 
     const commandBypassesLabelMatching =
@@ -4163,9 +4544,16 @@ export async function handleClarificationIntercept(
     // IMPORTANT: If input matches MULTIPLE options (e.g., "links panel" matches both D and E),
     // do NOT auto-select - fall through to re-show options instead.
     if (commandBypassesLabelMatching) {
-      // Pre-gate: escape-only (Rule E — no LLM here)
-      // commandBypassesLabelMatching = !isSelectionLike && !inputTargetsActiveOption
-      // → input genuinely isn't about active options, so escape is correct.
+      // Clear stale clarification state so downstream tiers don't inherit it.
+      // Without this, Tier 4.5 grounding LLM picks up stale options as candidates.
+      // MUST return immediately — local lastClarification param stays stale otherwise.
+      if (lastClarification?.options?.length) {
+        saveClarificationSnapshot(lastClarification)
+        setLastClarification(null)
+        setPendingOptions([])
+        setPendingOptionsMessageId(null)
+        setPendingOptionsGraceCount(0)
+      }
       void debugLog({
         component: 'ChatNavigation',
         action: 'clarification_selection_bypassed_command_intent',
@@ -4175,12 +4563,17 @@ export async function handleClarificationIntercept(
           isExplicitCommand: inputIsExplicitCommand,
           isNewQuestionOrCommandDetected,
           inputTargetsActiveOption,
+          clarificationCleared: !!lastClarification?.options?.length,
           escapeReason: inputIsExplicitCommand ? 'explicit_command_priority'
             : !lastClarification?.options?.length ? 'no_active_options'
             : 'command_bypass_not_selection_like',
         },
       })
-      // Fall through to downstream tiers
+      return {
+        handled: false,
+        clarificationCleared: !!lastClarification?.options?.length,
+        isNewQuestionOrCommandDetected,
+      }
     } else if (lastClarification?.options && lastClarification.options.length > 0) {
       void debugLog({
         component: 'ChatNavigation',
@@ -4244,7 +4637,8 @@ export async function handleClarificationIntercept(
         const tokens = input.toLowerCase().split(/\s+/).filter(Boolean)
         if (tokens.length === 0) return { badge: null, inputWithoutBadge: input }
 
-        const lastToken = tokens[tokens.length - 1]
+        // Strip trailing punctuation (e.g., "d?" → "d", "d!" → "d")
+        const lastToken = tokens[tokens.length - 1].replace(/[?!.,;:]+$/, '')
         // Badge is a single letter (a-z) or single digit (1-9)
         if (/^[a-z]$/.test(lastToken) || /^[1-9]$/.test(lastToken)) {
           return {
@@ -4306,12 +4700,17 @@ export async function handleClarificationIntercept(
       // Also prepare verb-stripped version for matching (per plan §215-218)
       const inputForMatching = inputWithoutVerb.toLowerCase().trim()
 
+      // Strict-exact policy: non-exact signals become advisory hints for the LLM
+      let preferredCandidateHint: PreferredCandidateHint = null
+
       // ==========================================================================
       // Badge-aware Selection (per plan §220-222)
       // If input has a badge suffix (d, e, 1, 2), match against option labels
       // e.g., "open link panel d" → badge "d" → match "Links Panel D"
+      // Guard: verify-open questions skip badge execution → fall through to LLM.
+      // "did i open the links panel d?" → isVerifyOpenQuestion → skip badge → LLM answers.
       // ==========================================================================
-      if (extractedBadge && inputWithoutBadge) {
+      if (extractedBadge && inputWithoutBadge && !isVerifyOpenQuestion(trimmedInput)) {
         const badgeMatchingOptions = lastClarification.options.filter(opt => {
           const normalizedLabel = opt.label.toLowerCase()
           // Check if label ends with the badge (case-insensitive)
@@ -4323,105 +4722,156 @@ export async function handleClarificationIntercept(
 
         if (badgeMatchingOptions.length === 1) {
           const matchedOption = badgeMatchingOptions[0]
-          const fullOption = pendingOptions.find(opt => opt.id === matchedOption.id)
 
-          void debugLog({
-            component: 'ChatNavigation',
-            action: 'clarification_badge_aware_selection',
-            metadata: {
-              input: trimmedInput,
-              badge: extractedBadge,
-              matchedLabel: matchedOption.label,
-            },
-          })
+          if (isStrictExactMode()) {
+            // Strict policy: badge is non-exact → set advisory hint, fall through to unresolved hook
+            preferredCandidateHint = { id: matchedOption.id, label: matchedOption.label, source: 'badge' }
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'badge_hint_deferred_to_llm',
+              metadata: { input: trimmedInput, badge: extractedBadge, matchedLabel: matchedOption.label },
+            })
+            // Fall through — do NOT execute, do NOT clear state
+          } else {
+            // Legacy: direct execute
+            const fullOption = pendingOptions.find(opt => opt.id === matchedOption.id)
 
-          // Save clarification snapshot for post-action repair window
-          saveClarificationSnapshot(lastClarification)
-          setRepairMemory(matchedOption.id, lastClarification.options)
-          setLastClarification(null)
-          setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'clarification_badge_aware_selection',
+              metadata: {
+                input: trimmedInput,
+                badge: extractedBadge,
+                matchedLabel: matchedOption.label,
+              },
+            })
 
-          const optionToSelect: SelectionOption = {
-            type: (fullOption?.type ?? matchedOption.type) as SelectionOption['type'],
-            id: matchedOption.id,
-            label: matchedOption.label,
-            sublabel: matchedOption.sublabel,
-            data: fullOption?.data as SelectionOption['data'] ??
-              reconstructSnapshotData(matchedOption),
+            // Save clarification snapshot for post-action repair window
+            saveClarificationSnapshot(lastClarification)
+            setRepairMemory(matchedOption.id, lastClarification.options)
+            setLastClarification(null)
+            setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+
+            const optionToSelect: SelectionOption = {
+              type: (fullOption?.type ?? matchedOption.type) as SelectionOption['type'],
+              id: matchedOption.id,
+              label: matchedOption.label,
+              sublabel: matchedOption.sublabel,
+              data: fullOption?.data as SelectionOption['data'] ??
+                reconstructSnapshotData(matchedOption),
+            }
+            setIsLoading(false)
+            handleSelectOption(optionToSelect)
+            return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
           }
-          setIsLoading(false)
-          handleSelectOption(optionToSelect)
-          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
         }
+      }
+
+      // ==========================================================================
+      // Polite-wrapper exact pass (pre-gate)
+      // Canonicalize input (strip polite phrases, verbs, articles, punctuation),
+      // then check for strict exact label match (case-insensitive) among active options.
+      // "can you open links panels?" → canonical "links panels" === "Links Panels" → execute.
+      // Only fires on strict label equality — no canonical token or soft matching.
+      // Guard: verify-open questions skip this pass entirely.
+      // Scoped exception: active-option clarification context (Tier 1b.3) only.
+      // ==========================================================================
+      // Per raw-strict-exact plan (Contract rule 1): polite-wrapper stripping is advisory only.
+      // Never deterministic-execute from stripped match. Always set as hint for bounded LLM.
+      const politeExactMatch = findPoliteWrapperExactMatch(trimmedInput, lastClarification.options)
+      if (politeExactMatch) {
+        preferredCandidateHint = preferredCandidateHint ?? { id: politeExactMatch.id, label: politeExactMatch.label, source: 'polite_wrapper' }
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'polite_wrapper_hint_deferred_to_llm',
+          metadata: { input: trimmedInput, canonical: canonicalizeCommandInput(trimmedInput), matchedLabel: politeExactMatch.label },
+        })
+        // Fall through — do NOT execute, do NOT clear state
       }
 
       // Track exact match count for unresolved hook (hoisted for Step 4)
       let lastExactMatchCount = 0
 
       // Find ALL matching options using shared findMatchingOptions helper.
-      // Try both original input AND verb-stripped input for matching (union results).
-      const matchesOriginal = findMatchingOptions(normalizedInput, lastClarification.options)
-      const matchesVerbStripped = findMatchingOptions(inputForMatching, lastClarification.options)
-      // Dedupe by option id
-      const matchedIds = new Set(matchesOriginal.map(o => o.id))
-      for (const m of matchesVerbStripped) {
-        if (!matchedIds.has(m.id)) matchesOriginal.push(m)
-      }
-      const matchingOptions = matchesOriginal
+      // Per raw-strict-exact contract Rule 1: raw input only, no verb-stripped union.
+      const matchingOptions = findMatchingOptions(normalizedInput, lastClarification.options)
 
-      // Note: findMatchingOptions uses the same matching semantics as the original
-      // inline code (exact/substring/word-boundary + canonical token matching).
-      // Trying both normalizedInput and inputForMatching preserves the original
-      // dual-path behavior.
-
-      // Only auto-select if EXACTLY ONE option matches
-      // If multiple match (e.g., "links panel" matches both D and E), fall through to re-show
+      // Only auto-select if EXACTLY ONE option matches AND it's high-confidence.
+      // If multiple match (e.g., "links panel" matches both D and E), fall through to re-show.
+      // Universal deterministic confidence gate: soft matches fall through to unresolved hook.
       if (matchingOptions.length === 1) {
         const matchedOption = matchingOptions[0]
-        const fullOption = pendingOptions.find(opt => opt.id === matchedOption.id)
 
-        void debugLog({
-          component: 'ChatNavigation',
-          action: 'clarification_tier1b3_label_selection',
-          metadata: {
-            input: trimmedInput,
-            matchedLabel: matchedOption.label,
-            hasFullOption: !!fullOption,
-            matchCount: 1,
-          },
-        })
+        // Route through shared gate — same contract as Sites 1-3 in routing-dispatcher.ts
+        const gateDecision = evaluateDeterministicDecision(
+          trimmedInput,
+          [{ id: matchedOption.id, label: matchedOption.label, sublabel: matchedOption.sublabel }],
+          'active_option'
+        )
 
-        // Save clarification snapshot for post-action repair window (per plan §153-161)
-        saveClarificationSnapshot(lastClarification)
-        // Set repair memory for label selection (enables "the other one" after label match)
-        setRepairMemory(matchedOption.id, lastClarification.options)
-        setLastClarification(null)
-        setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+        if (gateDecision.outcome === 'execute') {
+          const fullOption = pendingOptions.find(opt => opt.id === matchedOption.id)
 
-        if (fullOption) {
-          const optionToSelect: SelectionOption = {
-            type: fullOption.type as SelectionOption['type'],
-            id: fullOption.id,
-            label: fullOption.label,
-            sublabel: fullOption.sublabel,
-            data: fullOption.data as SelectionOption['data'],
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'clarification_tier1b3_label_selection',
+            metadata: {
+              input: trimmedInput,
+              matchedLabel: matchedOption.label,
+              hasFullOption: !!fullOption,
+              matchCount: 1,
+              confidence: gateDecision.confidence,
+              reason: gateDecision.reason,
+            },
+          })
+
+          // Save clarification snapshot for post-action repair window (per plan §153-161)
+          saveClarificationSnapshot(lastClarification)
+          // Set repair memory for label selection (enables "the other one" after label match)
+          setRepairMemory(matchedOption.id, lastClarification.options)
+          setLastClarification(null)
+          setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+
+          if (fullOption) {
+            const optionToSelect: SelectionOption = {
+              type: fullOption.type as SelectionOption['type'],
+              id: fullOption.id,
+              label: fullOption.label,
+              sublabel: fullOption.sublabel,
+              data: fullOption.data as SelectionOption['data'],
+            }
+            setIsLoading(false)
+            handleSelectOption(optionToSelect)
+            return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
+          } else {
+            const optionToSelect: SelectionOption = {
+              type: matchedOption.type as SelectionOption['type'],
+              id: matchedOption.id,
+              label: matchedOption.label,
+              sublabel: matchedOption.sublabel,
+              data: matchedOption.type === 'doc'
+                ? { docSlug: matchedOption.id }
+                : { term: matchedOption.id, action: 'doc' as const },
+            }
+            setIsLoading(false)
+            handleSelectOption(optionToSelect)
+            return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
           }
-          setIsLoading(false)
-          handleSelectOption(optionToSelect)
-          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
         } else {
-          const optionToSelect: SelectionOption = {
-            type: matchedOption.type as SelectionOption['type'],
-            id: matchedOption.id,
-            label: matchedOption.label,
-            sublabel: matchedOption.sublabel,
-            data: matchedOption.type === 'doc'
-              ? { docSlug: matchedOption.id }
-              : { term: matchedOption.id, action: 'doc' as const },
-          }
-          setIsLoading(false)
-          handleSelectOption(optionToSelect)
-          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+          // Gate says not high-confidence → fall through to unresolved hook
+          // (bounded LLM → safe clarifier). Gate outcome is authoritative.
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'deterministic_gate_tier1b3_soft_match_to_llm',
+            metadata: {
+              input: trimmedInput,
+              matchedLabel: matchedOption.label,
+              confidence: gateDecision.confidence,
+              reason: gateDecision.reason,
+              outcome: gateDecision.outcome,
+            },
+          })
+          // Do NOT clear pendingOptions or lastClarification — preserve for LLM
         }
       } else if (matchingOptions.length > 1) {
         // Multiple options match (e.g., "links panel" matches both D and E)
@@ -4433,52 +4883,76 @@ export async function handleClarificationIntercept(
         // e.g., "open links panel" → {links,panel} matches "Links Panels"
         //        exactly but NOT "Links Panel D" (superset).
         // =================================================================
-        const exactOriginal = findExactNormalizedMatches(normalizedInput, matchingOptions)
-        const exactVerbStripped = findExactNormalizedMatches(inputForMatching, matchingOptions)
-        // Dedupe
-        const exactIds = new Set(exactOriginal.map(o => o.id))
-        for (const m of exactVerbStripped) {
-          if (!exactIds.has(m.id)) exactOriginal.push(m)
-        }
-        const exactMatches = exactOriginal
+        // Per raw-strict-exact contract Rule 1: raw input only, no verb-stripped union.
+        const exactMatches = findExactNormalizedMatches(normalizedInput, matchingOptions)
 
         if (exactMatches.length === 1) {
-          // Exact-first winner: one option matches exactly
+          // Exact-first winner: one option matches exactly on canonical tokens.
+          // Route through shared gate — gate outcome is authoritative.
           const matchedOption = exactMatches[0]
-          const fullOption = pendingOptions.find(opt => opt.id === matchedOption.id)
+          // Per raw-strict-exact contract Rule 1: use raw input, no verb stripping.
+          const exactNormGateDecision = evaluateDeterministicDecision(
+            trimmedInput,
+            [{ id: matchedOption.id, label: matchedOption.label, sublabel: matchedOption.sublabel }],
+            'active_option'
+          )
 
-          void debugLog({
-            component: 'ChatNavigation',
-            action: 'clarification_exact_normalized_match_selected',
-            metadata: {
-              input: trimmedInput,
-              matchedLabel: matchedOption.label,
-              hasFullOption: !!fullOption,
-              broadMatchCount: matchingOptions.length,
-              exactMatchCount: 1,
-              activeOptionsCount: lastClarification.options.length,
-              isExplicitCommand: inputIsExplicitCommand,
-              isSelectionLike: inputIsSelectionLike,
-            },
-          })
+          if (exactNormGateDecision.outcome === 'execute') {
+            // Gate confirms high-confidence → deterministic execute
+            const fullOption = pendingOptions.find(opt => opt.id === matchedOption.id)
 
-          // Save clarification snapshot for post-action repair window
-          saveClarificationSnapshot(lastClarification)
-          setRepairMemory(matchedOption.id, lastClarification.options)
-          setLastClarification(null)
-          setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'clarification_exact_normalized_match_selected',
+              metadata: {
+                input: trimmedInput,
+                matchedLabel: matchedOption.label,
+                hasFullOption: !!fullOption,
+                broadMatchCount: matchingOptions.length,
+                exactMatchCount: 1,
+                activeOptionsCount: lastClarification.options.length,
+                isExplicitCommand: inputIsExplicitCommand,
+                isSelectionLike: inputIsSelectionLike,
+                gateOutcome: exactNormGateDecision.outcome,
+                gateConfidence: exactNormGateDecision.confidence,
+                gateReason: exactNormGateDecision.reason,
+              },
+            })
 
-          const optionToSelect: SelectionOption = {
-            type: (fullOption?.type ?? matchedOption.type) as SelectionOption['type'],
-            id: matchedOption.id,
-            label: matchedOption.label,
-            sublabel: matchedOption.sublabel,
-            data: fullOption?.data as SelectionOption['data'] ??
-              reconstructSnapshotData(matchedOption),
+            // Save clarification snapshot for post-action repair window
+            saveClarificationSnapshot(lastClarification)
+            setRepairMemory(matchedOption.id, lastClarification.options)
+            setLastClarification(null)
+            setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+
+            const optionToSelect: SelectionOption = {
+              type: (fullOption?.type ?? matchedOption.type) as SelectionOption['type'],
+              id: matchedOption.id,
+              label: matchedOption.label,
+              sublabel: matchedOption.sublabel,
+              data: fullOption?.data as SelectionOption['data'] ??
+                reconstructSnapshotData(matchedOption),
+            }
+            setIsLoading(false)
+            handleSelectOption(optionToSelect)
+            return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
+          } else {
+            // Gate says not high-confidence (token-exact but not string-exact)
+            // → fall through to unresolved hook (bounded LLM). Do NOT execute.
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'deterministic_gate_exact_normalized_to_llm',
+              metadata: {
+                input: trimmedInput,
+                matchedLabel: matchedOption.label,
+                broadMatchCount: matchingOptions.length,
+                gateOutcome: exactNormGateDecision.outcome,
+                gateConfidence: exactNormGateDecision.confidence,
+                gateReason: exactNormGateDecision.reason,
+              },
+            })
+            // Do NOT clear state — preserve for LLM
           }
-          setIsLoading(false)
-          handleSelectOption(optionToSelect)
-          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
         }
 
         // No exact winner — hoist count for unresolved hook, then fall through
@@ -4490,15 +4964,17 @@ export async function handleClarificationIntercept(
       // Ordinal guard — skip hook for ordinal inputs
       // Ordinals like "first", "2", "the second one" should be handled
       // by Tier 1b.3a (deterministic), not by LLM.
+      // Strict mode: only bare ordinals ("first", "2") skip; embedded
+      // ordinals ("can you open the first one pls") enter the hook.
       // =================================================================
       const ordinalCheck = isSelectionOnly(
         trimmedInput,
         lastClarification.options.length,
         lastClarification.options.map(o => o.label),
-        'embedded'
+        isStrictExactMode() ? 'strict' : 'embedded'
       )
 
-      if (!ordinalCheck.isSelection) {
+      if (!ordinalCheck.isSelection || preferredCandidateHint) {
         // =================================================================
         // UNRESOLVED HOOK (Rule E: single post-deterministic arbitration)
         // Reached when:
@@ -4514,6 +4990,72 @@ export async function handleClarificationIntercept(
         // tryLLMLastChance). Pre-gate already handles "nothing to do with
         // active options" escapes via commandBypassesLabelMatching.
         // =================================================================
+
+        // --- Continuity deterministic resolver (Plan 20, Site 2: Tier 1b.3) ---
+        const isContinuityEnabledTier1b3 = process.env.NEXT_PUBLIC_SELECTION_CONTINUITY_LANE_ENABLED === 'true'
+        if (isContinuityEnabledTier1b3) {
+          const inputForQuestionCheck = trimmedInput.replace(/[?!.]+$/, '').trim()
+          const continuityResult = tryContinuityDeterministicResolve({
+            trimmedInput,
+            candidates: lastClarification.options.map(o => ({ id: o.id, label: o.label, sublabel: o.sublabel })),
+            continuityState: ctx.selectionContinuity,
+            currentOptionSetId: lastClarification.messageId ?? null,
+            currentScope: scopeCue.scope === 'none' ? 'chat' : scopeCue.scope,
+            isCommandOrSelection: inputIsExplicitCommand || ordinalCheck.isSelection || inputIsSelectionLike,
+            isQuestionIntent: hasQuestionIntent(inputForQuestionCheck) && !isPoliteImperativeRequest(trimmedInput),
+            labelMatchCount: matchingOptions.length,
+          })
+          if (continuityResult.resolved && continuityResult.winnerId) {
+            const winnerCandidate = lastClarification.options.find(o => o.id === continuityResult.winnerId)
+            if (winnerCandidate) {
+              if (isStrictExactMode()) {
+                // Strict policy: continuity is non-exact → set advisory hint, fall through to LLM
+                preferredCandidateHint = preferredCandidateHint ?? { id: winnerCandidate.id, label: winnerCandidate.label, source: 'continuity' }
+                void debugLog({
+                  component: 'ChatNavigation',
+                  action: 'continuity_hint_deferred_to_llm',
+                  metadata: { site: 'tier1b3_unresolved', winnerId: continuityResult.winnerId, winnerLabel: winnerCandidate.label },
+                })
+                // Fall through to LLM arbitration
+              } else {
+                // Legacy: direct execute
+                const fullOption = pendingOptions.find(opt => opt.id === winnerCandidate.id)
+                const optionToSelect: SelectionOption = {
+                  type: (fullOption?.type ?? winnerCandidate.type) as SelectionOption['type'],
+                  id: winnerCandidate.id,
+                  label: winnerCandidate.label,
+                  sublabel: winnerCandidate.sublabel,
+                  data: fullOption?.data as SelectionOption['data'] ??
+                    reconstructSnapshotData(winnerCandidate),
+                }
+                void debugLog({
+                  component: 'ChatNavigation',
+                  action: 'selection_deterministic_continuity_resolve',
+                  metadata: {
+                    site: 'tier1b3_unresolved',
+                    winnerId: continuityResult.winnerId,
+                    winnerLabel: winnerCandidate.label,
+                    activeOptionSetId: ctx.selectionContinuity.activeOptionSetId,
+                    activeScope: ctx.selectionContinuity.activeScope,
+                    candidateCount: lastClarification.options.length,
+                  },
+                })
+                saveClarificationSnapshot(lastClarification)
+                setRepairMemory(winnerCandidate.id, lastClarification.options)
+                setLastClarification(null)
+                setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+                setIsLoading(false)
+                handleSelectOption(optionToSelect)
+                return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+              }
+            }
+          }
+        }
+
+        // If we reach here, no match survived the gate (deterministic, badge, or polite-wrapper).
+        // Pass matchCount: 0 so the arbitration classifier treats this as "no viable deterministic match"
+        // and routes to bounded LLM. Without this, matchCount=1 (a soft match the gate rejected)
+        // causes classifier_not_eligible, preventing the LLM from ever being called.
         const tier1b3Candidates = lastClarification.options.map(o => ({
           id: o.id, label: o.label, sublabel: o.sublabel,
         }))
@@ -4524,15 +5066,16 @@ export async function handleClarificationIntercept(
           clarificationMessageId: lastClarification.messageId ?? '',
           inputIsExplicitCommand,
           isNewQuestionOrCommandDetected,
-          matchCount: matchingOptions.length,
-          exactMatchCount: lastExactMatchCount,
+          matchCount: 0,
+          exactMatchCount: 0,
           scope: scopeCue.scope,
           enrichmentCallback: createEnrichmentCallback(scopeCue.scope, 'tier1b3_unresolved', ctx),
+          preferredCandidateHint,
         })
 
         // Scope-specific fallback (per context-enrichment-retry-loop-plan §Binding Hardening)
         if (llmResult.fallbackReason === 'scope_not_available') {
-          const scopeLabel = scopeCue.scope === 'dashboard' ? 'Dashboard' : scopeCue.scope === 'workspace' ? 'Workspace' : 'This scope'
+          const scopeLabel = 'This scope'
           addMessage({
             id: `assistant-${Date.now()}`,
             role: 'assistant',
@@ -4541,7 +5084,7 @@ export async function handleClarificationIntercept(
             isError: false,
           })
           setIsLoading(false)
-          return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+          return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected, _devProvenanceHint: 'safe_clarifier' as const }
         }
 
         if (llmResult.fallbackReason === 'question_intent') {
@@ -4594,11 +5137,76 @@ export async function handleClarificationIntercept(
           }
           // suggestedId not found in options → fall through to safe clarifier
         } else {
-          // Safe clarifier — reorder if LLM suggested (Rules C, D, F)
-          const reorderSource = llmResult.suggestedId
+          // --- need_more_info veto (Plan 20, Site 2: Tier 1b.3) ---
+          if (isContinuityEnabledTier1b3 && llmResult.attempted && !llmResult.suggestedId) {
+            const inputForQuestionCheck = trimmedInput.replace(/[?!.]+$/, '').trim()
+            const vetoResult = tryContinuityDeterministicResolve({
+              trimmedInput,
+              candidates: lastClarification.options.map(o => ({ id: o.id, label: o.label, sublabel: o.sublabel })),
+              continuityState: ctx.selectionContinuity,
+              currentOptionSetId: lastClarification.messageId ?? null,
+              currentScope: scopeCue.scope === 'none' ? 'chat' : scopeCue.scope,
+              isCommandOrSelection: inputIsExplicitCommand || ordinalCheck.isSelection || inputIsSelectionLike,
+              isQuestionIntent: hasQuestionIntent(inputForQuestionCheck) && !isPoliteImperativeRequest(trimmedInput),
+              labelMatchCount: matchingOptions.length,
+            })
+            if (vetoResult.resolved && vetoResult.winnerId) {
+              const vetoWinner = lastClarification.options.find(o => o.id === vetoResult.winnerId)
+              if (vetoWinner) {
+                if (isStrictExactMode()) {
+                  // Strict policy: veto is non-exact → use as reorder hint for safe clarifier
+                  preferredCandidateHint = preferredCandidateHint ?? { id: vetoWinner.id, label: vetoWinner.label, source: 'continuity' }
+                  void debugLog({
+                    component: 'ChatNavigation',
+                    action: 'need_more_info_veto_hint_deferred_to_safe_clarifier',
+                    metadata: { site: 'tier1b3_unresolved', winnerId: vetoResult.winnerId, winnerLabel: vetoWinner.label },
+                  })
+                  // Fall through to safe clarifier below
+                } else {
+                  // Legacy: direct execute
+                  const fullOption = pendingOptions.find(opt => opt.id === vetoWinner.id)
+                  void debugLog({
+                    component: 'ChatNavigation',
+                    action: 'selection_need_more_info_veto_applied',
+                    metadata: {
+                      site: 'tier1b3_unresolved',
+                      winnerId: vetoResult.winnerId,
+                      winnerLabel: vetoWinner.label,
+                      activeOptionSetId: ctx.selectionContinuity.activeOptionSetId,
+                    },
+                  })
+                  saveClarificationSnapshot(lastClarification)
+                  setRepairMemory(vetoWinner.id, lastClarification.options)
+                  setLastClarification(null)
+                  setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+                  const optionToSelect: SelectionOption = {
+                    type: (fullOption?.type ?? vetoWinner.type) as SelectionOption['type'],
+                    id: vetoWinner.id,
+                    label: vetoWinner.label,
+                    sublabel: vetoWinner.sublabel,
+                    data: fullOption?.data as SelectionOption['data'] ?? reconstructSnapshotData(vetoWinner),
+                  }
+                  setIsLoading(false)
+                  handleSelectOption(optionToSelect)
+                  return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+                }
+              }
+            }
+            if (!vetoResult.resolved) {
+              void debugLog({
+                component: 'ChatNavigation',
+                action: 'selection_need_more_info_veto_blocked_reason',
+                metadata: { site: 'tier1b3_unresolved', reason: vetoResult.reason, activeOptionSetId: ctx.selectionContinuity.activeOptionSetId },
+              })
+            }
+          }
+
+          // Safe clarifier — reorder if LLM suggested or hint available (Rules C, D, F)
+          const reorderHintId = llmResult.suggestedId ?? preferredCandidateHint?.id ?? null
+          const reorderSource = reorderHintId
             ? [
-                ...lastClarification.options.filter(o => o.id === llmResult.suggestedId),
-                ...lastClarification.options.filter(o => o.id !== llmResult.suggestedId),
+                ...lastClarification.options.filter(o => o.id === reorderHintId),
+                ...lastClarification.options.filter(o => o.id !== reorderHintId),
               ]
             : lastClarification.options
 
@@ -4613,6 +5221,9 @@ export async function handleClarificationIntercept(
               llmSuggestedId: llmResult.suggestedId,
               fallbackReason: llmResult.fallbackReason,
               activeOptionsCount: lastClarification.options.length,
+              strictExactMode: isStrictExactMode(),
+              hintSource: preferredCandidateHint?.source ?? null,
+              hintId: preferredCandidateHint?.id ?? null,
             },
           })
 
@@ -4657,8 +5268,14 @@ export async function handleClarificationIntercept(
             timestamp: Date.now(),
             options: reorderSource,
           })
+          // Update continuity state to track new active option set (Plan 20, B9)
+          updateSelectionContinuity({
+            activeOptionSetId: messageId,
+            activeScope: scopeCue.scope === 'none' ? 'chat' : scopeCue.scope,
+            pendingClarifierType: 'selection_disambiguation',
+          })
           setIsLoading(false)
-          return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected, _devProvenanceHint: llmResult.suggestedId ? 'llm_influenced' : undefined }
+          return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected, _devProvenanceHint: (llmResult.suggestedId || preferredCandidateHint) ? 'llm_influenced' : 'safe_clarifier' as const }
         }
       }
       // ordinal → skip hook, Tier 1b.3a handles it
@@ -4667,16 +5284,17 @@ export async function handleClarificationIntercept(
     // Tier 1b.3a: Ordinal selection (BEFORE off-menu mapping)
     // "first", "1", "second", "2", etc. should select the corresponding option
     // Must come BEFORE off-menu mapping to prevent ordinals from being treated as no_match
+    // Strict mode: only strict ordinals execute; embedded ordinals → hint → unresolved hook
     if (lastClarification?.options && lastClarification.options.length > 0) {
-      const ordinalResult = isSelectionOnly(
+      const tier1b3aOrdinalResult = isSelectionOnly(
         trimmedInput,
         lastClarification.options.length,
         lastClarification.options.map(opt => opt.label),
-        'embedded'
+        isStrictExactMode() ? 'strict' : 'embedded'
       )
 
-      if (ordinalResult.isSelection && ordinalResult.index !== undefined) {
-        const selectedOption = lastClarification.options[ordinalResult.index]
+      if (tier1b3aOrdinalResult.isSelection && tier1b3aOrdinalResult.index !== undefined) {
+        const selectedOption = lastClarification.options[tier1b3aOrdinalResult.index]
         const fullOption = pendingOptions.find(opt => opt.id === selectedOption.id)
 
         void debugLog({
@@ -4684,7 +5302,7 @@ export async function handleClarificationIntercept(
           action: 'clarification_tier1b3a_ordinal_selection',
           metadata: {
             input: trimmedInput,
-            index: ordinalResult.index,
+            index: tier1b3aOrdinalResult.index,
             selectedLabel: selectedOption.label,
             clarificationType: lastClarification.type,
           },
@@ -4712,7 +5330,7 @@ export async function handleClarificationIntercept(
         }
         setIsLoading(false)
         handleSelectOption(optionToSelect)
-        return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+        return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
       }
     }
 
@@ -5505,7 +6123,7 @@ export async function handleClarificationIntercept(
           }
           setIsLoading(false)
           handleSelectOption(optionToSelect)
-          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
         } else {
           const optionToSelect: SelectionOption = {
             type: selectedClarificationOption.type as SelectionOption['type'],
@@ -5518,7 +6136,7 @@ export async function handleClarificationIntercept(
           }
           setIsLoading(false)
           handleSelectOption(optionToSelect)
-          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
         }
       }
     }
@@ -5606,8 +6224,10 @@ export interface PanelDisambiguationHandlerContext {
   saveLastOptionsShown?: (options: ClarificationOption[], messageId: string) => void
   // Per universal-selection-resolver-plan.md: clear widget context when registering chat context
   clearWidgetSelectionContext?: () => void
+  // Clear focus latch when opening a new panel (prevents stale latch scoping to wrong widget)
+  clearFocusLatch?: () => void
   // Single-match direct open (Step 1b — deterministic panel open when 1 match found)
-  openPanelDrawer?: (panelId: string, panelTitle?: string) => void
+  openPanelDrawer?: (panelId: string, panelTitle?: string, executionMeta?: import('@/lib/chat/action-trace').ExecutionMeta) => void
 }
 
 export interface PanelDisambiguationHandlerResult extends HandlerResult {
@@ -5640,6 +6260,7 @@ export function handlePanelDisambiguation(
     setLastClarification,
     saveLastOptionsShown,
     clearWidgetSelectionContext,
+    clearFocusLatch,
     openPanelDrawer,
   } = context
 
@@ -5738,6 +6359,24 @@ export function handlePanelDisambiguation(
   if (isSingleMatch && openPanelDrawer) {
     const singleMatch = matchResult.matches[0]
 
+    // Addendum Rule B: strict ^...$ match determines matchKind for classifier.
+    // Token-containment 'exact' from matchVisiblePanelCommand is NOT strict exact.
+    // Only raw input === panel title qualifies as deterministic 'exact'.
+    const strictExact = isStrictExactMatch(trimmedInput, singleMatch.title)
+    const effectiveMatchKind: 'exact' | 'partial' = strictExact ? 'exact' : 'partial'
+
+    const meta = classifyExecutionMeta({
+      matchKind: effectiveMatchKind,
+      candidateCount: 1,
+      resolverPath: 'panelDisambiguation',
+    })
+
+    // Unresolved gate: non-strict-exact → fall through to LLM tier (Rule B, Rule C)
+    // NO state cleared before this return — context preserved for LLM
+    if (meta.reasonCode === 'unknown') {
+      return { handled: false, matchType: matchResult.type, matchCount: 1 }
+    }
+
     void debugLog({
       component: 'ChatNavigation',
       action: 'panel_disambiguation_single_match_open',
@@ -5753,9 +6392,12 @@ export function handlePanelDisambiguation(
     setPendingOptionsMessageId(null)
     setLastClarification(null)
     clearWidgetSelectionContext?.()
+    // Clear stale focus latch — panel switch starts fresh scope
+    // (prevents grounding tier from scoping to wrong widget's candidates)
+    clearFocusLatch?.()
 
-    // Direct open
-    openPanelDrawer(singleMatch.id, singleMatch.title)
+    // Direct open with executionMeta
+    openPanelDrawer(singleMatch.id, singleMatch.title, meta)
 
     const assistantMessage: ChatMessage = {
       id: `assistant-${Date.now()}`,
