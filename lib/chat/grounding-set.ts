@@ -177,8 +177,10 @@ export function buildGroundingSets(ctx: GroundingSetBuildContext): GroundingSet[
   // Priority: after active_options, before widget_list.
   // CRITICAL: These are NOT eligible for resolveUniqueDeterministic — they are
   // LLM-only candidates to prevent non-exact panel text from being deterministic-executed.
+  // NOTE: No NON_LIST_CANDIDATE_CAP here — DashboardView.tsx already caps at 10 panels,
+  // and Step 2.6 evidence matching needs ALL visible panels to avoid scope misses.
   if (ctx.visiblePanels && ctx.visiblePanels.length > 0) {
-    const panelCandidates = ctx.visiblePanels.slice(0, NON_LIST_CANDIDATE_CAP).map(panel => ({
+    const panelCandidates = ctx.visiblePanels.map(panel => ({
       id: panel.id,
       label: panel.title,
       type: 'option' as const,
@@ -876,23 +878,42 @@ export function handleGroundingSetFallback(
   // NOTE: Runs whenever visible_panels exists — NOT coupled to widgetListSets.
   const visiblePanelSet = groundingSets.find(s => s.type === 'visible_panels')
   if (visiblePanelSet && visiblePanelSet.candidates.length > 0) {
-    const hasActiveOptions = groundingSets.some(s => s.type === 'active_options' && s.candidates.length > 0)
-    if (!hasActiveOptions) {
-      const panelWidgets = visiblePanelSet.candidates.map(c => ({
-        id: c.id, title: c.label, type: 'panel'
-      }))
-      const rawPanelEvidence = matchVisiblePanelCommand(trimmed, panelWidgets)
-      if (rawPanelEvidence.type !== 'none') {
+    // Check panel evidence BEFORE hasActiveOptions gate — strong evidence can bypass stale options.
+    const panelWidgets = visiblePanelSet.candidates.map(c => ({
+      id: c.id, title: c.label, type: 'panel'
+    }))
+    const rawPanelEvidence = matchVisiblePanelCommand(trimmed, panelWidgets)
+    if (rawPanelEvidence.type !== 'none') {
+      const hasActiveOptions = groundingSets.some(s => s.type === 'active_options' && s.candidates.length > 0)
+
+      // Strong panel evidence: exact match on multi-word title (≥2 words) overrides stale active options.
+      // Rationale: "can you open the link panel d pls" explicitly names a 3-word panel
+      // ("Links Panel D") — the user is navigating, not selecting from stale widget options.
+      // Single-word titles are NOT strong enough to override (risk of incidental overlap).
+      // When we reach Step 2.6, deterministic resolution (Step 2.2) already failed to match
+      // against active_options, so those options are likely from a different context.
+      const hasStrongMultiWordMatch = rawPanelEvidence.type === 'exact' &&
+        rawPanelEvidence.matches.some(m => m.title.trim().split(/\s+/).length >= 2)
+
+      if (!hasActiveOptions || hasStrongMultiWordMatch) {
         // Hard guard: substantive match over ALL matched panels.
         // Prevents single-token incidental overlap from stealing mixed-intent inputs.
         // Multi-word title → almost certainly intentional.
         // Single-word title → only if input is short (not incidental in long sentence).
-        // Filter politeness/filler words before counting — they inflate word count
-        // but carry no domain signal. Verbs are NOT filtered (they carry intent).
-        // Uses shared STOPWORDS from panel-command-matcher (single source of truth).
+        //
+        // Filters applied to inputWordCount (all carry no domain signal for panel matching):
+        // 1. STOPWORDS — politeness/filler (pls, please, the, a, my)
+        // 2. Question-intent markers — grammatical scaffolding for "can you..." phrasing
+        //    (can, could, would, should, will, you, me, i)
+        // 3. Panel-domain keywords — structural terms indicating panel domain, not panel identity
+        //    (panel, panels, widget, widgets)
+        // Action verbs (open, show, go) are deliberately NOT filtered — they carry domain intent
+        // and prevent over-admission (e.g., "open a recent document" → 3 content words → rejected).
+        const QUESTION_INTENT_MARKERS = new Set(['can', 'could', 'would', 'should', 'will', 'you', 'me', 'i'])
+        const PANEL_DOMAIN_KEYWORDS = new Set(['panel', 'panels', 'widget', 'widgets'])
         const inputWordCount = trimmed.split(/\s+/).filter(w => {
           const norm = w.toLowerCase().replace(/[^a-z0-9]/g, '')
-          return norm.length > 0 && !STOPWORDS.has(norm)
+          return norm.length > 0 && !STOPWORDS.has(norm) && !QUESTION_INTENT_MARKERS.has(norm) && !PANEL_DOMAIN_KEYWORDS.has(norm)
         }).length
         const isSubstantive = rawPanelEvidence.matches.some(m => {
           const titleWordCount = m.title.trim().split(/\s+/).length
@@ -912,6 +933,7 @@ export function handleGroundingSetFallback(
               matchedLabels: matchedCandidates.map(c => c.label),
               inputWordCount,
               isSubstantive,
+              hasActiveOptionsBypassed: hasActiveOptions && hasStrongMultiWordMatch,
             },
           })
           return {
