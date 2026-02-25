@@ -269,3 +269,51 @@ export type ArbitrationFallbackReason =
 export type ContextEnrichmentCallback = (
   neededContext: NeededContextType[]
 ) => { enrichedMetadata: Record<string, unknown> } | null
+
+// =============================================================================
+// LLM Arbitration Guard Types (internal to arbitration module)
+// =============================================================================
+
+/** Loop guard for LLM arbitration: prevent repeated LLM calls for same input+options.
+ *  Module-level singleton — reset when input or option set changes. */
+export interface LLMArbitrationGuardState {
+  normalizedInput: string
+  candidateIds: string
+  clarificationMessageId: string
+  suggestedId: string | null  // Rule F — loop-guard continuity
+  enrichmentFingerprint?: string  // Context-enrichment retry loop
+  retryAttempted?: boolean        // Context-enrichment retry loop — budget tracking
+}
+
+// =============================================================================
+// Selection Continuity Deterministic Resolver Types (Plan 20)
+// =============================================================================
+
+export interface ContinuityResolveParams {
+  trimmedInput: string
+  candidates: { id: string; label: string; sublabel?: string }[]
+  continuityState: SelectionContinuityState
+  currentOptionSetId: string | null
+  currentScope: 'chat' | 'widget' | 'dashboard' | 'workspace' | 'none'
+  isCommandOrSelection: boolean
+  isQuestionIntent: boolean
+  labelMatchCount: number
+}
+
+export interface ContinuityResolveResult {
+  resolved: boolean
+  winnerId: string | null
+  reason: string
+}
+
+// =============================================================================
+// Bounded Arbitration Result (context-enrichment retry loop)
+// =============================================================================
+
+export interface BoundedArbitrationResult {
+  attempted: boolean
+  suggestedId: string | null
+  fallbackReason: ArbitrationFallbackReason | null
+  autoExecute: boolean
+  retryAttempted: boolean
+}
