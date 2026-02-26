@@ -317,3 +317,15 @@ export interface BoundedArbitrationResult {
   autoExecute: boolean
   retryAttempted: boolean
 }
+
+// =============================================================================
+// Pre-Clarification Computed State (PR3c)
+// Computed once at the top of handleClarificationIntercept, passed into each phase.
+// =============================================================================
+
+export interface PreClarificationComputedState {
+  latchBlocksStaleChat: boolean
+  isNewQuestionOrCommandDetected: boolean
+  isBareNounNewIntent: boolean
+  clarificationTokens: string[]
+}
