@@ -14,8 +14,8 @@
 
 import { debugLog } from '@/lib/utils/debug-logger'
 import { levenshteinDistance } from '@/lib/chat/typo-suggestions'
-import { matchVisiblePanelCommand, STOPWORDS } from '@/lib/chat/panel-command-matcher'
-import { isExplicitCommand } from '@/lib/chat/input-classifiers'
+import { matchVisiblePanelCommand, STOPWORDS, type PanelMatchResult } from '@/lib/chat/panel-command-matcher'
+import { isExplicitCommand, canonicalizeCommandInput } from '@/lib/chat/input-classifiers'
 import type { ClarificationOption, ClarificationSnapshot, LastClarificationState, RepairMemoryState, SessionState } from '@/lib/chat/chat-navigation-context'
 
 // =============================================================================
@@ -716,13 +716,65 @@ export function handleGroundingSetFallback(
   // Filter to non-empty sets (capability set is always present but may not be useful)
   const nonCapabilitySets = groundingSets.filter(s => s.type !== 'capability')
 
+  // ---- Advisory Panel Evidence (hoisted before multi-list guard) ----
+  // Compute raw + canonical panel evidence early. If panel intent is detected,
+  // multi-list ambiguity is suppressed — the user is targeting a panel, not a
+  // widget-list item. Evidence is advisory only (scopes LLM candidates).
+  const visiblePanelSet = groundingSets.find(s => s.type === 'visible_panels')
+  let panelEvidenceResult: { candidates: GroundingCandidate[]; matchType: PanelMatchResult['type']; source: 'raw' | 'canonical' } | null = null
+
+  if (visiblePanelSet && visiblePanelSet.candidates.length > 0) {
+    const panelWidgets = visiblePanelSet.candidates.map(c => ({
+      id: c.id, title: c.label, type: 'panel'
+    }))
+
+    // Raw evidence (current behavior)
+    const rawEvidence = matchVisiblePanelCommand(trimmed, panelWidgets)
+    if (rawEvidence.type !== 'none') {
+      const matchedIds = new Set(rawEvidence.matches.map(m => m.id))
+      panelEvidenceResult = {
+        candidates: visiblePanelSet.candidates.filter(c => matchedIds.has(c.id)),
+        matchType: rawEvidence.type,
+        source: 'raw',
+      }
+    }
+
+    // Canonical fallback (strip verb prefix, articles, politeness)
+    // Guardrail: only attempt canonical matching for panel-like command forms
+    // to prevent unrelated text from getting panel-biased.
+    // Gate: isExplicitCommand OR input contains "panel"/"panels"/"widget"/"widgets"
+    if (!panelEvidenceResult) {
+      const lowerTrimmed = trimmed.toLowerCase()
+      const isPanelLikeForm = isExplicitCommand(trimmed)
+        || /\b(panels?|widgets?)\b/.test(lowerTrimmed)
+      if (isPanelLikeForm) {
+        const canonical = canonicalizeCommandInput(trimmed)
+        if (canonical && canonical !== lowerTrimmed.trim()) {
+          const canonicalEvidence = matchVisiblePanelCommand(canonical, panelWidgets)
+          if (canonicalEvidence.type !== 'none') {
+            const matchedIds = new Set(canonicalEvidence.matches.map(m => m.id))
+            panelEvidenceResult = {
+              candidates: visiblePanelSet.candidates.filter(c => matchedIds.has(c.id)),
+              matchType: canonicalEvidence.type,
+              source: 'canonical',
+            }
+          }
+        }
+      }
+    }
+  }
+
   // Step 2: Multi-list early guard
   // Per selection-intent-arbitration-incubation-plan Rule 2 + Test 9:
   // When activeWidgetId is set (latch active or pre-latch single list),
   // skip multi-list ambiguity — the active widget is authoritative.
+  // Guardrail: panelEvidenceResult is only non-null when candidates.length > 0
+  // (both raw and canonical paths only set it on non-none match with actual candidates)
   const multiListCheck = options?.activeWidgetId
     ? { isAmbiguous: false as const }
-    : checkMultiListAmbiguity(trimmed, ctx.openWidgets, options)
+    : panelEvidenceResult
+      ? { isAmbiguous: false as const }  // Panel intent detected — skip multi-list
+      : checkMultiListAmbiguity(trimmed, ctx.openWidgets, options)
   if (multiListCheck.isAmbiguous) {
     void debugLog({
       component: 'ChatNavigation',
@@ -853,40 +905,26 @@ export function handleGroundingSetFallback(
   }
 
   // Step 2.6: Visible-panels LLM fallback (independent of widget lists).
-  // Advisory panel-intent gate: token-subset match on raw input via matchVisiblePanelCommand.
-  // (normalizeToTokenSet is advisory — selects LLM candidates, never deterministic execution)
+  // Uses pre-computed panelEvidenceResult (raw or canonical, hoisted above multi-list guard).
   // Per raw-strict-exact contract Rule 1 (refined): advisory normalization for LLM candidate
   // selection is permitted since the LLM makes the final routing decision.
   // NOTE: Runs whenever visible_panels exists — NOT coupled to widgetListSets.
-  const visiblePanelSet = groundingSets.find(s => s.type === 'visible_panels')
-  if (visiblePanelSet && visiblePanelSet.candidates.length > 0) {
-    // Check panel evidence BEFORE hasActiveOptions gate — strong evidence can bypass stale options.
-    const panelWidgets = visiblePanelSet.candidates.map(c => ({
-      id: c.id, title: c.label, type: 'panel'
-    }))
-    const rawPanelEvidence = matchVisiblePanelCommand(trimmed, panelWidgets)
-    if (rawPanelEvidence.type !== 'none') {
-      // Per policy: non-exact → bounded LLM → safe clarifier.
-      // No substantive guard, no hasActiveOptions gate. matchVisiblePanelCommand
-      // found token-subset evidence — pass matched candidates to the bounded LLM
-      // and let the LLM decide. The LLM handles all non-exact resolution.
-      const matchedIds = new Set(rawPanelEvidence.matches.map(m => m.id))
-      const matchedCandidates = visiblePanelSet.candidates.filter(c => matchedIds.has(c.id))
-      void debugLog({
-        component: 'ChatNavigation',
-        action: 'visible_panels_evidence_gated_llm_fallback',
-        metadata: {
-          input: trimmed,
-          matchType: rawPanelEvidence.type,
-          matchedCount: matchedCandidates.length,
-          matchedLabels: matchedCandidates.map(c => c.label),
-        },
-      })
-      return {
-        handled: false,
-        needsLLM: true,
-        llmCandidates: matchedCandidates,
-      }
+  if (panelEvidenceResult && panelEvidenceResult.candidates.length > 0) {
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'visible_panels_evidence_gated_llm_fallback',
+      metadata: {
+        input: trimmed,
+        matchType: panelEvidenceResult.matchType,
+        source: panelEvidenceResult.source,
+        matchedCount: panelEvidenceResult.candidates.length,
+        matchedLabels: panelEvidenceResult.candidates.map(c => c.label),
+      },
+    })
+    return {
+      handled: false,
+      needsLLM: true,
+      llmCandidates: panelEvidenceResult.candidates,
     }
   }
 
