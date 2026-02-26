@@ -413,7 +413,11 @@ function isSelectionOnlyEmbedded(
 export interface ScopeCueResult {
   scope: 'chat' | 'widget' | 'dashboard' | 'workspace' | 'none'
   cueText: string | null
-  confidence: 'high' | 'none'
+  confidence: 'high' | 'low_typo' | 'none'
+  /** For named widget cues like "from links panel d", the extracted panel label suffix */
+  namedWidgetHint?: string
+  /** True when BOTH chat + widget cues detected in the same input (Rule 14 conflict) */
+  hasConflict?: boolean
 }
 
 /**
@@ -429,20 +433,41 @@ export interface ScopeCueResult {
  * - "from the chat", "from chat", "in chat"
  */
 export function resolveScopeCue(input: string): ScopeCueResult {
-  const normalized = input.toLowerCase().trim()
+  // Collapse internal whitespace so "from  links panel d" matches same as "from links panel d"
+  const normalized = input.toLowerCase().trim().replace(/\s+/g, ' ')
 
   // --- Chat cues (highest precedence) — longest match first ---
   const CHAT_CUE_PATTERN = /\b(back to options|from earlier options|from chat options?|from the chat|from chat|in chat)\b/i
   const chatMatch = normalized.match(CHAT_CUE_PATTERN)
+
+  // --- Widget cues (expanded per incubation-plan Rule 14) ---
+  const WIDGET_CUE_PATTERN = /\b(from links panel\s+\S+|from panel\s+\S+|from links panel|from recent|from active widgets?|from current widgets?|from active panels?|from current panels?|from this widget|from the widget|in active widgets?|in current widgets?|in active panels?|in current panels?|in this widget|in this panel|from active(?!\s+(?:widgets?|panels?|dashboard|workspace))|from current(?!\s+(?:widgets?|panels?|dashboard|workspace)))\b/i
+  const widgetMatch = normalized.match(WIDGET_CUE_PATTERN)
+
+  // --- Conflict detection (Rule 14): both chat + widget cues in same input ---
+  if (chatMatch && widgetMatch) {
+    // Primary scope = chat (higher precedence), flag conflict
+    return { scope: 'chat', cueText: chatMatch[0], confidence: 'high', hasConflict: true }
+  }
+
   if (chatMatch) {
     return { scope: 'chat', cueText: chatMatch[0], confidence: 'high' }
   }
 
-  // --- Widget cues ---
-  const WIDGET_CUE_PATTERN = /\b(from links panel\s*[a-z]?|from recent|from active widget|from the widget)\b/i
-  const widgetMatch = normalized.match(WIDGET_CUE_PATTERN)
   if (widgetMatch) {
-    return { scope: 'widget', cueText: widgetMatch[0], confidence: 'high' }
+    // Normalize cue text: strip trailing punctuation, collapse whitespace
+    const rawCueText = widgetMatch[0]
+    const normalizedCueText = rawCueText.replace(/[?!.,;:]+$/, '').replace(/\s+/g, ' ').trim()
+
+    // Extract named widget hint for "from links panel d", "from panel delta", etc.
+    // Captures everything after "from/in" + optional "links" — supports multi-word suffixes
+    let namedWidgetHint: string | undefined
+    const namedMatch = normalizedCueText.match(/(?:from|in)\s+((?:links\s+)?panel\s+\S+)/i)
+    if (namedMatch) {
+      namedWidgetHint = namedMatch[1].trim()
+    }
+
+    return { scope: 'widget', cueText: normalizedCueText, confidence: 'high', namedWidgetHint }
   }
 
   // --- Dashboard cues ---
@@ -457,6 +482,86 @@ export function resolveScopeCue(input: string): ScopeCueResult {
   const workspaceMatch = normalized.match(WORKSPACE_CUE_PATTERN)
   if (workspaceMatch) {
     return { scope: 'workspace', cueText: workspaceMatch[0], confidence: 'high' }
+  }
+
+  // --- Typo detection fallback (deterministic, no LLM) ---
+  // Runs only when all exact patterns fail. Returns low_typo → always safe clarifier, never executable.
+  const typoResult = detectScopeCueTypo(normalized)
+  if (typoResult.scope !== 'none') return typoResult
+
+  return { scope: 'none', cueText: null, confidence: 'none' }
+}
+
+// =============================================================================
+// Scope-Cue Typo Detection (deterministic, closed vocabulary)
+// Per plan: strictly advisory — low_typo confidence NEVER leads to execution.
+// =============================================================================
+
+/** Closed vocabulary of scope-relevant tokens for fuzzy matching */
+const SCOPE_VOCAB = ['active', 'current', 'widget', 'panel', 'chat', 'links', 'recent', 'dashboard', 'workspace'] as const
+
+/** Exact scope tokens that override fuzzy widget classification */
+const EXACT_SCOPE_TOKENS = new Set(['workspace', 'dashboard', 'chat'])
+
+/**
+ * Detect likely scope-cue typos using Levenshtein distance against closed vocabulary.
+ * Returns low_typo confidence — always ends in safe clarifier, never executable.
+ *
+ * Algorithm:
+ * 1. Scan for exact "from"/"in" trigger tokens
+ * 2. Check 1–2 following tokens against SCOPE_VOCAB (distance ≤ 1, length ≥ 4)
+ * 3. Guard: if any exact scope token (workspace/dashboard/chat) appears nearby, don't map to widget
+ * 4. Return best-guess scope with low_typo confidence
+ */
+function detectScopeCueTypo(normalizedInput: string): ScopeCueResult {
+  const tokens = normalizedInput.split(/\s+/).map(t => t.replace(/[?!.,;:]+$/, '').toLowerCase())
+
+  for (let i = 0; i < tokens.length - 1; i++) {
+    const trigger = tokens[i]
+    if (trigger !== 'from' && trigger !== 'in') continue
+
+    // Check the 1–2 tokens after the trigger
+    const followingTokens = tokens.slice(i + 1, i + 3)
+
+    // Guard: if any exact scope token is present in the following tokens, skip widget fuzzy mapping.
+    // This prevents "from activ workspace" from being classified as widget scope.
+    const hasExactScopeToken = followingTokens.some(t => EXACT_SCOPE_TOKENS.has(t))
+
+    for (const token of followingTokens) {
+      if (token.length < 4) continue
+
+      // Find best fuzzy match in closed vocabulary
+      let bestMatch: string | null = null
+      let bestDistance = Infinity
+      for (const vocab of SCOPE_VOCAB) {
+        const dist = levenshteinDistance(token, vocab)
+        if (dist <= 1 && dist > 0 && dist < bestDistance) {
+          bestMatch = vocab
+          bestDistance = dist
+        }
+      }
+
+      if (!bestMatch) continue
+
+      // Determine scope from fuzzy-matched token
+      let detectedScope: ScopeCueResult['scope'] = 'none'
+      if (bestMatch === 'chat') {
+        detectedScope = 'chat'
+      } else if (bestMatch === 'dashboard') {
+        detectedScope = 'dashboard'
+      } else if (bestMatch === 'workspace') {
+        detectedScope = 'workspace'
+      } else if (bestMatch === 'active' || bestMatch === 'current' || bestMatch === 'widget' || bestMatch === 'panel') {
+        // Guard: don't map to widget if exact scope token is present
+        if (hasExactScopeToken) continue
+        detectedScope = 'widget'
+      }
+
+      if (detectedScope !== 'none') {
+        const cueSpan = [trigger, ...followingTokens].join(' ')
+        return { scope: detectedScope, cueText: cueSpan, confidence: 'low_typo' }
+      }
+    }
   }
 
   return { scope: 'none', cueText: null, confidence: 'none' }

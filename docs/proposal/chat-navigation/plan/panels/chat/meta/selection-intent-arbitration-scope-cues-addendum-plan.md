@@ -2,14 +2,14 @@
 
 **Status:** Addendum Draft  
 **Owner:** Chat Navigation  
-**Last updated:** 2026-02-07  
+**Last updated:** 2026-02-27  
 **Parent plan:** `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-intent-arbitration-incubation-plan.md`  
 **Companion implementation plan:** `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-intent-arbitration-widget-first-fix-plan.md`
 
 ## Why this addendum exists
 Current latch behavior handles many ordinal cases, but explicit user scope phrases are still missed:
 - `in chat`, `from chat`
-- `from the active widget`, `from current widget`, `from recent open widget`
+- `from the active widget`, `from current widget`, `from this widget`, `from the widget`
 - `from links panel d` (named widget scope)
 
 When scope cues are missed, routing can apply latch/default selection incorrectly. This addendum defines a strict, hybrid scope policy:
@@ -36,6 +36,10 @@ When scope cues are missed, routing can apply latch/default selection incorrectl
 5. **No free-form execution**
 - LLM never emits direct actions.
 - App executes only validated candidate ids/sources.
+
+6. **Scope cue outranks semantic lane**
+- If semantic-question detection and explicit scope cue both match the same input, scope-cue routing wins.
+- Do not bypass to semantic answer lane for scoped commands (for example: `can you open sample1 from active widget`).
 
 ## Required safety gates (must)
 1. **Routing-order lock**
@@ -81,9 +85,10 @@ When scope cues are missed, routing can apply latch/default selection incorrectl
 ## Scope normalization contract
 Classifier output:
 - `scope = 'chat' | 'widget' | 'none'`
-- `targetWidgetId?: string`
-- `confidence: 'high' | 'medium' | 'low'`
-- `source: 'deterministic' | 'llm'`
+- `cueText: string | null`
+- `confidence: 'high' | 'none'`
+- `namedWidgetHint?: string`
+- `hasConflict?: boolean`
 
 Deterministic cue families:
 - Chat cues:
@@ -95,7 +100,8 @@ Deterministic cue families:
 - Widget generic cues:
   - `from active widget`
   - `from current widget`
-  - `from recent open widget`
+  - `from this widget`
+  - `from the widget`
   - `in this widget`
   - `in this panel`
 - Widget named cues:
@@ -117,8 +123,9 @@ Add a reusable classifier:
 
 ### Step B: Apply scope-cue stage before latch selection
 Files:
-- `lib/chat/chat-routing.ts`
-- `lib/chat/routing-dispatcher.ts` (if needed for shared flow)
+- `lib/chat/chat-routing-clarification-intercept.ts`
+- `lib/chat/chat-routing-scope-cue-handler.ts`
+- `lib/chat/routing-dispatcher.ts`
 
 In `handleClarificationIntercept`:
 1. Run scope-cue classifier before focus-latch selection-like bypass.
@@ -142,7 +149,9 @@ In `handleClarificationIntercept`:
      - Do not require a second user turn for the same input.
    - If no selection payload exists after scope cue normalization, restore chat options and return `handled: true` without execution.
 3. If `scope='widget'`:
-   - Keep or set latch to the resolved widget target.
+   - For explicit active references (`from active widget`, `from current widget`), use `activeSnapshotWidgetId`.
+   - For contextual references (`from this widget`, `from the widget`, `in this panel`), prefer latch, then fall back to `activeSnapshotWidgetId`.
+   - Emit a widget-scope signal to dispatcher with stripped input + scope source (`active` | `latch` | `named`).
    - Route selection-like input to widget resolution path.
 4. If scope is unresolved:
    - Continue existing latch/default arbitration path.
@@ -150,22 +159,16 @@ In `handleClarificationIntercept`:
 
 ### Step C: Add constrained LLM source arbitration fallback
 File:
-- `lib/chat/routing-dispatcher.ts` (Tier 3.6 path)
+- `lib/chat/routing-dispatcher.ts` (scope-signal path before Tier 2, then Tier 4.5 grounding)
 
-When deterministic scope is `none` and input is selection-like:
-- If active latch is present, defer to existing Tier 4.5 deterministic latch resolution first.
-- Constrained LLM fires only when deterministic resolution does not resolve safely.
-- Build source candidates from currently valid scopes:
-  - Recoverable chat source (if any)
-  - Latched/focused widget source
-  - Named widget candidates (if relevant)
-- Call constrained LLM with source + option candidates.
-- Require output:
-  - `select(choiceId)` or `need_more_info` (frozen baseline contract)
-- Candidate ids must carry enough source identity to recover chat/widget route deterministically.
-- On LLM failure/timeout/429:
+When widget-scope signal is present:
+- Resolve widget target deterministically (named cue matcher + active fallback).
+- Hard-filter grounding candidates to the scoped widget only (no mixed-source candidates).
+- Run deterministic grounding on raw stripped input (no pre-canonicalization for deterministic execution).
+- If unresolved and LLM is enabled, run bounded LLM on scoped candidates.
+- On LLM failure/timeout/429/abstain:
   - Skip execution.
-  - Immediately return deterministic grounded clarifier template using the same candidate ids.
+  - Return scoped safe clarifier.
 
 ### Step D: Clarifier fallback behavior
 If constrained LLM cannot safely select:
@@ -197,6 +200,10 @@ Add logs:
 11. Tier ordering remains compliant with `routing-order-priority-plan.md` (stop/return/interrupt still win).
 12. Active latch + explicit command (`open links panel d`) executes command path and does not enter scope-cue or selection retry loop.
 13. `scope='chat'` with combined input (example: `open the first one in chat`) resolves and executes in the same turn (no second-turn repeat required).
+14. `from active widget` resolves against `activeSnapshotWidgetId` even when latch points elsewhere.
+15. `from this widget` resolves against latch first, then active snapshot fallback.
+16. Conflicting cues (`from chat` + widget cue) return source clarifier; no execute.
+17. Scoped command phrased as a question (`can you open ... from active widget`) does not enter semantic lane.
 
 ## Dispatcher-level integration checks (must)
 Add dispatcher-level tests that call `dispatchRouting()` with real routing flow and mocked externals:
@@ -207,6 +214,9 @@ Add dispatcher-level tests that call `dispatchRouting()` with real routing flow 
 5. No-latch baseline behavior remains unchanged when feature flag is off.
 6. Active latch + explicit command (`open links panel d`) bypasses cue arbitration and routes as command.
 7. Scope=`chat` restore with mismatched `lastOptionsShown.messageId` clears `lastOptionsShown` and still restores active chat options safely.
+8. Widget scope signal with named cue + unique partial match resolves target widget (no fallback to unrelated active widget).
+9. Widget scope signal with named collision returns clarifier limited to matched widgets only.
+10. Widget scope signal path preserves non-exact policy: unresolved deterministic path attempts bounded LLM before safe clarifier.
 
 ## Rollout
 1. Gate addendum behavior behind `NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1`.

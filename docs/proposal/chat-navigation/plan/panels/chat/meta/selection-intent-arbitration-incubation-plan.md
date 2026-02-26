@@ -2,7 +2,7 @@
 
 **Status:** Incubation Draft
 **Owner:** Chat Navigation
-**Last updated:** 2026-02-12
+**Last updated:** 2026-02-27
 **Scope:** Planning-only. No implementation changes in this document.
 **Implementation addenda:**
 - `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-intent-arbitration-widget-first-fix-plan.md`
@@ -19,6 +19,7 @@ This incubation plan defines a focus-latch-first policy to reduce friction while
 3. Chat and widget contexts remain separate and source-aware.
 4. Clarification is a last resort, not a default.
 5. Constrained LLM handles long-tail phrasing; deterministic handles strict high-confidence cases.
+6. Explicit source cues are binding (`from chat`, `from active widget`, `from <panel>`).
 
 ## Normative Dependency (Mandatory)
 
@@ -149,6 +150,29 @@ If focused-widget resolution fails:
 - “Exactly one fresh visible widget list” means exactly one visible list-segment candidate group.
 - If multiple list segments exist (within one widget or across widgets), pre-latch ordinal default must not trigger; use ambiguity handling.
 
+14. Source-cue precedence
+- Explicit scope cues override latch defaults:
+  - Chat cues: `from chat`, `in chat`, `from earlier options`, `back to options`.
+  - Active-widget cues: `from active widget`, `from current widget`, `from this widget`, `from the widget`, `in this panel`.
+  - Named cues: `from links panel d`, `from panel d`.
+- If input contains conflicting source cues, do not execute; return one source clarifier.
+- Explicit vs contextual widget cues are distinct:
+  - `from active widget` / `from current widget` must use `activeSnapshotWidgetId` (UI-focused widget).
+  - `from this widget` / `from the widget` should prefer latch context, then fall back to `activeSnapshotWidgetId`.
+
+15. Scoped candidate isolation for non-exact input
+- For non-exact inputs with explicit scope cue, bounded LLM receives candidates from that scope only.
+- Do not mix unrelated candidate domains in the same turn.
+- If scoped source has zero viable candidates, return scoped safe clarifier first; do not silently widen scope.
+
+16. Post-clarifier source continuity
+- After app shows source-specific options, immediate follow-up selection-like input stays in that source until user explicitly switches.
+- Noisy variants (`pls`, `now`, punctuation) must not change source routing outcome.
+
+17. Semantic-lane suppression under explicit scope cue
+- If semantic-question heuristics fire but explicit scope cue is present (`chat` or `widget`), suppress semantic-lane bypass and keep scope-cue arbitration active.
+- Scope cue is a stronger routing signal than generic question phrasing (for example: `can you open ... from active widget`).
+
 ## Input Classification Gate
 ### Selection-like input
 Examples:
@@ -241,6 +265,14 @@ Add logs for:
 10. Active-option unresolved compliance: if deterministic cannot resolve uniquely, bounded LLM is attempted before unrelated downstream fallback.
 11. Safe-fallback compliance: timeout/429/error/abstain/low-confidence returns grounded safe clarifier and does not execute.
 12. Phase C gate compliance: LLM `select` executes only when addendum gates pass; otherwise clarifier-only behavior.
+13. `open the summary144 from active widget` must never resolve chat candidates in that turn.
+14. `open panel e pls` with active widget + chat options must not return unrelated widget-list summary candidates.
+15. `open the panel d from chat` resolves only in chat scope (or clarifies in chat scope), not active-widget scope.
+16. Conflicting cues (`from chat` + `from active widget`) return source clarifier and do not execute.
+17. Repeated noisy variants (`open panel e pls`, `open panel e pls??`) remain source-stable.
+18. `from active widget` resolves against UI-active widget even when latch still points to a previously engaged widget.
+19. `from this widget` resolves against latch first, then falls back to UI-active widget.
+20. `can you open <item> from active widget` must not enter semantic answer lane; it must route through scope-cue arbitration.
 
 ## Rollout Plan
 1. Keep this as separate incubation plan until behavior is stable in QA.

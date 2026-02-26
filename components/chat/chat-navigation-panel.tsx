@@ -529,6 +529,10 @@ function ChatNavigationPanelContent({
     suspendFocusLatch,
     incrementFocusLatchTurn,
     clearFocusLatch,
+    // Pending scope-typo clarifier for one-turn replay (per scope-cues-addendum-plan.md §typoScopeCueGate)
+    pendingScopeTypoClarifier,
+    setPendingScopeTypoClarifier,
+    clearPendingScopeTypoClarifier,
     // Selection continuity (Plan 20)
     selectionContinuity,
     updateSelectionContinuity,
@@ -1525,6 +1529,10 @@ function ChatNavigationPanelContent({
         suspendFocusLatch,
         incrementFocusLatchTurn,
         clearFocusLatch,
+        // Pending scope-typo clarifier for one-turn replay (per scope-cues-addendum-plan.md §typoScopeCueGate)
+        pendingScopeTypoClarifier,
+        setPendingScopeTypoClarifier,
+        clearPendingScopeTypoClarifier,
         // Selection continuity (Plan 20)
         selectionContinuity,
         updateSelectionContinuity,

@@ -21,10 +21,12 @@ import type {
   FocusLatchState,
   WidgetSelectionContext,
   ScopeCueRecoveryMemory,
+  PendingScopeTypoClarifier,
 } from '@/lib/chat/chat-navigation-context'
 import type { VisibleWidget } from '@/lib/chat/panel-command-matcher'
 import type { ExecutionMeta } from '@/lib/chat/action-trace'
 import type { NeededContextType } from '@/lib/chat/clarification-llm-fallback'
+import type { ScopeCueResult } from '@/lib/chat/input-classifiers'
 
 // =============================================================================
 // Preferred Candidate Hint (strict-exact policy)
@@ -131,6 +133,9 @@ export interface FollowUpHandlerContext extends RoutingHandlerContext {
 // Clarification Intercept Types
 // =============================================================================
 
+/** How the widget target was resolved — stable enum for deterministic dispatcher logic */
+export type WidgetScopeSource = 'active' | 'named' | 'latch'
+
 /**
  * Result from clarification intercept handler
  */
@@ -141,6 +146,20 @@ export interface ClarificationInterceptResult extends HandlerResult {
   isNewQuestionOrCommandDetected: boolean
   /** Dev-only: routing provenance hint for debug overlay (undefined = deterministic) */
   _devProvenanceHint?: ChatProvenance
+  /** Widget scope-cue signal: dispatcher should scope Tier 4.5 to this widget */
+  widgetScopeCueSignal?: {
+    strippedInput: string              // Input with scope-cue text removed
+    resolvedWidgetId: string | null    // null = named cue (dispatcher resolves from openWidgets)
+    namedWidgetHint: string | null     // e.g., "links panel d" for named cues
+    cueText: string
+    scopeSource: WidgetScopeSource     // 'active' | 'named' | 'latch'
+  }
+  /** Replay signal from scope-typo confirmation resolver (per scope-cues-addendum-plan.md §typoScopeCueGate) */
+  replaySignal?: {
+    replayInput: string
+    confirmedScope: ScopeCueResult
+    isReplay: true  // guards against recursive replay loops
+  }
 }
 
 export interface ClarificationInterceptContext {
@@ -202,6 +221,19 @@ export interface ClarificationInterceptContext {
   activeSnapshotWidgetId: string | null
   scopeCueRecoveryMemory: ScopeCueRecoveryMemory | null
   clearScopeCueRecoveryMemory: () => void
+
+  // Pending scope-typo clarifier for one-turn replay (per scope-cues-addendum-plan.md §typoScopeCueGate)
+  pendingScopeTypoClarifier: PendingScopeTypoClarifier | null
+  setPendingScopeTypoClarifier: (state: PendingScopeTypoClarifier | null) => void
+  clearPendingScopeTypoClarifier: () => void
+
+  /** Replay depth guard: 0 = original input, 1 = replayed. Never recurse beyond 1. */
+  _replayDepth?: 0 | 1
+
+  /** Snapshot fingerprint: activeSnapshotWidgetId + sorted open widget IDs (computed by dispatcher) */
+  snapshotFingerprint: string
+  /** Deterministic turn counter (computed by dispatcher from message count) */
+  currentTurnCount: number
 
   // Selection continuity (Plan 20 — per Plan 19 canonical contract)
   selectionContinuity: SelectionContinuityState

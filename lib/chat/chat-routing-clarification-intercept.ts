@@ -19,6 +19,7 @@ import {
   hasFuzzyMatch,
   hasQuestionIntent,
   isPoliteImperativeRequest,
+  stripLeadingAffirmation,
 } from '@/lib/chat/query-patterns'
 import { isBareNounQuery } from '@/lib/chat/doc-routing'
 import type { ChatMessage, SelectionOption } from '@/lib/chat'
@@ -65,7 +66,7 @@ import {
   shouldCallLLMFallback,
   callClarificationLLMClient,
 } from '@/lib/chat/clarification-llm-fallback'
-import { isExplicitCommand, isSelectionOnly, resolveScopeCue, canonicalizeCommandInput, isStrictExactMatch, evaluateDeterministicDecision, isVerifyOpenQuestion, findPoliteWrapperExactMatch, isStrictExactMode } from '@/lib/chat/input-classifiers'
+import { isExplicitCommand, isSelectionOnly, resolveScopeCue, canonicalizeCommandInput, isStrictExactMatch, evaluateDeterministicDecision, isVerifyOpenQuestion, findPoliteWrapperExactMatch, isStrictExactMode, type ScopeCueResult } from '@/lib/chat/input-classifiers'
 import { isSelectionLike } from '@/lib/chat/grounding-set'
 import {
   reconstructSnapshotData,
@@ -203,6 +204,72 @@ export async function handleClarificationIntercept(
   })
   if (preClarificationResult) return preClarificationResult
 
+  // =========================================================================
+  // Scope-Typo Replay Resolver (per scope-cues-addendum-plan.md §typoScopeCueGate)
+  // MUST run before ordinal binding and scope-cue resolution to prevent
+  // "yes" from being captured as a query or ordinal.
+  // =========================================================================
+  if (ctx.pendingScopeTypoClarifier) {
+    const pending = ctx.pendingScopeTypoClarifier
+
+    // 1. Strict one-turn TTL: only accept on the IMMEDIATE next turn
+    if (ctx.currentTurnCount !== pending.createdAtTurnCount + 1) {
+      ctx.clearPendingScopeTypoClarifier()
+      void debugLog({ component: 'ChatNavigation', action: 'scope_cue_typo_gate_expired', metadata: { currentTurn: ctx.currentTurnCount, createdTurn: pending.createdAtTurnCount } })
+      // Fall through to normal routing
+    }
+    // 2. Drift check — fingerprint must match exactly
+    else if (ctx.snapshotFingerprint !== pending.snapshotFingerprint) {
+      ctx.clearPendingScopeTypoClarifier()
+      void debugLog({ component: 'ChatNavigation', action: 'scope_cue_typo_gate_drift', metadata: { current: ctx.snapshotFingerprint, expected: pending.snapshotFingerprint } })
+      // Fall through to normal routing
+    }
+    // 3. Check for new unrelated command (e.g., "open panel d" — clearly not a confirmation)
+    else if (isNewQuestionOrCommandDetected && !stripLeadingAffirmation(trimmedInput).affirmed) {
+      ctx.clearPendingScopeTypoClarifier()
+      void debugLog({ component: 'ChatNavigation', action: 'scope_cue_typo_gate_unrelated', metadata: { input: trimmedInput } })
+      // Fall through to normal routing
+    }
+    else {
+      // 4. Strip leading affirmation
+      const { affirmed, remainder } = stripLeadingAffirmation(trimmedInput)
+
+      // 5. Check if remainder contains an exact scope token
+      const remainderScopeCue: ScopeCueResult = resolveScopeCue(affirmed ? remainder : trimmedInput)
+
+      if (remainderScopeCue.scope !== 'none' && remainderScopeCue.confidence === 'high') {
+        // User confirmed with exact scope: "yes from active widget"
+        const replayInput = `${pending.originalInputWithoutScopeCue} ${remainderScopeCue.cueText}`
+        ctx.clearPendingScopeTypoClarifier()
+        void debugLog({ component: 'ChatNavigation', action: 'scope_cue_typo_gate_replay', metadata: { replayInput, confirmedScope: remainderScopeCue.scope, originalInput: pending.originalInputWithoutScopeCue } })
+        return {
+          handled: false,
+          clarificationCleared: true,
+          isNewQuestionOrCommandDetected: true,
+          replaySignal: { replayInput, confirmedScope: remainderScopeCue, isReplay: true },
+        }
+      }
+
+      if (affirmed && !remainder) {
+        // Pure "yes" — no scope specified. Ambiguous. Clarify again.
+        ctx.clearPendingScopeTypoClarifier()
+        void debugLog({ component: 'ChatNavigation', action: 'scope_cue_typo_gate_ambiguous_yes', metadata: { input: trimmedInput } })
+        addMessage({
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: 'Which scope did you mean? Try "from active widget" or "from chat".',
+          timestamp: new Date(),
+          isError: false,
+        })
+        setIsLoading(false)
+        return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+      }
+
+      // Not a recognizable confirmation — clear and fall through
+      ctx.clearPendingScopeTypoClarifier()
+      void debugLog({ component: 'ChatNavigation', action: 'scope_cue_typo_gate_non_confirmation', metadata: { input: trimmedInput, affirmed, remainder } })
+    }
+  }
 
   // Check if we should enter clarification mode
   const hasClarificationContext = lastClarification?.nextAction ||
@@ -229,7 +296,7 @@ export async function handleClarificationIntercept(
   // widget clarifier is active (e.g., "open panel d from chat" after a widget
   // LLM clarification created widgetSelectionContext for different items).
   // ==========================================================================
-  if (widgetSelectionContext !== null && scopeCue.scope !== 'chat') {
+  if (widgetSelectionContext !== null && scopeCue.scope !== 'chat' && scopeCue.scope !== 'widget' && !scopeCue.hasConflict) {
     void debugLog({
       component: 'ChatNavigation',
       action: 'clarification_bypass_widget_context',
@@ -260,6 +327,8 @@ export async function handleClarificationIntercept(
     scopeCue,
     isLatchActive: !!isLatchActive,
     isNewQuestionOrCommandDetected,
+    snapshotFingerprint: ctx.snapshotFingerprint,
+    currentTurnCount: ctx.currentTurnCount,
   })
   if (scopeCueResult) {
     return scopeCueResult

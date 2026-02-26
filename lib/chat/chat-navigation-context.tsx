@@ -206,6 +206,31 @@ export interface ScopeCueRecoveryMemory {
 }
 
 /**
+ * Pending scope-typo clarifier state for one-turn replay.
+ * Per scope-cues-addendum-plan.md §typoScopeCueGate:
+ *   When a low_typo scope cue fires, this state captures the original intent
+ *   so the user's follow-up confirmation can replay with the confirmed scope.
+ *   Strict one-turn TTL: only accepted on createdAtTurnCount + 1 exactly.
+ */
+export interface PendingScopeTypoClarifier {
+  /** Pre-stripped original input (scope cue removed, avoids malformed replay reconstruction) */
+  originalInputWithoutScopeCue: string
+  /** Suggested scope cue strings shown to the user */
+  suggestedScopes: string[]
+  /** Detected scope from the typo detector */
+  detectedScope: 'chat' | 'widget' | 'dashboard' | 'workspace' | 'none'
+  /** Deterministic turn counter at creation time */
+  createdAtTurnCount: number
+  /** activeSnapshotWidgetId + sorted open widget IDs — for drift detection */
+  snapshotFingerprint: string
+  /** Clarifier message ID for option-set linkage */
+  messageId: string
+}
+
+/** One-turn only (deterministic turn count) */
+export const SCOPE_TYPO_CLARIFIER_TTL = 1
+
+/**
  * Widget selection context for universal selection resolver.
  * Per universal-selection-resolver-plan.md:
  *   Stores widget options separately from chat options (pendingOptions).
@@ -506,6 +531,10 @@ interface ChatNavigationContextValue {
   suspendFocusLatch: () => void
   incrementFocusLatchTurn: () => void
   clearFocusLatch: () => void
+  // Pending scope-typo clarifier for one-turn replay (per scope-cues-addendum-plan.md §typoScopeCueGate)
+  pendingScopeTypoClarifier: PendingScopeTypoClarifier | null
+  setPendingScopeTypoClarifier: (state: PendingScopeTypoClarifier | null) => void
+  clearPendingScopeTypoClarifier: () => void
   // Selection continuity state (Plan 20 — per Plan 19 canonical contract)
   selectionContinuity: SelectionContinuityState
   updateSelectionContinuity: (updates: Partial<SelectionContinuityState>) => void
@@ -1593,6 +1622,18 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     setFocusLatchInternal(null)
   }, [isLatchEnabled])
 
+  // Pending scope-typo clarifier for one-turn replay (per scope-cues-addendum-plan.md §typoScopeCueGate)
+  const [pendingScopeTypoClarifier, setPendingScopeTypoClarifierInternal] = useState<PendingScopeTypoClarifier | null>(null)
+
+  const setPendingScopeTypoClarifier = useCallback((state: PendingScopeTypoClarifier | null) => {
+    if (!isLatchEnabled) return
+    setPendingScopeTypoClarifierInternal(state)
+  }, [isLatchEnabled])
+
+  const clearPendingScopeTypoClarifier = useCallback(() => {
+    setPendingScopeTypoClarifierInternal(null)
+  }, [])
+
   // Selection continuity state (Plan 20 — per Plan 19 canonical contract)
   const isContinuityEnabled = process.env.NEXT_PUBLIC_SELECTION_CONTINUITY_LANE_ENABLED === 'true'
   const [selectionContinuity, setSelectionContinuity] = useState<SelectionContinuityState>(EMPTY_CONTINUITY_STATE)
@@ -1720,6 +1761,10 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         suspendFocusLatch,
         incrementFocusLatchTurn,
         clearFocusLatch,
+        // Pending scope-typo clarifier for one-turn replay
+        pendingScopeTypoClarifier,
+        setPendingScopeTypoClarifier,
+        clearPendingScopeTypoClarifier,
         // Selection continuity state (Plan 20)
         selectionContinuity,
         updateSelectionContinuity,

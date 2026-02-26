@@ -12,10 +12,20 @@ import { levenshteinDistance } from './typo-suggestions'
 // Pattern Constants
 // =============================================================================
 
+/** Shared affirmation vocabulary — single source of truth for all affirmation checks */
+export const AFFIRMATION_TOKENS = [
+  'yes', 'yeah', 'yep', 'yup', 'sure', 'ok', 'okay', 'k', 'ya', 'ye', 'yea',
+  'mhm', 'uh huh', 'go ahead', 'do it', 'proceed', 'correct', 'right', 'exactly',
+  'confirm', 'confirmed',
+] as const
+
 /**
  * Affirmation patterns for yes/confirm responses.
+ * Built from AFFIRMATION_TOKENS (single source of truth).
  */
-export const AFFIRMATION_PATTERN = /^(yes|yeah|yep|yup|sure|ok|okay|k|ya|ye|yea|mhm|uh\s*huh|go ahead|do it|proceed|correct|right|exactly|confirm|confirmed)(\s+please)?$/
+export const AFFIRMATION_PATTERN = new RegExp(
+  `^(${AFFIRMATION_TOKENS.map(t => t.replace(/\s+/g, '\\s*')).join('|')})(\\s+please)?$`, 'i'
+)
 
 /**
  * Rejection patterns for no/cancel responses.
@@ -313,6 +323,45 @@ export function startsWithAnyPrefix(normalized: string, prefixes: string[]): boo
 export function isAffirmationPhrase(input: string): boolean {
   const normalized = input.toLowerCase().trim()
   return AFFIRMATION_PATTERN.test(normalized)
+}
+
+/**
+ * Strip leading affirmation token from input, preserving remainder for replay.
+ * Per scope-cues-addendum-plan.md §typoScopeCueGate:
+ *   "yes from active widget" → { affirmed: true, remainder: "from active widget" }
+ *   "yes" → { affirmed: true, remainder: "" }
+ *   "open panel d" → { affirmed: false, remainder: "open panel d" }
+ *
+ * Built from AFFIRMATION_TOKENS (single source of truth).
+ * Tokens sorted by length desc to prevent partial matches (e.g., "yeah" before "ye").
+ */
+export function stripLeadingAffirmation(input: string): { affirmed: boolean; remainder: string } {
+  const normalized = input.trim()
+
+  // Sort tokens by length desc so longer tokens match first ("yeah" before "ye", "confirmed" before "confirm")
+  const sortedTokens = [...AFFIRMATION_TOKENS]
+    .sort((a, b) => b.length - a.length)
+    .map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'))
+
+  // Leading affirmation followed by word boundary, optional "please", then separator + remainder
+  const leadingPattern = new RegExp(
+    `^(${sortedTokens.join('|')})\\b(\\s+please)?[\\s,]+(.+)$`, 'i'
+  )
+  const match = normalized.match(leadingPattern)
+  if (match && match[3]?.trim()) {
+    // Guard: if remainder is just "please", treat as pure affirmation (regex backtrack artifact)
+    if (match[3].trim().toLowerCase() === 'please') {
+      return { affirmed: true, remainder: '' }
+    }
+    return { affirmed: true, remainder: match[3].trim() }
+  }
+
+  // Pure affirmation (no remainder)
+  if (isAffirmationPhrase(normalized)) {
+    return { affirmed: true, remainder: '' }
+  }
+
+  return { affirmed: false, remainder: normalized }
 }
 
 /**

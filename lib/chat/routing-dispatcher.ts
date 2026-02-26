@@ -38,8 +38,8 @@ import type { ChatMessage, SelectionOption, ViewPanelContent } from '@/lib/chat'
 import type { UIContext } from '@/lib/chat/intent-prompt'
 import type { LastClarificationState } from '@/lib/chat/chat-navigation-context'
 import type { DocRetrievalState } from '@/lib/docs/doc-retrieval-state'
-// matchVisiblePanelCommand import removed — Tier 4.5 command-panel skip deleted.
-// Tier 2c in chat-routing.ts still imports and uses it directly.
+// matchVisiblePanelCommand re-imported for widget scope-cue signal resolution (Stage 4).
+import { matchVisiblePanelCommand } from '@/lib/chat/panel-command-matcher'
 import type { RepairMemoryState, ClarificationSnapshot, ClarificationOption, LastSuggestionState, SuggestionCandidate, ChatSuggestions, WidgetSelectionContext, ChatProvenance } from '@/lib/chat/chat-navigation-context'
 import { WIDGET_SELECTION_TTL, SOFT_ACTIVE_TURN_LIMIT } from '@/lib/chat/chat-navigation-context'
 import type {
@@ -115,6 +115,16 @@ function resolveWidgetItemFromSnapshots(
     }
   }
   return null
+}
+
+/**
+ * Compute a deterministic fingerprint for snapshot drift detection.
+ * Used by typoScopeCueGate to detect if the UI state changed between
+ * the clarifier turn and the confirmation turn.
+ */
+function computeSnapshotFingerprint(turnSnapshot: { activeSnapshotWidgetId?: string | null; openWidgets: Array<{ id: string }> }): string {
+  const widgetIds = turnSnapshot.openWidgets.map(w => w.id).sort().join(',')
+  return `${turnSnapshot.activeSnapshotWidgetId ?? 'null'}|${widgetIds}`
 }
 
 // =============================================================================
@@ -232,6 +242,14 @@ export interface RoutingDispatcherContext {
   incrementFocusLatchTurn: () => void
   clearFocusLatch: () => void
 
+  // --- Pending Scope-Typo Clarifier (per scope-cues-addendum-plan.md §typoScopeCueGate) ---
+  pendingScopeTypoClarifier: import('@/lib/chat/chat-navigation-context').PendingScopeTypoClarifier | null
+  setPendingScopeTypoClarifier: (state: import('@/lib/chat/chat-navigation-context').PendingScopeTypoClarifier | null) => void
+  clearPendingScopeTypoClarifier: () => void
+
+  /** Replay depth guard: 0 = original input, 1 = replayed. Never recurse beyond 1. */
+  _replayDepth?: 0 | 1
+
   // --- Selection Continuity (Plan 20 — per Plan 19 canonical contract) ---
   selectionContinuity: import('@/lib/chat/chat-navigation-context').SelectionContinuityState
   updateSelectionContinuity: (updates: Partial<import('@/lib/chat/chat-navigation-context').SelectionContinuityState>) => void
@@ -304,7 +322,7 @@ export type GroundingAction = NonNullable<RoutingDispatcherResult['groundingActi
 // =============================================================================
 
 // Import from shared utility (extracted to avoid circular dependency with chat-routing.ts)
-import { isExplicitCommand, isSelectionOnly, normalizeOrdinalTypos, isSemanticQuestionInput, classifyExecutionMeta, isStrictExactMatch, isVerifyOpenQuestion, evaluateDeterministicDecision, isStrictExactMode, type MatchConfidence } from '@/lib/chat/input-classifiers'
+import { isExplicitCommand, isSelectionOnly, normalizeOrdinalTypos, isSemanticQuestionInput, classifyExecutionMeta, isStrictExactMatch, isVerifyOpenQuestion, evaluateDeterministicDecision, isStrictExactMode, resolveScopeCue, type MatchConfidence } from '@/lib/chat/input-classifiers'
 // Re-export to avoid breaking existing imports from this file
 export { isExplicitCommand }
 
@@ -1089,7 +1107,12 @@ export async function dispatchRouting(
     }
   }
 
+  // Override: if scope cue is present ('chat' or 'widget'), suppress semantic lane —
+  // the user is issuing a scoped command ("can you open X from active widget"), not a question.
+  // "can you open" triggers hasQuestionIntent but the scope cue is a stronger signal.
+  const scopeCueForSemanticGuard = isLatchEnabled ? resolveScopeCue(ctx.trimmedInput) : null
   const semanticLaneDetected = isSemanticQuestion
+    && (!scopeCueForSemanticGuard || scopeCueForSemanticGuard.scope === 'none')
   if (semanticLaneDetected) {
     void debugLog({
       component: 'ChatNavigation',
@@ -1157,6 +1180,13 @@ export async function dispatchRouting(
     // Scope-cue recovery memory (explicit-only, per scope-cue-recovery-plan)
     scopeCueRecoveryMemory: ctx.scopeCueRecoveryMemory,
     clearScopeCueRecoveryMemory: ctx.clearScopeCueRecoveryMemory,
+    // Pending scope-typo clarifier for one-turn replay (per scope-cues-addendum-plan.md §typoScopeCueGate)
+    pendingScopeTypoClarifier: isLatchEnabled ? ctx.pendingScopeTypoClarifier : null,
+    setPendingScopeTypoClarifier: isLatchEnabled ? ctx.setPendingScopeTypoClarifier : () => {},
+    clearPendingScopeTypoClarifier: isLatchEnabled ? ctx.clearPendingScopeTypoClarifier : () => {},
+    // Snapshot fingerprint + turn count for typo gate drift/TTL detection
+    snapshotFingerprint: computeSnapshotFingerprint(turnSnapshot),
+    currentTurnCount: ctx.messages.filter(m => m.role === 'user').length,
     // Selection continuity (Plan 20 — per Plan 19 canonical contract)
     selectionContinuity: ctx.selectionContinuity,
     updateSelectionContinuity: ctx.updateSelectionContinuity,
@@ -1186,6 +1216,125 @@ export async function dispatchRouting(
     }
   }
 
+  // =========================================================================
+  // SCOPE-TYPO REPLAY SIGNAL — One-shot replay (per scope-cues-addendum-plan.md §typoScopeCueGate)
+  // When the confirmation resolver returns a replaySignal, re-run the intercept
+  // with the rewritten input (scope cue now exact). Full safety ladder applies.
+  // =========================================================================
+  if (clarificationResult.replaySignal && !clarificationResult.handled) {
+    const { replayInput, confirmedScope } = clarificationResult.replaySignal
+
+    // Type-safe replay depth guard: 0 = original, 1 = replayed. Never recurse beyond 1.
+    const currentReplayDepth = ctx._replayDepth ?? 0
+    if (currentReplayDepth >= 1) {
+      // Already inside a replay — do not recurse. Show safe clarifier.
+      ctx.clearPendingScopeTypoClarifier()
+      ctx.addMessage({
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: 'I couldn\'t resolve that. Please try again with the exact scope.',
+        timestamp: new Date(),
+        isError: false,
+      })
+      ctx.setIsLoading(false)
+      return { ...defaultResult, handled: true }
+    }
+
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'scope_cue_typo_gate_replay_dispatch',
+      metadata: { replayInput, confirmedScope: confirmedScope.scope, depth: currentReplayDepth },
+    })
+
+    // Re-run intercept with rewritten input. The confirmed scope cue is now 'high' confidence.
+    const replayInterceptResult = await handleClarificationIntercept({
+      ...ctx as unknown as import('./chat-routing-types').ClarificationInterceptContext,
+      trimmedInput: replayInput,
+      // Wire all the same fields as the original call
+      lastClarification: ctx.lastClarification,
+      lastSuggestion: ctx.lastSuggestion,
+      pendingOptions: ctx.pendingOptions,
+      uiContext: ctx.uiContext,
+      currentEntryId: ctx.currentEntryId,
+      addMessage: ctx.addMessage,
+      setLastClarification: ctx.setLastClarification,
+      setIsLoading: ctx.setIsLoading,
+      setPendingOptions: ctx.setPendingOptions,
+      setPendingOptionsMessageId: ctx.setPendingOptionsMessageId,
+      setPendingOptionsGraceCount: ctx.setPendingOptionsGraceCount,
+      setNotesScopeFollowUpActive: ctx.setNotesScopeFollowUpActive,
+      handleSelectOption: ctx.handleSelectOption,
+      repairMemory: ctx.repairMemory,
+      setRepairMemory: ctx.setRepairMemory,
+      incrementRepairMemoryTurn: ctx.incrementRepairMemoryTurn,
+      clearRepairMemory: ctx.clearRepairMemory,
+      clarificationSnapshot: ctx.clarificationSnapshot,
+      saveClarificationSnapshot: ctx.saveClarificationSnapshot,
+      pauseSnapshotWithReason: ctx.pauseSnapshotWithReason,
+      incrementSnapshotTurn: ctx.incrementSnapshotTurn,
+      clearClarificationSnapshot: ctx.clearClarificationSnapshot,
+      stopSuppressionCount: ctx.stopSuppressionCount,
+      setStopSuppressionCount: ctx.setStopSuppressionCount,
+      decrementStopSuppression: ctx.decrementStopSuppression,
+      saveLastOptionsShown: ctx.saveLastOptionsShown,
+      widgetSelectionContext: ctx.widgetSelectionContext,
+      clearWidgetSelectionContext: ctx.clearWidgetSelectionContext,
+      setActiveOptionSetId: ctx.setActiveOptionSetId,
+      focusLatch: isLatchEnabled ? ctx.focusLatch : null,
+      setFocusLatch: isLatchEnabled ? ctx.setFocusLatch : () => {},
+      suspendFocusLatch: isLatchEnabled ? ctx.suspendFocusLatch : () => {},
+      clearFocusLatch: isLatchEnabled ? ctx.clearFocusLatch : () => {},
+      hasVisibleWidgetItems,
+      totalListSegmentCount: turnSnapshot.openWidgets.reduce((sum, w) => sum + w.listSegmentCount, 0),
+      lastOptionsShown: ctx.lastOptionsShown,
+      isLatchEnabled,
+      activeSnapshotWidgetId: isLatchEnabled ? (turnSnapshot.activeSnapshotWidgetId ?? null) : null,
+      scopeCueRecoveryMemory: ctx.scopeCueRecoveryMemory,
+      clearScopeCueRecoveryMemory: ctx.clearScopeCueRecoveryMemory,
+      pendingScopeTypoClarifier: null,  // Already cleared — prevent re-trigger
+      setPendingScopeTypoClarifier: ctx.setPendingScopeTypoClarifier,
+      clearPendingScopeTypoClarifier: ctx.clearPendingScopeTypoClarifier,
+      snapshotFingerprint: computeSnapshotFingerprint(turnSnapshot),
+      currentTurnCount: ctx.messages.filter(m => m.role === 'user').length,
+      selectionContinuity: ctx.selectionContinuity,
+      updateSelectionContinuity: ctx.updateSelectionContinuity,
+      resetSelectionContinuity: ctx.resetSelectionContinuity,
+      semanticLaneDetected,
+      _replayDepth: 1,  // Replay depth = 1 — prevents further recursion
+    })
+
+    // If replay intercept handled (e.g., showed clarifier), return
+    if (replayInterceptResult.handled) {
+      return {
+        handled: true,
+        handledByTier: 0,
+        tierLabel: 'scope_typo_replay',
+        clarificationCleared: replayInterceptResult.clarificationCleared,
+        isNewQuestionOrCommandDetected: replayInterceptResult.isNewQuestionOrCommandDetected,
+        classifierCalled: false,
+        classifierTimeout: false,
+        classifierError: false,
+        isFollowUp: false,
+        _devProvenanceHint: replayInterceptResult._devProvenanceHint,
+      }
+    }
+
+    // If replay produced a widgetScopeCueSignal, handle it via the normal widget signal path
+    if (replayInterceptResult.widgetScopeCueSignal) {
+      // Override the original clarificationResult with the replay result
+      // so the widget signal handler below picks it up
+      const replayWidgetSignal = replayInterceptResult.widgetScopeCueSignal
+      // Fall through to the widget scope-cue signal handler below
+      // by updating the local reference
+      Object.assign(clarificationResult, {
+        widgetScopeCueSignal: replayWidgetSignal,
+        handled: false,
+        clarificationCleared: replayInterceptResult.clarificationCleared,
+        isNewQuestionOrCommandDetected: replayInterceptResult.isNewQuestionOrCommandDetected,
+      })
+    }
+  }
+
   // When commandBypassesLabelMatching cleared state but intercept didn't handle,
   // nullify stale ctx references so downstream tiers (esp. Tier 4.5 grounding) don't
   // inherit phantom options. React state setters are async — ctx still holds old values.
@@ -1195,6 +1344,249 @@ export async function dispatchRouting(
     ctx.pendingOptions = []
     ctx.activeOptionSetId = null
     ctx.setPendingOptionsGraceCount(0)
+  }
+
+  // =========================================================================
+  // WIDGET SCOPE-CUE SIGNAL — Scoped Grounding (Rules 14-15, Tests 13-14)
+  //
+  // When the intercept detects an explicit widget scope cue ("from active widget",
+  // "from links panel d"), it returns a widgetScopeCueSignal with handled:false.
+  // The dispatcher resolves the target widget, hard-filters candidates to that
+  // widget only (Rule 15: no mixed-source candidate list), and runs Tier 4.5
+  // grounding against the scoped candidate set.
+  // =========================================================================
+  const widgetSignal = clarificationResult.widgetScopeCueSignal
+  if (isLatchEnabled && widgetSignal && !clarificationResult.handled) {
+    // A. Resolve named widget using matchVisiblePanelCommand
+    let scopedWidgetId = widgetSignal.resolvedWidgetId
+    if (!scopedWidgetId && widgetSignal.namedWidgetHint) {
+      const panelMatch = matchVisiblePanelCommand(
+        widgetSignal.namedWidgetHint,
+        turnSnapshot.openWidgets.map(w => ({ id: w.id, title: w.label, type: 'panel' }))
+      )
+      if (panelMatch.type !== 'none' && panelMatch.matches.length === 1) {
+        // Accept both exact and unique partial matches (e.g., "panel d" → "Links Panel D")
+        scopedWidgetId = panelMatch.matches[0].id
+      } else if (panelMatch.matches.length > 1) {
+        // Named cue collision — safe clarifier limited to matched panels only
+        const collisionLabels = panelMatch.matches.map(m => m.title).join(', ')
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'scope_cue_widget_named_collision',
+          metadata: { namedWidgetHint: widgetSignal.namedWidgetHint, matchCount: panelMatch.matches.length, collisionLabels },
+        })
+        ctx.addMessage({
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: `Multiple panels match "${widgetSignal.namedWidgetHint}": ${collisionLabels}. Which one did you mean?`,
+          timestamp: new Date(),
+          isError: false,
+        })
+        ctx.setIsLoading(false)
+        return {
+          ...defaultResult,
+          handled: true,
+          handledByTier: 1,
+          tierLabel: 'scope_cue_widget_named_collision',
+          clarificationCleared,
+          isNewQuestionOrCommandDetected,
+          _devProvenanceHint: 'safe_clarifier',
+        }
+      }
+    }
+
+    // B. Fallback to activeSnapshotWidgetId
+    if (!scopedWidgetId) {
+      scopedWidgetId = turnSnapshot.activeSnapshotWidgetId ?? null
+    }
+
+    // C. No widget found → scoped "not available" message
+    if (!scopedWidgetId) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'scope_cue_widget_no_target',
+        metadata: { namedWidgetHint: widgetSignal.namedWidgetHint, scopeSource: widgetSignal.scopeSource },
+      })
+      ctx.addMessage({
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: widgetSignal.namedWidgetHint
+          ? `I can't find a widget matching "${widgetSignal.namedWidgetHint}".`
+          : 'No active widget is available. Please select from the visible options.',
+        timestamp: new Date(),
+        isError: false,
+      })
+      ctx.setIsLoading(false)
+      return {
+        ...defaultResult,
+        handled: true,
+        handledByTier: 1,
+        tierLabel: 'scope_cue_widget_not_available',
+        clarificationCleared,
+        isNewQuestionOrCommandDetected,
+        _devProvenanceHint: 'safe_clarifier',
+      }
+    }
+
+    // D. Route to Tier 4.5 grounding with HARD-FILTERED candidates (Rule 15)
+    //    Build grounding context with ONLY the scoped widget's candidates.
+    //    No mixed-source candidate list ever reaches the LLM.
+    const scopedWidgets = turnSnapshot.openWidgets.filter(w => w.id === scopedWidgetId)
+
+    const scopedGroundingCtx = buildGroundingContext({
+      activeOptionSetId: null, // No chat options — widget-scoped only
+      lastClarification: null,
+      clarificationSnapshot: null,
+      sessionState: ctx.sessionState,
+      repairMemory: null,
+      openWidgets: scopedWidgets,
+      visiblePanels: undefined, // Rule 15: no mixed-source candidates — widget-scoped only
+    })
+
+    // Pass RAW stripped input to deterministic grounding (strict-exact policy:
+    // non-exact input must NOT deterministic-execute). LLM handles verb stripping.
+    const groundingInput = widgetSignal.strippedInput
+
+    const scopedGroundingResult = handleGroundingSetFallback(
+      groundingInput,
+      scopedGroundingCtx,
+      { hasBadgeLetters: turnSnapshot.hasBadgeLetters, activeWidgetId: scopedWidgetId }
+    )
+
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'scope_cue_widget_grounding_result',
+      metadata: {
+        input: groundingInput,
+        scopedWidgetId,
+        handled: scopedGroundingResult.handled,
+        resolvedBy: scopedGroundingResult.resolvedBy,
+        selectedCandidateId: scopedGroundingResult.selectedCandidate?.id,
+        needsLLM: scopedGroundingResult.needsLLM,
+        llmCandidateCount: scopedGroundingResult.llmCandidates?.length ?? 0,
+      },
+    })
+
+    // Helper: execute a resolved candidate (deterministic or LLM-selected)
+    const executeScopedCandidate = (candidate: typeof scopedGroundingResult.selectedCandidate, provenance: 'deterministic' | 'llm_executed') => {
+      if (!candidate) return null
+      const sourceWidget = scopedWidgets[0]
+
+      // Latch-on: successful widget item resolution
+      trySetWidgetLatch({ widgetId: sourceWidget?.id, trigger: 'scope_cue_widget_grounding' })
+
+      // Source continuity (Rule 16): lock scope to widget after successful resolution
+      ctx.updateSelectionContinuity({ activeScope: 'widget' })
+
+      if (candidate.type === 'widget_option') {
+        return {
+          ...defaultResult,
+          handled: true,
+          handledByTier: 4 as const,
+          tierLabel: `scope_cue_widget_grounding_${provenance === 'deterministic' ? 'execute' : 'llm_execute'}`,
+          clarificationCleared,
+          isNewQuestionOrCommandDetected,
+          _devProvenanceHint: provenance,
+          groundingAction: {
+            type: 'execute_widget_item' as const,
+            widgetId: sourceWidget?.id || '',
+            segmentId: findSourceSegmentId(sourceWidget?.id, candidate.id),
+            itemId: candidate.id,
+            itemLabel: candidate.label,
+            action: 'open',
+          },
+        }
+      }
+      return null
+    }
+
+    // Deterministic match → execute widget item
+    if (scopedGroundingResult.handled && scopedGroundingResult.selectedCandidate) {
+      const result = executeScopedCandidate(scopedGroundingResult.selectedCandidate, 'deterministic')
+      if (result) return result
+    }
+
+    // Bounded LLM fallback (Fix 5): try scoped LLM before safe clarifier
+    if (scopedGroundingResult.needsLLM
+        && scopedGroundingResult.llmCandidates
+        && scopedGroundingResult.llmCandidates.length > 0
+        && isGroundingLLMEnabled()) {
+      try {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'scope_cue_widget_llm_attempt',
+          metadata: {
+            input: groundingInput,
+            scopedWidgetId,
+            candidateCount: scopedGroundingResult.llmCandidates.length,
+          },
+        })
+
+        const llmResult = await callGroundingLLM({
+          userInput: groundingInput,
+          candidates: scopedGroundingResult.llmCandidates.map(c => ({
+            id: c.id,
+            label: c.label,
+            type: c.type,
+            actionHint: c.actionHint,
+          })),
+        })
+
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'scope_cue_widget_llm_result',
+          metadata: {
+            success: llmResult.success,
+            decision: llmResult.response?.decision,
+            choiceId: llmResult.response?.choiceId,
+            confidence: llmResult.response?.confidence,
+            latencyMs: llmResult.latencyMs,
+          },
+        })
+
+        if (llmResult.success && llmResult.response?.decision === 'select' && llmResult.response.choiceId) {
+          const selected = scopedGroundingResult.llmCandidates.find(
+            c => c.id === llmResult.response!.choiceId
+          )
+          if (selected) {
+            const result = executeScopedCandidate(selected, 'llm_executed')
+            if (result) return result
+          }
+        }
+        // LLM abstained/no-match → fall through to safe clarifier
+      } catch {
+        // LLM error → fall through to safe clarifier (safe fallback compliance)
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'scope_cue_widget_llm_error',
+          metadata: { scopedWidgetId, input: groundingInput },
+        })
+      }
+    }
+
+    // No match (deterministic + LLM both missed) → scoped safe clarifier
+    // Rule 15: do not silently widen scope
+    // Source continuity (Rule 16): lock scope to widget even on miss
+    ctx.updateSelectionContinuity({ activeScope: 'widget' })
+
+    const scopedWidgetLabel = scopedWidgets[0]?.label || 'the widget'
+    ctx.addMessage({
+      id: `assistant-${Date.now()}`,
+      role: 'assistant',
+      content: `I couldn't find "${groundingInput}" in ${scopedWidgetLabel}. Could you try a different selection?`,
+      timestamp: new Date(),
+      isError: false,
+    })
+    ctx.setIsLoading(false)
+    return {
+      ...defaultResult,
+      handled: true,
+      handledByTier: 4,
+      tierLabel: 'scope_cue_widget_grounding_miss',
+      clarificationCleared,
+      isNewQuestionOrCommandDetected,
+      _devProvenanceHint: 'safe_clarifier',
+    }
   }
 
   // =========================================================================
