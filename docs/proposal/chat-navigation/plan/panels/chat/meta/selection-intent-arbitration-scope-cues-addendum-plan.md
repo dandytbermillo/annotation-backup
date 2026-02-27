@@ -10,8 +10,11 @@
 Implemented behind `NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1`:
 - Expanded scope cues for active/current widget/panel variants (including plural forms).
 - Added `low_typo` scope confidence and a typo scope-cue safe-clarifier gate (never executes directly).
+- Added `scope_uncertain` confidence as a last-resort scope-trigger safety net (clarifier-only hard stop).
 - Added pending scope-typo clarifier state with one-turn TTL + snapshot drift checks.
 - Added one-turn replay flow for explicit confirmations (for example: `yes from active widget`) using stripped original input + confirmed scope cue.
+- Updated replay resolver ordering so high-confidence scope confirmation is checked before unrelated-command clearing.
+- Added bare scope confirmation replay support (for example: `from active widget` without `yes`).
 - Added affirmation stripping helper (`stripLeadingAffirmation`) from shared affirmation vocabulary.
 
 ## Implementation reports
@@ -100,7 +103,7 @@ When scope cues are missed, routing can apply latch/default selection incorrectl
 Classifier output:
 - `scope = 'chat' | 'widget' | 'dashboard' | 'workspace' | 'none'`
 - `cueText: string | null`
-- `confidence: 'high' | 'low_typo' | 'none'`
+- `confidence: 'high' | 'low_typo' | 'scope_uncertain' | 'none'`
 - `namedWidgetHint?: string`
 - `hasConflict?: boolean`
 
@@ -132,7 +135,7 @@ Deterministic cue families:
   - Example: `from links panel d`
 
 ## Typo scope-cue gate and one-turn replay contract (implemented)
-`low_typo` scope cues are advisory only and clarifier-only.
+`low_typo` and `scope_uncertain` scope cues are advisory only and clarifier-only.
 
 Required implemented behavior:
 1. Save pending typo clarifier state with:
@@ -142,8 +145,14 @@ Required implemented behavior:
 2. Enforce strict one-turn TTL (`createdAtTurnCount + 1` only).
 3. Enforce snapshot drift check before replay.
 4. Strip leading affirmation tokens before scope confirmation parse.
-5. Replay only as rewritten input (`originalInputWithoutScopeCue + confirmedScopeCue`) through the normal safety ladder.
-6. On expired/drifted/ambiguous/unrelated follow-up, clear pending state and use safe clarifier/fallthrough (no unsafe execute).
+5. Evaluate high-confidence scope confirmation before unrelated-command clearing.
+   - Must support both `yes from active widget` and bare `from active widget`.
+6. Replay only as rewritten input (`originalInputWithoutScopeCue + confirmedScopeCue`) through the normal safety ladder.
+7. On expired/drifted/ambiguous/unrelated follow-up, clear pending state and use safe clarifier/fallthrough (no unsafe execute).
+
+Expected standalone behavior:
+- Bare scope-only input without pending typo state (for example: `from active widget`) is not executable by itself.
+- The system should ask for target content (for example: `What would you like to find in the widget?`).
 
 ## Implementation steps
 
@@ -240,6 +249,8 @@ Add logs:
 15. `from this widget` resolves against latch first, then active snapshot fallback.
 16. Conflicting cues (`from chat` + widget cue) return source clarifier; no execute.
 17. Scoped command phrased as a question (`can you open ... from active widget`) does not enter semantic lane.
+18. After typo clarifier, bare scope confirmation (`from active widget` / `from active panel`) replays original intent in one turn.
+19. `scope_uncertain` is a hard stop: no grounding-set fallback or scoped candidate arbitration in the same turn.
 
 ## Dispatcher-level integration checks (must)
 Add dispatcher-level tests that call `dispatchRouting()` with real routing flow and mocked externals:

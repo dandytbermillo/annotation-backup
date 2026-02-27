@@ -107,7 +107,7 @@ export async function handleScopeCuePhase(
   // Typo-detected scope cues are strictly advisory — never executable.
   // Always show actionable safe clarifier with common scope suggestions.
   // ============================================================================
-  if (scopeCue.confidence === 'low_typo') {
+  if (scopeCue.confidence === 'low_typo' || scopeCue.confidence === 'scope_uncertain') {
     // Build actionable suggestions based on detected scope
     const suggestions: string[] = []
     if (scopeCue.scope === 'widget') suggestions.push('"from active widget"', '"from active panel"')

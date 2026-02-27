@@ -224,34 +224,31 @@ export async function handleClarificationIntercept(
       void debugLog({ component: 'ChatNavigation', action: 'scope_cue_typo_gate_drift', metadata: { current: ctx.snapshotFingerprint, expected: pending.snapshotFingerprint } })
       // Fall through to normal routing
     }
-    // 3. Check for new unrelated command (e.g., "open panel d" — clearly not a confirmation)
-    else if (isNewQuestionOrCommandDetected && !stripLeadingAffirmation(trimmedInput).affirmed) {
-      ctx.clearPendingScopeTypoClarifier()
-      void debugLog({ component: 'ChatNavigation', action: 'scope_cue_typo_gate_unrelated', metadata: { input: trimmedInput } })
-      // Fall through to normal routing
-    }
+    // 3. Scope-based confirmation (compute once, check before unrelated-command guard)
+    //    Handles both "yes from active widget" AND bare "from active widget".
+    //    Must run BEFORE the unrelated-command guard, because "from active widget"
+    //    can look like a new command to isFuzzyMatchNewIntent but is clearly a
+    //    scope confirmation when pendingScopeTypoClarifier is active.
     else {
-      // 4. Strip leading affirmation
       const { affirmed, remainder } = stripLeadingAffirmation(trimmedInput)
+      const candidate = affirmed ? remainder : trimmedInput
+      const candidateScope: ScopeCueResult = resolveScopeCue(candidate)
 
-      // 5. Check if remainder contains an exact scope token
-      const remainderScopeCue: ScopeCueResult = resolveScopeCue(affirmed ? remainder : trimmedInput)
-
-      if (remainderScopeCue.scope !== 'none' && remainderScopeCue.confidence === 'high') {
-        // User confirmed with exact scope: "yes from active widget"
-        const replayInput = `${pending.originalInputWithoutScopeCue} ${remainderScopeCue.cueText}`
+      // 3a. High-confidence scope match → replay original intent with confirmed scope
+      if (candidateScope.scope !== 'none' && candidateScope.confidence === 'high') {
+        const replayInput = `${pending.originalInputWithoutScopeCue} ${candidateScope.cueText}`
         ctx.clearPendingScopeTypoClarifier()
-        void debugLog({ component: 'ChatNavigation', action: 'scope_cue_typo_gate_replay', metadata: { replayInput, confirmedScope: remainderScopeCue.scope, originalInput: pending.originalInputWithoutScopeCue } })
+        void debugLog({ component: 'ChatNavigation', action: 'scope_cue_typo_gate_replay', metadata: { replayInput, confirmedScope: candidateScope.scope, originalInput: pending.originalInputWithoutScopeCue, affirmed } })
         return {
           handled: false,
           clarificationCleared: true,
           isNewQuestionOrCommandDetected: true,
-          replaySignal: { replayInput, confirmedScope: remainderScopeCue, isReplay: true },
+          replaySignal: { replayInput, confirmedScope: candidateScope, isReplay: true },
         }
       }
 
+      // 3b. Pure affirmation without scope ("yes", "yes please") → ambiguous, ask again
       if (affirmed && !remainder) {
-        // Pure "yes" — no scope specified. Ambiguous. Clarify again.
         ctx.clearPendingScopeTypoClarifier()
         void debugLog({ component: 'ChatNavigation', action: 'scope_cue_typo_gate_ambiguous_yes', metadata: { input: trimmedInput } })
         addMessage({
@@ -265,9 +262,16 @@ export async function handleClarificationIntercept(
         return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
       }
 
-      // Not a recognizable confirmation — clear and fall through
-      ctx.clearPendingScopeTypoClarifier()
-      void debugLog({ component: 'ChatNavigation', action: 'scope_cue_typo_gate_non_confirmation', metadata: { input: trimmedInput, affirmed, remainder } })
+      // 3c. Unrelated command (no scope match, not affirmed) → clear and fall through
+      if (isNewQuestionOrCommandDetected && !affirmed) {
+        ctx.clearPendingScopeTypoClarifier()
+        void debugLog({ component: 'ChatNavigation', action: 'scope_cue_typo_gate_unrelated', metadata: { input: trimmedInput } })
+        // Fall through to normal routing
+      } else {
+        // Not a recognizable confirmation — clear and fall through
+        ctx.clearPendingScopeTypoClarifier()
+        void debugLog({ component: 'ChatNavigation', action: 'scope_cue_typo_gate_non_confirmation', metadata: { input: trimmedInput, affirmed, remainder } })
+      }
     }
   }
 

@@ -13,7 +13,10 @@
 This incubation plan remains normative/planning-oriented, but key addendum items are implemented in runtime:
 - Widget scope cue expansion (active/current variants, including plural forms).
 - Typo scope-cue safety path (`low_typo`) with clarifier-only behavior.
+- Last-resort unresolved scope-trigger safety path (`scope_uncertain`) with clarifier-only hard stop.
 - One-turn pending typo-clarifier replay with TTL + snapshot drift checks.
+- Replay resolver reorder: high-confidence scope confirmation is evaluated before unrelated-command clearing.
+- Bare scope confirmation is supported after typo clarifier (for example: `from active widget` without `yes`).
 
 Primary implementation source:
 - `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-intent-arbitration-scope-cues-addendum-plan.md`
@@ -187,6 +190,18 @@ If focused-widget resolution fails:
 17. Semantic-lane suppression under explicit scope cue
 - If semantic-question heuristics fire but explicit scope cue is present (`chat` or `widget`), suppress semantic-lane bypass and keep scope-cue arbitration active.
 - Scope cue is a stronger routing signal than generic question phrasing (for example: `can you open ... from active widget`).
+
+18. Scope-uncertain hard stop
+- If scope cue is unresolved but scope-trigger-like (`scope_uncertain`), do not continue into grounding or candidate arbitration in the same turn.
+- Return safe clarifier only.
+
+19. Typo-clarifier replay confirmation ordering
+- In pending typo-clarifier flow, evaluate scope confirmation before unrelated-command clearing.
+- Accept both affirmed (`yes from active widget`) and bare (`from active widget`) confirmations.
+
+20. Standalone scope-only input behavior
+- Scope-only input without a pending typo clarification state (for example: `from active widget`) must not execute directly.
+- Ask for target content instead.
 
 ## Input Classification Gate
 ### Selection-like input
