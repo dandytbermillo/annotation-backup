@@ -1319,15 +1319,15 @@ export async function dispatchRouting(
       }
     }
 
-    // If replay produced a widgetScopeCueSignal, handle it via the normal widget signal path
-    if (replayInterceptResult.widgetScopeCueSignal) {
+    // If replay produced a scopeCueSignal, handle it via the normal scope signal path
+    if (replayInterceptResult.scopeCueSignal) {
       // Override the original clarificationResult with the replay result
-      // so the widget signal handler below picks it up
-      const replayWidgetSignal = replayInterceptResult.widgetScopeCueSignal
-      // Fall through to the widget scope-cue signal handler below
+      // so the scope signal handler below picks it up
+      const replayScopeSignal = replayInterceptResult.scopeCueSignal
+      // Fall through to the scope-cue signal handler below
       // by updating the local reference
       Object.assign(clarificationResult, {
-        widgetScopeCueSignal: replayWidgetSignal,
+        scopeCueSignal: replayScopeSignal,
         handled: false,
         clarificationCleared: replayInterceptResult.clarificationCleared,
         isNewQuestionOrCommandDetected: replayInterceptResult.isNewQuestionOrCommandDetected,
@@ -1347,21 +1347,25 @@ export async function dispatchRouting(
   }
 
   // =========================================================================
-  // WIDGET SCOPE-CUE SIGNAL — Scoped Grounding (Rules 14-15, Tests 13-14)
+  // SCOPE-CUE SIGNAL — Scoped Resolution (Rules 14-15, Tests 13-14)
   //
-  // When the intercept detects an explicit widget scope cue ("from active widget",
-  // "from links panel d"), it returns a widgetScopeCueSignal with handled:false.
-  // The dispatcher resolves the target widget, hard-filters candidates to that
-  // widget only (Rule 15: no mixed-source candidate list), and runs Tier 4.5
-  // grounding against the scoped candidate set.
+  // When the intercept detects an explicit scope cue ("from active widget",
+  // "from links panel d", "from dashboard"), it returns a scopeCueSignal with
+  // handled:false. The dispatcher resolves against the declared scope only —
+  // explicit cue → scoped candidates only, no mixed pools.
   // =========================================================================
-  const widgetSignal = clarificationResult.widgetScopeCueSignal
-  if (isLatchEnabled && widgetSignal && !clarificationResult.handled) {
+  const scopeSignal = clarificationResult.scopeCueSignal
+  if (isLatchEnabled && scopeSignal && !clarificationResult.handled) {
+
+    // -----------------------------------------------------------------------
+    // WIDGET SCOPE — scoped grounding against widget items only
+    // -----------------------------------------------------------------------
+    if (scopeSignal.scope === 'widget') {
     // A. Resolve named widget using matchVisiblePanelCommand
-    let scopedWidgetId = widgetSignal.resolvedWidgetId
-    if (!scopedWidgetId && widgetSignal.namedWidgetHint) {
+    let scopedWidgetId = scopeSignal.resolvedWidgetId
+    if (!scopedWidgetId && scopeSignal.namedWidgetHint) {
       const panelMatch = matchVisiblePanelCommand(
-        widgetSignal.namedWidgetHint,
+        scopeSignal.namedWidgetHint,
         turnSnapshot.openWidgets.map(w => ({ id: w.id, title: w.label, type: 'panel' }))
       )
       if (panelMatch.type !== 'none' && panelMatch.matches.length === 1) {
@@ -1373,12 +1377,12 @@ export async function dispatchRouting(
         void debugLog({
           component: 'ChatNavigation',
           action: 'scope_cue_widget_named_collision',
-          metadata: { namedWidgetHint: widgetSignal.namedWidgetHint, matchCount: panelMatch.matches.length, collisionLabels },
+          metadata: { namedWidgetHint: scopeSignal.namedWidgetHint, matchCount: panelMatch.matches.length, collisionLabels },
         })
         ctx.addMessage({
           id: `assistant-${Date.now()}`,
           role: 'assistant',
-          content: `Multiple panels match "${widgetSignal.namedWidgetHint}": ${collisionLabels}. Which one did you mean?`,
+          content: `Multiple panels match "${scopeSignal.namedWidgetHint}": ${collisionLabels}. Which one did you mean?`,
           timestamp: new Date(),
           isError: false,
         })
@@ -1405,13 +1409,13 @@ export async function dispatchRouting(
       void debugLog({
         component: 'ChatNavigation',
         action: 'scope_cue_widget_no_target',
-        metadata: { namedWidgetHint: widgetSignal.namedWidgetHint, scopeSource: widgetSignal.scopeSource },
+        metadata: { namedWidgetHint: scopeSignal.namedWidgetHint, scopeSource: scopeSignal.scopeSource },
       })
       ctx.addMessage({
         id: `assistant-${Date.now()}`,
         role: 'assistant',
-        content: widgetSignal.namedWidgetHint
-          ? `I can't find a widget matching "${widgetSignal.namedWidgetHint}".`
+        content: scopeSignal.namedWidgetHint
+          ? `I can't find a widget matching "${scopeSignal.namedWidgetHint}".`
           : 'No active widget is available. Please select from the visible options.',
         timestamp: new Date(),
         isError: false,
@@ -1445,7 +1449,7 @@ export async function dispatchRouting(
 
     // Pass RAW stripped input to deterministic grounding (strict-exact policy:
     // non-exact input must NOT deterministic-execute). LLM handles verb stripping.
-    const groundingInput = widgetSignal.strippedInput
+    const groundingInput = scopeSignal.strippedInput
 
     const scopedGroundingResult = handleGroundingSetFallback(
       groundingInput,
@@ -1506,6 +1510,9 @@ export async function dispatchRouting(
       if (result) return result
     }
 
+    // Track why we fell through to clarifier (provenance + observability)
+    let widgetScopeLlmFallbackReason: 'llm_disabled' | 'need_more_info' | 'llm_abstain' | 'llm_error' = 'llm_disabled'
+
     // Bounded LLM fallback (Fix 5): try scoped LLM before safe clarifier
     if (scopedGroundingResult.needsLLM
         && scopedGroundingResult.llmCandidates
@@ -1553,9 +1560,15 @@ export async function dispatchRouting(
             if (result) return result
           }
         }
-        // LLM abstained/no-match → fall through to safe clarifier
+        // LLM returned but didn't select → track reason for clarifier
+        if (llmResult.success && llmResult.response?.decision === 'need_more_info') {
+          widgetScopeLlmFallbackReason = 'need_more_info'
+        } else {
+          widgetScopeLlmFallbackReason = 'llm_abstain'
+        }
       } catch {
         // LLM error → fall through to safe clarifier (safe fallback compliance)
+        widgetScopeLlmFallbackReason = 'llm_error'
         void debugLog({
           component: 'ChatNavigation',
           action: 'scope_cue_widget_llm_error',
@@ -1569,6 +1582,53 @@ export async function dispatchRouting(
     // Source continuity (Rule 16): lock scope to widget even on miss
     ctx.updateSelectionContinuity({ activeScope: 'widget' })
 
+    // If candidates exist, show grounded clarifier with disambiguation options
+    // Covers: LLM need_more_info, LLM disabled, LLM error, LLM abstain
+    if (scopedGroundingResult.llmCandidates && scopedGroundingResult.llmCandidates.length > 0) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'scope_cue_widget_grounding_clarifier',
+        metadata: {
+          input: groundingInput,
+          scopedWidgetId,
+          candidateCount: scopedGroundingResult.llmCandidates.length,
+          reason: widgetScopeLlmFallbackReason,
+        },
+      })
+
+      const clarifierMsgId = `assistant-${Date.now()}`
+      const boundOptions = bindGroundingClarifierOptions(ctx, scopedGroundingResult.llmCandidates, clarifierMsgId)
+      ctx.addMessage({
+        id: clarifierMsgId,
+        role: 'assistant',
+        content: buildGroundedClarifier(scopedGroundingResult.llmCandidates),
+        timestamp: new Date(),
+        isError: false,
+        options: boundOptions.map(opt => ({
+          type: opt.type as SelectionOption['type'],
+          id: opt.id,
+          label: opt.label,
+          sublabel: opt.sublabel,
+          data: opt.data as SelectionOption['data'],
+        })),
+      })
+      ctx.setIsLoading(false)
+      return {
+        ...defaultResult,
+        handled: true,
+        handledByTier: 4,
+        tierLabel: widgetScopeLlmFallbackReason === 'need_more_info'
+          ? 'scope_cue_widget_llm_need_more_info'
+          : 'scope_cue_widget_grounding_clarifier',
+        clarificationCleared,
+        isNewQuestionOrCommandDetected,
+        _devProvenanceHint: widgetScopeLlmFallbackReason === 'need_more_info'
+          ? 'llm_influenced' as const
+          : 'safe_clarifier',
+      }
+    }
+
+    // True miss — no candidates at all → generic clarifier
     const scopedWidgetLabel = scopedWidgets[0]?.label || 'the widget'
     ctx.addMessage({
       id: `assistant-${Date.now()}`,
@@ -1587,7 +1647,226 @@ export async function dispatchRouting(
       isNewQuestionOrCommandDetected,
       _devProvenanceHint: 'safe_clarifier',
     }
-  }
+    } // end widget scope
+
+    // -----------------------------------------------------------------------
+    // DASHBOARD SCOPE — scoped resolution against dashboard panels only
+    // Explicit cue → scoped candidates only, no mixed pools.
+    // All stages return handled: true — never falls through to non-dashboard tiers.
+    // -----------------------------------------------------------------------
+    else if (scopeSignal.scope === 'dashboard') {
+      // Normalize dashboard widgets to canonical shape once before matching
+      const rawDashboardWidgets = ctx.uiContext?.dashboard?.visibleWidgets
+      const dashboardWidgets = (rawDashboardWidgets ?? []).map(w => ({
+        id: w.id,
+        title: w.title ?? (w as Record<string, unknown>).label as string ?? w.id,
+        type: w.type ?? 'panel',
+      }))
+
+      if (!dashboardWidgets.length) {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'scope_cue_dashboard_no_panels',
+          metadata: { input: scopeSignal.strippedInput },
+        })
+        ctx.addMessage({
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: 'No panels are visible on the dashboard.',
+          timestamp: new Date(),
+          isError: false,
+        })
+        ctx.setIsLoading(false)
+        return {
+          ...defaultResult,
+          handled: true,
+          handledByTier: 1,
+          tierLabel: 'scope_cue_dashboard_no_panels',
+          clarificationCleared,
+          isNewQuestionOrCommandDetected,
+          _devProvenanceHint: 'safe_clarifier',
+        }
+      }
+
+      // Stage A: strict-exact + disambiguation via existing panel disambiguation flow
+      const panelResult = handlePanelDisambiguation({
+        trimmedInput: scopeSignal.strippedInput,
+        visibleWidgets: dashboardWidgets,
+        addMessage: ctx.addMessage,
+        setIsLoading: ctx.setIsLoading,
+        setPendingOptions: ctx.setPendingOptions,
+        setPendingOptionsMessageId: ctx.setPendingOptionsMessageId,
+        setLastClarification: ctx.setLastClarification,
+        saveLastOptionsShown: ctx.saveLastOptionsShown,
+        clearWidgetSelectionContext: ctx.clearWidgetSelectionContext,
+        clearFocusLatch: isLatchEnabled ? ctx.clearFocusLatch : undefined,
+        openPanelDrawer: ctx.openPanelDrawer,
+      })
+
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'scope_cue_dashboard_panel_result',
+        metadata: {
+          input: scopeSignal.strippedInput,
+          handled: panelResult.handled,
+          matchType: panelResult.matchType,
+          matchCount: panelResult.matchCount,
+        },
+      })
+
+      if (panelResult.handled) {
+        return {
+          ...defaultResult,
+          handled: true,
+          handledByTier: 2,
+          tierLabel: 'scope_cue_dashboard_panel',
+          clarificationCleared,
+          isNewQuestionOrCommandDetected,
+        }
+      }
+
+      // Stage B: scoped grounding — bounded LLM with dashboard panels only
+      // buildGroundingContext with openWidgets: [] — only dashboard panels in candidate set
+      const scopedGroundingCtx = buildGroundingContext({
+        activeOptionSetId: null,
+        lastClarification: null,
+        clarificationSnapshot: null,
+        sessionState: ctx.sessionState,
+        repairMemory: null,
+        openWidgets: [],                   // No widget items in dashboard scope
+        visiblePanels: dashboardWidgets,   // ONLY dashboard panels
+      })
+
+      const groundingInput = scopeSignal.strippedInput
+      const scopedGroundingResult = handleGroundingSetFallback(
+        groundingInput,
+        scopedGroundingCtx,
+        { hasBadgeLetters: turnSnapshot.hasBadgeLetters }
+      )
+
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'scope_cue_dashboard_grounding_result',
+        metadata: {
+          input: groundingInput,
+          handled: scopedGroundingResult.handled,
+          resolvedBy: scopedGroundingResult.resolvedBy,
+          selectedCandidateId: scopedGroundingResult.selectedCandidate?.id,
+          needsLLM: scopedGroundingResult.needsLLM,
+          llmCandidateCount: scopedGroundingResult.llmCandidates?.length ?? 0,
+        },
+      })
+
+      // Deterministic grounding match → enforce strict-exact before execution
+      if (scopedGroundingResult.handled && scopedGroundingResult.selectedCandidate) {
+        // SAFETY GUARD: only deterministic-execute if input is strict-exact match
+        const candidate = scopedGroundingResult.selectedCandidate
+        if (isStrictExactMatch(groundingInput, candidate.label)) {
+          // Strict-exact → deterministic open via openPanelDrawer
+          if (ctx.openPanelDrawer) {
+            ctx.openPanelDrawer(candidate.id, candidate.label)
+          }
+          return {
+            ...defaultResult,
+            handled: true,
+            handledByTier: 2,
+            tierLabel: 'scope_cue_dashboard_grounding_execute',
+            clarificationCleared,
+            isNewQuestionOrCommandDetected,
+            _devProvenanceHint: 'deterministic',
+          }
+        }
+        // Non-strict-exact → fall through to LLM path (do NOT deterministic execute)
+      }
+
+      // Bounded LLM fallback: try scoped LLM with dashboard panels only
+      if (scopedGroundingResult.needsLLM
+          && scopedGroundingResult.llmCandidates
+          && scopedGroundingResult.llmCandidates.length > 0
+          && isGroundingLLMEnabled()) {
+        try {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'scope_cue_dashboard_llm_attempt',
+            metadata: {
+              input: groundingInput,
+              candidateCount: scopedGroundingResult.llmCandidates.length,
+            },
+          })
+
+          const llmResult = await callGroundingLLM({
+            userInput: groundingInput,
+            candidates: scopedGroundingResult.llmCandidates.map(c => ({
+              id: c.id,
+              label: c.label,
+              type: c.type,
+              actionHint: c.actionHint,
+            })),
+          })
+
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'scope_cue_dashboard_llm_result',
+            metadata: {
+              success: llmResult.success,
+              decision: llmResult.response?.decision,
+              choiceId: llmResult.response?.choiceId,
+              confidence: llmResult.response?.confidence,
+              latencyMs: llmResult.latencyMs,
+            },
+          })
+
+          if (llmResult.success && llmResult.response?.decision === 'select' && llmResult.response.choiceId) {
+            const selected = scopedGroundingResult.llmCandidates.find(
+              c => c.id === llmResult.response!.choiceId
+            )
+            if (selected && ctx.openPanelDrawer) {
+              ctx.openPanelDrawer(selected.id, selected.label)
+              return {
+                ...defaultResult,
+                handled: true,
+                handledByTier: 2,
+                tierLabel: 'scope_cue_dashboard_llm_execute',
+                clarificationCleared,
+                isNewQuestionOrCommandDetected,
+                _devProvenanceHint: 'llm_executed',
+              }
+            }
+          }
+          // LLM abstained/no-match → fall through to Stage C (scoped not-found)
+        } catch {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'scope_cue_dashboard_llm_error',
+            metadata: { input: groundingInput },
+          })
+          // LLM error → fall through to Stage C (safe fallback)
+        }
+      }
+
+      // Stage C: scoped "not found" — always returns handled: true
+      // CRITICAL: never falls through to non-dashboard tiers
+      const available = dashboardWidgets.map(w => w.title).join(', ')
+      ctx.addMessage({
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: `I couldn't find that on the dashboard. Available panels: ${available}`,
+        timestamp: new Date(),
+        isError: false,
+      })
+      ctx.setIsLoading(false)
+      return {
+        ...defaultResult,
+        handled: true,
+        handledByTier: 2,
+        tierLabel: 'scope_cue_dashboard_not_found',
+        clarificationCleared,
+        isNewQuestionOrCommandDetected,
+        _devProvenanceHint: 'safe_clarifier',
+      }
+    } // end dashboard scope
+
+  } // end scope signal block
 
   // =========================================================================
   // TIER 2 — New Topic / Interrupt Commands

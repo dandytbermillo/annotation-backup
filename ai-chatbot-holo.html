@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Chatbot - Holographic Interface</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;900&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@300;400;500&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #050a18;
+    font-family: 'Inter', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* Background ambient light */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse at 30% 30%, rgba(60, 100, 180, 0.07) 0%, transparent 55%),
+      radial-gradient(ellipse at 70% 70%, rgba(30, 60, 120, 0.05) 0%, transparent 50%),
+      radial-gradient(ellipse at 50% 50%, rgba(10, 20, 50, 0.3) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  /* Subtle grid */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+      linear-gradient(rgba(20, 50, 100, 0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(20, 50, 100, 0.03) 1px, transparent 1px);
+    background-size: 25px 25px;
+    pointer-events: none;
+  }
+
+  /* ===== MAIN HOLOGRAPHIC CHAT PANEL ===== */
+  .chat-panel {
+    position: relative;
+    z-index: 1;
+    width: 420px;
+    height: 680px;
+    background: linear-gradient(
+      160deg,
+      rgba(12, 22, 50, 0.75) 0%,
+      rgba(8, 16, 42, 0.85) 40%,
+      rgba(10, 20, 48, 0.88) 100%
+    );
+    border: 1px solid rgba(50, 100, 180, 0.25);
+    border-radius: 20px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transform: perspective(1600px) rotateY(-3deg) rotateX(1deg);
+    box-shadow:
+      0 0 60px rgba(30, 70, 160, 0.1),
+      0 0 150px rgba(20, 50, 130, 0.05),
+      inset 0 0 80px rgba(15, 40, 100, 0.04),
+      0 25px 50px rgba(0, 0, 0, 0.5);
+  }
+
+  /* Top glow edge */
+  .chat-panel::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 20px; right: 20px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(90, 160, 240, 0.4), transparent);
+    z-index: 10;
+  }
+
+  /* Left glow edge */
+  .chat-panel::after {
+    content: '';
+    position: absolute;
+    top: 20px; bottom: 20px; left: 0;
+    width: 1px;
+    background: linear-gradient(180deg, transparent, rgba(90, 160, 240, 0.2), transparent);
+    z-index: 10;
+  }
+
+  /* Light sweep */
+  .light-sweep {
+    position: absolute;
+    top: -50%; left: -50%;
+    width: 200%; height: 200%;
+    background: linear-gradient(
+      135deg,
+      transparent 42%,
+      rgba(100, 160, 240, 0.025) 46%,
+      rgba(130, 180, 255, 0.04) 50%,
+      rgba(100, 160, 240, 0.025) 54%,
+      transparent 58%
+    );
+    animation: sweep 10s ease-in-out infinite;
+    pointer-events: none;
+    z-index: 50;
+  }
+
+  @keyframes sweep {
+    0%, 100% { transform: translateX(-25%) translateY(-25%); }
+    50% { transform: translateX(25%) translateY(25%); }
+  }
+
+  /* ===== HEADER ===== */
+  .chat-header {
+    padding: 18px 22px 14px;
+    border-bottom: 1px solid rgba(40, 80, 150, 0.15);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 5;
+  }
+
+  .chat-header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .header-bot-icon {
+    width: 34px;
+    height: 34px;
+    background: linear-gradient(135deg, rgba(0, 180, 180, 0.25), rgba(0, 140, 160, 0.35));
+    border: 1.5px solid rgba(0, 200, 210, 0.4);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+
+  .header-bot-icon svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .header-bot-icon::after {
+    content: '';
+    width: 8px; height: 8px;
+    background: #22d3a7;
+    border-radius: 50%;
+    position: absolute;
+    bottom: -2px; right: -2px;
+    border: 2px solid rgba(10, 20, 45, 0.9);
+    box-shadow: 0 0 6px rgba(34, 211, 167, 0.5);
+  }
+
+  .header-title {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    color: rgba(200, 220, 255, 0.85);
+  }
+
+  .header-sub {
+    font-size: 10px;
+    color: rgba(100, 160, 220, 0.4);
+    letter-spacing: 1px;
+    margin-top: 1px;
+  }
+
+  .header-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .header-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: rgba(60, 120, 200, 0.3);
+  }
+
+  .header-dot:nth-child(2) { background: rgba(60, 120, 200, 0.2); }
+  .header-dot:nth-child(3) { background: rgba(60, 120, 200, 0.15); }
+
+  /* ===== CHAT MESSAGES AREA ===== */
+  .chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    position: relative;
+    z-index: 5;
+
+    /* Custom scrollbar */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(50, 100, 180, 0.2) transparent;
+  }
+
+  .chat-messages::-webkit-scrollbar { width: 4px; }
+  .chat-messages::-webkit-scrollbar-track { background: transparent; }
+  .chat-messages::-webkit-scrollbar-thumb {
+    background: rgba(50, 100, 180, 0.25);
+    border-radius: 2px;
+  }
+
+  /* Message row */
+  .msg-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    animation: msgFadeIn 0.4s ease-out;
+  }
+
+  @keyframes msgFadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .msg-row.user {
+    flex-direction: row-reverse;
+  }
+
+  /* Bot avatar */
+  .msg-avatar {
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+    background: linear-gradient(135deg, rgba(0, 170, 170, 0.3), rgba(0, 130, 150, 0.4));
+    border: 1px solid rgba(0, 190, 200, 0.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  .msg-avatar svg {
+    width: 15px;
+    height: 15px;
+  }
+
+  .msg-avatar.user-av {
+    background: linear-gradient(135deg, rgba(60, 100, 200, 0.25), rgba(40, 80, 170, 0.35));
+    border-color: rgba(70, 120, 220, 0.3);
+  }
+
+  /* Message bubble */
+  .msg-bubble {
+    max-width: 290px;
+    padding: 12px 16px;
+    border-radius: 14px;
+    font-size: 13px;
+    line-height: 1.55;
+    position: relative;
+  }
+
+  .msg-bubble.bot {
+    background: linear-gradient(135deg, rgba(200, 215, 240, 0.92), rgba(220, 230, 248, 0.88));
+    color: #1a2540;
+    border-bottom-left-radius: 4px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+  }
+
+  .msg-bubble.user {
+    background: linear-gradient(135deg, rgba(40, 80, 160, 0.4), rgba(30, 65, 140, 0.5));
+    color: rgba(200, 220, 255, 0.9);
+    border: 1px solid rgba(50, 100, 180, 0.25);
+    border-bottom-right-radius: 4px;
+  }
+
+  /* Code/dark panel bubble */
+  .msg-bubble.bot-dark {
+    background: linear-gradient(135deg, rgba(15, 35, 70, 0.9), rgba(12, 28, 58, 0.92));
+    color: rgba(180, 210, 245, 0.85);
+    border: 1px solid rgba(40, 90, 170, 0.3);
+    border-bottom-left-radius: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    line-height: 1.7;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+  }
+
+  .msg-bubble.bot-dark .code-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(40, 80, 150, 0.2);
+    font-family: 'Inter', sans-serif;
+    font-size: 10px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: rgba(100, 160, 230, 0.5);
+  }
+
+  .code-dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: rgba(0, 200, 200, 0.5);
+  }
+
+  .code-line {
+    display: flex;
+    gap: 8px;
+    padding: 1px 0;
+  }
+
+  .code-line .ln {
+    color: rgba(80, 130, 200, 0.3);
+    min-width: 18px;
+    text-align: right;
+    user-select: none;
+  }
+
+  .code-line .kw { color: rgba(130, 170, 255, 0.8); }
+  .code-line .fn { color: rgba(100, 220, 200, 0.8); }
+  .code-line .str { color: rgba(180, 220, 130, 0.8); }
+  .code-line .cm { color: rgba(80, 120, 170, 0.4); }
+  .code-line .op { color: rgba(200, 180, 255, 0.7); }
+  .code-line .txt { color: rgba(180, 205, 240, 0.7); }
+
+  /* Timestamp */
+  .msg-time {
+    font-size: 9px;
+    color: rgba(100, 150, 210, 0.3);
+    margin-top: 4px;
+    padding-left: 40px;
+  }
+
+  .msg-row.user .msg-time {
+    text-align: right;
+    padding-left: 0;
+    padding-right: 40px;
+  }
+
+  /* Typing indicator */
+  .typing-indicator {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 0 4px;
+  }
+
+  .typing-dots {
+    display: flex;
+    gap: 4px;
+    padding: 10px 16px;
+    background: linear-gradient(135deg, rgba(200, 215, 240, 0.88), rgba(220, 230, 248, 0.84));
+    border-radius: 14px;
+    border-bottom-left-radius: 4px;
+  }
+
+  .typing-dots span {
+    width: 6px; height: 6px;
+    background: rgba(40, 70, 120, 0.4);
+    border-radius: 50%;
+    animation: typingBounce 1.4s ease-in-out infinite;
+  }
+
+  .typing-dots span:nth-child(2) { animation-delay: 0.15s; }
+  .typing-dots span:nth-child(3) { animation-delay: 0.3s; }
+
+  @keyframes typingBounce {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+    30% { transform: translateY(-5px); opacity: 0.9; }
+  }
+
+  /* ===== INPUT BAR ===== */
+  .chat-input-area {
+    padding: 14px 18px 18px;
+    border-top: 1px solid rgba(40, 80, 150, 0.12);
+    flex-shrink: 0;
+    position: relative;
+    z-index: 5;
+  }
+
+  .input-wrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: linear-gradient(135deg, rgba(15, 28, 55, 0.7), rgba(12, 24, 50, 0.8));
+    border: 1px solid rgba(45, 90, 165, 0.25);
+    border-radius: 14px;
+    padding: 4px 6px 4px 16px;
+    transition: border-color 0.3s, box-shadow 0.3s;
+  }
+
+  .input-wrap:focus-within {
+    border-color: rgba(60, 120, 210, 0.45);
+    box-shadow: 0 0 20px rgba(40, 90, 190, 0.1);
+  }
+
+  .chat-input {
+    flex: 1;
+    background: none;
+    border: none;
+    outline: none;
+    color: rgba(200, 220, 255, 0.8);
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    padding: 10px 0;
+    caret-color: rgba(80, 170, 255, 0.7);
+  }
+
+  .chat-input::placeholder {
+    color: rgba(80, 130, 190, 0.35);
+  }
+
+  .send-btn {
+    width: 38px; height: 38px;
+    border-radius: 11px;
+    background: linear-gradient(135deg, rgba(0, 170, 180, 0.35), rgba(0, 140, 160, 0.45));
+    border: 1px solid rgba(0, 200, 210, 0.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.3s;
+    flex-shrink: 0;
+  }
+
+  .send-btn:hover {
+    background: linear-gradient(135deg, rgba(0, 190, 200, 0.45), rgba(0, 160, 180, 0.55));
+    box-shadow: 0 0 15px rgba(0, 200, 210, 0.2);
+  }
+
+  .send-btn svg {
+    width: 18px; height: 18px;
+  }
+
+  /* Quick actions under input */
+  .quick-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 0 4px;
+  }
+
+  .qa-chip {
+    font-size: 10px;
+    color: rgba(100, 160, 220, 0.4);
+    background: rgba(20, 40, 75, 0.4);
+    border: 1px solid rgba(40, 80, 150, 0.15);
+    border-radius: 8px;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: all 0.3s;
+    letter-spacing: 0.5px;
+  }
+
+  .qa-chip:hover {
+    border-color: rgba(60, 120, 200, 0.35);
+    color: rgba(140, 190, 240, 0.6);
+    background: rgba(25, 50, 90, 0.5);
+  }
+
+  /* ===== DECORATIVE OVERLAYS ===== */
+  .side-glow-left {
+    position: absolute;
+    top: 0; bottom: 0; left: -80px;
+    width: 120px;
+    background: radial-gradient(ellipse at right center, rgba(40, 80, 160, 0.06) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .side-glow-right {
+    position: absolute;
+    top: 0; bottom: 0; right: -80px;
+    width: 120px;
+    background: radial-gradient(ellipse at left center, rgba(30, 60, 130, 0.04) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Blurred hand-like shape at bottom */
+  .blur-overlay-bottom {
+    position: absolute;
+    bottom: -40px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 300px;
+    height: 120px;
+    background: radial-gradient(ellipse, rgba(120, 100, 90, 0.08) 0%, transparent 70%);
+    filter: blur(20px);
+    pointer-events: none;
+    z-index: 60;
+  }
+
+  /* Edge light flare top-left */
+  .flare-tl {
+    position: absolute;
+    top: -30px;
+    left: -30px;
+    width: 160px;
+    height: 160px;
+    background: radial-gradient(circle, rgba(120, 160, 230, 0.06) 0%, transparent 60%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+</style>
+</head>
+<body>
+
+<div class="flare-tl"></div>
+
+<div class="chat-panel">
+  <div class="light-sweep"></div>
+  <div class="side-glow-left"></div>
+  <div class="side-glow-right"></div>
+
+  <!-- ===== HEADER ===== -->
+  <div class="chat-header">
+    <div class="chat-header-left">
+      <div class="header-bot-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="rgba(0,230,220,0.8)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2a4 4 0 014 4v1H8V6a4 4 0 014-4z"/>
+          <rect x="4" y="7" width="16" height="12" rx="3"/>
+          <circle cx="9" cy="13" r="1.5" fill="rgba(0,230,220,0.8)" stroke="none"/>
+          <circle cx="15" cy="13" r="1.5" fill="rgba(0,230,220,0.8)" stroke="none"/>
+        </svg>
+      </div>
+      <div>
+        <div class="header-title">AI CHATBOT</div>
+        <div class="header-sub">Online &middot; Ready</div>
+      </div>
+    </div>
+    <div class="header-actions">
+      <div class="header-dot"></div>
+      <div class="header-dot"></div>
+      <div class="header-dot"></div>
+    </div>
+  </div>
+
+  <!-- ===== MESSAGES ===== -->
+  <div class="chat-messages" id="chatMessages">
+
+    <!-- Bot message 1 -->
+    <div>
+      <div class="msg-row">
+        <div class="msg-avatar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="rgba(0,220,210,0.7)" stroke-width="2" stroke-linecap="round">
+            <rect x="4" y="7" width="16" height="12" rx="3"/>
+            <circle cx="9" cy="13" r="1.5" fill="rgba(0,220,210,0.7)" stroke="none"/>
+            <circle cx="15" cy="13" r="1.5" fill="rgba(0,220,210,0.7)" stroke="none"/>
+          </svg>
+        </div>
+        <div class="msg-bubble bot">
+          Hello! I'm your AI assistant. How can I help you today?
+        </div>
+      </div>
+      <div class="msg-time">09:41 AM</div>
+    </div>
+
+    <!-- User message 1 -->
+    <div>
+      <div class="msg-row user">
+        <div class="msg-avatar user-av">
+          <svg viewBox="0 0 24 24" fill="none" stroke="rgba(120,170,255,0.6)" stroke-width="2" stroke-linecap="round">
+            <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
+          </svg>
+        </div>
+        <div class="msg-bubble user">
+          Can you show me how to create an API endpoint in Next.js?
+        </div>
+      </div>
+      <div class="msg-time" style="text-align:right;padding-right:40px;">09:42 AM</div>
+    </div>
+
+    <!-- Bot message 2 (light) -->
+    <div>
+      <div class="msg-row">
+        <div class="msg-avatar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="rgba(0,220,210,0.7)" stroke-width="2" stroke-linecap="round">
+            <rect x="4" y="7" width="16" height="12" rx="3"/>
+            <circle cx="9" cy="13" r="1.5" fill="rgba(0,220,210,0.7)" stroke="none"/>
+            <circle cx="15" cy="13" r="1.5" fill="rgba(0,220,210,0.7)" stroke="none"/>
+          </svg>
+        </div>
+        <div class="msg-bubble bot">
+          Sure! Here's how to create a route handler in Next.js App Router:
+        </div>
+      </div>
+      <div class="msg-time">09:42 AM</div>
+    </div>
+
+    <!-- Bot message 3 (dark code panel) -->
+    <div>
+      <div class="msg-row">
+        <div class="msg-avatar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="rgba(0,220,210,0.7)" stroke-width="2" stroke-linecap="round">
+            <rect x="4" y="7" width="16" height="12" rx="3"/>
+            <circle cx="9" cy="13" r="1.5" fill="rgba(0,220,210,0.7)" stroke="none"/>
+            <circle cx="15" cy="13" r="1.5" fill="rgba(0,220,210,0.7)" stroke="none"/>
+          </svg>
+        </div>
+        <div class="msg-bubble bot-dark">
+          <div class="code-header">
+            <span class="code-dot"></span>
+            app/api/hello/route.ts
+          </div>
+          <div class="code-line"><span class="ln">1</span><span class="kw">import</span> <span class="txt">{ NextResponse }</span> <span class="kw">from</span> <span class="str">'next/server'</span></div>
+          <div class="code-line"><span class="ln">2</span></div>
+          <div class="code-line"><span class="ln">3</span><span class="kw">export async function</span> <span class="fn">GET</span><span class="txt">() {</span></div>
+          <div class="code-line"><span class="ln">4</span><span class="txt">&nbsp;&nbsp;</span><span class="kw">return</span> <span class="fn">NextResponse</span><span class="op">.</span><span class="fn">json</span><span class="txt">({</span></div>
+          <div class="code-line"><span class="ln">5</span><span class="txt">&nbsp;&nbsp;&nbsp;&nbsp;message:</span> <span class="str">'Hello World'</span></div>
+          <div class="code-line"><span class="ln">6</span><span class="txt">&nbsp;&nbsp;})</span></div>
+          <div class="code-line"><span class="ln">7</span><span class="txt">}</span></div>
+        </div>
+      </div>
+      <div class="msg-time">09:42 AM</div>
+    </div>
+
+    <!-- User message 2 -->
+    <div>
+      <div class="msg-row user">
+        <div class="msg-avatar user-av">
+          <svg viewBox="0 0 24 24" fill="none" stroke="rgba(120,170,255,0.6)" stroke-width="2" stroke-linecap="round">
+            <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
+          </svg>
+        </div>
+        <div class="msg-bubble user">
+          That's great, thanks! How do I add POST handling?
+        </div>
+      </div>
+      <div class="msg-time" style="text-align:right;padding-right:40px;">09:43 AM</div>
+    </div>
+
+    <!-- Typing indicator -->
+    <div class="typing-indicator">
+      <div class="msg-avatar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="rgba(0,220,210,0.7)" stroke-width="2" stroke-linecap="round">
+          <rect x="4" y="7" width="16" height="12" rx="3"/>
+          <circle cx="9" cy="13" r="1.5" fill="rgba(0,220,210,0.7)" stroke="none"/>
+          <circle cx="15" cy="13" r="1.5" fill="rgba(0,220,210,0.7)" stroke="none"/>
+        </svg>
+      </div>
+      <div class="typing-dots">
+        <span></span><span></span><span></span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ===== INPUT ===== -->
+  <div class="chat-input-area">
+    <div class="input-wrap">
+      <input type="text" class="chat-input" placeholder="Type your message..." id="chatInput"/>
+      <button class="send-btn" id="sendBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="rgba(0,230,220,0.8)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="22" y1="2" x2="11" y2="13"/>
+          <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+        </svg>
+      </button>
+    </div>
+    <div class="quick-actions">
+      <div class="qa-chip">Code</div>
+      <div class="qa-chip">Explain</div>
+      <div class="qa-chip">Debug</div>
+      <div class="qa-chip">Optimize</div>
+    </div>
+  </div>
+</div>
+
+<div class="blur-overlay-bottom"></div>
+
+<script>
+  const chatMessages = document.getElementById('chatMessages');
+  const chatInput = document.getElementById('chatInput');
+  const sendBtn = document.getElementById('sendBtn');
+
+  // Bot responses pool
+  const botResponses = [
+    { type: 'text', content: "I'd be happy to help with that! Let me think about the best approach." },
+    { type: 'text', content: "Great question! Here's what you need to know about that." },
+    { type: 'code', header: 'example.ts', lines: [
+      { ln: '1', parts: [{ cls: 'kw', text: 'const' }, { cls: 'txt', text: ' result' }, { cls: 'op', text: ' = ' }, { cls: 'kw', text: 'await' }, { cls: 'fn', text: ' fetch' }, { cls: 'txt', text: '(' }] },
+      { ln: '2', parts: [{ cls: 'txt', text: '&nbsp;&nbsp;' }, { cls: 'str', text: "'/api/data'" }] },
+      { ln: '3', parts: [{ cls: 'txt', text: ')' }] },
+    ]},
+    { type: 'text', content: "That approach works well for most use cases. You might also want to consider error handling." },
+    { type: 'text', content: "The Next.js App Router makes this straightforward. Each route.ts file exports HTTP method handlers." },
+  ];
+
+  let responseIndex = 0;
+
+  function createAvatar(isUser) {
+    const av = document.createElement('div');
+    av.className = isUser ? 'msg-avatar user-av' : 'msg-avatar';
+    av.innerHTML = isUser
+      ? '<svg viewBox="0 0 24 24" fill="none" stroke="rgba(120,170,255,0.6)" stroke-width="2" stroke-linecap="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>'
+      : '<svg viewBox="0 0 24 24" fill="none" stroke="rgba(0,220,210,0.7)" stroke-width="2" stroke-linecap="round"><rect x="4" y="7" width="16" height="12" rx="3"/><circle cx="9" cy="13" r="1.5" fill="rgba(0,220,210,0.7)" stroke="none"/><circle cx="15" cy="13" r="1.5" fill="rgba(0,220,210,0.7)" stroke="none"/></svg>';
+    return av;
+  }
+
+  function timeString() {
+    const now = new Date();
+    const h = now.getHours();
+    const m = String(now.getMinutes()).padStart(2, '0');
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    return `${((h + 11) % 12) + 1}:${m} ${ampm}`;
+  }
+
+  function addMessage(text, isUser) {
+    // Remove typing indicator if present
+    const ti = chatMessages.querySelector('.typing-indicator');
+    if (ti) ti.remove();
+
+    const wrapper = document.createElement('div');
+    const row = document.createElement('div');
+    row.className = isUser ? 'msg-row user' : 'msg-row';
+    row.appendChild(createAvatar(isUser));
+
+    const bubble = document.createElement('div');
+    bubble.className = isUser ? 'msg-bubble user' : 'msg-bubble bot';
+    bubble.textContent = text;
+    row.appendChild(bubble);
+    wrapper.appendChild(row);
+
+    const time = document.createElement('div');
+    time.className = 'msg-time';
+    if (isUser) { time.style.textAlign = 'right'; time.style.paddingRight = '40px'; }
+    time.textContent = timeString();
+    wrapper.appendChild(time);
+
+    chatMessages.appendChild(wrapper);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  }
+
+  function addCodeMessage(header, lines) {
+    const ti = chatMessages.querySelector('.typing-indicator');
+    if (ti) ti.remove();
+
+    const wrapper = document.createElement('div');
+    const row = document.createElement('div');
+    row.className = 'msg-row';
+    row.appendChild(createAvatar(false));
+
+    const bubble = document.createElement('div');
+    bubble.className = 'msg-bubble bot-dark';
+
+    let codeHTML = `<div class="code-header"><span class="code-dot"></span>${header}</div>`;
+    lines.forEach(l => {
+      codeHTML += `<div class="code-line"><span class="ln">${l.ln}</span>`;
+      l.parts.forEach(p => { codeHTML += `<span class="${p.cls}">${p.text}</span>`; });
+      codeHTML += '</div>';
+    });
+
+    bubble.innerHTML = codeHTML;
+    row.appendChild(bubble);
+    wrapper.appendChild(row);
+
+    const time = document.createElement('div');
+    time.className = 'msg-time';
+    time.textContent = timeString();
+    wrapper.appendChild(time);
+
+    chatMessages.appendChild(wrapper);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  }
+
+  function showTyping() {
+    const ti = document.createElement('div');
+    ti.className = 'typing-indicator';
+    ti.appendChild(createAvatar(false));
+    const dots = document.createElement('div');
+    dots.className = 'typing-dots';
+    dots.innerHTML = '<span></span><span></span><span></span>';
+    ti.appendChild(dots);
+    chatMessages.appendChild(ti);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  }
+
+  function botReply() {
+    showTyping();
+    const resp = botResponses[responseIndex % botResponses.length];
+    responseIndex++;
+
+    setTimeout(() => {
+      if (resp.type === 'code') {
+        addCodeMessage(resp.header, resp.lines);
+      } else {
+        addMessage(resp.content, false);
+      }
+    }, 1200 + Math.random() * 800);
+  }
+
+  function handleSend() {
+    const text = chatInput.value.trim();
+    if (!text) return;
+    addMessage(text, true);
+    chatInput.value = '';
+    setTimeout(botReply, 400);
+  }
+
+  sendBtn.addEventListener('click', handleSend);
+  chatInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') handleSend();
+  });
+
+  // Quick action chips
+  document.querySelectorAll('.qa-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      chatInput.value = chip.textContent + ': ';
+      chatInput.focus();
+    });
+  });
+
+  // Scroll to bottom on load
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+</script>
+
+</body>
+</html>

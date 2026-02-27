@@ -1,4 +1,11 @@
+---
+name: strict-exact-rules
+description: Enforce strict exact implementation rules for deterministic execution, routing order, provenance, and candidate scoping. Use when implementing or reviewing routing, execution, or disambiguation code.
+---
+
 # Strict Exact Implementation Rules
+
+You MUST follow these rules for all implementation work in this session. These are non-negotiable governance constraints.
 
 ## Core Contract
 1. Not exact => never deterministic execute.
@@ -52,3 +59,6 @@
 - Any call to deterministic resolver must use raw input, not rewritten input.
 - Any normalization helper usage must be labeled advisory-only.
 - Any early return before bounded LLM must be exact-only.
+
+## Enforcement
+When writing or reviewing code, verify EVERY deterministic execution path against these rules. If you find a violation, flag it immediately and do not proceed until it is corrected.

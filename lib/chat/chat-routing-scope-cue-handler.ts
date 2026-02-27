@@ -27,7 +27,7 @@ import type {
   ClarificationInterceptResult,
   PendingOptionState,
   PreferredCandidateHint,
-  WidgetScopeSource,
+  ScopeSource,
 } from './chat-routing-types'
 import {
   runBoundedArbitrationLoop,
@@ -702,26 +702,61 @@ export async function handleScopeCuePhase(
       return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
     }
   } else if (scopeCue.scope === 'dashboard') {
-    // Scope-specific need_more_info: dashboard scope is not yet available.
-    // Per context-enrichment-retry-loop-plan.md §Binding Hardening Rule 2:
-    // unhandled scope must return scope-specific need_more_info, never default to mixed pools.
-    void debugLog({ component: 'ChatNavigation', action: 'scope_cue_dashboard_not_available', metadata: { cueText: scopeCue.cueText, input: trimmedInput } })
-    addMessage({
-      id: `assistant-${Date.now()}`,
-      role: 'assistant',
-      content: 'Dashboard-scoped selection is not yet available. Please select from the active options shown above.',
-      timestamp: new Date(),
-      isError: false,
+    // Dashboard scope: return signal for dispatcher to resolve against dashboard panels.
+    // Dispatcher has the dashboard widget snapshot — handler just strips cue and signals.
+    const cueText = scopeCue.cueText!
+    const lowerInput = trimmedInput.toLowerCase()
+    const normalizedCue = cueText.toLowerCase()
+    const cueIdx = lowerInput.indexOf(normalizedCue)
+    const strippedInput = cueIdx >= 0
+      ? (trimmedInput.slice(0, cueIdx) + trimmedInput.slice(cueIdx + cueText.length)).trim()
+      : trimmedInput
+
+    // Guard: if stripping leaves empty input, return scoped clarifier immediately
+    if (!strippedInput.trim()) {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'scope_cue_dashboard_empty_after_strip',
+        metadata: { original: trimmedInput, cueText },
+      })
+      addMessage({
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: 'What would you like to find on the dashboard?',
+        timestamp: new Date(),
+        isError: false,
+      })
+      setIsLoading(false)
+      return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+    }
+
+    void debugLog({
+      component: 'ChatNavigation',
+      action: 'scope_cue_dashboard_signal',
+      metadata: { strippedInput, cueText },
     })
-    setIsLoading(false)
-    return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+
+    return {
+      handled: false,
+      clarificationCleared: false,
+      isNewQuestionOrCommandDetected,
+      scopeCueSignal: {
+        scope: 'dashboard',
+        strippedInput,
+        resolvedWidgetId: null,
+        namedWidgetHint: null,
+        cueText,
+        scopeSource: 'active',
+      },
+    }
   } else if (scopeCue.scope === 'workspace') {
-    // Scope-specific need_more_info: workspace scope is not yet available.
+    // Workspace scope: keep hard-stop until proper filtering exists.
+    // Workspace candidate pool is not well-defined — no signal, no passthrough.
     void debugLog({ component: 'ChatNavigation', action: 'scope_cue_workspace_not_available', metadata: { cueText: scopeCue.cueText, input: trimmedInput } })
     addMessage({
       id: `assistant-${Date.now()}`,
       role: 'assistant',
-      content: 'Workspace-scoped selection is not yet available. Please select from the active options shown above.',
+      content: 'Workspace-scoped selection is not yet available. Try specifying a panel or use "from dashboard".',
       timestamp: new Date(),
       isError: false,
     })
@@ -763,7 +798,7 @@ export async function handleScopeCuePhase(
 
     // Resolve target widget + classify scopeSource for deterministic dispatcher logic
     let resolvedWidgetId: string | null = null
-    let scopeSource: WidgetScopeSource = 'active'
+    let scopeSource: ScopeSource = 'active'
 
     // Determine if cue explicitly references the "active" or "current" widget/panel
     // vs contextual "this/the widget" (which should prefer latch).
@@ -807,7 +842,8 @@ export async function handleScopeCuePhase(
       handled: false,
       clarificationCleared: false,
       isNewQuestionOrCommandDetected,
-      widgetScopeCueSignal: {
+      scopeCueSignal: {
+        scope: 'widget',
         strippedInput,
         resolvedWidgetId,
         namedWidgetHint: scopeCue.namedWidgetHint ?? null,

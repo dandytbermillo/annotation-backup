@@ -8,6 +8,14 @@
 
 ---
 
+## MANDATORY SKILL ENFORCEMENT
+
+**When modifying any file in `lib/chat/`, `lib/chat/routing-dispatcher.ts`, `lib/chat/chat-routing.ts`, `lib/chat/grounding-set.ts`, `lib/chat/input-classifiers.ts`, or any routing/execution/disambiguation code, you MUST load and follow `/strict-exact-rules` before writing or reviewing code.**
+
+This is non-negotiable. Every deterministic execution path must be verified against the strict exact implementation rules defined in that skill.
+
+---
+
 ## MANDATORY HONESTY AND ACCURACY REQUIREMENTS
 
 **CRITICAL: Agents (Claude) MUST maintain absolute honesty and accuracy at all times.**

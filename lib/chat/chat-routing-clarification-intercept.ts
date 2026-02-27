@@ -79,6 +79,60 @@ import {
 } from './chat-routing-clarification-utils'
 import { handleScopeCuePhase } from './chat-routing-scope-cue-handler'
 import { handlePreClarificationPhases } from './chat-routing-pre-clarification'
+import { levenshteinDistance } from '@/lib/chat/typo-suggestions'
+
+// =============================================================================
+// Scope Trigger-Word Typo Correction (clarifier-reply context ONLY)
+// Per trigger-typo-detection plan: correct "rom"→"from", "fom"→"from" etc.
+// PRIVATE to this module — only used inside pendingScopeTypoClarifier block.
+// MUST NOT be exported or used in standalone routing paths.
+// =============================================================================
+
+/** Trigger words eligible for fuzzy correction. "in" excluded (too short, false positives). */
+const CORRECTABLE_TRIGGERS = ['from'] as const
+
+/**
+ * Attempt to correct a typo in the scope trigger word at the beginning of input.
+ * Returns corrected input if a fix was applied, or null if no correction needed.
+ *
+ * Rules:
+ * - Only correct "from" (4 chars): Levenshtein ≤ 1, candidate length ≥ 3
+ * - "in" (2 chars): skip — too many false positives
+ * - Only checks the FIRST token (trigger position)
+ * - Returns null if input already starts with an exact trigger
+ */
+function correctScopeTriggerTypo(input: string): {
+  correctedInput: string
+  originalTrigger: string
+  correctedTrigger: string
+} | null {
+  const trimmed = input.trim()
+  if (!trimmed) return null
+
+  const tokens = trimmed.split(/\s+/)
+  const firstToken = tokens[0].toLowerCase().replace(/[?!.,;:]+$/, '')
+
+  // Skip if first token is already an exact trigger
+  if (firstToken === 'from' || firstToken === 'in') return null
+
+  // Skip if first token is too short (minimum 3 chars for "from" fuzzy)
+  if (firstToken.length < 3) return null
+
+  for (const trigger of CORRECTABLE_TRIGGERS) {
+    const dist = levenshteinDistance(firstToken, trigger)
+    if (dist <= 1 && dist > 0) {
+      // Replace first token with exact trigger, preserve rest of input
+      const restOfInput = trimmed.slice(tokens[0].length)
+      return {
+        correctedInput: trigger + restOfInput,
+        originalTrigger: firstToken,
+        correctedTrigger: trigger,
+      }
+    }
+  }
+
+  return null
+}
 
 // =============================================================================
 // Clarification Intercept Handler
@@ -232,19 +286,76 @@ export async function handleClarificationIntercept(
     else {
       const { affirmed, remainder } = stripLeadingAffirmation(trimmedInput)
       const candidate = affirmed ? remainder : trimmedInput
-      const candidateScope: ScopeCueResult = resolveScopeCue(candidate)
+      let candidateScope: ScopeCueResult = resolveScopeCue(candidate)
+
+      // ---- Trigger-typo correction (clarifier-reply context ONLY) ----
+      // If resolveScopeCue returned 'none', the trigger word itself may be
+      // a typo (e.g., "rom" for "from"). Try correcting and re-resolving.
+      // This runs ONLY inside pendingScopeTypoClarifier — never standalone.
+      let triggerCorrected = false
+      let triggerCorrectionInfo: { originalTrigger: string; correctedTrigger: string } | null = null
+      if (candidateScope.scope === 'none') {
+        const correction = correctScopeTriggerTypo(candidate)
+        if (correction) {
+          const reresolvedScope = resolveScopeCue(correction.correctedInput)
+          triggerCorrected = true
+          triggerCorrectionInfo = {
+            originalTrigger: correction.originalTrigger,
+            correctedTrigger: correction.correctedTrigger,
+          }
+          if (reresolvedScope.scope !== 'none') {
+            candidateScope = reresolvedScope
+          }
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'scope_cue_typo_gate_trigger_corrected',
+            metadata: {
+              original: candidate,
+              corrected: correction.correctedInput,
+              originalTrigger: correction.originalTrigger,
+              correctedTrigger: correction.correctedTrigger,
+              reresolvedScope: reresolvedScope.scope,
+              reresolvedConfidence: reresolvedScope.confidence,
+            },
+          })
+        }
+      }
 
       // 3a. High-confidence scope match → replay original intent with confirmed scope
-      if (candidateScope.scope !== 'none' && candidateScope.confidence === 'high') {
+      //     (includes trigger-corrected inputs that re-resolve to high confidence)
+      //     Guard: scope must be a valid confirmation scope AND confidence === 'high'
+      const VALID_CONFIRMATION_SCOPES = new Set(['chat', 'widget', 'dashboard', 'workspace'])
+      if (candidateScope.scope !== 'none' && candidateScope.confidence === 'high' && VALID_CONFIRMATION_SCOPES.has(candidateScope.scope)) {
         const replayInput = `${pending.originalInputWithoutScopeCue} ${candidateScope.cueText}`
         ctx.clearPendingScopeTypoClarifier()
-        void debugLog({ component: 'ChatNavigation', action: 'scope_cue_typo_gate_replay', metadata: { replayInput, confirmedScope: candidateScope.scope, originalInput: pending.originalInputWithoutScopeCue, affirmed } })
+        void debugLog({ component: 'ChatNavigation', action: 'scope_cue_typo_gate_replay', metadata: { replayInput, confirmedScope: candidateScope.scope, originalInput: pending.originalInputWithoutScopeCue, affirmed, triggerCorrected, triggerCorrectionInfo } })
         return {
           handled: false,
           clarificationCleared: true,
           isNewQuestionOrCommandDetected: true,
           replaySignal: { replayInput, confirmedScope: candidateScope, isReplay: true },
         }
+      }
+
+      // 3a-ii. Trigger corrected + non-high scope → trigger was fixed but scope
+      //        words are ALSO mangled (e.g., "rom actve widgt"). Show clarifier again
+      //        without setting new pendingScopeTypoClarifier (prevents infinite loop).
+      if (triggerCorrected && candidateScope.scope !== 'none' && candidateScope.confidence !== 'high') {
+        ctx.clearPendingScopeTypoClarifier()
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'scope_cue_typo_gate_trigger_corrected_low_confidence',
+          metadata: { input: trimmedInput, correctedScope: candidateScope.scope, confidence: candidateScope.confidence, triggerCorrectionInfo },
+        })
+        addMessage({
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: 'I think you\'re trying to specify a scope. Try "from active widget", "from active panel", or "from chat".',
+          timestamp: new Date(),
+          isError: false,
+        })
+        setIsLoading(false)
+        return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
       }
 
       // 3b. Pure affirmation without scope ("yes", "yes please") → ambiguous, ask again
@@ -265,12 +376,12 @@ export async function handleClarificationIntercept(
       // 3c. Unrelated command (no scope match, not affirmed) → clear and fall through
       if (isNewQuestionOrCommandDetected && !affirmed) {
         ctx.clearPendingScopeTypoClarifier()
-        void debugLog({ component: 'ChatNavigation', action: 'scope_cue_typo_gate_unrelated', metadata: { input: trimmedInput } })
+        void debugLog({ component: 'ChatNavigation', action: 'scope_cue_typo_gate_unrelated', metadata: { input: trimmedInput, triggerCorrected } })
         // Fall through to normal routing
       } else {
-        // Not a recognizable confirmation — clear and fall through
+        // 3d. Not a recognizable confirmation — clear and fall through
         ctx.clearPendingScopeTypoClarifier()
-        void debugLog({ component: 'ChatNavigation', action: 'scope_cue_typo_gate_non_confirmation', metadata: { input: trimmedInput, affirmed, remainder } })
+        void debugLog({ component: 'ChatNavigation', action: 'scope_cue_typo_gate_non_confirmation', metadata: { input: trimmedInput, affirmed, remainder, triggerCorrected } })
       }
     }
   }

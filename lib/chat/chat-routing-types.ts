@@ -133,8 +133,8 @@ export interface FollowUpHandlerContext extends RoutingHandlerContext {
 // Clarification Intercept Types
 // =============================================================================
 
-/** How the widget target was resolved — stable enum for deterministic dispatcher logic */
-export type WidgetScopeSource = 'active' | 'named' | 'latch'
+/** How the scope target was resolved — stable enum for deterministic dispatcher logic */
+export type ScopeSource = 'active' | 'named' | 'latch'
 
 /**
  * Result from clarification intercept handler
@@ -146,13 +146,14 @@ export interface ClarificationInterceptResult extends HandlerResult {
   isNewQuestionOrCommandDetected: boolean
   /** Dev-only: routing provenance hint for debug overlay (undefined = deterministic) */
   _devProvenanceHint?: ChatProvenance
-  /** Widget scope-cue signal: dispatcher should scope Tier 4.5 to this widget */
-  widgetScopeCueSignal?: {
+  /** Scope-cue signal: dispatcher resolves scoped candidates for the declared scope */
+  scopeCueSignal?: {
+    scope: 'widget' | 'dashboard' | 'workspace'
     strippedInput: string              // Input with scope-cue text removed
     resolvedWidgetId: string | null    // null = named cue (dispatcher resolves from openWidgets)
     namedWidgetHint: string | null     // e.g., "links panel d" for named cues
     cueText: string
-    scopeSource: WidgetScopeSource     // 'active' | 'named' | 'latch'
+    scopeSource: ScopeSource           // 'active' | 'named' | 'latch'
   }
   /** Replay signal from scope-typo confirmation resolver (per scope-cues-addendum-plan.md §typoScopeCueGate) */
   replaySignal?: {

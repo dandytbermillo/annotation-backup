@@ -1,0 +1,1040 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Dashboard - Holographic Interface</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #060a14;
+    font-family: 'Rajdhani', sans-serif;
+    color: #c8d6e5;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* Dark vignette + ambient light from top-left */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: radial-gradient(ellipse at 25% 20%, rgba(100, 140, 200, 0.08) 0%, transparent 60%),
+                radial-gradient(ellipse at 80% 80%, rgba(10, 20, 40, 0.5) 0%, transparent 50%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Subtle grid background */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+      linear-gradient(rgba(20, 50, 100, 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(20, 50, 100, 0.04) 1px, transparent 1px);
+    background-size: 30px 30px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ===== MAIN HOLOGRAPHIC PANEL ===== */
+  .holo-panel {
+    position: relative;
+    z-index: 1;
+    width: 1050px;
+    height: 620px;
+    background: linear-gradient(145deg, rgba(12, 22, 48, 0.85), rgba(8, 16, 38, 0.92));
+    border: 1px solid rgba(40, 90, 170, 0.3);
+    border-radius: 24px;
+    transform: perspective(1800px) rotateY(-4deg) rotateX(2deg);
+    box-shadow:
+      0 0 80px rgba(30, 80, 180, 0.12),
+      0 0 200px rgba(20, 60, 150, 0.06),
+      inset 0 0 100px rgba(20, 50, 120, 0.05),
+      0 30px 60px rgba(0, 0, 0, 0.5);
+    overflow: hidden;
+  }
+
+  /* Glowing top edge */
+  .holo-panel::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 30px; right: 30px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(100, 180, 255, 0.5), rgba(100, 180, 255, 0.2), transparent);
+  }
+
+  /* Glowing left edge */
+  .holo-panel::after {
+    content: '';
+    position: absolute;
+    top: 30px; bottom: 30px; left: 0;
+    width: 1px;
+    background: linear-gradient(180deg, transparent, rgba(100, 180, 255, 0.3), transparent);
+  }
+
+  /* Light reflection sweep */
+  .light-sweep {
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: linear-gradient(
+      135deg,
+      transparent 40%,
+      rgba(100, 160, 240, 0.03) 45%,
+      rgba(140, 190, 255, 0.06) 50%,
+      rgba(100, 160, 240, 0.03) 55%,
+      transparent 60%
+    );
+    animation: sweep 8s ease-in-out infinite;
+    pointer-events: none;
+    z-index: 50;
+  }
+
+  @keyframes sweep {
+    0%, 100% { transform: translateX(-30%) translateY(-30%); }
+    50% { transform: translateX(30%) translateY(30%); }
+  }
+
+  /* ===== AI BADGE (top center-left) ===== */
+  .ai-badge {
+    position: absolute;
+    top: 35px;
+    left: 320px;
+    width: 72px;
+    height: 72px;
+    background: linear-gradient(135deg, rgba(20, 40, 75, 0.95), rgba(12, 25, 55, 0.98));
+    border: 2px solid rgba(80, 150, 240, 0.4);
+    border-radius: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Orbitron', sans-serif;
+    font-size: 28px;
+    font-weight: 900;
+    color: #fff;
+    box-shadow: 0 0 30px rgba(50, 120, 220, 0.25), 0 4px 20px rgba(0,0,0,0.4);
+    z-index: 10;
+  }
+
+  .ai-badge::after {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border-radius: 19px;
+    border: 1px solid rgba(80, 150, 240, 0.15);
+  }
+
+  /* ===== LEFT: TEXT DATA PANEL ===== */
+  .data-panel {
+    position: absolute;
+    top: 30px;
+    left: 28px;
+    width: 270px;
+    height: 210px;
+    background: linear-gradient(135deg, rgba(14, 24, 50, 0.8), rgba(10, 20, 42, 0.85));
+    border: 1px solid rgba(40, 85, 160, 0.25);
+    border-radius: 14px;
+    padding: 16px;
+    overflow: hidden;
+  }
+
+  .data-panel-label {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 9px;
+    letter-spacing: 2px;
+    color: rgba(80, 150, 230, 0.6);
+    margin-bottom: 10px;
+  }
+
+  .data-lines {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 9.5px;
+    line-height: 1.9;
+    color: rgba(140, 175, 220, 0.45);
+  }
+
+  .data-lines .dl {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 1px 0;
+  }
+
+  .data-lines .bar {
+    width: 3px;
+    height: 10px;
+    border-radius: 1px;
+    flex-shrink: 0;
+  }
+
+  .bar-blue { background: rgba(60, 130, 220, 0.6); }
+  .bar-cyan { background: rgba(0, 200, 230, 0.5); }
+  .bar-teal { background: rgba(0, 180, 160, 0.5); }
+  .bar-dim { background: rgba(60, 100, 160, 0.3); }
+
+  /* ===== LEFT BOTTOM: SMALL TILES ===== */
+  .small-tiles {
+    position: absolute;
+    top: 260px;
+    left: 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .tile-row {
+    display: flex;
+    gap: 8px;
+  }
+
+  .sm-tile {
+    width: 52px;
+    height: 38px;
+    background: linear-gradient(135deg, rgba(15, 30, 60, 0.8), rgba(10, 22, 48, 0.85));
+    border: 1px solid rgba(40, 85, 155, 0.2);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    color: rgba(120, 170, 230, 0.5);
+  }
+
+  .sm-tile.active {
+    border-color: rgba(0, 180, 220, 0.4);
+    background: linear-gradient(135deg, rgba(0, 60, 100, 0.4), rgba(0, 40, 80, 0.5));
+    color: rgba(0, 220, 240, 0.7);
+  }
+
+  /* ===== LEFT BOTTOM: HORIZONTAL BARS ===== */
+  .h-bars {
+    position: absolute;
+    top: 370px;
+    left: 28px;
+    width: 170px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .h-bar {
+    height: 6px;
+    border-radius: 3px;
+    opacity: 0.4;
+  }
+
+  /* ===== CENTER-LEFT: LARGE CIRCLE ===== */
+  .center-circle {
+    position: absolute;
+    top: 280px;
+    left: 260px;
+    width: 170px;
+    height: 170px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 40% 40%, rgba(18, 35, 70, 0.9), rgba(8, 18, 40, 0.95));
+    border: 3px solid rgba(50, 110, 200, 0.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 50px rgba(30, 80, 180, 0.2), inset 0 0 40px rgba(20, 50, 120, 0.15);
+    z-index: 5;
+  }
+
+  /* Outer dashed ring */
+  .center-circle::before {
+    content: '';
+    position: absolute;
+    inset: -12px;
+    border-radius: 50%;
+    border: 2px dashed rgba(50, 120, 220, 0.15);
+    animation: spinSlow 40s linear infinite;
+  }
+
+  /* Outer solid ring */
+  .center-circle::after {
+    content: '';
+    position: absolute;
+    inset: -24px;
+    border-radius: 50%;
+    border: 1px solid rgba(50, 120, 220, 0.08);
+  }
+
+  @keyframes spinSlow { to { transform: rotate(360deg); } }
+
+  /* Notched ring effect */
+  .ring-notch {
+    position: absolute;
+    inset: -6px;
+    border-radius: 50%;
+    border: 4px solid transparent;
+    border-top-color: rgba(70, 140, 230, 0.3);
+    border-right-color: rgba(70, 140, 230, 0.15);
+    animation: spinSlow 20s linear infinite;
+  }
+
+  .cloud-icon-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .cloud-svg {
+    filter: drop-shadow(0 0 8px rgba(200, 220, 255, 0.3));
+  }
+
+  /* ===== CENTER-RIGHT: ROBOT ===== */
+  .robot-wrap {
+    position: absolute;
+    top: 190px;
+    left: 500px;
+    z-index: 10;
+    animation: robotFloat 5s ease-in-out infinite;
+  }
+
+  @keyframes robotFloat {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+  }
+
+  .robot-svg-area {
+    width: 150px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  /* Robot built with divs for precise control */
+  .r-antenna-stem {
+    width: 3px;
+    height: 20px;
+    background: linear-gradient(180deg, #8ec5fc, #a0b8d8);
+    border-radius: 2px;
+    position: relative;
+    margin: 0 auto;
+  }
+
+  .r-antenna-ball {
+    width: 12px;
+    height: 12px;
+    background: radial-gradient(circle at 40% 35%, #8ec5fc, #5a9eff);
+    border-radius: 50%;
+    position: absolute;
+    top: -10px;
+    left: -4.5px;
+    box-shadow: 0 0 14px rgba(90, 158, 255, 0.7), 0 0 30px rgba(90, 158, 255, 0.3);
+    animation: antennaPulse 2s ease-in-out infinite;
+  }
+
+  @keyframes antennaPulse {
+    0%, 100% { box-shadow: 0 0 10px rgba(90, 158, 255, 0.5); }
+    50% { box-shadow: 0 0 20px rgba(90, 158, 255, 0.9), 0 0 40px rgba(90, 158, 255, 0.4); }
+  }
+
+  .r-head {
+    width: 88px;
+    height: 68px;
+    background: linear-gradient(180deg, #f0f3f8, #d8dfe8);
+    border-radius: 26px 26px 22px 22px;
+    position: relative;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.2), inset 0 2px 0 rgba(255,255,255,0.3);
+    margin-top: -2px;
+  }
+
+  .r-eye-row {
+    display: flex;
+    justify-content: center;
+    gap: 18px;
+    padding-top: 18px;
+  }
+
+  .r-eye {
+    width: 18px;
+    height: 18px;
+    background: radial-gradient(circle, #0a1a35, #152a50);
+    border-radius: 50%;
+    position: relative;
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.4);
+  }
+
+  .r-eye::after {
+    content: '';
+    width: 6px;
+    height: 6px;
+    background: #5ab8ff;
+    border-radius: 50%;
+    position: absolute;
+    top: 4px;
+    left: 7px;
+    box-shadow: 0 0 6px rgba(90, 184, 255, 0.9);
+  }
+
+  .r-mouth {
+    width: 28px;
+    height: 10px;
+    border: 2.5px solid #2a3a55;
+    border-top: none;
+    border-radius: 0 0 14px 14px;
+    margin: 8px auto 0;
+  }
+
+  .r-neck {
+    width: 20px;
+    height: 6px;
+    background: #c5cdd8;
+    margin: 0 auto;
+    border-radius: 0 0 4px 4px;
+  }
+
+  .r-body-area {
+    position: relative;
+    display: flex;
+    justify-content: center;
+    margin-top: -1px;
+  }
+
+  .r-arm {
+    width: 18px;
+    height: 44px;
+    background: linear-gradient(180deg, #dbe1ea, #b8c3d2);
+    border-radius: 10px;
+    position: relative;
+    top: 8px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  }
+
+  .r-arm-left { transform: rotate(15deg); margin-right: -6px; }
+  .r-arm-right { transform: rotate(-15deg); margin-left: -6px; }
+
+  .r-arm::after {
+    content: '';
+    width: 14px;
+    height: 14px;
+    background: radial-gradient(circle, #d0d8e2, #bcc5d2);
+    border-radius: 50%;
+    position: absolute;
+    bottom: -4px;
+    left: 2px;
+  }
+
+  .r-body {
+    width: 68px;
+    height: 58px;
+    background: linear-gradient(180deg, #e8ecf2, #ced5df);
+    border-radius: 14px;
+    position: relative;
+    z-index: 2;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.2), inset 0 2px 0 rgba(255,255,255,0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .r-body-badge {
+    background: linear-gradient(135deg, rgba(0, 180, 200, 0.3), rgba(0, 140, 170, 0.4));
+    border: 1.5px solid rgba(0, 200, 220, 0.5);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-family: 'Orbitron', sans-serif;
+    font-size: 10px;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: 2px;
+    box-shadow: 0 0 10px rgba(0, 200, 220, 0.3);
+  }
+
+  .r-legs {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 2px;
+  }
+
+  .r-leg {
+    width: 22px;
+    height: 18px;
+    background: linear-gradient(180deg, #bcc5d2, #a0abba);
+    border-radius: 0 0 10px 10px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  }
+
+  .r-foot {
+    width: 28px;
+    height: 10px;
+    background: linear-gradient(180deg, #a0abba, #8a95a5);
+    border-radius: 0 0 8px 8px;
+    margin-top: -1px;
+  }
+
+  /* ===== RIGHT: ICON GRID WITH CONNECTIONS ===== */
+  .icon-grid-area {
+    position: absolute;
+    top: 30px;
+    right: 25px;
+    width: 260px;
+  }
+
+  .ig-label {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 8px;
+    letter-spacing: 2px;
+    color: rgba(80, 150, 230, 0.4);
+    margin-bottom: 10px;
+    text-align: right;
+  }
+
+  .icon-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    position: relative;
+  }
+
+  .ig-node {
+    width: 100%;
+    aspect-ratio: 1;
+    background: linear-gradient(135deg, rgba(14, 26, 52, 0.85), rgba(10, 20, 44, 0.9));
+    border: 1px solid rgba(40, 85, 160, 0.2);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s;
+    position: relative;
+  }
+
+  .ig-node:hover {
+    border-color: rgba(70, 140, 230, 0.5);
+    box-shadow: 0 0 15px rgba(40, 100, 200, 0.2);
+  }
+
+  .ig-node.lit {
+    border-color: rgba(60, 130, 220, 0.35);
+    background: linear-gradient(135deg, rgba(18, 35, 65, 0.9), rgba(14, 28, 56, 0.92));
+  }
+
+  .ig-node svg {
+    width: 22px;
+    height: 22px;
+    opacity: 0.5;
+  }
+
+  .ig-node.lit svg { opacity: 0.7; }
+
+  /* Connection lines between grid nodes */
+  .grid-connections {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ===== RIGHT MIDDLE: METRICS TILES ===== */
+  .metrics-area {
+    position: absolute;
+    top: 300px;
+    right: 25px;
+    width: 260px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .metric-tile {
+    background: linear-gradient(135deg, rgba(14, 26, 52, 0.8), rgba(10, 20, 44, 0.85));
+    border: 1px solid rgba(40, 80, 150, 0.2);
+    border-radius: 12px;
+    padding: 14px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .mt-icon-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .mt-icon {
+    width: 28px;
+    height: 28px;
+    background: rgba(20, 40, 75, 0.8);
+    border: 1px solid rgba(50, 100, 170, 0.25);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .mt-icon svg { width: 14px; height: 14px; opacity: 0.6; }
+
+  .mt-val {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+    color: #dce6f5;
+  }
+
+  .mt-label {
+    font-size: 9px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: rgba(100, 150, 210, 0.4);
+  }
+
+  .mt-bar {
+    height: 3px;
+    background: rgba(20, 40, 70, 0.5);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .mt-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+  }
+
+  .fill-b { background: linear-gradient(90deg, #2a6ad4, #4a9eff); }
+  .fill-c { background: linear-gradient(90deg, #0891b2, #22d3ee); }
+  .fill-t { background: linear-gradient(90deg, #0d9488, #2dd4bf); }
+  .fill-p { background: linear-gradient(90deg, #7c3aed, #a78bfa); }
+
+  /* ===== BOTTOM: CIRCULAR ICON ROW ===== */
+  .bottom-icons {
+    position: absolute;
+    bottom: 25px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .b-icon {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, rgba(14, 26, 50, 0.85), rgba(10, 20, 42, 0.9));
+    border: 1px solid rgba(40, 80, 155, 0.25);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s;
+    cursor: pointer;
+    position: relative;
+  }
+
+  .b-icon:hover {
+    border-color: rgba(70, 140, 230, 0.5);
+    box-shadow: 0 0 15px rgba(40, 100, 200, 0.25);
+  }
+
+  .b-icon svg { width: 18px; height: 18px; opacity: 0.5; }
+
+  .b-icon.has-ring::before {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    border-top-color: rgba(0, 200, 220, 0.5);
+    border-right-color: rgba(0, 200, 220, 0.3);
+    animation: spinSlow 6s linear infinite;
+  }
+
+  .b-icon.accent {
+    border-color: rgba(0, 190, 210, 0.4);
+    box-shadow: 0 0 12px rgba(0, 190, 210, 0.15);
+  }
+
+  /* ===== DECORATIVE CONNECTING LINES ===== */
+  .conn-lines {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 3;
+  }
+
+  .conn-lines line {
+    stroke: rgba(50, 110, 200, 0.1);
+    stroke-width: 1;
+  }
+
+  .conn-lines .bright {
+    stroke: rgba(50, 120, 210, 0.18);
+    stroke-dasharray: 4 6;
+    animation: dashFlow 3s linear infinite;
+  }
+
+  @keyframes dashFlow {
+    to { stroke-dashoffset: -20; }
+  }
+
+  /* ===== FLOATING PARTICLES ===== */
+  .particles {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 4;
+    overflow: hidden;
+  }
+
+  .particle {
+    position: absolute;
+    width: 2px;
+    height: 2px;
+    background: rgba(80, 160, 255, 0.4);
+    border-radius: 50%;
+    animation: particleDrift linear infinite;
+  }
+
+  @keyframes particleDrift {
+    0% { transform: translateY(100%) translateX(0); opacity: 0; }
+    10% { opacity: 1; }
+    90% { opacity: 1; }
+    100% { transform: translateY(-20%) translateX(30px); opacity: 0; }
+  }
+
+  /* Hand silhouette at bottom-right (decorative overlay) */
+  .hand-overlay {
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 300px;
+    height: 200px;
+    background: radial-gradient(ellipse at bottom right, rgba(15, 20, 35, 0.7) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 20;
+  }
+
+  /* Laptop silhouette at bottom-left */
+  .laptop-overlay {
+    position: absolute;
+    bottom: 0;
+    left: -40px;
+    width: 250px;
+    height: 180px;
+    background: radial-gradient(ellipse at bottom left, rgba(8, 12, 25, 0.8) 0%, transparent 65%);
+    pointer-events: none;
+    z-index: 20;
+  }
+
+</style>
+</head>
+<body>
+
+<div class="holo-panel">
+  <div class="light-sweep"></div>
+
+  <!-- ===== CONNECTING LINES (decorative) ===== -->
+  <svg class="conn-lines" viewBox="0 0 1050 620">
+    <!-- Data panel to circle -->
+    <line x1="298" y1="200" x2="340" y2="340" class="bright"/>
+    <!-- Circle to robot -->
+    <line x1="430" y1="365" x2="510" y2="330"/>
+    <!-- AI badge to icon grid -->
+    <line x1="392" y1="70" x2="750" y2="70" class="bright"/>
+    <!-- Robot to metrics -->
+    <line x1="640" y1="350" x2="760" y2="380"/>
+    <!-- Data panel to tiles -->
+    <line x1="160" y1="240" x2="140" y2="265"/>
+    <!-- Circle to bottom -->
+    <line x1="345" y1="450" x2="420" y2="560" class="bright"/>
+    <!-- Metrics to bottom -->
+    <line x1="860" y1="480" x2="700" y2="560"/>
+  </svg>
+
+  <!-- ===== PARTICLES ===== -->
+  <div class="particles">
+    <div class="particle" style="left:10%;animation-duration:7s;animation-delay:0s;"></div>
+    <div class="particle" style="left:25%;animation-duration:9s;animation-delay:1s;"></div>
+    <div class="particle" style="left:45%;animation-duration:6s;animation-delay:2s;"></div>
+    <div class="particle" style="left:60%;animation-duration:8s;animation-delay:0.5s;"></div>
+    <div class="particle" style="left:75%;animation-duration:10s;animation-delay:3s;"></div>
+    <div class="particle" style="left:88%;animation-duration:7s;animation-delay:1.5s;"></div>
+    <div class="particle" style="left:35%;animation-duration:11s;animation-delay:4s;"></div>
+    <div class="particle" style="left:55%;animation-duration:8s;animation-delay:2.5s;"></div>
+  </div>
+
+  <!-- ===== AI BADGE ===== -->
+  <div class="ai-badge">AI</div>
+
+  <!-- ===== LEFT: DATA PANEL ===== -->
+  <div class="data-panel">
+    <div class="data-panel-label">AI CHATBOT</div>
+    <div class="data-lines">
+      <div class="dl"><span class="bar bar-blue"></span>Neural engine initialized &mdash; v4.2.1</div>
+      <div class="dl"><span class="bar bar-cyan"></span>Transformer layers: 96 active</div>
+      <div class="dl"><span class="bar bar-teal"></span>Context window: 128k tokens</div>
+      <div class="dl"><span class="bar bar-dim"></span>Embedding dim: 4096 &middot; float16</div>
+      <div class="dl"><span class="bar bar-blue"></span>Attention heads: multi-query (GQA)</div>
+      <div class="dl"><span class="bar bar-cyan"></span>KV cache: 2.1 GB allocated</div>
+      <div class="dl"><span class="bar bar-dim"></span>Tokenizer: BPE &middot; vocab 100k</div>
+      <div class="dl"><span class="bar bar-teal"></span>Inference: speculative decode ON</div>
+      <div class="dl"><span class="bar bar-blue"></span>RLHF policy: v3 &middot; reward 0.94</div>
+      <div class="dl"><span class="bar bar-dim"></span>Endpoint: /api/v1/chat/completions</div>
+    </div>
+  </div>
+
+  <!-- ===== LEFT: SMALL TILES ===== -->
+  <div class="small-tiles">
+    <div class="tile-row">
+      <div class="sm-tile active">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      </div>
+      <div class="sm-tile">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+      </div>
+      <div class="sm-tile">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+      </div>
+    </div>
+    <div class="tile-row">
+      <div class="sm-tile active" style="border-color:rgba(0,200,180,0.35);">
+        <svg width="14" height="14" fill="none" stroke="rgba(0,220,200,0.7)" stroke-width="1.5" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      </div>
+      <div class="sm-tile">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      </div>
+      <div class="sm-tile">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== HORIZONTAL BARS (below small tiles) ===== -->
+  <div class="h-bars">
+    <div class="h-bar" style="width:85%;background:linear-gradient(90deg,rgba(40,100,200,0.5),rgba(60,140,230,0.3));"></div>
+    <div class="h-bar" style="width:65%;background:linear-gradient(90deg,rgba(0,180,200,0.4),rgba(0,140,180,0.2));"></div>
+    <div class="h-bar" style="width:75%;background:linear-gradient(90deg,rgba(40,100,200,0.4),rgba(60,140,230,0.2));"></div>
+    <div class="h-bar" style="width:50%;background:linear-gradient(90deg,rgba(0,160,180,0.3),rgba(0,120,150,0.15));"></div>
+    <div class="h-bar" style="width:90%;background:linear-gradient(90deg,rgba(40,100,200,0.3),rgba(60,140,230,0.15));"></div>
+    <div class="h-bar" style="width:60%;background:linear-gradient(90deg,rgba(0,180,200,0.3),rgba(0,140,180,0.15));"></div>
+  </div>
+
+  <!-- ===== CENTER-LEFT: LARGE CIRCLE ===== -->
+  <div class="center-circle">
+    <div class="ring-notch"></div>
+    <div class="cloud-icon-wrap">
+      <svg class="cloud-svg" width="60" height="52" viewBox="0 0 60 52" fill="none">
+        <!-- Cloud shape -->
+        <path d="M48 28a10 10 0 00-9.8-10A14 14 0 0012 28a10 10 0 002 20h32a10 10 0 002-20z"
+              fill="rgba(200, 220, 255, 0.9)" stroke="rgba(140, 180, 240, 0.5)" stroke-width="1"/>
+        <!-- Upload arrow -->
+        <path d="M30 38V22M24 27l6-6 6 6" stroke="rgba(30, 60, 110, 0.8)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+  </div>
+
+  <!-- ===== CENTER-RIGHT: ROBOT ===== -->
+  <div class="robot-wrap">
+    <div class="robot-svg-area">
+      <!-- Antenna -->
+      <div class="r-antenna-stem">
+        <div class="r-antenna-ball"></div>
+      </div>
+      <!-- Head -->
+      <div class="r-head">
+        <div class="r-eye-row">
+          <div class="r-eye"></div>
+          <div class="r-eye"></div>
+        </div>
+        <div class="r-mouth"></div>
+      </div>
+      <!-- Neck -->
+      <div class="r-neck"></div>
+      <!-- Body + Arms -->
+      <div class="r-body-area">
+        <div class="r-arm r-arm-left"></div>
+        <div class="r-body">
+          <div class="r-body-badge">AI</div>
+        </div>
+        <div class="r-arm r-arm-right"></div>
+      </div>
+      <!-- Legs -->
+      <div class="r-legs">
+        <div>
+          <div class="r-leg"></div>
+          <div class="r-foot"></div>
+        </div>
+        <div>
+          <div class="r-leg"></div>
+          <div class="r-foot"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== RIGHT: ICON GRID ===== -->
+  <div class="icon-grid-area">
+    <div class="ig-label">ARTIFICIAL INTELLIGENCE</div>
+
+    <!-- Grid connections SVG behind nodes -->
+    <svg style="position:absolute;top:25px;left:0;width:260px;height:200px;pointer-events:none;z-index:0;" viewBox="0 0 260 200">
+      <line x1="35" y1="35" x2="95" y2="35" stroke="rgba(50,110,200,0.12)" stroke-width="1"/>
+      <line x1="95" y1="35" x2="155" y2="35" stroke="rgba(50,110,200,0.12)" stroke-width="1"/>
+      <line x1="155" y1="35" x2="225" y2="35" stroke="rgba(50,110,200,0.12)" stroke-width="1"/>
+      <line x1="35" y1="35" x2="35" y2="95" stroke="rgba(50,110,200,0.12)" stroke-width="1"/>
+      <line x1="95" y1="35" x2="95" y2="95" stroke="rgba(50,110,200,0.12)" stroke-width="1"/>
+      <line x1="155" y1="35" x2="155" y2="95" stroke="rgba(50,110,200,0.12)" stroke-width="1"/>
+      <line x1="225" y1="35" x2="225" y2="95" stroke="rgba(50,110,200,0.12)" stroke-width="1"/>
+      <line x1="35" y1="95" x2="95" y2="95" stroke="rgba(50,110,200,0.1)" stroke-width="1"/>
+      <line x1="95" y1="95" x2="155" y2="95" stroke="rgba(50,110,200,0.1)" stroke-width="1"/>
+      <line x1="155" y1="95" x2="225" y2="95" stroke="rgba(50,110,200,0.1)" stroke-width="1"/>
+      <line x1="35" y1="95" x2="35" y2="155" stroke="rgba(50,110,200,0.08)" stroke-width="1"/>
+      <line x1="95" y1="95" x2="95" y2="155" stroke="rgba(50,110,200,0.08)" stroke-width="1"/>
+      <line x1="155" y1="95" x2="155" y2="155" stroke="rgba(50,110,200,0.08)" stroke-width="1"/>
+      <line x1="225" y1="95" x2="225" y2="155" stroke="rgba(50,110,200,0.08)" stroke-width="1"/>
+      <!-- Diagonal connections -->
+      <line x1="35" y1="35" x2="95" y2="95" stroke="rgba(50,110,200,0.06)" stroke-width="1"/>
+      <line x1="155" y1="35" x2="95" y2="95" stroke="rgba(50,110,200,0.06)" stroke-width="1"/>
+      <line x1="95" y1="95" x2="155" y2="155" stroke="rgba(50,110,200,0.06)" stroke-width="1"/>
+    </svg>
+
+    <div class="icon-grid">
+      <!-- Row 1 -->
+      <div class="ig-node lit">
+        <svg viewBox="0 0 24 24" fill="none" stroke="rgba(140,180,240,0.7)" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      </div>
+      <div class="ig-node">
+        <svg viewBox="0 0 24 24" fill="none" stroke="rgba(140,180,240,0.5)" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+      </div>
+      <div class="ig-node lit">
+        <svg viewBox="0 0 24 24" fill="none" stroke="rgba(140,180,240,0.7)" stroke-width="1.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      </div>
+      <div class="ig-node">
+        <svg viewBox="0 0 24 24" fill="none" stroke="rgba(140,180,240,0.5)" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      </div>
+      <!-- Row 2 -->
+      <div class="ig-node">
+        <svg viewBox="0 0 24 24" fill="none" stroke="rgba(140,180,240,0.5)" stroke-width="1.5"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+      </div>
+      <div class="ig-node lit">
+        <svg viewBox="0 0 24 24" fill="none" stroke="rgba(140,180,240,0.7)" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      </div>
+      <div class="ig-node">
+        <svg viewBox="0 0 24 24" fill="none" stroke="rgba(140,180,240,0.5)" stroke-width="1.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+      </div>
+      <div class="ig-node lit">
+        <svg viewBox="0 0 24 24" fill="none" stroke="rgba(140,180,240,0.7)" stroke-width="1.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+      </div>
+      <!-- Row 3 -->
+      <div class="ig-node">
+        <svg viewBox="0 0 24 24" fill="none" stroke="rgba(140,180,240,0.5)" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+      </div>
+      <div class="ig-node lit">
+        <svg viewBox="0 0 24 24" fill="none" stroke="rgba(140,180,240,0.7)" stroke-width="1.5"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>
+      </div>
+      <div class="ig-node">
+        <svg viewBox="0 0 24 24" fill="none" stroke="rgba(140,180,240,0.5)" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.32 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+      </div>
+      <div class="ig-node lit">
+        <svg viewBox="0 0 24 24" fill="none" stroke="rgba(140,180,240,0.7)" stroke-width="1.5"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== RIGHT: METRICS TILES ===== -->
+  <div class="metrics-area">
+    <div class="metric-tile">
+      <div class="mt-icon-row">
+        <div class="mt-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="rgba(100,170,255,0.6)" stroke-width="1.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        </div>
+        <div class="mt-val">87%</div>
+      </div>
+      <div class="mt-label">GPU Load</div>
+      <div class="mt-bar"><div class="mt-bar-fill fill-b" style="width:87%"></div></div>
+    </div>
+    <div class="metric-tile">
+      <div class="mt-icon-row">
+        <div class="mt-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="rgba(0,200,220,0.6)" stroke-width="1.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        </div>
+        <div class="mt-val">94%</div>
+      </div>
+      <div class="mt-label">Accuracy</div>
+      <div class="mt-bar"><div class="mt-bar-fill fill-c" style="width:94%"></div></div>
+    </div>
+    <div class="metric-tile">
+      <div class="mt-icon-row">
+        <div class="mt-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="rgba(120,100,240,0.6)" stroke-width="1.5"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        </div>
+        <div class="mt-val">72ms</div>
+      </div>
+      <div class="mt-label">Latency</div>
+      <div class="mt-bar"><div class="mt-bar-fill fill-p" style="width:72%"></div></div>
+    </div>
+    <div class="metric-tile">
+      <div class="mt-icon-row">
+        <div class="mt-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="rgba(0,200,180,0.6)" stroke-width="1.5"><path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z"/></svg>
+        </div>
+        <div class="mt-val">6.5G</div>
+      </div>
+      <div class="mt-label">Throughput</div>
+      <div class="mt-bar"><div class="mt-bar-fill fill-t" style="width:65%"></div></div>
+    </div>
+  </div>
+
+  <!-- ===== BOTTOM: CIRCULAR ICONS ===== -->
+  <div class="bottom-icons">
+    <div class="b-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="rgba(140,180,240,0.5)" stroke-width="1.5"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+    </div>
+    <div class="b-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="rgba(140,180,240,0.5)" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+    </div>
+    <div class="b-icon has-ring accent">
+      <svg viewBox="0 0 24 24" fill="none" stroke="rgba(0,220,230,0.7)" stroke-width="1.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+    </div>
+    <div class="b-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="rgba(140,180,240,0.5)" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    </div>
+    <div class="b-icon has-ring">
+      <svg viewBox="0 0 24 24" fill="none" stroke="rgba(140,180,240,0.6)" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+    </div>
+    <div class="b-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="rgba(140,180,240,0.5)" stroke-width="1.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+    </div>
+    <div class="b-icon accent">
+      <svg viewBox="0 0 24 24" fill="none" stroke="rgba(0,220,230,0.6)" stroke-width="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+    </div>
+    <div class="b-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="rgba(140,180,240,0.5)" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4"/></svg>
+    </div>
+    <div class="b-icon has-ring">
+      <svg viewBox="0 0 24 24" fill="none" stroke="rgba(140,180,240,0.6)" stroke-width="1.5"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+    </div>
+  </div>
+
+  <!-- Decorative overlays -->
+  <div class="hand-overlay"></div>
+  <div class="laptop-overlay"></div>
+
+</div>
+
+<script>
+  // Randomly toggle lit nodes
+  const nodes = document.querySelectorAll('.ig-node');
+  setInterval(() => {
+    const i = Math.floor(Math.random() * nodes.length);
+    nodes[i].classList.toggle('lit');
+  }, 2500);
+</script>
+
+</body>
+</html>

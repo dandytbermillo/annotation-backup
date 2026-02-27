@@ -414,6 +414,9 @@ export interface ScopeCueResult {
   scope: 'chat' | 'widget' | 'dashboard' | 'workspace' | 'none'
   cueText: string | null
   confidence: 'high' | 'low_typo' | 'scope_uncertain' | 'none'
+  /** Whether the cue names a specific target ('named'), uses a generic reference ('generic'), or no cue ('none').
+   *  Optional for backward compat — consumers read `scopeCue.sourceKind ?? 'none'`. */
+  sourceKind?: 'named' | 'generic' | 'none'
   /** For named widget cues like "from links panel d", the extracted panel label suffix */
   namedWidgetHint?: string
   /** True when BOTH chat + widget cues detected in the same input (Rule 14 conflict) */
@@ -447,11 +450,11 @@ export function resolveScopeCue(input: string): ScopeCueResult {
   // --- Conflict detection (Rule 14): both chat + widget cues in same input ---
   if (chatMatch && widgetMatch) {
     // Primary scope = chat (higher precedence), flag conflict
-    return { scope: 'chat', cueText: chatMatch[0], confidence: 'high', hasConflict: true }
+    return { scope: 'chat', cueText: chatMatch[0], confidence: 'high', sourceKind: 'generic', hasConflict: true }
   }
 
   if (chatMatch) {
-    return { scope: 'chat', cueText: chatMatch[0], confidence: 'high' }
+    return { scope: 'chat', cueText: chatMatch[0], confidence: 'high', sourceKind: 'generic' }
   }
 
   if (widgetMatch) {
@@ -467,21 +470,21 @@ export function resolveScopeCue(input: string): ScopeCueResult {
       namedWidgetHint = namedMatch[1].trim()
     }
 
-    return { scope: 'widget', cueText: normalizedCueText, confidence: 'high', namedWidgetHint }
+    return { scope: 'widget', cueText: normalizedCueText, confidence: 'high', sourceKind: namedWidgetHint ? 'named' : 'generic', namedWidgetHint }
   }
 
   // --- Dashboard cues ---
   const DASHBOARD_CUE_PATTERN = /\b(from dashboard|in dashboard|from active dashboard|from the dashboard)\b/i
   const dashboardMatch = normalized.match(DASHBOARD_CUE_PATTERN)
   if (dashboardMatch) {
-    return { scope: 'dashboard', cueText: dashboardMatch[0], confidence: 'high' }
+    return { scope: 'dashboard', cueText: dashboardMatch[0], confidence: 'high', sourceKind: 'generic' }
   }
 
   // --- Workspace cues ---
   const WORKSPACE_CUE_PATTERN = /\b(from workspace|in workspace|from active workspace|from the workspace)\b/i
   const workspaceMatch = normalized.match(WORKSPACE_CUE_PATTERN)
   if (workspaceMatch) {
-    return { scope: 'workspace', cueText: workspaceMatch[0], confidence: 'high' }
+    return { scope: 'workspace', cueText: workspaceMatch[0], confidence: 'high', sourceKind: 'generic' }
   }
 
   // --- Typo detection fallback (deterministic, no LLM) ---
@@ -565,7 +568,7 @@ function detectScopeCueTypo(normalizedInput: string): ScopeCueResult {
 
       if (detectedScope !== 'none') {
         const cueSpan = [trigger, ...followingTokens].join(' ')
-        return { scope: detectedScope, cueText: cueSpan, confidence: 'low_typo' }
+        return { scope: detectedScope, cueText: cueSpan, confidence: 'low_typo', sourceKind: 'generic' }
       }
     }
   }
@@ -641,7 +644,7 @@ function detectScopeTriggerUnresolved(normalizedInput: string): ScopeCueResult {
 
       if (detectedScope !== 'none') {
         const cueSpan = [trigger, ...following].join(' ')
-        return { scope: detectedScope, cueText: cueSpan, confidence: 'scope_uncertain' }
+        return { scope: detectedScope, cueText: cueSpan, confidence: 'scope_uncertain', sourceKind: 'generic' }
       }
     }
   }
