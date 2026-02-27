@@ -9,6 +9,21 @@
 - `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-intent-arbitration-scope-cues-addendum-plan.md`
 - `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-vs-command-arbitration-rule-plan.md`
 
+## Implementation status snapshot (2026-02-27)
+This incubation plan remains normative/planning-oriented, but key addendum items are implemented in runtime:
+- Widget scope cue expansion (active/current variants, including plural forms).
+- Typo scope-cue safety path (`low_typo`) with clarifier-only behavior.
+- One-turn pending typo-clarifier replay with TTL + snapshot drift checks.
+
+Primary implementation source:
+- `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-intent-arbitration-scope-cues-addendum-plan.md`
+
+Implementation records:
+- `docs/proposal/chat-navigation/plan/panels/chat/meta/orchestrator/report/2026-02-26-widget-scope-cue-implementation-report.md`
+- `docs/proposal/chat-navigation/plan/panels/chat/meta/orchestrator/report/2026-02-26-scope-typo-clarifier-one-turn-replay-report.md`
+- `docs/proposal/chat-navigation/plan/panels/chat/meta/orchestrator/report/2026-02-26-scope-typo-clarifier-investigation-and-fix-report.md`
+- `docs/proposal/chat-navigation/plan/panels/chat/meta/orchestrator/report/2026-02-26-scope-typo-clarifier-consolidated-implementation-report.md`
+
 ## Why This Exists
 Current behavior can over-clarify or bind to stale chat lists when users are clearly interacting with an open widget.
 This incubation plan defines a focus-latch-first policy to reduce friction while keeping execution safe.

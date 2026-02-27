@@ -1,10 +1,24 @@
 # Selection Intent Arbitration - Scope Cues and LLM Fallback Addendum
 
-**Status:** Addendum Draft  
+**Status:** Implemented (v1)  
 **Owner:** Chat Navigation  
 **Last updated:** 2026-02-27  
 **Parent plan:** `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-intent-arbitration-incubation-plan.md`  
 **Companion implementation plan:** `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-intent-arbitration-widget-first-fix-plan.md`
+
+## Implementation snapshot (2026-02-27)
+Implemented behind `NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1`:
+- Expanded scope cues for active/current widget/panel variants (including plural forms).
+- Added `low_typo` scope confidence and a typo scope-cue safe-clarifier gate (never executes directly).
+- Added pending scope-typo clarifier state with one-turn TTL + snapshot drift checks.
+- Added one-turn replay flow for explicit confirmations (for example: `yes from active widget`) using stripped original input + confirmed scope cue.
+- Added affirmation stripping helper (`stripLeadingAffirmation`) from shared affirmation vocabulary.
+
+## Implementation reports
+- `docs/proposal/chat-navigation/plan/panels/chat/meta/orchestrator/report/2026-02-26-widget-scope-cue-implementation-report.md`
+- `docs/proposal/chat-navigation/plan/panels/chat/meta/orchestrator/report/2026-02-26-scope-typo-clarifier-one-turn-replay-report.md`
+- `docs/proposal/chat-navigation/plan/panels/chat/meta/orchestrator/report/2026-02-26-scope-typo-clarifier-investigation-and-fix-report.md`
+- `docs/proposal/chat-navigation/plan/panels/chat/meta/orchestrator/report/2026-02-26-scope-typo-clarifier-consolidated-implementation-report.md`
 
 ## Why this addendum exists
 Current latch behavior handles many ordinal cases, but explicit user scope phrases are still missed:
@@ -84,9 +98,9 @@ When scope cues are missed, routing can apply latch/default selection incorrectl
 
 ## Scope normalization contract
 Classifier output:
-- `scope = 'chat' | 'widget' | 'none'`
+- `scope = 'chat' | 'widget' | 'dashboard' | 'workspace' | 'none'`
 - `cueText: string | null`
-- `confidence: 'high' | 'none'`
+- `confidence: 'high' | 'low_typo' | 'none'`
 - `namedWidgetHint?: string`
 - `hasConflict?: boolean`
 
@@ -98,16 +112,38 @@ Deterministic cue families:
   - `from chat`
   - `in chat`
 - Widget generic cues:
-  - `from active widget`
-  - `from current widget`
+  - `from active widget(s)`
+  - `from current widget(s)`
+  - `from active panel(s)`
+  - `from current panel(s)`
+  - `from active`
+  - `from current`
   - `from this widget`
   - `from the widget`
+  - `in active widget(s)`
+  - `in current widget(s)`
+  - `in active panel(s)`
+  - `in current panel(s)`
   - `in this widget`
   - `in this panel`
 - Widget named cues:
   - `from <widget label>`
   - `in <widget label>`
   - Example: `from links panel d`
+
+## Typo scope-cue gate and one-turn replay contract (implemented)
+`low_typo` scope cues are advisory only and clarifier-only.
+
+Required implemented behavior:
+1. Save pending typo clarifier state with:
+   - `originalInputWithoutScopeCue`
+   - `createdAtTurnCount`
+   - `snapshotFingerprint`
+2. Enforce strict one-turn TTL (`createdAtTurnCount + 1` only).
+3. Enforce snapshot drift check before replay.
+4. Strip leading affirmation tokens before scope confirmation parse.
+5. Replay only as rewritten input (`originalInputWithoutScopeCue + confirmedScopeCue`) through the normal safety ladder.
+6. On expired/drifted/ambiguous/unrelated follow-up, clear pending state and use safe clarifier/fallthrough (no unsafe execute).
 
 ## Implementation steps
 
