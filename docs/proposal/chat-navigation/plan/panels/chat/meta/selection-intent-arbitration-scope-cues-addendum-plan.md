@@ -2,11 +2,11 @@
 
 **Status:** Implemented (v1)  
 **Owner:** Chat Navigation  
-**Last updated:** 2026-02-27  
+**Last updated:** 2026-02-28  
 **Parent plan:** `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-intent-arbitration-incubation-plan.md`  
 **Companion implementation plan:** `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-intent-arbitration-widget-first-fix-plan.md`
 
-## Implementation snapshot (2026-02-27)
+## Implementation snapshot (2026-02-28)
 Implemented behind `NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1`:
 - Expanded scope cues for active/current widget/panel variants (including plural forms).
 - Added `low_typo` scope confidence and a typo scope-cue safe-clarifier gate (never executes directly).
@@ -16,6 +16,8 @@ Implemented behind `NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1`:
 - Updated replay resolver ordering so high-confidence scope confirmation is checked before unrelated-command clearing.
 - Added bare scope confirmation replay support (for example: `from active widget` without `yes`).
 - Added affirmation stripping helper (`stripLeadingAffirmation`) from shared affirmation vocabulary.
+- Clarifier-reply ordinal parsing now uses strict-only mode in replay resolution to prevent embedded fuzzy false positives (for example, `want` misread as `last`).
+- Focus latch is re-anchored to pending after `open_panel_drawer` in both the main intent flow and the suggestion-affirm flow, preventing stale widget scoping on the next turn.
 
 ## Implementation reports
 - `docs/proposal/chat-navigation/plan/panels/chat/meta/orchestrator/report/2026-02-26-widget-scope-cue-implementation-report.md`
@@ -86,12 +88,17 @@ When scope cues are missed, routing can apply latch/default selection incorrectl
 - `in chat` / `from chat` and explicit widget cues must override latch default source binding.
 - Latch default applies only when scope cue is absent or unresolved.
 
-6. **LLM outage/non-blocking rule**
+6. **Panel-switch latch re-anchor**
+- Any successful `open_panel_drawer` action must clear stale latch state and set a pending latch for the opened panel id.
+- This applies to all execution paths that can open a panel (main intent flow and suggestion-affirm flow), not just one path.
+- Next-turn widget scoping must use upgraded pending->resolved latch or safe pending-latch handling, never stale previous-widget latch.
+
+7. **LLM outage/non-blocking rule**
 - LLM failure (including timeout/429/network) must never degrade routing safety.
 - On LLM failure, immediately use deterministic grounded clarifier template for the same validated candidate set.
 - No silent reroute and no execution may occur from failed LLM output.
 
-7. **Constrained LLM output contract freeze**
+8. **Constrained LLM output contract freeze**
 - Freeze one output contract before implementation and use it consistently across prompt, client parser, and API route.
 - Current baseline contract in runtime is:
   - `select(choiceId)`
@@ -251,6 +258,8 @@ Add logs:
 17. Scoped command phrased as a question (`can you open ... from active widget`) does not enter semantic lane.
 18. After typo clarifier, bare scope confirmation (`from active widget` / `from active panel`) replays original intent in one turn.
 19. `scope_uncertain` is a hard stop: no grounding-set fallback or scoped candidate arbitration in the same turn.
+20. After panel switch via `open_panel_drawer`, next unscoped selection-like turn must not reuse stale prior-widget latch candidates.
+21. Clarifier-reply ordinal deterministic check must not parse ordinals from longer non-ordinal phrases (strict-only, no embedded extraction).
 
 ## Dispatcher-level integration checks (must)
 Add dispatcher-level tests that call `dispatchRouting()` with real routing flow and mocked externals:

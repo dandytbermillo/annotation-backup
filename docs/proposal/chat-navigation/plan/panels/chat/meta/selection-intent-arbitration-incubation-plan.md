@@ -2,14 +2,14 @@
 
 **Status:** Incubation Draft
 **Owner:** Chat Navigation
-**Last updated:** 2026-02-27
+**Last updated:** 2026-02-28
 **Scope:** Planning-only. No implementation changes in this document.
 **Implementation addenda:**
 - `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-intent-arbitration-widget-first-fix-plan.md`
 - `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-intent-arbitration-scope-cues-addendum-plan.md`
 - `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-vs-command-arbitration-rule-plan.md`
 
-## Implementation status snapshot (2026-02-27)
+## Implementation status snapshot (2026-02-28)
 This incubation plan remains normative/planning-oriented, but key addendum items are implemented in runtime:
 - Widget scope cue expansion (active/current variants, including plural forms).
 - Typo scope-cue safety path (`low_typo`) with clarifier-only behavior.
@@ -17,6 +17,10 @@ This incubation plan remains normative/planning-oriented, but key addendum items
 - One-turn pending typo-clarifier replay with TTL + snapshot drift checks.
 - Replay resolver reorder: high-confidence scope confirmation is evaluated before unrelated-command clearing.
 - Bare scope confirmation is supported after typo clarifier (for example: `from active widget` without `yes`).
+- Clarifier-reply ordinal parsing uses strict-only mode to avoid embedded fuzzy ordinal false positives (for example, `want` incorrectly interpreted as `last`).
+- Focus latch is re-anchored to pending when `open_panel_drawer` executes in both:
+  - main intent API execution flow
+  - suggestion-affirm execution flow
 
 Primary implementation source:
 - `docs/proposal/chat-navigation/plan/panels/chat/meta/selection-intent-arbitration-scope-cues-addendum-plan.md`

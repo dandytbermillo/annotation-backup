@@ -1549,7 +1549,7 @@ export async function dispatchRouting(
           metadata: { matchedId: exactLabelMatch[0].id, matchedLabel: exactLabelMatch[0].label },
         })
         const result = executeScopedCandidate(
-          { id: exactLabelMatch[0].id, label: exactLabelMatch[0].label, type: 'widget_option' },
+          { id: exactLabelMatch[0].id, label: exactLabelMatch[0].label, type: 'widget_option', source: 'widget_list' },
           'deterministic'
         )
         if (result) {
@@ -1562,8 +1562,11 @@ export async function dispatchRouting(
       }
 
       // --- Deterministic: ordinal match against prior pills ---
+      // MUST use 'strict' mode — embedded mode's per-token fuzzy normalizer causes
+      // false positives (e.g., "want"→"last" at distance 2, then extractOrdinalFromPhrase
+      // matches /\blast\b/ → selects wrong option). LLM handles non-ordinal inputs.
       const optionLabels = priorOptions.map(o => o.label)
-      const ordinalResult = isSelectionOnly(groundingInput, priorOptions.length, optionLabels, 'embedded')
+      const ordinalResult = isSelectionOnly(groundingInput, priorOptions.length, optionLabels, 'strict')
       if (ordinalResult.isSelection && ordinalResult.index !== undefined) {
         const selected = priorOptions[ordinalResult.index]
         if (selected) {
@@ -1573,7 +1576,7 @@ export async function dispatchRouting(
             metadata: { index: ordinalResult.index, matchedId: selected.id, matchedLabel: selected.label },
           })
           const result = executeScopedCandidate(
-            { id: selected.id, label: selected.label, type: 'widget_option' },
+            { id: selected.id, label: selected.label, type: 'widget_option', source: 'widget_list' },
             'deterministic'
           )
           if (result) {
@@ -1625,7 +1628,7 @@ export async function dispatchRouting(
                 metadata: { choiceId: selected.id, label: selected.label },
               })
               const result = executeScopedCandidate(
-                { id: selected.id, label: selected.label, type: 'widget_option' },
+                { id: selected.id, label: selected.label, type: 'widget_option', source: 'widget_list' },
                 'llm_executed'
               )
               if (result) {

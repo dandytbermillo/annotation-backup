@@ -10,6 +10,7 @@
 - Strict label: `rawInput.trim().toLowerCase() === label.trim().toLowerCase()`
 - Strict sublabel: same as label check against sublabel.
 - Strict whole-string ordinal only (no embedded extraction in longer phrases).
+- Clarifier-reply deterministic ordinal checks must also be strict-only (never embedded/fuzzy ordinal parsing).
 - Optional badge letter only when explicitly enabled and anchored to one token (e.g. `a`-`e`).
 
 ## Forbidden for Deterministic Execution
@@ -26,6 +27,7 @@
 3. Run bounded LLM with scoped candidates.
 4. If unresolved/low confidence, safe clarifier.
 5. Scoped single-match but non-exact input is still non-exact: do not auto-execute deterministically.
+6. Any successful panel-switch action (`open_panel_drawer`) must re-anchor focus latch to the newly opened panel (clear stale latch + set pending latch).
 
 ## Candidate Scope Rules
 - Candidate scope quality is part of correctness: wrong scope makes LLM outputs unreliable.
@@ -52,3 +54,4 @@
 - Any call to deterministic resolver must use raw input, not rewritten input.
 - Any normalization helper usage must be labeled advisory-only.
 - Any early return before bounded LLM must be exact-only.
+- Any panel open path must prove latch re-anchor is applied in that path (main flow + suggestion-affirm flow parity).

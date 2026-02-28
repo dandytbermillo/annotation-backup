@@ -1594,6 +1594,15 @@ function ChatNavigationPanelContent({
           // Execute action based on resolution
           if (resolution.action === 'open_panel_drawer' && resolution.panelId) {
             openPanelDrawer(resolution.panelId, resolution.panelTitle, resolution.executionMeta)
+            // Re-anchor focus latch to newly opened panel (same pattern as main flow at line ~2420).
+            clearFocusLatch()
+            setFocusLatch({
+              kind: 'pending',
+              pendingPanelId: resolution.panelId,
+              widgetLabel: resolution.panelTitle || 'Panel',
+              latchedAt: Date.now(),
+              turnsSinceLatched: 0,
+            })
           }
 
           // Handle actions that return selectable options
@@ -2406,6 +2415,21 @@ function ChatNavigationPanelContent({
 
       // Execute the action
       const result = await executeAction(resolution)
+
+      // Re-anchor focus latch when a panel drawer is opened via intent API
+      // (same pattern as pill-based panel selection at handleSelectOption lines 909-932).
+      // Without this, a stale latch from a prior widget causes Tier 4.5 grounding
+      // to scope candidates to the wrong widget on the next turn.
+      if (resolution.action === 'open_panel_drawer' && resolution.panelId) {
+        clearFocusLatch()
+        setFocusLatch({
+          kind: 'pending',
+          pendingPanelId: resolution.panelId,
+          widgetLabel: resolution.panelTitle || 'Panel',
+          latchedAt: Date.now(),
+          turnsSinceLatched: 0,
+        })
+      }
 
       // ---------------------------------------------------------------------------
       // Update pending options based on result
