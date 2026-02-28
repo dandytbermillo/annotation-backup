@@ -60,10 +60,10 @@ export function ShowMoreButton({
       className={cn(
         'inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium',
         'rounded-full border transition-all duration-200',
-        'bg-indigo-50/80 text-indigo-700 border-indigo-200/50',
-        'hover:bg-indigo-100 hover:border-indigo-300 hover:shadow-sm',
-        'focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:ring-offset-1',
-        'disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-indigo-50/80',
+        'bg-cyan-800/10 text-cyan-400/75 border-cyan-600/25',
+        'hover:bg-cyan-700/15 hover:border-cyan-500/40 hover:shadow-sm',
+        'focus:outline-none focus:ring-2 focus:ring-cyan-500/30 focus:ring-offset-1',
+        'disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-cyan-800/10',
         className
       )}
     >

@@ -56,9 +56,9 @@ export function SuggestionPills({ suggestions, onSuggestionClick, disabled = fal
             <Badge
               variant="outline"
               className={cn(
-                'cursor-pointer transition-colors',
-                'hover:bg-primary hover:text-primary-foreground',
-                'border-dashed text-muted-foreground',
+                'cursor-pointer transition-all duration-200',
+                'bg-transparent border-dashed border-cyan-600/25 text-slate-300/60',
+                'hover:bg-cyan-800/10 hover:border-cyan-500/35 hover:text-slate-200',
                 disabled && 'opacity-50 cursor-not-allowed'
               )}
             >
@@ -118,9 +118,10 @@ function SuggestionButton({
       <Badge
         variant={variant}
         className={cn(
-          'cursor-pointer transition-colors',
-          'hover:bg-primary hover:text-primary-foreground',
-          variant === 'outline' && 'border-dashed text-muted-foreground',
+          'cursor-pointer transition-all duration-200',
+          variant === 'secondary'
+            ? 'bg-cyan-800/15 border border-cyan-500/30 text-cyan-400 hover:bg-cyan-700/25 hover:border-cyan-400/50 hover:text-cyan-300'
+            : 'bg-transparent border-dashed border-cyan-600/25 text-slate-300/60 hover:bg-cyan-800/10 hover:border-cyan-500/35 hover:text-slate-200',
           disabled && 'opacity-50 cursor-not-allowed'
         )}
       >

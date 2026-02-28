@@ -43,16 +43,16 @@ function formatDate(d: Date, isToday: boolean): string {
 export function DateHeader({ date, isToday }: DateHeaderProps) {
   return (
     <div className="flex items-center gap-3 py-3 my-1">
-      <div className="flex-1 h-px bg-zinc-200" />
+      <div className="flex-1 h-px bg-cyan-700/15" />
       <div className={cn(
-        "text-[11px] font-medium px-3 py-1 rounded-full border shadow-sm",
+        "text-[11px] font-medium px-3 py-1 rounded-full border",
         isToday
-          ? "text-indigo-600 bg-indigo-50 border-indigo-200"
-          : "text-zinc-500 bg-zinc-50 border-zinc-200"
+          ? "text-cyan-400 bg-cyan-800/10 border-cyan-500/30"
+          : "text-slate-400 bg-slate-700/10 border-slate-500/15"
       )}>
         {formatDate(date, isToday)}
       </div>
-      <div className="flex-1 h-px bg-zinc-200" />
+      <div className="flex-1 h-px bg-cyan-700/15" />
     </div>
   )
 }

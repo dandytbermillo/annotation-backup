@@ -9,6 +9,7 @@
 'use client'
 
 import type { ReactNode } from 'react'
+import { Bot, User } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ChatMessage, SelectionOption, ChatSuggestions, ChatProvenance } from '@/lib/chat'
 import { MessageResultPreview } from './message-result-preview'
@@ -57,6 +58,13 @@ function isToday(date: Date): boolean {
   return date.toDateString() === new Date().toDateString()
 }
 
+/**
+ * Format time as HH:MM (24h) for message timestamps
+ */
+function formatTime(date: Date): string {
+  return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
+}
+
 // =============================================================================
 // Simple Markdown Renderer
 // =============================================================================
@@ -78,7 +86,7 @@ function renderSimpleMarkdown(content: string): ReactNode {
     if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
       // Bold text - remove ** and wrap in <strong>
       const boldText = part.slice(2, -2)
-      return <strong key={index} className="font-semibold">{boldText}</strong>
+      return <strong key={index} className="font-semibold text-white">{boldText}</strong>
     }
     return part
   })
@@ -148,97 +156,141 @@ export function ChatMessageList({
             {index === initialMessageCount && initialMessageCount > 0 && (
               <SessionDivider />
             )}
+            {/* Message row: avatar + bubble */}
             <div
               className={cn(
-                'flex flex-col gap-1 w-full',
-                message.role === 'user' ? 'items-end' : 'items-start',
-                // Slightly fade history messages
+                'flex items-start gap-2 w-full',
                 index < initialMessageCount && 'opacity-75'
               )}
             >
+              {/* Assistant avatar — left side */}
+              {message.role === 'assistant' && (
+                <div
+                  className="w-8 h-8 rounded-full shrink-0 flex items-center justify-center border mt-1 border-blue-400/25 bg-slate-700/20"
+                  style={{ color: '#94a3b8' }}
+                >
+                  <Bot className="h-4 w-4" />
+                </div>
+              )}
+
+              {/* Spacer — pushes user messages to the right */}
+              {message.role === 'user' && <div className="flex-1" />}
+
+              {/* Bubble + pills column */}
               <div
                 className={cn(
-                  // Match ViewPanel TextRenderer styling exactly
-                  'rounded-lg p-4 max-w-[90%] font-mono',
-                  // User messages: no overflow-hidden to prevent text clipping
-                  // Assistant messages: overflow-hidden for consistent card appearance
-                  message.role === 'user'
-                    ? 'bg-zinc-900 text-white border border-white/10'
-                    : 'overflow-hidden ' + (message.isError
-                      ? 'bg-red-950 text-red-200 border border-red-500/20'
-                      : 'bg-slate-900 text-white/80 border border-white/10') // Solid dark like ViewPanel
+                  'flex flex-col gap-1 min-w-0 max-w-[85%]',
+                  message.role === 'user' ? 'items-end' : 'items-start',
                 )}
-                style={{
-                  fontSize: '13px',
-                  lineHeight: '20px',
-                  wordBreak: 'break-word',
-                  overflowWrap: 'break-word',
-                  whiteSpace: 'pre-wrap',
-                }}
               >
-                {/* Render markdown for assistant messages, plain text for user/error */}
-                {message.role === 'assistant' && !message.isError
-                  ? renderSimpleMarkdown(message.content)
-                  : message.content}
-              </div>
+                <div
+                  className={cn(
+                    // Glass bubble styling (AR HUD inspired)
+                    'rounded-lg p-4 max-w-full font-mono backdrop-blur-sm',
+                    // User messages: no overflow-hidden to prevent text clipping
+                    // Assistant messages: overflow-hidden for consistent card appearance
+                    message.role === 'user'
+                      ? 'bg-cyan-900/20 text-slate-100 border border-cyan-500/25'
+                      : 'overflow-hidden ' + (message.isError
+                        ? 'bg-red-900/20 text-red-300 border border-red-500/25'
+                        : 'bg-slate-700/15 text-slate-200 border border-blue-300/20')
+                  )}
+                  style={{
+                    fontSize: '13px',
+                    lineHeight: '20px',
+                    wordBreak: 'break-word',
+                    overflowWrap: 'break-word',
+                    whiteSpace: 'pre-wrap',
+                    // Force text color inline to override inherited light-mode body color
+                    color: message.role === 'user'
+                      ? '#f1f5f9'  // slate-100
+                      : message.isError
+                        ? '#fca5a5' // red-300
+                        : '#e2e8f0', // slate-200
+                  }}
+                >
+                  {/* Render markdown for assistant messages, plain text for user/error */}
+                  {message.role === 'assistant' && !message.isError
+                    ? renderSimpleMarkdown(message.content)
+                    : message.content}
+                </div>
 
-              {/* Dev-only: Provenance debug badge */}
-              {provenanceMap && message.role === 'assistant' && provenanceMap.has(message.id) && (
-                <ProvenanceBadge provenance={provenanceMap.get(message.id)!} />
-              )}
+                {/* Timestamp below bubble */}
+                <span
+                  className="text-[10px] font-mono px-1"
+                  style={{ color: 'rgba(148, 163, 184, 0.5)' }}
+                >
+                  {formatTime(message.timestamp)}
+                </span>
 
-              {/* Message Result Preview (for "Show all" view panel content) */}
-              {message.previewItems && message.previewItems.length > 0 && message.viewPanelContent && (
-                <MessageResultPreview
-                  title={message.viewPanelContent.title}
-                  previewItems={message.previewItems}
-                  totalCount={message.totalCount ?? message.previewItems.length}
-                  fullContent={message.viewPanelContent}
-                  onShowAll={
-                    message.drawerPanelId && onOpenPanelDrawer
-                      ? () => onOpenPanelDrawer(message.drawerPanelId!, message.drawerPanelTitle)
-                      : undefined
-                  }
-                />
-              )}
+                {/* Dev-only: Provenance debug badge */}
+                {provenanceMap && message.role === 'assistant' && provenanceMap.has(message.id) && (
+                  <ProvenanceBadge provenance={provenanceMap.get(message.id)!} />
+                )}
 
-              {/* Selection Pills */}
-              {message.options && message.options.length > 0 && (
-                <SelectionPills
-                  options={message.options}
-                  onSelect={onSelectOption}
-                  disabled={isLoading}
-                />
-              )}
+                {/* Message Result Preview (for "Show all" view panel content) */}
+                {message.previewItems && message.previewItems.length > 0 && message.viewPanelContent && (
+                  <MessageResultPreview
+                    title={message.viewPanelContent.title}
+                    previewItems={message.previewItems}
+                    totalCount={message.totalCount ?? message.previewItems.length}
+                    fullContent={message.viewPanelContent}
+                    onShowAll={
+                      message.drawerPanelId && onOpenPanelDrawer
+                        ? () => onOpenPanelDrawer(message.drawerPanelId!, message.drawerPanelTitle)
+                        : undefined
+                    }
+                  />
+                )}
 
-              {/* Suggestion Pills (typo recovery) */}
-              {message.suggestions && message.suggestions.candidates.length > 0 && (
-                <SuggestionPills
-                  suggestions={message.suggestions}
-                  onSuggestionClick={onSuggestionClick}
-                  disabled={isLoading}
-                />
-              )}
-
-              {/* Show More Button (doc/note responses, per show-more-button-spec.md) */}
-              {message.role === 'assistant' &&
-                !message.isError &&
-                (message.docSlug || message.itemId) &&
-                !message.options?.length && // Don't show during disambiguation
-                // Hide if ViewPanel shows THIS resource
-                !(message.docSlug && viewPanelDocSlug === message.docSlug) &&
-                !(message.itemId && viewPanelItemId === message.itemId) &&
-                onShowMore && (
-                  <ShowMoreButton
-                    docSlug={message.docSlug}
-                    itemId={message.itemId}
-                    itemName={message.itemName}
-                    chunkId={message.chunkId}
-                    headerPath={message.headerPath}
-                    onClick={onShowMore}
+                {/* Selection Pills */}
+                {message.options && message.options.length > 0 && (
+                  <SelectionPills
+                    options={message.options}
+                    onSelect={onSelectOption}
                     disabled={isLoading}
                   />
                 )}
+
+                {/* Suggestion Pills (typo recovery) */}
+                {message.suggestions && message.suggestions.candidates.length > 0 && (
+                  <SuggestionPills
+                    suggestions={message.suggestions}
+                    onSuggestionClick={onSuggestionClick}
+                    disabled={isLoading}
+                  />
+                )}
+
+                {/* Show More Button (doc/note responses, per show-more-button-spec.md) */}
+                {message.role === 'assistant' &&
+                  !message.isError &&
+                  (message.docSlug || message.itemId) &&
+                  !message.options?.length && // Don't show during disambiguation
+                  // Hide if ViewPanel shows THIS resource
+                  !(message.docSlug && viewPanelDocSlug === message.docSlug) &&
+                  !(message.itemId && viewPanelItemId === message.itemId) &&
+                  onShowMore && (
+                    <ShowMoreButton
+                      docSlug={message.docSlug}
+                      itemId={message.itemId}
+                      itemName={message.itemName}
+                      chunkId={message.chunkId}
+                      headerPath={message.headerPath}
+                      onClick={onShowMore}
+                      disabled={isLoading}
+                    />
+                  )}
+              </div>
+
+              {/* User avatar — right side */}
+              {message.role === 'user' && (
+                <div
+                  className="w-8 h-8 rounded-full shrink-0 flex items-center justify-center border mt-1 border-cyan-500/30 bg-cyan-900/20"
+                  style={{ color: '#22d3ee' }}
+                >
+                  <User className="h-4 w-4" />
+                </div>
+              )}
             </div>
           </div>
         )

@@ -2820,7 +2820,7 @@ function ChatNavigationPanelContent({
 
       {/* Backdrop - click to close (only when chat is open) */}
       <div
-        className="fixed inset-0 bg-black/20 z-40 transition-opacity duration-200"
+        className="fixed inset-0 bg-black/30 z-40 transition-opacity duration-200"
         onClick={() => setOpen(false)}
         aria-hidden="true"
         style={{
@@ -2834,7 +2834,7 @@ function ChatNavigationPanelContent({
         className={cn(
           'fixed left-0 top-0 z-50',
           'h-screen',
-          'bg-background/80 backdrop-blur-xl border-r border-white/10 shadow-2xl',
+          'dark bg-slate-950/95 backdrop-blur-xl border-r border-cyan-700/20 shadow-2xl',
           'flex flex-col',
           'transition-transform duration-200',
           isOpen ? 'translate-x-0' : '-translate-x-full',
@@ -2845,17 +2845,17 @@ function ChatNavigationPanelContent({
         {/* Chat content wrapper */}
         <div className="flex flex-col h-full">
             {/* Header - high contrast for readability */}
-            <div className="flex items-center justify-between border-b border-white/20 px-4 py-3 shrink-0 bg-white/90 backdrop-blur-md">
+            <div className="flex items-center justify-between border-b border-cyan-700/15 px-4 py-3 shrink-0 bg-slate-950/90 backdrop-blur-md">
               <div className="flex items-center gap-2">
-                <MessageSquare className="h-5 w-5 text-zinc-600" />
-                <span className="text-base font-semibold text-zinc-800">Navigate</span>
+                <MessageSquare className="h-5 w-5 text-cyan-400/80" />
+                <span className="text-base font-semibold text-slate-200">Navigate</span>
               </div>
               <div className="flex items-center gap-1">
                 {messages.length > 0 && (
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200/50"
+                    className="h-8 w-8 text-slate-400 hover:text-cyan-400 hover:bg-cyan-800/10"
                     onClick={clearChat}
                     title="Clear chat"
                   >
@@ -2866,7 +2866,7 @@ function ChatNavigationPanelContent({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-8 w-8 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200/50"
+                  className="h-8 w-8 text-slate-400 hover:text-cyan-400 hover:bg-cyan-800/10"
                   onClick={() => setOpen(false)}
                   title="Close panel"
                 >
@@ -2881,9 +2881,9 @@ function ChatNavigationPanelContent({
               <div className="flex flex-col gap-3 p-4">
                 {/* Loading history indicator */}
                 {isLoadingHistory && messages.length === 0 && (
-                  <div className="flex items-center justify-center py-8 bg-white/80 backdrop-blur-sm rounded-lg mx-2">
-                    <Loader2 className="h-5 w-5 animate-spin text-zinc-500" />
-                    <span className="ml-2 text-sm text-zinc-600">Loading history...</span>
+                  <div className="flex items-center justify-center py-8 bg-slate-800/20 border border-cyan-700/15 backdrop-blur-sm rounded-lg mx-2">
+                    <Loader2 className="h-5 w-5 animate-spin text-cyan-400/70" />
+                    <span className="ml-2 text-sm text-slate-300/70">Loading history...</span>
                   </div>
                 )}
 
@@ -2891,34 +2891,34 @@ function ChatNavigationPanelContent({
                 {hasMoreMessages && !isLoadingHistory && (
                   <button
                     onClick={handleLoadOlder}
-                    className="text-xs text-zinc-600 hover:text-zinc-900 text-center py-2 px-3 transition-colors bg-white/70 hover:bg-white/90 rounded-lg mx-auto block"
+                    className="text-xs text-slate-300/60 hover:text-cyan-400 text-center py-2 px-3 transition-colors bg-cyan-900/10 hover:bg-cyan-800/15 border border-cyan-700/15 rounded-lg mx-auto block"
                   >
                     ↑ Show older messages
                   </button>
                 )}
                 {hasMoreMessages && isLoadingHistory && (
-                  <div className="flex items-center justify-center py-2 bg-white/70 rounded-lg mx-auto px-3">
-                    <Loader2 className="h-3 w-3 animate-spin text-zinc-500" />
-                    <span className="ml-1.5 text-xs text-zinc-600">Loading...</span>
+                  <div className="flex items-center justify-center py-2 bg-cyan-900/10 border border-cyan-700/15 rounded-lg mx-auto px-3">
+                    <Loader2 className="h-3 w-3 animate-spin text-cyan-400/70" />
+                    <span className="ml-1.5 text-xs text-slate-300/60">Loading...</span>
                   </div>
                 )}
 
                 {/* Summary banner (optional) - high contrast */}
                 {conversationSummary && messages.length > 0 && (
-                  <div className="text-xs text-zinc-600 bg-white/90 backdrop-blur-md rounded-lg px-3 py-2 mb-2 shadow-sm">
-                    <span className="font-semibold text-zinc-800">Earlier:</span> {conversationSummary}
+                  <div className="text-xs text-slate-300/70 bg-slate-900/50 border border-cyan-700/15 backdrop-blur-md rounded-lg px-3 py-2 mb-2">
+                    <span className="font-semibold text-slate-200">Earlier:</span> {conversationSummary}
                   </div>
                 )}
 
                 {messages.length === 0 && !isLoadingHistory ? (
-                  <div className="text-center text-sm py-12 bg-white/80 backdrop-blur-sm rounded-lg mx-2 shadow-sm">
-                    <p className="mb-3 text-zinc-700 font-medium">Try saying:</p>
-                    <p className="italic mb-1 text-zinc-600">&quot;open workspace Research&quot;</p>
-                    <p className="italic mb-1 text-zinc-600">&quot;go to note Project Plan&quot;</p>
-                    <p className="italic mb-1 text-zinc-600">&quot;create workspace Sprint 12&quot;</p>
-                    <p className="italic mb-1 text-zinc-600">&quot;list workspaces&quot;</p>
-                    <p className="italic mb-1 text-zinc-600">&quot;where am I?&quot;</p>
-                    <p className="italic text-zinc-600">&quot;what did I just do?&quot;</p>
+                  <div className="text-center text-sm py-12 bg-slate-800/20 border border-cyan-700/10 backdrop-blur-sm rounded-lg mx-2">
+                    <p className="mb-3 text-slate-200 font-medium">Try saying:</p>
+                    <p className="italic mb-1 text-slate-400">&quot;open workspace Research&quot;</p>
+                    <p className="italic mb-1 text-slate-400">&quot;go to note Project Plan&quot;</p>
+                    <p className="italic mb-1 text-slate-400">&quot;create workspace Sprint 12&quot;</p>
+                    <p className="italic mb-1 text-slate-400">&quot;list workspaces&quot;</p>
+                    <p className="italic mb-1 text-slate-400">&quot;where am I?&quot;</p>
+                    <p className="italic text-slate-400">&quot;what did I just do?&quot;</p>
                   </div>
                 ) : (
                   <ChatMessageList
@@ -2937,7 +2937,7 @@ function ChatNavigationPanelContent({
 
                 {/* Loading Indicator */}
                 {isLoading && (
-                  <div className="flex items-center gap-2 text-muted-foreground">
+                  <div className="flex items-center gap-2 text-cyan-400/70">
                     <Loader2 className="h-4 w-4 animate-spin" />
                     <span className="text-sm">Processing...</span>
                   </div>
