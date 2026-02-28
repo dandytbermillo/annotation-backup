@@ -1510,6 +1510,197 @@ export async function dispatchRouting(
       if (result) return result
     }
 
+    // =====================================================================
+    // CLARIFIER-REPLY MODE: If widgetSelectionContext is active for the same
+    // widget, this is a follow-up to a previous grounded clarifier.
+    // Resolve against prior pills only — no fresh grounding, no drift.
+    // Complete early-return block: always returns, never falls through.
+    // =====================================================================
+    const isReplyToPreviousClarifier = ctx.widgetSelectionContext !== null
+      && ctx.widgetSelectionContext.turnsSinceShown < 3
+      && ctx.widgetSelectionContext.widgetId === scopedWidgetId
+
+    if (isReplyToPreviousClarifier && ctx.widgetSelectionContext) {
+      const priorOptions = ctx.widgetSelectionContext.options
+      const priorOptionSetId = ctx.widgetSelectionContext.optionSetId
+      const priorQuestionText = ctx.widgetSelectionContext.questionText
+        || `Which option did you mean? ${priorOptions.map(o => o.label).join(', ')}?`
+
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'scope_cue_widget_clarifier_reply_mode',
+        metadata: {
+          input: groundingInput,
+          scopedWidgetId,
+          priorOptionSetId,
+          candidateCount: priorOptions.length,
+        },
+      })
+
+      // --- Deterministic: exact label match against prior pills ---
+      const normalizedReplyInput = groundingInput.toLowerCase().trim()
+      const exactLabelMatch = priorOptions.filter(
+        o => o.label.toLowerCase().trim() === normalizedReplyInput
+      )
+      if (exactLabelMatch.length === 1) {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'scope_cue_widget_clarifier_reply_exact_label',
+          metadata: { matchedId: exactLabelMatch[0].id, matchedLabel: exactLabelMatch[0].label },
+        })
+        const result = executeScopedCandidate(
+          { id: exactLabelMatch[0].id, label: exactLabelMatch[0].label, type: 'widget_option' },
+          'deterministic'
+        )
+        if (result) {
+          return {
+            ...result,
+            tierLabel: 'scope_cue_widget_clarifier_reply_exact',
+            _devProvenanceHint: 'deterministic' as const,
+          }
+        }
+      }
+
+      // --- Deterministic: ordinal match against prior pills ---
+      const optionLabels = priorOptions.map(o => o.label)
+      const ordinalResult = isSelectionOnly(groundingInput, priorOptions.length, optionLabels, 'embedded')
+      if (ordinalResult.isSelection && ordinalResult.index !== undefined) {
+        const selected = priorOptions[ordinalResult.index]
+        if (selected) {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'scope_cue_widget_clarifier_reply_ordinal',
+            metadata: { index: ordinalResult.index, matchedId: selected.id, matchedLabel: selected.label },
+          })
+          const result = executeScopedCandidate(
+            { id: selected.id, label: selected.label, type: 'widget_option' },
+            'deterministic'
+          )
+          if (result) {
+            return {
+              ...result,
+              tierLabel: 'scope_cue_widget_clarifier_reply_ordinal',
+              _devProvenanceHint: 'deterministic' as const,
+            }
+          }
+        }
+      }
+
+      // --- Non-exact: bounded LLM with clarifier context ---
+      // Policy lock: only bounded LLM select can execute. Never deterministic for non-exact.
+      if (isGroundingLLMEnabled()) {
+        const replyLlmCandidates = priorOptions.map(o => ({
+          id: o.id, label: o.label, type: 'widget_option', actionHint: 'open' as const,
+        }))
+        const clarifierContext = {
+          messageId: priorOptionSetId,
+          previousQuestion: priorQuestionText,
+        }
+
+        try {
+          const llmResult = await callGroundingLLM({
+            userInput: groundingInput,
+            candidates: replyLlmCandidates,
+            clarifierContext,
+          })
+
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'scope_cue_widget_clarifier_reply_llm_result',
+            metadata: {
+              success: llmResult.success,
+              decision: llmResult.response?.decision,
+              choiceId: llmResult.response?.choiceId,
+              confidence: llmResult.response?.confidence,
+              latencyMs: llmResult.latencyMs,
+            },
+          })
+
+          if (llmResult.success && llmResult.response?.decision === 'select' && llmResult.response.choiceId) {
+            const selected = priorOptions.find(o => o.id === llmResult.response!.choiceId)
+            if (selected) {
+              void debugLog({
+                component: 'ChatNavigation',
+                action: 'scope_cue_widget_clarifier_reply_llm_select',
+                metadata: { choiceId: selected.id, label: selected.label },
+              })
+              const result = executeScopedCandidate(
+                { id: selected.id, label: selected.label, type: 'widget_option' },
+                'llm_executed'
+              )
+              if (result) {
+                return {
+                  ...result,
+                  tierLabel: 'scope_cue_widget_clarifier_reply_select',
+                  _devProvenanceHint: 'llm_influenced' as const,
+                }
+              }
+            }
+          }
+        } catch {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'scope_cue_widget_clarifier_reply_llm_error',
+            metadata: { scopedWidgetId, input: groundingInput },
+          })
+        }
+      }
+
+      // --- Loop guard: LLM didn't select → re-show same pills ---
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'scope_cue_widget_clarifier_reply_need_more_info',
+        metadata: {
+          input: groundingInput,
+          optionSetId: priorOptionSetId,
+          candidateCount: priorOptions.length,
+        },
+      })
+
+      const loopGuardMsgId = `assistant-${Date.now()}`
+      const loopGuardCandidates: GroundingCandidate[] = priorOptions.map(o => ({
+        id: o.id, label: o.label, type: 'widget_option' as const, source: 'widget_list' as const,
+      }))
+      const loopGuardBoundOptions = bindGroundingClarifierOptions(ctx, loopGuardCandidates, loopGuardMsgId)
+
+      // Store questionText on the re-shown clarifier for next turn
+      const loopGuardQuestionText = `Please tap an option or say the exact label: ${priorOptions.map(o => o.label).join(', ')}`
+      if (ctx.widgetSelectionContext && ctx.widgetSelectionContext.optionSetId === loopGuardMsgId) {
+        ctx.setWidgetSelectionContext({
+          ...ctx.widgetSelectionContext,
+          questionText: loopGuardQuestionText,
+        })
+      }
+
+      ctx.addMessage({
+        id: loopGuardMsgId,
+        role: 'assistant',
+        content: loopGuardQuestionText,
+        timestamp: new Date(),
+        isError: false,
+        options: loopGuardBoundOptions.map(opt => ({
+          type: opt.type as SelectionOption['type'],
+          id: opt.id,
+          label: opt.label,
+          sublabel: opt.sublabel,
+          data: opt.data as SelectionOption['data'],
+        })),
+      })
+      ctx.setIsLoading(false)
+      return {
+        ...defaultResult,
+        handled: true,
+        handledByTier: 4,
+        tierLabel: 'scope_cue_widget_clarifier_reply_need_more_info',
+        clarificationCleared,
+        isNewQuestionOrCommandDetected,
+        _devProvenanceHint: 'safe_clarifier',
+      }
+    }
+    // =====================================================================
+    // END CLARIFIER-REPLY MODE
+    // =====================================================================
+
     // Track why we fell through to clarifier (provenance + observability)
     let widgetScopeLlmFallbackReason: 'llm_disabled' | 'need_more_info' | 'llm_abstain' | 'llm_error' = 'llm_disabled'
 
@@ -1597,11 +1788,21 @@ export async function dispatchRouting(
       })
 
       const clarifierMsgId = `assistant-${Date.now()}`
+      const clarifierContent = buildGroundedClarifier(scopedGroundingResult.llmCandidates)
       const boundOptions = bindGroundingClarifierOptions(ctx, scopedGroundingResult.llmCandidates, clarifierMsgId)
+
+      // Store the actual clarifier question text for reply-context (clarifier-reply mode)
+      if (ctx.widgetSelectionContext && ctx.widgetSelectionContext.optionSetId === clarifierMsgId) {
+        ctx.setWidgetSelectionContext({
+          ...ctx.widgetSelectionContext,
+          questionText: clarifierContent,
+        })
+      }
+
       ctx.addMessage({
         id: clarifierMsgId,
         role: 'assistant',
-        content: buildGroundedClarifier(scopedGroundingResult.llmCandidates),
+        content: clarifierContent,
         timestamp: new Date(),
         isError: false,
         options: boundOptions.map(opt => ({

@@ -249,6 +249,8 @@ export interface WidgetSelectionContext {
   timestamp: number
   /** Turn counter for TTL expiry */
   turnsSinceShown: number
+  /** The actual clarifier message content shown to the user (for reply-context) */
+  questionText?: string
 }
 
 /** Widget selection TTL in turns (matches SOFT_ACTIVE_TURN_LIMIT) */

@@ -85,6 +85,11 @@ function buildUserPrompt(request: GroundingLLMRequest): string {
     })
     .join('\n')
 
+  // Clarifier-reply mode: user is answering a previous grounded clarifier
+  if (request.clarifierContext) {
+    return `The assistant previously asked: "${request.clarifierContext.previousQuestion}"\n\nThe shown options were:\n${candidatesList}\n\nThe user replied: "${request.userInput}"\n\nThe user is answering the previous clarifier. Map their reply to exactly one of the shown option IDs. If their reply contains or clearly references a label, select that option. Return JSON only.`
+  }
+
   return `Candidates:\n${candidatesList}\n\nUser said: "${request.userInput}"\n\nWhich candidate? Return JSON only.`
 }
 

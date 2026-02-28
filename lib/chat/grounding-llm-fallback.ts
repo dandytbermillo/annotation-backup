@@ -27,6 +27,11 @@ import type { GroundingCandidate } from './grounding-set'
 export interface GroundingLLMRequest {
   userInput: string
   candidates: { id: string; label: string; type: string; actionHint?: string }[]
+  /** Clarifier reply context — only when user is replying to a previous grounded clarifier */
+  clarifierContext?: {
+    messageId: string
+    previousQuestion: string
+  }
 }
 
 export interface GroundingLLMResponse {
