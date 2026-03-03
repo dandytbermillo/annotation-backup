@@ -22,7 +22,7 @@
 -- ============================================
 -- Centralized thresholds referenced by all sections below.
 -- Adjust these values to calibrate sensitivity for your usage patterns.
-DROP TABLE IF EXISTS soak_thresholds;
+DROP TABLE IF EXISTS pg_temp.soak_thresholds;
 CREATE TEMP TABLE soak_thresholds AS SELECT
   20    AS min_decisions,         -- minimum routing decisions before judging health
   10    AS min_eligible,          -- minimum eligible decisions for 2b hit rate
@@ -201,7 +201,7 @@ SELECT
     REPEAT('█', LEAST((100 * cnt / NULLIF(total, 1))::int / 2, 50)) as bar,
     CASE
         WHEN total < (SELECT min_decisions FROM soak_thresholds) THEN ''
-        WHEN result_status = 'failed' AND 100.0 * cnt / total > 5.0 THEN '❌ HIGH FAILURE RATE'
+        WHEN result_status = 'failed' AND 100.0 * cnt / total > (SELECT healthy_max_failure_pct FROM soak_thresholds) THEN '❌ HIGH FAILURE RATE'
         ELSE ''
     END as flag
 FROM status_counts
@@ -417,4 +417,4 @@ ORDER BY created_at DESC
 LIMIT 20;
 
 -- Cleanup
-DROP TABLE IF EXISTS soak_thresholds;
+DROP TABLE IF EXISTS pg_temp.soak_thresholds;
