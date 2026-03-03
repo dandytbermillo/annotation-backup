@@ -7,6 +7,13 @@
  * Latency tracked and logged for telemetry.
  *
  * The server-side API route handles normalization, hashing, redaction, and DB insert.
+ *
+ * Logging semantics:
+ * - Best-effort: timeout, network failure, or disabled flags can drop a row.
+ *   Not guaranteed to produce a row for every routing decision.
+ * - Log unit: one row per routing decision (not per user turn). A single user
+ *   turn that falls through from memory to tier chain may produce one row from
+ *   either path, deduplicated by interaction_id via ON CONFLICT DO NOTHING.
  */
 
 import type { RoutingLogPayload } from './payload'
@@ -18,7 +25,7 @@ const LOG_ENDPOINT = '/api/chat/routing-log'
 /**
  * Record a routing log entry via server API.
  * - Gated by NEXT_PUBLIC_CHAT_ROUTING_OBSERVE_ONLY on client (build-time inline)
- * - Server also checks CHAT_ROUTING_OBSERVE_ONLY (runtime check, authoritative)
+ * - Server also checks NEXT_PUBLIC_CHAT_ROUTING_OBSERVE_ONLY (available server-side in Next.js)
  * - Bounded await (50ms timeout) + fail-open
  * - Late-write handling: if timeout fires first, fetch outcome is still logged
  */

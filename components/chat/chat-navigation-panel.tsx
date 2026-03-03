@@ -64,7 +64,7 @@ import { normalizeUserMessage, extractQuickLinksBadge } from '@/lib/chat/ui-help
 import { maybeFormatSnippetWithHs3, stripMarkdownHeadersForUI, dedupeHeaderPath } from '@/lib/chat/doc-routing'
 // Prereq 4: Cross-corpus handlers (pill selection still used locally)
 import { handleCrossCorpusPillSelection } from '@/lib/chat/cross-corpus-handler'
-import { recordMemoryEntry, recordRoutingLog, validateMemoryCandidate } from '@/lib/chat/routing-log'
+import { recordMemoryEntry, recordRoutingLog, revalidateMemoryHit } from '@/lib/chat/routing-log'
 import { buildTurnSnapshot } from '@/lib/chat/ui-snapshot-builder'
 
 export interface ChatNavigationPanelProps {
@@ -1683,36 +1683,11 @@ function ChatNavigationPanelContent({
       // ---------------------------------------------------------------------------
       // Gate 1: Commit-point revalidation for memory-served actions
       // Re-validates with fresh buildTurnSnapshot just before executing groundingAction.
-      // If stale, clears handled + groundingAction and falls through to LLM API.
-      // Gate 9: If revalidation fails, fires failed log immediately.
+      // If stale, revalidateMemoryHit clears handled + groundingAction and fires
+      // failed log (best-effort). Result falls through to LLM API below.
       // ---------------------------------------------------------------------------
       if (routingResult._memoryCandidate) {
-        const freshSnapshot = buildTurnSnapshot({})
-        const check = validateMemoryCandidate(routingResult._memoryCandidate, freshSnapshot)
-        if (!check.valid) {
-          console.warn('[routing-memory] commit-point revalidation failed:', check.reason)
-
-          // Gate 9: Fire failed log immediately (best-effort — fail-open, gated by observe-only flag)
-          if (routingResult._pendingMemoryLog) {
-            const failedLog = {
-              ...routingResult._pendingMemoryLog,
-              result_status: 'failed' as const,
-              commit_revalidation_result: 'rejected',
-              commit_revalidation_reason_code: check.reason ?? 'unknown',
-            }
-            recordRoutingLog(failedLog).catch(() => {})
-          }
-
-          // Clear memory fields — falls through to LLM API below
-          routingResult = {
-            ...routingResult,
-            handled: false,
-            groundingAction: undefined,
-            _memoryCandidate: undefined,
-            _pendingMemoryLog: undefined,
-            _pendingMemoryWrite: undefined,
-          }
-        }
+        routingResult = revalidateMemoryHit(routingResult, buildTurnSnapshot({}))
       }
 
       // ---------------------------------------------------------------------------

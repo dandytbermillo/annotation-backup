@@ -1131,6 +1131,13 @@ function isPreLatchDefault(
  *
  * Phase 2 flags are independent of Phase 1. Memory read/write work even when
  * durable logging is off.
+ *
+ * Logging contract:
+ * - Best-effort, not guaranteed. Fail-open writers may drop rows on timeout or error.
+ * - Log unit: one row per routing decision. A memory-read early return skips
+ *   Phase 1 logging; deferred _pendingMemoryLog fires after commit-point instead.
+ *   If both paths somehow attempt to log the same turn, the interaction_id
+ *   dedupe constraint (ON CONFLICT DO NOTHING) prevents duplicates.
  */
 export async function dispatchRouting(
   ctx: RoutingDispatcherContext

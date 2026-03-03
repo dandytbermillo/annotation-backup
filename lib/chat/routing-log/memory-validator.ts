@@ -8,6 +8,8 @@
  */
 
 import type { MemoryLookupResult } from './memory-reader'
+import type { RoutingLogPayload } from './payload'
+import { recordRoutingLog } from './writer'
 
 // Minimal turn snapshot interface to avoid importing the full UI snapshot builder
 interface MinimalTurnSnapshot {
@@ -82,4 +84,64 @@ export function validateMemoryCandidate(
 
   // Unknown action type
   return { valid: false, reason: 'unknown_action_type' }
+}
+
+// --- Commit-point revalidation helper (Gate 1) ---
+
+/**
+ * Minimal routing result shape for revalidation.
+ * Avoids importing the full RoutingDispatcherResult from the dispatcher.
+ */
+interface RevalidatableResult {
+  handled: boolean
+  groundingAction?: unknown
+  _memoryCandidate?: MemoryLookupResult
+  _pendingMemoryLog?: RoutingLogPayload
+  _pendingMemoryWrite?: unknown
+}
+
+/**
+ * Commit-point revalidation for memory-served actions (Gate 1).
+ *
+ * Called by sendMessage() just before executing a groundingAction.
+ * Re-validates the memory candidate against a fresh UI snapshot.
+ *
+ * If invalid:
+ * - Fires a failed durable log (best-effort, fail-open) with commit_revalidation fields (Gate 9)
+ * - Returns the result with handled=false and memory fields cleared (falls through to LLM)
+ *
+ * If valid or not a memory-served result: returns unchanged.
+ *
+ * Client-safe: uses only validateMemoryCandidate + recordRoutingLog (HTTP wrapper).
+ */
+export function revalidateMemoryHit<T extends RevalidatableResult>(
+  result: T,
+  freshSnapshot: MinimalTurnSnapshot,
+): T {
+  if (!result._memoryCandidate) return result
+
+  const check = validateMemoryCandidate(result._memoryCandidate, freshSnapshot)
+  if (check.valid) return result
+
+  console.warn('[routing-memory] commit-point revalidation failed:', check.reason)
+
+  // Gate 9: Fire failed log (best-effort — fail-open, gated by observe-only flag)
+  if (result._pendingMemoryLog) {
+    const failedLog: RoutingLogPayload = {
+      ...result._pendingMemoryLog,
+      result_status: 'failed',
+      commit_revalidation_result: 'rejected',
+      commit_revalidation_reason_code: check.reason ?? 'unknown',
+    }
+    recordRoutingLog(failedLog).catch(() => {})
+  }
+
+  return {
+    ...result,
+    handled: false,
+    groundingAction: undefined,
+    _memoryCandidate: undefined,
+    _pendingMemoryLog: undefined,
+    _pendingMemoryWrite: undefined,
+  }
 }

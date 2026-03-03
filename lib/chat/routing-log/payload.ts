@@ -4,6 +4,9 @@
  * Data structure sent from client to server API route.
  * The server handles normalization, hashing, redaction, and DB insert.
  * This keeps crypto (SHA-256) and DB access server-side only.
+ *
+ * One payload per routing decision (not per user turn). Deduplicated
+ * server-side by interaction_id via ON CONFLICT DO NOTHING.
  */
 
 import type { RoutingLane, DecisionSource, RiskTier, ResultStatus } from './types'

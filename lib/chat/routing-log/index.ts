@@ -27,6 +27,6 @@ export type { MemoryWritePayload } from './memory-write-payload'
 // Phase 2b: Memory read + validate + execute (client-safe)
 export { lookupExactMemory } from './memory-reader'
 export type { MemoryLookupResult } from './memory-reader'
-export { validateMemoryCandidate } from './memory-validator'
+export { validateMemoryCandidate, revalidateMemoryHit } from './memory-validator'
 export type { ValidationResult } from './memory-validator'
 export { buildResultFromMemory } from './memory-action-builder'

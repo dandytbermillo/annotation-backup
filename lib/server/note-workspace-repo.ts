@@ -102,11 +102,11 @@ async function getOrCreateLegacyWorkspacesFolder(userId: string): Promise<string
   let homeId = homeResult.rows[0]?.id
   if (!homeId) {
     const insertHome = await serverPool.query<{ id: string }>(
-      `INSERT INTO items (type, parent_id, path, name, slug)
-       VALUES ('folder', $1, $2, 'Home', $3)
+      `INSERT INTO items (type, parent_id, path, name)
+       VALUES ('folder', $1, $2, 'Home')
        ON CONFLICT DO NOTHING
        RETURNING id`,
-      [kbId, userHomePath, userHomeSlug],
+      [kbId, userHomePath],
     )
     homeId = insertHome.rows[0]?.id
     if (!homeId) {
@@ -131,8 +131,8 @@ async function getOrCreateLegacyWorkspacesFolder(userId: string): Promise<string
   let legacyId = legacyResult.rows[0]?.id
   if (!legacyId) {
     const insertLegacy = await serverPool.query<{ id: string }>(
-      `INSERT INTO items (type, parent_id, path, name, slug)
-       VALUES ('folder', $1, $2, 'Legacy Workspaces', 'legacy-workspaces')
+      `INSERT INTO items (type, parent_id, path, name)
+       VALUES ('folder', $1, $2, 'Legacy Workspaces')
        ON CONFLICT DO NOTHING
        RETURNING id`,
       [homeId, legacyPath],

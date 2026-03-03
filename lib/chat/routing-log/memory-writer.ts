@@ -6,6 +6,12 @@
  *
  * Client-safe: no crypto, no DB imports.
  * The server-side API route handles normalization, hashing, redaction, and DB UPSERT.
+ *
+ * Write semantics:
+ * - Best-effort: timeout, network failure, or disabled flags can drop a write.
+ * - Fired by sendMessage() after confirmed execution only (Gate 5), not at
+ *   routing decision time. A dropped write means the action won't be cached
+ *   for future memory-assist — it does not affect correctness.
  */
 
 import type { MemoryWritePayload } from './memory-write-payload'
