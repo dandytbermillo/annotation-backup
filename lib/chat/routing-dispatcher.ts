@@ -69,6 +69,160 @@ import { buildTurnSnapshot } from '@/lib/chat/ui-snapshot-builder'
 import { callGroundingLLM, isGroundingLLMEnabled } from '@/lib/chat/grounding-llm-fallback'
 import { getWidgetSnapshot } from '@/lib/widgets/ui-snapshot-registry'
 
+// Phase 1 observe-only durable log
+import {
+  recordRoutingLog,
+  buildContextSnapshot,
+  tierToLane,
+  provenanceToDecisionSource,
+  deriveResultStatus,
+  deriveRiskTier,
+  deriveFallbackInteractionId,
+} from '@/lib/chat/routing-log'
+import type { RoutingLogPayload } from '@/lib/chat/routing-log'
+import { buildMemoryWritePayload } from '@/lib/chat/routing-log/memory-write-payload'
+import { lookupExactMemory } from '@/lib/chat/routing-log/memory-reader'
+import { validateMemoryCandidate } from '@/lib/chat/routing-log/memory-validator'
+import { buildResultFromMemory } from '@/lib/chat/routing-log/memory-action-builder'
+
+// =============================================================================
+// Phase 1 Observe-Only — Routing Log Helpers
+// =============================================================================
+
+/** Module-level session ID (same pattern as debug-logger.ts) */
+let _routingLogSessionId: string | null = null
+function getRoutingLogSessionId(): string {
+  if (!_routingLogSessionId) {
+    _routingLogSessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+  }
+  return _routingLogSessionId
+}
+
+/**
+ * Build the routing log payload from dispatcher context and result.
+ * Client-safe: no crypto, no DB access. Sent to server API for processing.
+ */
+function buildRoutingLogPayload(
+  ctx: RoutingDispatcherContext,
+  result: RoutingDispatcherResult,
+  turnSnapshot: ReturnType<typeof buildTurnSnapshot>,
+): RoutingLogPayload {
+  const isLatchEnabled = process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1 === 'true'
+
+  // Prefer user message id as interaction_id (cleaner, already unique per turn)
+  const lastUserMessage = [...ctx.messages].reverse().find(m => m.role === 'user')
+  const turnIndex = ctx.messages.filter(m => m.role === 'user').length
+  const sessionId = getRoutingLogSessionId()
+  const interactionId = lastUserMessage?.id ?? deriveFallbackInteractionId(sessionId, turnIndex, ctx.trimmedInput)
+
+  const snapshot = buildContextSnapshot({
+    openWidgetCount: turnSnapshot.openWidgets.length,
+    pendingOptionsCount: ctx.pendingOptions.length,
+    activeOptionSetId: ctx.activeOptionSetId,
+    hasLastClarification: ctx.lastClarification !== null,
+    hasLastSuggestion: ctx.lastSuggestion !== null,
+    latchEnabled: isLatchEnabled,
+    messageCount: ctx.messages.length,
+  })
+
+  return {
+    raw_query_text: ctx.trimmedInput,
+    context_snapshot: snapshot,
+    session_id: sessionId,
+    interaction_id: interactionId,
+    turn_index: turnIndex,
+    routing_lane: tierToLane(result.handledByTier),
+    decision_source: provenanceToDecisionSource(result._devProvenanceHint),
+    risk_tier: deriveRiskTier(result.handled, result.handledByTier),
+    provenance: result.tierLabel ?? 'unhandled',
+    result_status: deriveResultStatus(result.handled, result._devProvenanceHint, result.tierLabel),
+    tier_label: result.tierLabel,
+    handled_by_tier: result.handledByTier,
+  }
+}
+
+/**
+ * Build a failed-path routing log payload (for exception cases).
+ * All NOT NULL columns get safe documented defaults.
+ */
+function buildFailedRoutingLogPayload(
+  ctx: RoutingDispatcherContext,
+  turnSnapshot: ReturnType<typeof buildTurnSnapshot>,
+): RoutingLogPayload {
+  const isLatchEnabled = process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1 === 'true'
+  const lastUserMessage = [...ctx.messages].reverse().find(m => m.role === 'user')
+  const turnIndex = ctx.messages.filter(m => m.role === 'user').length
+  const sessionId = getRoutingLogSessionId()
+  const interactionId = lastUserMessage?.id ?? deriveFallbackInteractionId(sessionId, turnIndex, ctx.trimmedInput)
+
+  const snapshot = buildContextSnapshot({
+    openWidgetCount: turnSnapshot.openWidgets.length,
+    pendingOptionsCount: ctx.pendingOptions.length,
+    activeOptionSetId: ctx.activeOptionSetId,
+    hasLastClarification: ctx.lastClarification !== null,
+    hasLastSuggestion: ctx.lastSuggestion !== null,
+    latchEnabled: isLatchEnabled,
+    messageCount: ctx.messages.length,
+  })
+
+  return {
+    raw_query_text: ctx.trimmedInput,
+    context_snapshot: snapshot,
+    session_id: sessionId,
+    interaction_id: interactionId,
+    turn_index: turnIndex,
+    routing_lane: 'E',
+    decision_source: 'clarifier',
+    risk_tier: 'low',
+    provenance: 'exception',
+    result_status: 'failed',
+    tier_label: undefined,
+    handled_by_tier: undefined,
+  }
+}
+
+/**
+ * Build a routing log payload for memory-served decisions (Phase 2b).
+ * Used by the dispatcher to attach as _pendingMemoryLog on memory-served results.
+ * Sets routing_lane='B1', decision_source='memory_exact'.
+ */
+function buildRoutingLogPayloadFromMemory(
+  ctx: RoutingDispatcherContext,
+  memoryResult: RoutingDispatcherResult,
+  turnSnapshot: ReturnType<typeof buildTurnSnapshot>,
+): RoutingLogPayload {
+  const isLatchEnabled = process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1 === 'true'
+  const lastUserMessage = [...ctx.messages].reverse().find(m => m.role === 'user')
+  const turnIndex = ctx.messages.filter(m => m.role === 'user').length
+  const sessionId = getRoutingLogSessionId()
+  const interactionId = lastUserMessage?.id ?? deriveFallbackInteractionId(sessionId, turnIndex, ctx.trimmedInput)
+
+  const snapshot = buildContextSnapshot({
+    openWidgetCount: turnSnapshot.openWidgets.length,
+    pendingOptionsCount: ctx.pendingOptions.length,
+    activeOptionSetId: ctx.activeOptionSetId,
+    hasLastClarification: ctx.lastClarification !== null,
+    hasLastSuggestion: ctx.lastSuggestion !== null,
+    latchEnabled: isLatchEnabled,
+    messageCount: ctx.messages.length,
+  })
+
+  return {
+    raw_query_text: ctx.trimmedInput,
+    context_snapshot: snapshot,
+    session_id: sessionId,
+    interaction_id: interactionId,
+    turn_index: turnIndex,
+    routing_lane: 'B1',
+    decision_source: 'memory_exact',
+    risk_tier: memoryResult._memoryCandidate?.risk_tier ?? 'medium',
+    provenance: memoryResult.tierLabel ?? 'memory_exact',
+    result_status: 'executed',
+    tier_label: memoryResult.tierLabel,
+    handled_by_tier: undefined,
+  }
+}
+
 // =============================================================================
 // Helpers
 // =============================================================================
@@ -312,6 +466,14 @@ export interface RoutingDispatcherResult {
   semanticLanePending?: boolean
   /** Dev-only: routing provenance hint for debug overlay (undefined = deterministic) */
   _devProvenanceHint?: ChatProvenance
+
+  // Phase 2 memory-assist fields (deferred execution — sendMessage fires after commit-point)
+  /** Memory lookup result for commit-point revalidation in sendMessage (Gate 1) */
+  _memoryCandidate?: import('@/lib/chat/routing-log/memory-reader').MemoryLookupResult
+  /** Deferred memory write payload — sendMessage fires after confirmed execution (Gate 5) */
+  _pendingMemoryWrite?: import('@/lib/chat/routing-log/memory-write-payload').MemoryWritePayload
+  /** Deferred durable log payload — sendMessage fires after commit-point passes (Gate 6) */
+  _pendingMemoryLog?: import('@/lib/chat/routing-log/payload').RoutingLogPayload
 }
 
 /** Type alias for grounding actions (extracted from RoutingDispatcherResult for reuse) */
@@ -959,7 +1121,135 @@ function isPreLatchDefault(
  * them would require passing 25+ fields with no architectural benefit.
  * The tier order within that function is already correct.
  */
+/**
+ * Routing dispatch wrapper.
+ *
+ * Responsibilities (each independently gated):
+ * - Phase 1: Durable log (NEXT_PUBLIC_CHAT_ROUTING_OBSERVE_ONLY)
+ * - Phase 2b: Memory read before tier chain (NEXT_PUBLIC_CHAT_ROUTING_MEMORY_READ)
+ * - Phase 2a: Memory write build after tier chain (NEXT_PUBLIC_CHAT_ROUTING_MEMORY_WRITE)
+ *
+ * Phase 2 flags are independent of Phase 1. Memory read/write work even when
+ * durable logging is off.
+ */
 export async function dispatchRouting(
+  ctx: RoutingDispatcherContext
+): Promise<RoutingDispatcherResult> {
+  const phase1Enabled = process.env.NEXT_PUBLIC_CHAT_ROUTING_OBSERVE_ONLY === 'true'
+  const memoryReadEnabled = process.env.NEXT_PUBLIC_CHAT_ROUTING_MEMORY_READ === 'true'
+  const memoryWriteEnabled = process.env.NEXT_PUBLIC_CHAT_ROUTING_MEMORY_WRITE === 'true'
+
+  // Fast path: when ALL instrumentation is disabled, skip wrapper overhead entirely.
+  if (!phase1Enabled && !memoryReadEnabled && !memoryWriteEnabled) {
+    return dispatchRoutingInner(ctx)
+  }
+
+  const turnSnapshotForLog = buildTurnSnapshot({})
+
+  // ---------------------------------------------------------------------------
+  // Phase 2b: Exact memory lookup (Lane B1) — before tier chain
+  // If a valid memory match is found, return early without calling dispatchRoutingInner.
+  // This prevents double-logging (Gate 6): either memory path logs OR Phase 1 wrapper logs.
+  // ---------------------------------------------------------------------------
+  if (memoryReadEnabled) {
+    try {
+      const isLatchEnabled = process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1 === 'true'
+      const lookupSnapshot = buildContextSnapshot({
+        openWidgetCount: turnSnapshotForLog.openWidgets.length,
+        pendingOptionsCount: ctx.pendingOptions.length,
+        activeOptionSetId: ctx.activeOptionSetId,
+        hasLastClarification: ctx.lastClarification !== null,
+        hasLastSuggestion: ctx.lastSuggestion !== null,
+        latchEnabled: isLatchEnabled,
+        messageCount: ctx.messages.length,
+      })
+
+      const memoryResult = await lookupExactMemory({
+        raw_query_text: ctx.trimmedInput,
+        context_snapshot: lookupSnapshot,
+      })
+
+      if (memoryResult) {
+        // First validation: reject obviously stale candidates early (concrete ID checks)
+        const validation = validateMemoryCandidate(memoryResult, turnSnapshotForLog)
+        if (validation.valid) {
+          const defaultResult: RoutingDispatcherResult = {
+            handled: false,
+            clarificationCleared: false,
+            isNewQuestionOrCommandDetected: false,
+            classifierCalled: false,
+            classifierTimeout: false,
+            classifierError: false,
+            isFollowUp: false,
+          }
+          const memoryAction = buildResultFromMemory(memoryResult, defaultResult) as RoutingDispatcherResult | null
+          if (memoryAction) {
+            // Gate 6: Defer durable log — attach as pending, sendMessage fires after commit-point
+            try {
+              memoryAction._pendingMemoryLog = buildRoutingLogPayloadFromMemory(ctx, memoryAction, turnSnapshotForLog)
+            } catch { /* fail-open */ }
+
+            // Gate 8: Build writeback payload for success_count increment
+            if (memoryWriteEnabled) {
+              try {
+                memoryAction._pendingMemoryWrite = buildMemoryWritePayload(ctx, memoryAction, turnSnapshotForLog) ?? undefined
+              } catch { /* fail-open */ }
+            }
+
+            // Return with _memoryCandidate + _pendingMemoryLog + _pendingMemoryWrite attached
+            // sendMessage() does commit-point revalidation (Gate 1) then fires log + write
+            return memoryAction
+          }
+        }
+      }
+    } catch {
+      // Memory lookup failed: fall through to normal tier chain (fail-open)
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Normal tier chain
+  // ---------------------------------------------------------------------------
+  let result: RoutingDispatcherResult | undefined
+  let routingError: unknown
+
+  try {
+    result = await dispatchRoutingInner(ctx)
+  } catch (err) {
+    routingError = err
+  }
+
+  // Phase 1 observe-only logging (fail-open, non-blocking) — only when Phase 1 is enabled
+  if (phase1Enabled) {
+    try {
+      const logPayload = routingError
+        ? buildFailedRoutingLogPayload(ctx, turnSnapshotForLog)
+        : buildRoutingLogPayload(ctx, result!, turnSnapshotForLog)
+      await recordRoutingLog(logPayload)
+    } catch {
+      // Double-fault: even log builder failed. Silently ignore.
+    }
+  }
+
+  if (routingError) throw routingError
+
+  // Phase 2a: build memory write payload (deferred — sendMessage fires after confirmed execution)
+  // Gate 5: NOT sent here. Attached to result for sendMessage to fire after confirmed execution.
+  if (memoryWriteEnabled && result!.handled) {
+    try {
+      const memoryPayload = buildMemoryWritePayload(ctx, result!, turnSnapshotForLog)
+      if (memoryPayload) {
+        result!._pendingMemoryWrite = memoryPayload
+      }
+    } catch {
+      // Payload build failure: silently ignore (fail-open)
+    }
+  }
+
+  return result!
+}
+
+async function dispatchRoutingInner(
   ctx: RoutingDispatcherContext
 ): Promise<RoutingDispatcherResult> {
   const defaultResult: RoutingDispatcherResult = {

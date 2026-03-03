@@ -387,7 +387,7 @@ export interface DocRetrievalState {
 }
 
 // Dev-only provenance for routing debug overlay (per provenance-debug-overlay plan)
-export type ChatProvenance = 'deterministic' | 'llm_executed' | 'llm_influenced' | 'llm_clarifier' | 'safe_clarifier'
+export type ChatProvenance = 'deterministic' | 'llm_executed' | 'llm_influenced' | 'llm_clarifier' | 'safe_clarifier' | 'memory_exact'
 
 /** Dev-only: requires flag ON + non-production environment. Zero cost when disabled. */
 export function isProvenanceDebugEnabled(): boolean {

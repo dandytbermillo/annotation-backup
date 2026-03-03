@@ -64,6 +64,8 @@ import { normalizeUserMessage, extractQuickLinksBadge } from '@/lib/chat/ui-help
 import { maybeFormatSnippetWithHs3, stripMarkdownHeadersForUI, dedupeHeaderPath } from '@/lib/chat/doc-routing'
 // Prereq 4: Cross-corpus handlers (pill selection still used locally)
 import { handleCrossCorpusPillSelection } from '@/lib/chat/cross-corpus-handler'
+import { recordMemoryEntry, recordRoutingLog, validateMemoryCandidate } from '@/lib/chat/routing-log'
+import { buildTurnSnapshot } from '@/lib/chat/ui-snapshot-builder'
 
 export interface ChatNavigationPanelProps {
   /** Current entry ID for context */
@@ -1459,7 +1461,7 @@ function ChatNavigationPanelContent({
         lastAddedAssistantIdRef.current = null
       }
       console.log('[ChatPanel] Checkpoint 3: Before dispatchRouting', { lastClarification: !!lastClarification, pendingOptions: pendingOptions?.length })
-      const routingResult = await dispatchRouting({
+      let routingResult = await dispatchRouting({
         trimmedInput,
         // Suggestion routing (Tier S)
         lastSuggestion,
@@ -1679,6 +1681,41 @@ function ChatNavigationPanelContent({
       }
 
       // ---------------------------------------------------------------------------
+      // Gate 1: Commit-point revalidation for memory-served actions
+      // Re-validates with fresh buildTurnSnapshot just before executing groundingAction.
+      // If stale, clears handled + groundingAction and falls through to LLM API.
+      // Gate 9: If revalidation fails, fires failed log immediately.
+      // ---------------------------------------------------------------------------
+      if (routingResult._memoryCandidate) {
+        const freshSnapshot = buildTurnSnapshot({})
+        const check = validateMemoryCandidate(routingResult._memoryCandidate, freshSnapshot)
+        if (!check.valid) {
+          console.warn('[routing-memory] commit-point revalidation failed:', check.reason)
+
+          // Gate 9: Fire failed log immediately (best-effort — fail-open, gated by observe-only flag)
+          if (routingResult._pendingMemoryLog) {
+            const failedLog = {
+              ...routingResult._pendingMemoryLog,
+              result_status: 'failed' as const,
+              commit_revalidation_result: 'rejected',
+              commit_revalidation_reason_code: check.reason ?? 'unknown',
+            }
+            recordRoutingLog(failedLog).catch(() => {})
+          }
+
+          // Clear memory fields — falls through to LLM API below
+          routingResult = {
+            ...routingResult,
+            handled: false,
+            groundingAction: undefined,
+            _memoryCandidate: undefined,
+            _pendingMemoryLog: undefined,
+            _pendingMemoryWrite: undefined,
+          }
+        }
+      }
+
+      // ---------------------------------------------------------------------------
       // Tier 4.5: Grounding-Set Referent Execution
       // Per grounding-set-fallback-plan.md §5: "LLM select → execute deterministically."
       // The dispatcher returns a groundingAction with a synthetic message; we route it
@@ -1725,6 +1762,14 @@ function ChatNavigationPanelContent({
               isError: false,
             }
             addMessage(assistantMessage)
+
+            // Gates 5+6: Fire deferred memory log and memory write after confirmed execution
+            if (routingResult._pendingMemoryLog) {
+              recordRoutingLog(routingResult._pendingMemoryLog).catch(() => {})
+            }
+            if (routingResult._pendingMemoryWrite) {
+              recordMemoryEntry(routingResult._pendingMemoryWrite).catch(() => {})
+            }
           } else {
             // Navigate API couldn't resolve — show what we resolved to
             const assistantMessage: ChatMessage = {
@@ -1735,6 +1780,11 @@ function ChatNavigationPanelContent({
               isError: true,
             }
             addMessage(assistantMessage)
+
+            // Fire failed memory log for execution failure (resolution not success)
+            if (routingResult._pendingMemoryLog) {
+              recordRoutingLog({ ...routingResult._pendingMemoryLog, result_status: 'failed' }).catch(() => {})
+            }
           }
         } catch (error) {
           const errorMsg: ChatMessage = {
@@ -1745,6 +1795,11 @@ function ChatNavigationPanelContent({
             isError: true,
           }
           addMessage(errorMsg)
+
+          // Fire failed memory log for network/exception failure
+          if (routingResult._pendingMemoryLog) {
+            recordRoutingLog({ ...routingResult._pendingMemoryLog, result_status: 'failed' }).catch(() => {})
+          }
         }
 
         // Dev provenance: tag before early return (Tier 4.5 grounding referent)
@@ -1801,6 +1856,14 @@ function ChatNavigationPanelContent({
               isError: false,
             }
             addMessage(assistantMessage)
+
+            // Gates 5+6: Fire deferred memory log and memory write after confirmed execution
+            if (routingResult._pendingMemoryLog) {
+              recordRoutingLog(routingResult._pendingMemoryLog).catch(() => {})
+            }
+            if (routingResult._pendingMemoryWrite) {
+              recordMemoryEntry(routingResult._pendingMemoryWrite).catch(() => {})
+            }
           } else {
             const assistantMessage: ChatMessage = {
               id: `assistant-${Date.now()}`,
@@ -1810,6 +1873,11 @@ function ChatNavigationPanelContent({
               isError: true,
             }
             addMessage(assistantMessage)
+
+            // Fire failed memory log for execution failure (resolution not success)
+            if (routingResult._pendingMemoryLog) {
+              recordRoutingLog({ ...routingResult._pendingMemoryLog, result_status: 'failed' }).catch(() => {})
+            }
           }
         } catch (error) {
           void debugLog({
@@ -1830,6 +1898,11 @@ function ChatNavigationPanelContent({
             isError: true,
           }
           addMessage(errorMsg)
+
+          // Fire failed memory log for network/exception failure
+          if (routingResult._pendingMemoryLog) {
+            recordRoutingLog({ ...routingResult._pendingMemoryLog, result_status: 'failed' }).catch(() => {})
+          }
         }
 
         // Dev provenance: tag before early return (Tier 4.5 widget item)
