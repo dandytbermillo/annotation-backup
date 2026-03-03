@@ -1,4 +1,5 @@
 -- Routing Soak Monitor — Phase 2 Exact-Memory Assist
+-- 12 result sets across 10 numbered sections (2b, 9a, 9b are sub-sections)
 --
 -- Usage:
 --   psql -U postgres -d annotation_dev -f docs/proposal/chat-navigation/test_scripts/monitor-routing-soak.sql
@@ -31,7 +32,10 @@ CREATE TEMP TABLE soak_thresholds AS SELECT
   20.0  AS healthy_hit_pct,       -- memory hit rate threshold for HEALTHY
   10.0  AS warming_hit_pct,       -- memory hit rate threshold for WARMING UP
   5.0   AS healthy_reval_pct,     -- commit revalidation rejection threshold for HEALTHY
-  20.0  AS high_staleness_pct;    -- commit revalidation rejection threshold for HIGH STALENESS
+  20.0  AS high_staleness_pct,    -- commit revalidation rejection threshold for HIGH STALENESS
+  5.0   AS healthy_max_failure_pct, -- max failure rate for HEALTHY status
+  5.0   AS memory_underperforming_pct, -- B1 lane % below which memory is underperforming
+  80.0  AS llm_heavy_pct;         -- D lane % above which LLM is too dominant
 
 -- ============================================
 -- 1. ROUTING HEALTH DASHBOARD
@@ -53,7 +57,7 @@ SELECT
         WHEN 100.0 * COUNT(*) FILTER (WHERE result_status = 'failed') / NULLIF(COUNT(*), 0) >= (SELECT degraded_failure_pct FROM soak_thresholds)
             THEN '❌ DEGRADED (failure >= ' || (SELECT degraded_failure_pct FROM soak_thresholds) || '%)'
         WHEN 100.0 * COUNT(*) FILTER (WHERE decision_source = 'memory_exact') / NULLIF(COUNT(*), 0) >= (SELECT healthy_hit_pct FROM soak_thresholds)
-         AND 100.0 * COUNT(*) FILTER (WHERE result_status = 'failed') / NULLIF(COUNT(*), 0) < 5.0
+         AND 100.0 * COUNT(*) FILTER (WHERE result_status = 'failed') / NULLIF(COUNT(*), 0) < (SELECT healthy_max_failure_pct FROM soak_thresholds)
             THEN '✅ HEALTHY'
         WHEN 100.0 * COUNT(*) FILTER (WHERE decision_source = 'memory_exact') / NULLIF(COUNT(*), 0) >= (SELECT warming_hit_pct FROM soak_thresholds)
             THEN '⚠️  WARMING UP'
@@ -166,8 +170,8 @@ SELECT
     REPEAT('█', LEAST((100 * cnt / NULLIF(total, 1))::int / 2, 50)) as bar,
     CASE
         WHEN total < (SELECT min_lane_decisions FROM soak_thresholds) THEN ''
-        WHEN routing_lane = 'B1' AND 100.0 * cnt / total < 5.0 THEN '⚠️  MEMORY UNDERPERFORMING'
-        WHEN routing_lane = 'D' AND 100.0 * cnt / total > 80.0 THEN '⚠️  LLM HEAVY'
+        WHEN routing_lane = 'B1' AND 100.0 * cnt / total < (SELECT memory_underperforming_pct FROM soak_thresholds) THEN '⚠️  MEMORY UNDERPERFORMING'
+        WHEN routing_lane = 'D' AND 100.0 * cnt / total > (SELECT llm_heavy_pct FROM soak_thresholds) THEN '⚠️  LLM HEAVY'
         ELSE ''
     END as flag
 FROM lane_counts
