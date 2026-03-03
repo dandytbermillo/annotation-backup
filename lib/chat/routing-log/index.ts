@@ -13,7 +13,7 @@
 // Phase 1: Client-safe exports
 export { recordRoutingLog } from './writer'
 export { tierToLane, provenanceToDecisionSource, deriveResultStatus, deriveRiskTier } from './mapping'
-export { buildContextSnapshot, canonicalJsonSerialize } from './context-snapshot'
+export { buildContextSnapshot, canonicalJsonSerialize, stripVolatileFields } from './context-snapshot'
 export type { DurableLogRow, RoutingLane, DecisionSource, RiskTier, ResultStatus } from './types'
 export type { ContextSnapshotV1, SnapshotInputs } from './context-snapshot'
 export { deriveFallbackInteractionId, simpleStringHash } from './ids'

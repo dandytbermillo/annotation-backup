@@ -2,7 +2,7 @@
 
 **Status:** Ready for Phase 1 (observe-only)
 **Owner:** Chat Navigation
-**Last updated:** 2026-03-02
+**Last updated:** 2026-03-03
 **Scope:** Replace brittle rule-heavy matching with a retrieval-first, validator-gated, bounded-LLM architecture while preserving strict execution safety.
 
 Implementation details reference:
@@ -143,6 +143,13 @@ Serving constraints:
 - serving index stores minimal reusable payload, while durable log remains the audit source of truth
 - cross-user retrieval is disabled by default (including same tenant); enable only for explicitly flagged global-safe help/FAQ intents
 
+### 5.2.1 Exact-memory key stability (v2 refinement)
+To avoid false misses from per-turn drift, exact-memory keying must use a stable context profile:
+- include only structurally stable compatibility fields in the memory key
+- exclude volatile turn-counters/transient fields (for example `message_count`)
+- keep full context snapshot in durable logs for observability/audit
+- when key profile changes, bump `tool_version` (for example `v1` -> `v2`) so old/new keys are isolated
+
 ## 5.3 Optional plan memory
 For multi-intent queries:
 - `plan_json`
@@ -194,6 +201,7 @@ Intent-class separation safeguards:
 2. Run Lane A deterministic fast lane.
 3. If unresolved, query Lane B:
    - B1 exact memory lookup by `(tenant, query_fingerprint, compatible context, versions)` where context compatibility follows Section 7 intent-class rules (action intents: exact fingerprint/strict profile; info intents: relaxed compatibility)
+   - compatible context for memory keying must use the stable profile from Section 5.2.1 (not volatile per-turn fields)
    - B2 semantic retrieval fallback (topK, filtered by scope/risk/tool)
 4. Run Lane C validator on all candidate actions.
 5. Execute only when the remaining validated candidate is from an exact source (`Lane A` strict exact, or exact-memory key match in `Lane B`).
@@ -464,6 +472,7 @@ Feature flag each stage and keep kill switches.
 
 ### 13.2 Reliability tests
 - repeated phrasing variants resolve to same target via memory + validation
+- exact same command across consecutive turns with only message-count drift still hits B1 exact memory (stable key profile)
 - panel switch then unscoped query never uses stale widget candidates
 - clarifier-reply sentences never misfire ordinal extraction
 

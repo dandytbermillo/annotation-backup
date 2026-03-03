@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { serverPool } from '@/lib/db/pool'
 import { normalizeForStorage, computeQueryFingerprint, sha256Hex } from '@/lib/chat/routing-log/normalization'
-import { canonicalJsonSerialize } from '@/lib/chat/routing-log/context-snapshot'
+import { canonicalJsonSerialize, stripVolatileFields } from '@/lib/chat/routing-log/context-snapshot'
 import {
   OPTION_A_TENANT_ID,
   OPTION_A_USER_ID,
@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
     // Normalize and fingerprint on server side (crypto available here)
     const normalizedText = normalizeForStorage(payload.raw_query_text)
     const queryFingerprint = computeQueryFingerprint(normalizedText)
-    const contextFingerprint = sha256Hex(canonicalJsonSerialize(payload.context_snapshot))
+    const contextFingerprint = sha256Hex(canonicalJsonSerialize(stripVolatileFields(payload.context_snapshot)))
 
     const { rows } = await serverPool.query(LOOKUP_SQL, [
       OPTION_A_TENANT_ID, OPTION_A_USER_ID,

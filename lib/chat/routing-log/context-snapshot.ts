@@ -46,6 +46,17 @@ export function buildContextSnapshot(inputs: SnapshotInputs): ContextSnapshotV1 
   }
 }
 
+// --- Memory-key canonicalizer (strips volatile fields for stable fingerprinting) ---
+
+/**
+ * Strip volatile fields from a context snapshot for memory keying.
+ * Used only by memory write/read routes — durable log keeps the full snapshot.
+ */
+export function stripVolatileFields(snapshot: ContextSnapshotV1): Omit<ContextSnapshotV1, 'message_count'> {
+  const { message_count: _mc, ...stable } = snapshot
+  return stable
+}
+
 // --- Canonical JSON serializer (client-safe, no crypto) ---
 
 /**

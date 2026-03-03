@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { serverPool } from '@/lib/db/pool'
 import { normalizeForStorage, computeQueryFingerprint, sha256Hex } from '@/lib/chat/routing-log/normalization'
-import { canonicalJsonSerialize } from '@/lib/chat/routing-log/context-snapshot'
+import { canonicalJsonSerialize, stripVolatileFields } from '@/lib/chat/routing-log/context-snapshot'
 import { redactQueryText } from '@/lib/chat/routing-log/redaction'
 import {
   OPTION_A_TENANT_ID,
@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
     const queryFingerprint = computeQueryFingerprint(normalizedText)
     const redactedText = redactQueryText(normalizedText)
 
-    const contextFingerprint = sha256Hex(canonicalJsonSerialize(payload.context_snapshot))
+    const contextFingerprint = sha256Hex(canonicalJsonSerialize(stripVolatileFields(payload.context_snapshot)))
 
     await serverPool.query(UPSERT_SQL, [
       OPTION_A_TENANT_ID, OPTION_A_USER_ID, 'routing_dispatcher', payload.intent_class,
