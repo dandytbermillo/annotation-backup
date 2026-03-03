@@ -16,6 +16,18 @@
 --   Day 1-3: run 2-3x daily, focus on Sections 1, 2, 9b (hit rate, drift)
 --   Day 4-7: run daily, focus on Sections 1, 3, 8 (health, lane distribution, reuse histogram)
 --   After 7 days: run weekly or on-demand
+--
+-- Go/no-go thresholds for Phase 3 gate decision (all must pass):
+--
+--   Gate                  | Section | Pass              | Fail                | Extend Soak
+--   ----------------------+---------+-------------------+---------------------+--------------------
+--   Memory effectiveness  | 2b      | Hit rate >= 50%   | < 20% after 3 days  | 20-50%
+--   Commit rejection      | 5       | Reject rate < 5%  | > 20%               | 5-20%
+--   Active drift          | 9b      | Zero ACTIVE DRIFT | Any ACTIVE DRIFT    | n/a (always fail)
+--   Overall health        | 1       | Not DEGRADED 2+d  | DEGRADED 3+d        | 1 day DEGRADED
+--   Reuse growth          | 8       | Any entry >= 3    | All at 1 after 3d   | Some 2s, no 3+
+--
+--   Decision: all 5 pass -> Phase 3. Any fail -> block. Any extend -> +2 days.
 
 -- ============================================
 -- THRESHOLD CONSTANTS (tunable)
