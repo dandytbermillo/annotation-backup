@@ -194,7 +194,7 @@ export async function POST(request: NextRequest) {
     const result = await serverPool.query(query, [
       workspaceId,
       panelType,
-      title ?? defaultPanel.title,
+      title ?? (badge ? `${defaultPanel.title} ${badge}` : defaultPanel.title),
       positionX ?? defaultPanel.positionX,
       positionY ?? defaultPanel.positionY,
       width ?? defaultPanel.width,
