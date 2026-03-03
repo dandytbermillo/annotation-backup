@@ -252,6 +252,7 @@ Strict-compatibility profile examples (canonical):
 - Profile B (`widget_type_selected_item`): same widget type and same selected item stable id
 - Profile C (`panel_scope_action`): same panel/widget id set and same permission signature for action-capable operations
 
+
 Ambiguity check definition:
 - treat as ambiguous when multiple validated candidates remain with the same intent + slot-shape and no deterministic discriminator
 - treat as ambiguous when score-based candidates have near-tie margin (`top1_score - top2_score < configured margin`)
