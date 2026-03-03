@@ -50,9 +50,10 @@ export function handlePanelDisambiguation(
 
   const matchResult = matchVisiblePanelCommand(trimmedInput, visibleWidgets)
 
-  // Only handle partial matches with multiple panels (disambiguation case)
-  // Exact match (single panel) and no match are handled by LLM for richer responses
-  if (matchResult.type === 'partial' && matchResult.matches.length > 1) {
+  // Handle multiple matches (disambiguation case) — both partial and exact.
+  // Exact multi-match can occur when stopword-reduced titles have equal specificity
+  // after the best-specificity tiebreaker in matchVisiblePanelCommand().
+  if (matchResult.matches.length > 1 && (matchResult.type === 'partial' || matchResult.type === 'exact')) {
     void debugLog({
       component: 'ChatNavigation',
       action: 'panel_disambiguation_pre_llm',

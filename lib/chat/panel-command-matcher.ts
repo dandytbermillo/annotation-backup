@@ -213,7 +213,7 @@ export function matchVisiblePanelCommand(
     return { type: 'none', matches: [] }
   }
 
-  const exactMatches: VisibleWidget[] = []
+  const exactMatches: Array<{ widget: VisibleWidget; tokenCount: number }> = []
   const partialMatches: VisibleWidget[] = []
 
   for (const widget of visibleWidgets) {
@@ -223,12 +223,25 @@ export function matchVisiblePanelCommand(
     // Exact match: all title tokens are in input
     // "links panel d pls" contains all tokens of "Links Panel D" → exact match
     if (isSubset(titleTokens, inputTokens)) {
-      exactMatches.push(widget)
+      exactMatches.push({ widget, tokenCount: titleTokens.size })
     }
     // Partial match: all input tokens are in title
     // "links panel" tokens are all in "Links Panel D" → partial match (for disambiguation)
     else if (isSubset(inputTokens, titleTokens)) {
       partialMatches.push(widget)
+    }
+  }
+
+  // Best-specificity tiebreaker: among multiple exact matches, prefer
+  // those with the most title tokens. Prevents stopword-reduced titles
+  // (e.g., "Links Panel A" → {links, panel}) from shadowing more
+  // specific matches (e.g., "Links Panel B" → {links, panel, b}).
+  let resolvedExact = exactMatches
+  if (exactMatches.length > 1) {
+    const maxN = Math.max(...exactMatches.map(m => m.tokenCount))
+    const top = exactMatches.filter(m => m.tokenCount === maxN)
+    if (top.length < exactMatches.length) {
+      resolvedExact = top
     }
   }
 
@@ -241,13 +254,13 @@ export function matchVisiblePanelCommand(
 
   // If there are partial matches, include exact matches in disambiguation
   if (partialMatches.length > 0) {
-    const allMatches = [...exactMatches, ...partialMatches]
+    const allMatches = [...resolvedExact.map(m => m.widget), ...partialMatches]
     return { type: 'partial', matches: allMatches }
   }
 
   // Only return exact if there are NO partial matches (unambiguous)
-  if (exactMatches.length > 0) {
-    return { type: 'exact', matches: exactMatches }
+  if (resolvedExact.length > 0) {
+    return { type: 'exact', matches: resolvedExact.map(m => m.widget) }
   }
 
   return { type: 'none', matches: [] }
