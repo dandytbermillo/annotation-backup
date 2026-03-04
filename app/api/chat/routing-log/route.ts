@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { serverPool } from '@/lib/db/pool'
 import { normalizeForStorage, computeQueryFingerprint, sha256Hex } from '@/lib/chat/routing-log/normalization'
-import { canonicalJsonSerialize } from '@/lib/chat/routing-log/context-snapshot'
+import { canonicalJsonSerialize, stripVolatileFields } from '@/lib/chat/routing-log/context-snapshot'
 import { redactQueryText } from '@/lib/chat/routing-log/redaction'
 import {
   OPTION_A_TENANT_ID,
@@ -64,7 +64,9 @@ export async function POST(request: NextRequest) {
     const rawRedacted = redactQueryText(payload.raw_query_text)
 
     const contextSnapshot = payload.context_snapshot
-    const contextFingerprint = sha256Hex(canonicalJsonSerialize(contextSnapshot))
+    // Hash stripped snapshot (without message_count) to match memory index fingerprint contract.
+    // Full snapshot is still stored in context_snapshot_json for diagnostics.
+    const contextFingerprint = sha256Hex(canonicalJsonSerialize(stripVolatileFields(contextSnapshot)))
 
     await serverPool.query(INSERT_SQL, [
       OPTION_A_TENANT_ID, OPTION_A_USER_ID,

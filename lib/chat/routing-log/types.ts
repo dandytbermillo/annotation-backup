@@ -37,7 +37,7 @@ export const MEMORY_SCHEMA_VERSION = 'v1'
 export const MEMORY_TOOL_VERSION = 'v2'
 export const MEMORY_DEFAULT_TTL_DAYS = 30
 export const MEMORY_WRITE_TIMEOUT_MS = 50
-export const MEMORY_READ_TIMEOUT_MS = 50
+export const MEMORY_READ_TIMEOUT_MS = 150
 
 // --- Row interface ---
 
