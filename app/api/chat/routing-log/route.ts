@@ -24,7 +24,8 @@ const INSERT_SQL = `
     embedding_model_version, effective_thresholds_version, effective_margin_version,
     effective_confidence_threshold, effective_near_tie_margin,
     commit_revalidation_result, commit_revalidation_reason_code,
-    idempotency_key
+    idempotency_key,
+    log_phase
   ) VALUES (
     $1, $2,
     $3, $4, $5,
@@ -35,7 +36,8 @@ const INSERT_SQL = `
     $19, $20, $21,
     $22, $23,
     $24, $25,
-    $26
+    $26,
+    $27
   )
   ON CONFLICT ON CONSTRAINT uq_chat_routing_durable_log_interaction DO NOTHING
 `
@@ -79,6 +81,7 @@ export async function POST(request: NextRequest) {
       null, null,
       payload.commit_revalidation_result ?? null, payload.commit_revalidation_reason_code ?? null,
       null,
+      payload.log_phase ?? 'routing_attempt',
     ])
 
     return NextResponse.json({ status: 'ok' }, { status: 200 })

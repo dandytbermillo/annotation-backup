@@ -474,6 +474,8 @@ export interface RoutingDispatcherResult {
   _pendingMemoryWrite?: import('@/lib/chat/routing-log/memory-write-payload').MemoryWritePayload
   /** Deferred durable log payload — sendMessage fires after commit-point passes (Gate 6) */
   _pendingMemoryLog?: import('@/lib/chat/routing-log/payload').RoutingLogPayload
+  /** Bug #3: Full routing log payload for execution outcome logging in sendMessage */
+  _routingLogPayload?: import('@/lib/chat/routing-log/payload').RoutingLogPayload
 }
 
 /** Type alias for grounding actions (extracted from RoutingDispatcherResult for reuse) */
@@ -1233,6 +1235,11 @@ export async function dispatchRouting(
         ? buildFailedRoutingLogPayload(ctx, turnSnapshotForLog)
         : buildRoutingLogPayload(ctx, result!, turnSnapshotForLog)
       await recordRoutingLog(logPayload)
+      // Bug #3: Attach log payload to result for execution outcome logging in sendMessage.
+      // Only for non-error paths (error paths throw at line 1243, result not returned).
+      if (!routingError && result) {
+        result._routingLogPayload = logPayload
+      }
     } catch {
       // Double-fault: even log builder failed. Silently ignore.
     }

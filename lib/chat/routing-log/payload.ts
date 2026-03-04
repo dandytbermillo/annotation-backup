@@ -9,7 +9,7 @@
  * server-side by interaction_id via ON CONFLICT DO NOTHING.
  */
 
-import type { RoutingLane, DecisionSource, RiskTier, ResultStatus } from './types'
+import type { RoutingLane, DecisionSource, RiskTier, ResultStatus, LogPhase } from './types'
 import type { ContextSnapshotV1 } from './context-snapshot'
 
 /**
@@ -40,4 +40,7 @@ export interface RoutingLogPayload {
   // Phase 2 commit-point revalidation (optional — only set for memory-served decisions)
   commit_revalidation_result?: string    // 'passed' | 'rejected' | undefined
   commit_revalidation_reason_code?: string  // validation reason from Gate 3 checks
+
+  // Bug #3 two-phase logging (optional — defaults to 'routing_attempt' on server)
+  log_phase?: LogPhase
 }

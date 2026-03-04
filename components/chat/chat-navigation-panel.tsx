@@ -64,7 +64,7 @@ import { normalizeUserMessage, extractQuickLinksBadge } from '@/lib/chat/ui-help
 import { maybeFormatSnippetWithHs3, stripMarkdownHeadersForUI, dedupeHeaderPath } from '@/lib/chat/doc-routing'
 // Prereq 4: Cross-corpus handlers (pill selection still used locally)
 import { handleCrossCorpusPillSelection } from '@/lib/chat/cross-corpus-handler'
-import { recordMemoryEntry, recordRoutingLog, revalidateMemoryHit } from '@/lib/chat/routing-log'
+import { recordMemoryEntry, recordRoutingLog, revalidateMemoryHit, fireOutcomeLog, fireFailedOutcomeLog, type RoutingLogPayload } from '@/lib/chat/routing-log'
 import { buildTurnSnapshot } from '@/lib/chat/ui-snapshot-builder'
 
 export interface ChatNavigationPanelProps {
@@ -1406,6 +1406,10 @@ function ChatNavigationPanelContent({
     // TD-1: CORE_APP_TERMS fallback removed - SSR snapshot guarantees knownTerms availability
     const usedCoreAppTermsFallback = false // Kept for telemetry backwards compatibility
 
+    // Bug #3: Outcome logging state — declared outside try/catch so catch block can access
+    let outcomeLogFired = false
+    let _catchOutcomePayload: RoutingLogPayload | undefined
+
     try {
       // ---------------------------------------------------------------------------
       // Ensure knownTerms cache is populated before routing decisions
@@ -1745,6 +1749,14 @@ function ChatNavigationPanelContent({
             if (routingResult._pendingMemoryWrite) {
               recordMemoryEntry(routingResult._pendingMemoryWrite).catch(() => {})
             }
+            // Bug #3: Outcome log for non-memory grounding (memory paths use _pendingMemoryLog)
+            if (!routingResult._pendingMemoryLog && routingResult._routingLogPayload) {
+              fireOutcomeLog({
+                basePayload: routingResult._routingLogPayload,
+                action: resolution.action ?? 'execute_referent',
+                success: true,
+              })
+            }
           } else {
             // Navigate API couldn't resolve — show what we resolved to
             const assistantMessage: ChatMessage = {
@@ -1760,6 +1772,10 @@ function ChatNavigationPanelContent({
             if (routingResult._pendingMemoryLog) {
               recordRoutingLog({ ...routingResult._pendingMemoryLog, result_status: 'failed' }).catch(() => {})
             }
+            // Bug #3: Failed outcome for non-memory grounding
+            if (!routingResult._pendingMemoryLog && routingResult._routingLogPayload) {
+              fireFailedOutcomeLog(routingResult._routingLogPayload, 'grounding_referent_resolution_failed')
+            }
           }
         } catch (error) {
           const errorMsg: ChatMessage = {
@@ -1774,6 +1790,10 @@ function ChatNavigationPanelContent({
           // Fire failed memory log for network/exception failure
           if (routingResult._pendingMemoryLog) {
             recordRoutingLog({ ...routingResult._pendingMemoryLog, result_status: 'failed' }).catch(() => {})
+          }
+          // Bug #3: Failed outcome for non-memory grounding exception
+          if (!routingResult._pendingMemoryLog && routingResult._routingLogPayload) {
+            fireFailedOutcomeLog(routingResult._routingLogPayload, error instanceof Error ? error.message : 'unknown')
           }
         }
 
@@ -1839,6 +1859,14 @@ function ChatNavigationPanelContent({
             if (routingResult._pendingMemoryWrite) {
               recordMemoryEntry(routingResult._pendingMemoryWrite).catch(() => {})
             }
+            // Bug #3: Outcome log for non-memory grounding (memory paths use _pendingMemoryLog)
+            if (!routingResult._pendingMemoryLog && routingResult._routingLogPayload) {
+              fireOutcomeLog({
+                basePayload: routingResult._routingLogPayload,
+                action: resolution.action ?? 'execute_widget_item',
+                success: true,
+              })
+            }
           } else {
             const assistantMessage: ChatMessage = {
               id: `assistant-${Date.now()}`,
@@ -1852,6 +1880,10 @@ function ChatNavigationPanelContent({
             // Fire failed memory log for execution failure (resolution not success)
             if (routingResult._pendingMemoryLog) {
               recordRoutingLog({ ...routingResult._pendingMemoryLog, result_status: 'failed' }).catch(() => {})
+            }
+            // Bug #3: Failed outcome for non-memory grounding
+            if (!routingResult._pendingMemoryLog && routingResult._routingLogPayload) {
+              fireFailedOutcomeLog(routingResult._routingLogPayload, 'grounding_widget_item_resolution_failed')
             }
           }
         } catch (error) {
@@ -1877,6 +1909,10 @@ function ChatNavigationPanelContent({
           // Fire failed memory log for network/exception failure
           if (routingResult._pendingMemoryLog) {
             recordRoutingLog({ ...routingResult._pendingMemoryLog, result_status: 'failed' }).catch(() => {})
+          }
+          // Bug #3: Failed outcome for non-memory grounding exception
+          if (!routingResult._pendingMemoryLog && routingResult._routingLogPayload) {
+            fireFailedOutcomeLog(routingResult._routingLogPayload, error instanceof Error ? error.message : 'unknown')
           }
         }
 
@@ -1921,6 +1957,8 @@ function ChatNavigationPanelContent({
       // ---------------------------------------------------------------------------
       // Normal flow: Call the LLM API
       // ---------------------------------------------------------------------------
+      // Bug #3: Capture payload for catch block outcome logging
+      _catchOutcomePayload = routingResult?._routingLogPayload
 
       // Get context from props or fall back to session state (which tracks view mode properly)
       // Use sessionState.currentWorkspaceId instead of getActiveWorkspaceContext() because:
@@ -2339,6 +2377,15 @@ function ChatNavigationPanelContent({
           if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current) {
             setProvenance(lastAddedAssistantIdRef.current, 'llm_executed')
           }
+          // Bug #3 (6b): Outcome log for select_option matched
+          if (!outcomeLogFired && routingResult?._routingLogPayload) {
+            outcomeLogFired = true
+            fireOutcomeLog({
+              basePayload: routingResult._routingLogPayload,
+              action: 'select_option',
+              success: true,
+            })
+          }
           setIsLoading(false)
           handleSelectOption(optionToSelect)
           return
@@ -2355,6 +2402,15 @@ function ChatNavigationPanelContent({
           // Dev provenance: tag before early return (LLM select_option no match — clarifier, not execution)
           if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current) {
             setProvenance(lastAddedAssistantIdRef.current, 'safe_clarifier')
+          }
+          // Bug #3 (6c): Outcome log for select_option not matched
+          if (!outcomeLogFired && routingResult?._routingLogPayload) {
+            outcomeLogFired = true
+            fireOutcomeLog({
+              basePayload: routingResult._routingLogPayload,
+              action: 'select_option',
+              success: false,
+            })
           }
           setIsLoading(false)
           return
@@ -2434,6 +2490,15 @@ function ChatNavigationPanelContent({
           if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current) {
             setProvenance(lastAddedAssistantIdRef.current, 'llm_influenced')
           }
+          // Bug #3 (6d): Outcome log for reshow_options success
+          if (!outcomeLogFired && routingResult?._routingLogPayload) {
+            outcomeLogFired = true
+            fireOutcomeLog({
+              basePayload: routingResult._routingLogPayload,
+              action: 'reshow_options',
+              success: true,
+            })
+          }
           setIsLoading(false)
           return
         } else {
@@ -2455,6 +2520,15 @@ function ChatNavigationPanelContent({
           // Dev provenance: tag before early return (LLM reshow_options expired — clarifier, not execution)
           if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current) {
             setProvenance(lastAddedAssistantIdRef.current, 'safe_clarifier')
+          }
+          // Bug #3 (6d): Outcome log for reshow_options expired
+          if (!outcomeLogFired && routingResult?._routingLogPayload) {
+            outcomeLogFired = true
+            fireOutcomeLog({
+              basePayload: routingResult._routingLogPayload,
+              action: 'reshow_options',
+              success: false,
+            })
           }
           setIsLoading(false)
           return
@@ -2780,6 +2854,17 @@ function ChatNavigationPanelContent({
               : 'llm_executed'
         setProvenance(lastAddedAssistantIdRef.current, prov)
       }
+
+      // Bug #3 (6a): Outcome log for main LLM execution path
+      if (!outcomeLogFired && routingResult?._routingLogPayload) {
+        outcomeLogFired = true
+        fireOutcomeLog({
+          basePayload: routingResult._routingLogPayload,
+          action: resolution.action ?? '',
+          success: result.success,
+          executionMetaReasonCode: resolution.executionMeta?.reasonCode,
+        })
+      }
     } catch (error) {
       // Check if this is an abort error (user canceled, navigation, etc.)
       const isAbortError = error instanceof Error && (
@@ -2803,6 +2888,15 @@ function ChatNavigationPanelContent({
             stack: error instanceof Error ? error.stack?.split('\n').slice(0, 5).join('\n') : undefined,
           },
         })
+        // Bug #3 (6e): Failed outcome log for real errors
+        // Uses _catchOutcomePayload (hoisted before try) since routingResult is try-scoped
+        if (!outcomeLogFired && _catchOutcomePayload) {
+          outcomeLogFired = true
+          fireFailedOutcomeLog(
+            _catchOutcomePayload,
+            error instanceof Error ? error.message : 'unknown',
+          )
+        }
         const errorMessage: ChatMessage = {
           id: `error-${Date.now()}`,
           role: 'assistant',

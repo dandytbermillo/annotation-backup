@@ -110,19 +110,34 @@ Repeat Group 1 commands to ensure minimum sample targets.
 After the run, replace `$WINDOW_START` and `$WINDOW_END` with recorded timestamps:
 
 ```sql
--- Durable log rows in the clean test window
+-- Contract: Each interaction produces 1 routing_attempt + 0-1 execution_outcome rows.
+-- Gate queries MUST use the deduplicated CTE (prefers execution_outcome when present).
+--
+-- IMPORTANT: The dedup view reports the FINAL USER-VISIBLE OUTCOME, not the initial
+-- routing attempt distribution. An E/clarifier/failed attempt that the LLM later
+-- executes will appear as D/llm/executed in the dedup view. To analyze initial routing
+-- attempt distribution (e.g., how often does the dispatcher hit lane E?), query
+-- routing_attempt rows directly with: WHERE log_phase = 'routing_attempt'.
+
+-- Durable log rows in the clean test window (deduplicated)
+WITH deduplicated AS (
+  SELECT DISTINCT ON (tenant_id, user_id, interaction_id) *
+  FROM chat_routing_durable_log
+  WHERE tenant_id = 'default' AND user_id = 'local'
+    AND created_at BETWEEN '$WINDOW_START' AND '$WINDOW_END'
+  ORDER BY tenant_id, user_id, interaction_id,
+    CASE log_phase WHEN 'execution_outcome' THEN 0 ELSE 1 END
+)
 SELECT
   created_at,
+  log_phase,
   LEFT(normalized_query_text, 35) AS query,
   routing_lane,
   decision_source,
   result_status,
   commit_revalidation_result,
   commit_revalidation_reason_code
-FROM chat_routing_durable_log
-WHERE tenant_id = 'default'
-  AND user_id = 'local'
-  AND created_at BETWEEN '$WINDOW_START' AND '$WINDOW_END'
+FROM deduplicated
 ORDER BY created_at ASC;
 ```
 
@@ -131,13 +146,17 @@ ORDER BY created_at ASC;
 Single query evaluating all 5 gates on the clean window:
 
 ```sql
--- Gate evaluation for clean soak run
-WITH window_rows AS (
-  SELECT *
+-- Gate evaluation for clean soak run (using deduplicated view)
+WITH deduplicated AS (
+  SELECT DISTINCT ON (tenant_id, user_id, interaction_id) *
   FROM chat_routing_durable_log
-  WHERE tenant_id = 'default'
-    AND user_id = 'local'
+  WHERE tenant_id = 'default' AND user_id = 'local'
     AND created_at BETWEEN '$WINDOW_START' AND '$WINDOW_END'
+  ORDER BY tenant_id, user_id, interaction_id,
+    CASE log_phase WHEN 'execution_outcome' THEN 0 ELSE 1 END
+),
+window_rows AS (
+  SELECT * FROM deduplicated
 ),
 memory_attempts AS (
   SELECT *

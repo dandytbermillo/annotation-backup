@@ -5,8 +5,16 @@
 --   psql -U postgres -d annotation_dev -f docs/proposal/chat-navigation/test_scripts/monitor-routing-soak.sql
 --   Or: paste individual sections into pgAdmin query tool
 --
--- Metric unit: per routing decision (one row in chat_routing_durable_log = one routing decision,
---   deduplicated by interaction_id).
+-- Contract: Each interaction produces 1 routing_attempt + 0-1 execution_outcome rows.
+-- Sections that report user-visible outcomes use a deduplicated CTE (prefers
+-- execution_outcome when present). Sections analyzing initial routing distribution
+-- (e.g., commit revalidation) query routing_attempt rows directly.
+--
+-- IMPORTANT: The dedup view reports the FINAL USER-VISIBLE OUTCOME, not the initial
+-- routing attempt distribution. An E/clarifier/failed attempt that the LLM later
+-- executes will appear as D/llm/executed in the dedup view. To analyze initial routing
+-- attempt distribution (e.g., how often does the dispatcher hit lane E?), query
+-- routing_attempt rows directly with: WHERE log_phase = 'routing_attempt'.
 --
 -- Latency note: This script reports only DB-persisted timing (timestamp gaps, created_at ordering).
 --   App-level p95 latency (dispatch-to-execution round-trip) is not captured in the current schema
@@ -52,7 +60,15 @@ CREATE TEMP TABLE soak_thresholds AS SELECT
 -- ============================================
 -- 1. ROUTING HEALTH DASHBOARD
 -- ============================================
--- Single-glance summary over last 24 hours
+-- Single-glance summary over last 24 hours (deduplicated: prefers execution_outcome)
+WITH deduplicated AS (
+    SELECT DISTINCT ON (tenant_id, user_id, interaction_id) *
+    FROM chat_routing_durable_log
+    WHERE tenant_id = 'default' AND user_id = 'local'
+      AND created_at > now() - INTERVAL '24 hours'
+    ORDER BY tenant_id, user_id, interaction_id,
+      CASE log_phase WHEN 'execution_outcome' THEN 0 ELSE 1 END
+)
 SELECT
     COUNT(*) as total_decisions,
     COUNT(*) FILTER (WHERE decision_source = 'memory_exact') as memory_exact,
@@ -75,22 +91,26 @@ SELECT
             THEN '⚠️  WARMING UP'
         ELSE '❌ LOW HIT RATE'
     END as health_status
-FROM chat_routing_durable_log
-WHERE tenant_id = 'default' AND user_id = 'local'
-  AND created_at > now() - INTERVAL '24 hours';
+FROM deduplicated;
 
 -- ============================================
 -- 2. MEMORY HIT RATE — TIME SERIES
 -- ============================================
--- Hourly buckets showing memory absorption over time
-WITH hourly AS (
+-- Hourly buckets showing memory absorption over time (deduplicated)
+WITH deduplicated AS (
+    SELECT DISTINCT ON (tenant_id, user_id, interaction_id) *
+    FROM chat_routing_durable_log
+    WHERE tenant_id = 'default' AND user_id = 'local'
+      AND created_at > now() - INTERVAL '7 days'
+    ORDER BY tenant_id, user_id, interaction_id,
+      CASE log_phase WHEN 'execution_outcome' THEN 0 ELSE 1 END
+),
+hourly AS (
     SELECT
         DATE_TRUNC('hour', created_at) as hour,
         COUNT(*) as total,
         COUNT(*) FILTER (WHERE decision_source = 'memory_exact') as memory_hits
-    FROM chat_routing_durable_log
-    WHERE tenant_id = 'default' AND user_id = 'local'
-      AND created_at > now() - INTERVAL '7 days'
+    FROM deduplicated
     GROUP BY DATE_TRUNC('hour', created_at)
 )
 SELECT
@@ -114,13 +134,22 @@ LIMIT 168;
 -- ============================================
 -- Hit rate measured against repeat commands that had a matching memory key
 -- at the time of the routing decision (time-aware, full lookup key match)
-WITH eligible AS (
+-- Uses deduplicated view for final outcome accuracy
+WITH deduplicated AS (
+    SELECT DISTINCT ON (tenant_id, user_id, interaction_id) *
+    FROM chat_routing_durable_log
+    WHERE tenant_id = 'default' AND user_id = 'local'
+      AND created_at > now() - INTERVAL '24 hours'
+    ORDER BY tenant_id, user_id, interaction_id,
+      CASE log_phase WHEN 'execution_outcome' THEN 0 ELSE 1 END
+),
+eligible AS (
     SELECT
         d.id,
         d.decision_source,
         d.result_status,
         CASE WHEN m.id IS NOT NULL THEN true ELSE false END as had_memory_key
-    FROM chat_routing_durable_log d
+    FROM deduplicated d
     LEFT JOIN chat_routing_memory_index m
         ON  m.tenant_id = d.tenant_id
         AND m.user_id = d.user_id
@@ -131,9 +160,7 @@ WITH eligible AS (
         AND m.is_deleted = false
         AND (m.ttl_expires_at IS NULL OR m.ttl_expires_at > d.created_at)
         AND m.created_at < d.created_at
-    WHERE d.tenant_id = 'default' AND d.user_id = 'local'
-      AND d.created_at > now() - INTERVAL '24 hours'
-      AND d.result_status IN ('executed', 'failed')
+    WHERE d.result_status IN ('executed', 'failed')
       AND d.decision_source IN ('memory_exact', 'llm')
 ),
 counts AS (
@@ -164,15 +191,21 @@ FROM counts;
 -- ============================================
 -- 3. LANE DISTRIBUTION
 -- ============================================
--- Routing lane breakdown for last 24 hours
-WITH lane_counts AS (
+-- Routing lane breakdown for last 24 hours (deduplicated: final outcome lanes)
+WITH deduplicated AS (
+    SELECT DISTINCT ON (tenant_id, user_id, interaction_id) *
+    FROM chat_routing_durable_log
+    WHERE tenant_id = 'default' AND user_id = 'local'
+      AND created_at > now() - INTERVAL '24 hours'
+    ORDER BY tenant_id, user_id, interaction_id,
+      CASE log_phase WHEN 'execution_outcome' THEN 0 ELSE 1 END
+),
+lane_counts AS (
     SELECT
         routing_lane,
         COUNT(*) as cnt,
         SUM(COUNT(*)) OVER () as total
-    FROM chat_routing_durable_log
-    WHERE tenant_id = 'default' AND user_id = 'local'
-      AND created_at > now() - INTERVAL '24 hours'
+    FROM deduplicated
     GROUP BY routing_lane
 )
 SELECT
@@ -195,15 +228,21 @@ END;
 -- ============================================
 -- 4. RESULT STATUS BREAKDOWN
 -- ============================================
--- Execution outcomes for last 24 hours
-WITH status_counts AS (
+-- Execution outcomes for last 24 hours (deduplicated: final user-visible status)
+WITH deduplicated AS (
+    SELECT DISTINCT ON (tenant_id, user_id, interaction_id) *
+    FROM chat_routing_durable_log
+    WHERE tenant_id = 'default' AND user_id = 'local'
+      AND created_at > now() - INTERVAL '24 hours'
+    ORDER BY tenant_id, user_id, interaction_id,
+      CASE log_phase WHEN 'execution_outcome' THEN 0 ELSE 1 END
+),
+status_counts AS (
     SELECT
         result_status,
         COUNT(*) as cnt,
         SUM(COUNT(*)) OVER () as total
-    FROM chat_routing_durable_log
-    WHERE tenant_id = 'default' AND user_id = 'local'
-      AND created_at > now() - INTERVAL '24 hours'
+    FROM deduplicated
     GROUP BY result_status
 )
 SELECT
@@ -226,6 +265,8 @@ END;
 -- 5. COMMIT REVALIDATION ANALYSIS
 -- ============================================
 -- TOCTOU safety check outcomes for memory-served decisions
+-- NOTE: Queries routing_attempt rows directly (commit_revalidation fields are
+-- only populated on memory_exact routing_attempt rows, not on execution_outcome rows)
 WITH memory_decisions AS (
     SELECT
         commit_revalidation_result,
@@ -235,6 +276,7 @@ WITH memory_decisions AS (
     FROM chat_routing_durable_log
     WHERE tenant_id = 'default' AND user_id = 'local'
       AND decision_source = 'memory_exact'
+      AND log_phase = 'routing_attempt'
     GROUP BY commit_revalidation_result, commit_revalidation_reason_code
 )
 SELECT
@@ -414,9 +456,10 @@ LIMIT 20;
 -- ============================================
 -- 10. RECENT ACTIVITY TAIL
 -- ============================================
--- Last 20 routing decisions for live debugging
+-- Last 20 routing log rows for live debugging (shows both phases)
 SELECT
     TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS') as time,
+    log_phase,
     routing_lane,
     decision_source,
     result_status,

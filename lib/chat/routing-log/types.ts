@@ -19,6 +19,9 @@ export type RiskTier = 'low' | 'medium' | 'high'
 /** result_status CHECK (line 38): 'executed','clarified','blocked','failed' */
 export type ResultStatus = 'executed' | 'clarified' | 'blocked' | 'failed'
 
+/** log_phase CHECK (migration 072): 'routing_attempt','execution_outcome' */
+export type LogPhase = 'routing_attempt' | 'execution_outcome'
+
 // --- Option A constants ---
 
 export const OPTION_A_TENANT_ID = 'default'
@@ -87,4 +90,7 @@ export interface DurableLogRow {
 
   // Idempotency
   idempotency_key: string | null
+
+  // Two-phase logging (migration 072)
+  log_phase: LogPhase
 }

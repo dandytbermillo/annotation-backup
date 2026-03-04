@@ -24,6 +24,9 @@ export { buildMemoryWritePayload } from './memory-write-payload'
 export { recordMemoryEntry } from './memory-writer'
 export type { MemoryWritePayload } from './memory-write-payload'
 
+// Bug #3: Execution outcome logging (client-safe)
+export { fireOutcomeLog, fireFailedOutcomeLog } from './outcome-logger'
+
 // Phase 2b: Memory read + validate + execute (client-safe)
 export { lookupExactMemory } from './memory-reader'
 export type { MemoryLookupResult } from './memory-reader'

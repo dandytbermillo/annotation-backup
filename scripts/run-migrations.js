@@ -146,15 +146,88 @@ async function runMigrations() {
 // Handle command line args
 const command = process.argv[2]
 
+async function rollbackMigrations(count) {
+  const connectionString = getDatabaseUrl()
+  console.log(`🔄 Rolling back ${count} migration(s)...`)
+  console.log(`📊 Database: ${connectionString.replace(/:([^@]+)@/, ':****@')}`)
+
+  const pool = new Pool({ connectionString })
+
+  try {
+    await pool.query('SELECT 1')
+    console.log(`${colors.green}✓ Database connection successful${colors.reset}`)
+
+    // Get the last N applied migrations (most recent first)
+    const appliedResult = await pool.query(
+      'SELECT id, filename FROM _migrations ORDER BY id DESC LIMIT $1',
+      [count]
+    )
+
+    if (appliedResult.rows.length === 0) {
+      console.log(`\n${colors.yellow}⚠ No migrations to rollback${colors.reset}`)
+      return
+    }
+
+    const migrationsDir = path.join(__dirname, '..', 'migrations')
+    let rolledBack = 0
+
+    for (const row of appliedResult.rows) {
+      const upFilename = row.filename
+      const downFilename = upFilename.replace('.up.sql', '.down.sql')
+      const downPath = path.join(migrationsDir, downFilename)
+
+      console.log(`\n⏪ Rolling back: ${upFilename}`)
+
+      // Check that .down.sql exists
+      try {
+        await fs.access(downPath)
+      } catch {
+        console.error(`${colors.red}✗ Down migration not found: ${downFilename}${colors.reset}`)
+        console.error('  Cannot rollback without a .down.sql file. Stopping.')
+        throw new Error(`Missing down migration: ${downFilename}`)
+      }
+
+      const sql = await fs.readFile(downPath, 'utf8')
+
+      // Execute in transaction
+      await pool.query('BEGIN')
+      try {
+        await pool.query(sql)
+        await pool.query('DELETE FROM _migrations WHERE id = $1', [row.id])
+        await pool.query('COMMIT')
+        console.log(`${colors.green}✓ Rolled back successfully${colors.reset}`)
+        rolledBack++
+      } catch (error) {
+        await pool.query('ROLLBACK')
+        console.error(`${colors.red}✗ Rollback failed for ${downFilename}:${colors.reset}`)
+        console.error(error.message)
+        throw error
+      }
+    }
+
+    console.log(`\n${colors.green}✓ Rolled back ${rolledBack} migration(s)${colors.reset}`)
+
+  } catch (error) {
+    console.error(`\n${colors.red}❌ Rollback failed:${colors.reset}`)
+    console.error(error.message)
+    process.exit(1)
+  } finally {
+    await pool.end()
+  }
+}
+
 if (command === '--rollback') {
-  console.log('Rollback functionality not implemented yet')
-  console.log('To rollback, manually run the .down.sql files in reverse order')
-  process.exit(1)
+  // Support: --rollback (default 1) or --rollback 3
+  const count = parseInt(process.argv[3], 10) || 1
+  rollbackMigrations(count).catch(error => {
+    console.error('Unhandled error:', error)
+    process.exit(1)
+  })
 } else if (command === '--help') {
   console.log('Usage: node scripts/run-migrations.js [options]')
   console.log('Options:')
-  console.log('  --help      Show this help message')
-  console.log('  --rollback  Rollback last migration (not implemented)')
+  console.log('  --help          Show this help message')
+  console.log('  --rollback [N]  Rollback last N migration(s) (default: 1)')
   console.log('')
   console.log('Environment variables:')
   console.log('  DATABASE_URL  - Full PostgreSQL connection string')
@@ -163,8 +236,10 @@ if (command === '--rollback') {
   process.exit(0)
 }
 
-// Run migrations
-runMigrations().catch(error => {
-  console.error('Unhandled error:', error)
-  process.exit(1)
-})
+// Run migrations (default command)
+if (!command) {
+  runMigrations().catch(error => {
+    console.error('Unhandled error:', error)
+    process.exit(1)
+  })
+}
