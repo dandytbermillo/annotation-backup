@@ -587,3 +587,4 @@ Directly adapted:
 - multi-intent structured plan contract and partial replay safety
 - resolution-memory reuse with condition checks, not blind replay
 - dedupe/retention strategy for serving index and logs
+

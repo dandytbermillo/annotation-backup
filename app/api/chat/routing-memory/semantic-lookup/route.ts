@@ -52,12 +52,12 @@ const SEMANTIC_LOOKUP_SQL = `
 export async function POST(request: NextRequest) {
   // Kill switch — kills all memory (B1 + B2 + writes)
   if (process.env.CHAT_ROUTING_MEMORY_KILL === 'true') {
-    return NextResponse.json({ candidates: [] }, { status: 200 })
+    return NextResponse.json({ candidates: [], lookup_status: 'disabled' }, { status: 200 })
   }
 
   // Server-authoritative enable flag for B2 semantic read
   if (process.env.CHAT_ROUTING_MEMORY_SEMANTIC_READ_ENABLED !== 'true') {
-    return NextResponse.json({ candidates: [] }, { status: 200 })
+    return NextResponse.json({ candidates: [], lookup_status: 'disabled' }, { status: 200 })
   }
 
   try {
@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
     const queryEmbedding = await computeEmbedding(normalizedText, queryFingerprint)
     if (!queryEmbedding) {
       // Cannot search without an embedding — fail-open
-      return NextResponse.json({ candidates: [] }, { status: 200 })
+      return NextResponse.json({ candidates: [], lookup_status: 'embedding_failure' }, { status: 200 })
     }
 
     // pgvector expects vector as string like '[0.1,0.2,...]'
@@ -97,10 +97,10 @@ export async function POST(request: NextRequest) {
       similarity_score: Number(row.similarity_score),
     }))
 
-    return NextResponse.json({ candidates }, { status: 200 })
+    return NextResponse.json({ candidates, lookup_status: candidates.length > 0 ? 'ok' : 'empty_results' }, { status: 200 })
   } catch (err: unknown) {
     // Fail-open: return empty candidates on DB/embedding errors
     console.warn('[routing-memory] semantic lookup failed (non-fatal):', (err as Error).message)
-    return NextResponse.json({ candidates: [] }, { status: 200 })
+    return NextResponse.json({ candidates: [], lookup_status: 'server_error' }, { status: 200 })
   }
 }

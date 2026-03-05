@@ -82,7 +82,7 @@ import {
 import type { RoutingLogPayload } from '@/lib/chat/routing-log'
 import { buildMemoryWritePayload } from '@/lib/chat/routing-log/memory-write-payload'
 import { lookupExactMemory } from '@/lib/chat/routing-log/memory-reader'
-import { lookupSemanticMemory, type SemanticCandidate } from '@/lib/chat/routing-log/memory-semantic-reader'
+import { lookupSemanticMemory, type SemanticCandidate, type SemanticLookupResult } from '@/lib/chat/routing-log/memory-semantic-reader'
 import { validateMemoryCandidate } from '@/lib/chat/routing-log/memory-validator'
 import { buildResultFromMemory } from '@/lib/chat/routing-log/memory-action-builder'
 
@@ -1228,6 +1228,14 @@ export async function dispatchRouting(
   const semanticReadEnabled = process.env.NEXT_PUBLIC_CHAT_ROUTING_MEMORY_SEMANTIC_READ === 'true'
   let semanticCandidatesForLaneD: SemanticCandidate[] | undefined
 
+  // B2 telemetry: track every B2 outcome (only when B2-eligible: memoryReadEnabled=true)
+  let b2Telemetry: { status: string; rawCount?: number; validatedCount?: number; topScore?: number; latencyMs?: number } | undefined
+
+  // When memory read is enabled but semantic read is off, B2 is eligible but skipped
+  if (memoryReadEnabled && !semanticReadEnabled) {
+    b2Telemetry = { status: 'skipped' }
+  }
+
   if (memoryReadEnabled && semanticReadEnabled) {
     try {
       const isLatchEnabled = process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1 === 'true'
@@ -1241,24 +1249,39 @@ export async function dispatchRouting(
         messageCount: ctx.messages.length,
       })
 
-      const semanticCandidates = await lookupSemanticMemory({
+      const lookupResult: SemanticLookupResult = await lookupSemanticMemory({
         raw_query_text: ctx.trimmedInput,
         context_snapshot: lookupSnapshot,
       })
 
-      if (semanticCandidates && semanticCandidates.length > 0) {
+      // Map structured result to b2Telemetry
+      if (lookupResult.status === 'ok') {
+        const rawCount = lookupResult.candidates.length
         // Validate each candidate against live UI snapshot (Gate 3)
-        const validatedCandidates = semanticCandidates.filter(c => {
+        const validatedCandidates = lookupResult.candidates.filter(c => {
           const v = validateMemoryCandidate(c, turnSnapshotForLog)
           return v.valid
         })
+        const validatedCount = validatedCandidates.length
+        const topScore = validatedCandidates.length > 0
+          ? validatedCandidates[0].similarity_score
+          : (lookupResult.candidates.length > 0 ? lookupResult.candidates[0].similarity_score : undefined)
 
-        if (validatedCandidates.length > 0) {
+        b2Telemetry = { status: 'candidates_found', rawCount, validatedCount, topScore, latencyMs: lookupResult.latencyMs }
+
+        if (validatedCount > 0) {
           semanticCandidatesForLaneD = validatedCandidates
         }
+      } else if (lookupResult.status === 'empty') {
+        b2Telemetry = { status: 'no_candidates', latencyMs: lookupResult.latencyMs }
+      } else if (lookupResult.status === 'timeout' || lookupResult.status === 'error') {
+        b2Telemetry = { status: 'timeout_or_error', latencyMs: lookupResult.latencyMs }
+      } else if (lookupResult.status === 'disabled') {
+        b2Telemetry = { status: 'skipped', latencyMs: 0 }
       }
     } catch {
       // Fail-open: no semantic candidates, tier chain runs normally
+      b2Telemetry = { status: 'timeout_or_error' }
     }
   }
 
@@ -1285,6 +1308,21 @@ export async function dispatchRouting(
       const logPayload = routingError
         ? buildFailedRoutingLogPayload(ctx, turnSnapshotForLog)
         : buildRoutingLogPayload(ctx, result!, turnSnapshotForLog)
+
+      // B2 telemetry finalization (single point): enrich log payload with B2 outcome
+      if (b2Telemetry) {
+        // Final override: candidates_found → discarded_handled when validated candidates
+        // existed but tier chain handled the query
+        if (b2Telemetry.status === 'candidates_found' && b2Telemetry.validatedCount && b2Telemetry.validatedCount > 0 && result?.handled) {
+          b2Telemetry.status = 'discarded_handled'
+        }
+        logPayload.b2_status = b2Telemetry.status as RoutingLogPayload['b2_status']
+        logPayload.b2_raw_count = b2Telemetry.rawCount
+        logPayload.b2_validated_count = b2Telemetry.validatedCount
+        logPayload.semantic_top_score = b2Telemetry.topScore ?? logPayload.semantic_top_score
+        logPayload.b2_latency_ms = b2Telemetry.latencyMs
+      }
+
       await recordRoutingLog(logPayload)
       // Bug #3: Attach log payload to result for execution outcome logging in sendMessage.
       // Only for non-error paths (error paths throw at line 1243, result not returned).

@@ -48,4 +48,12 @@ export interface RoutingLogPayload {
   semantic_hint_count?: number
   semantic_top_score?: number
   semantic_hint_used?: boolean
+
+  // Phase 3 B2: B2 lookup attempt telemetry — set in dispatcher for ALL B2 outcomes
+  // Only emitted when memoryReadEnabled=true (B2-eligible).
+  // candidates_found means "raw candidates returned from API" — use b2_validated_count to check usable count.
+  b2_status?: 'skipped' | 'no_candidates' | 'timeout_or_error' | 'candidates_found' | 'discarded_handled'
+  b2_raw_count?: number        // candidates from API (before Gate 3 validation)
+  b2_validated_count?: number   // candidates after Gate 3 validation
+  b2_latency_ms?: number        // B2 lookup wall-clock time
 }
