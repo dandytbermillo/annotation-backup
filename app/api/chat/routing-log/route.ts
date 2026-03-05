@@ -25,7 +25,8 @@ const INSERT_SQL = `
     effective_confidence_threshold, effective_near_tie_margin,
     commit_revalidation_result, commit_revalidation_reason_code,
     idempotency_key,
-    log_phase
+    log_phase,
+    semantic_hint_metadata
   ) VALUES (
     $1, $2,
     $3, $4, $5,
@@ -37,7 +38,8 @@ const INSERT_SQL = `
     $22, $23,
     $24, $25,
     $26,
-    $27
+    $27,
+    $28
   )
   ON CONFLICT ON CONSTRAINT uq_chat_routing_durable_log_interaction DO NOTHING
 `
@@ -70,6 +72,15 @@ export async function POST(request: NextRequest) {
     // Full snapshot is still stored in context_snapshot_json for diagnostics.
     const contextFingerprint = sha256Hex(canonicalJsonSerialize(stripVolatileFields(contextSnapshot)))
 
+    // Phase 3 B2: build semantic_hint_metadata JSON only when telemetry present
+    const semanticHintMeta = payload.semantic_hint_count != null
+      ? JSON.stringify({
+          count: payload.semantic_hint_count,
+          top_score: payload.semantic_top_score,
+          hint_used: payload.semantic_hint_used,
+        })
+      : null
+
     await serverPool.query(INSERT_SQL, [
       OPTION_A_TENANT_ID, OPTION_A_USER_ID,
       payload.session_id, payload.interaction_id, payload.turn_index,
@@ -82,6 +93,7 @@ export async function POST(request: NextRequest) {
       payload.commit_revalidation_result ?? null, payload.commit_revalidation_reason_code ?? null,
       null,
       payload.log_phase ?? 'routing_attempt',
+      semanticHintMeta,
     ])
 
     return NextResponse.json({ status: 'ok' }, { status: 200 })

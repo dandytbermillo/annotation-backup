@@ -33,3 +33,7 @@ export type { MemoryLookupResult } from './memory-reader'
 export { validateMemoryCandidate, revalidateMemoryHit } from './memory-validator'
 export type { ValidationResult } from './memory-validator'
 export { buildResultFromMemory } from './memory-action-builder'
+
+// Phase 3: Semantic memory read (client-safe)
+export { lookupSemanticMemory } from './memory-semantic-reader'
+export type { SemanticCandidate } from './memory-semantic-reader'

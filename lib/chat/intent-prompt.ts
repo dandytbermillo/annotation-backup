@@ -651,6 +651,8 @@ export interface ConversationContext {
     label: string
     description: string
   }>
+  // Phase 3 B2: Pre-composed semantic hint text for LLM context (server-composed, never raw)
+  semanticHintContext?: string
 }
 
 /**
@@ -925,6 +927,11 @@ export async function buildIntentMessages(
 
     if (context.lastAssistantQuestion) {
       contextBlock += `\nLast assistant question: "${sanitizeForPrompt(context.lastAssistantQuestion, 200)}"\n`
+    }
+
+    // Phase 3 B2: Semantic hint context (pre-composed by navigate route, never raw)
+    if (context.semanticHintContext) {
+      contextBlock += `\n${context.semanticHintContext}\n`
     }
 
     contextBlock += '\nCurrent request:'

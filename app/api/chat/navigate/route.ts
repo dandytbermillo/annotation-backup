@@ -608,6 +608,69 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // ---------------------------------------------------------------------------
+    // Phase 3 B2: Validate and pre-process semantic hints
+    // ---------------------------------------------------------------------------
+    interface SemanticHintPayload {
+      intent_id: string
+      candidate_id?: string
+      candidate_label?: string
+      action_type?: string
+      similarity_score: number
+    }
+
+    const MAX_HINTS = 5
+    const MAX_STRING_LEN = 200
+
+    function validateSemanticHints(hints: unknown): SemanticHintPayload[] | null {
+      if (!Array.isArray(hints)) return null
+      if (hints.length > MAX_HINTS) return null
+      return hints.every((h: Record<string, unknown>) =>
+        typeof h === 'object' && h !== null &&
+        typeof h.intent_id === 'string' && (h.intent_id as string).length <= MAX_STRING_LEN &&
+        (h.candidate_id === undefined || (typeof h.candidate_id === 'string' && (h.candidate_id as string).length <= MAX_STRING_LEN)) &&
+        (h.candidate_label === undefined || (typeof h.candidate_label === 'string' && (h.candidate_label as string).length <= MAX_STRING_LEN)) &&
+        (h.action_type === undefined || ['execute_referent', 'execute_widget_item'].includes(h.action_type as string)) &&
+        typeof h.similarity_score === 'number' && h.similarity_score >= 0.0 && h.similarity_score <= 1.0
+      ) ? hints as SemanticHintPayload[] : null
+    }
+
+    const validatedHints = validateSemanticHints(body.semantic_hints)
+
+    // Pre-process: filter for candidate_id (required for near-tie options) + sort DESC once
+    const actionableHints = validatedHints?.filter(h => h.candidate_id != null) ?? []
+    actionableHints.sort((a, b) => b.similarity_score - a.similarity_score)
+
+    // Check injection flag and near-tie
+    const hintInjectionEnabled = process.env.CHAT_ROUTING_SEMANTIC_HINT_INJECTION_ENABLED === 'true'
+
+    if (hintInjectionEnabled && actionableHints.length >= 2) {
+      // Near-tie: if top 2 scores within 0.03, force clarify — server logic, not prompt
+      const isNearTie = (actionableHints[0].similarity_score - actionableHints[1].similarity_score) < 0.03
+      if (isNearTie) {
+        return NextResponse.json({
+          resolution: {
+            success: true,
+            action: 'select',
+            message: 'Multiple similar options found. Which did you mean?',
+            options: actionableHints.map(h => ({
+              type: 'panel_drawer' as const,
+              id: h.candidate_id!,
+              label: h.candidate_label ?? h.candidate_id!,
+              data: { source: 'semantic_near_tie', similarity_score: h.similarity_score },
+            })),
+          },
+        })
+      }
+    }
+
+    // Compose hint context string (for injection into LLM prompt via conversationContext)
+    let semanticHintContext: string | undefined
+    if (hintInjectionEnabled && actionableHints.length > 0) {
+      const topHint = actionableHints[0]
+      semanticHintContext = `Context: A similar query was previously resolved successfully with target "${topHint.candidate_label}" (ID: ${topHint.candidate_id}, action: ${topHint.action_type}). Consider this as a candidate if it matches the current context, but verify independently.`
+    }
+
     // Phase 2a.3: Handle clarification-mode interpretation
     // When clarificationMode is true, just interpret the reply as YES/NO/UNCLEAR
     if (clarificationMode && clarificationQuestion) {
@@ -663,6 +726,8 @@ export async function POST(request: NextRequest) {
         widgetContextSegments: context.widgetContextSegments,
         widgetItemDescriptions: context.widgetItemDescriptions,
       } : {}),
+      // Phase 3 B2: Semantic hint context (pre-composed, gated by HINT_INJECTION flag)
+      semanticHintContext,
     } : undefined
 
     // DEBUG: Log context received from client

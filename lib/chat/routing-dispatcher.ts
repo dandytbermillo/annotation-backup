@@ -82,6 +82,7 @@ import {
 import type { RoutingLogPayload } from '@/lib/chat/routing-log'
 import { buildMemoryWritePayload } from '@/lib/chat/routing-log/memory-write-payload'
 import { lookupExactMemory } from '@/lib/chat/routing-log/memory-reader'
+import { lookupSemanticMemory, type SemanticCandidate } from '@/lib/chat/routing-log/memory-semantic-reader'
 import { validateMemoryCandidate } from '@/lib/chat/routing-log/memory-validator'
 import { buildResultFromMemory } from '@/lib/chat/routing-log/memory-action-builder'
 
@@ -476,6 +477,9 @@ export interface RoutingDispatcherResult {
   _pendingMemoryLog?: import('@/lib/chat/routing-log/payload').RoutingLogPayload
   /** Bug #3: Full routing log payload for execution outcome logging in sendMessage */
   _routingLogPayload?: import('@/lib/chat/routing-log/payload').RoutingLogPayload
+
+  /** Phase 3 B2: Semantic memory candidates for Lane D selection (never direct-execute) */
+  _semanticCandidates?: SemanticCandidate[]
 }
 
 /** Type alias for grounding actions (extracted from RoutingDispatcherResult for reuse) */
@@ -1217,6 +1221,48 @@ export async function dispatchRouting(
   }
 
   // ---------------------------------------------------------------------------
+  // Phase 3: Semantic memory lookup (Lane B2) — after B1 miss, before tier chain
+  // IMPORTANT: B2 does NOT return handled=true. It attaches validated candidates
+  // as hints for Lane D (LLM fallthrough). Semantic retrieval never direct-executes.
+  // ---------------------------------------------------------------------------
+  const semanticReadEnabled = process.env.NEXT_PUBLIC_CHAT_ROUTING_MEMORY_SEMANTIC_READ === 'true'
+  let semanticCandidatesForLaneD: SemanticCandidate[] | undefined
+
+  if (memoryReadEnabled && semanticReadEnabled) {
+    try {
+      const isLatchEnabled = process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1 === 'true'
+      const lookupSnapshot = buildContextSnapshot({
+        openWidgetCount: turnSnapshotForLog.openWidgets.length,
+        pendingOptionsCount: ctx.pendingOptions.length,
+        activeOptionSetId: ctx.activeOptionSetId,
+        hasLastClarification: ctx.lastClarification !== null,
+        hasLastSuggestion: ctx.lastSuggestion !== null,
+        latchEnabled: isLatchEnabled,
+        messageCount: ctx.messages.length,
+      })
+
+      const semanticCandidates = await lookupSemanticMemory({
+        raw_query_text: ctx.trimmedInput,
+        context_snapshot: lookupSnapshot,
+      })
+
+      if (semanticCandidates && semanticCandidates.length > 0) {
+        // Validate each candidate against live UI snapshot (Gate 3)
+        const validatedCandidates = semanticCandidates.filter(c => {
+          const v = validateMemoryCandidate(c, turnSnapshotForLog)
+          return v.valid
+        })
+
+        if (validatedCandidates.length > 0) {
+          semanticCandidatesForLaneD = validatedCandidates
+        }
+      }
+    } catch {
+      // Fail-open: no semantic candidates, tier chain runs normally
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Normal tier chain
   // ---------------------------------------------------------------------------
   let result: RoutingDispatcherResult | undefined
@@ -1226,6 +1272,11 @@ export async function dispatchRouting(
     result = await dispatchRoutingInner(ctx)
   } catch (err) {
     routingError = err
+  }
+
+  // Attach semantic candidates to result (only if tier chain didn't handle it)
+  if (!routingError && result && !result.handled && semanticCandidatesForLaneD) {
+    result._semanticCandidates = semanticCandidatesForLaneD
   }
 
   // Phase 1 observe-only logging (fail-open, non-blocking) — only when Phase 1 is enabled

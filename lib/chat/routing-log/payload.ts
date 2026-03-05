@@ -43,4 +43,9 @@ export interface RoutingLogPayload {
 
   // Bug #3 two-phase logging (optional — defaults to 'routing_attempt' on server)
   log_phase?: LogPhase
+
+  // Phase 3 B2: Semantic hint telemetry (stored separately from context_snapshot to avoid fingerprint drift)
+  semantic_hint_count?: number
+  semantic_top_score?: number
+  semantic_hint_used?: boolean
 }

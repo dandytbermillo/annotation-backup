@@ -2085,6 +2085,16 @@ function ChatNavigationPanelContent({
         itemDescriptionsCount: widgetItemDescriptions.length,
       })
 
+      // Phase 3 B2: Sanitize semantic candidates into minimal hint payloads for navigate API
+      // IMPORTANT: Pass only IDs + labels + score — never raw slots_json blobs
+      const semanticHints = routingResult?._semanticCandidates?.map(c => ({
+        intent_id: c.intent_id,
+        candidate_id: (c.slots_json.candidateId ?? c.slots_json.itemId) as string | undefined,
+        candidate_label: (c.slots_json.candidateLabel ?? c.slots_json.itemLabel) as string | undefined,
+        action_type: c.slots_json.action_type as string | undefined,
+        similarity_score: c.similarity_score,
+      }))
+
       // Call the navigate API with normalized message, context, and session state
       const response = await fetch('/api/chat/navigate', {
         method: 'POST',
@@ -2093,6 +2103,8 @@ function ChatNavigationPanelContent({
           message: normalizedMessage,
           currentEntryId: entryId,
           currentWorkspaceId: workspaceId,
+          // Phase 3 B2: semantic hint candidates for LLM selection
+          semantic_hints: semanticHints,
           context: {
             ...contextPayload,
             sessionState,
@@ -2158,6 +2170,33 @@ function ChatNavigationPanelContent({
           id: string
           nextAction: 'show_workspace_picker'
           originalIntent: string
+        }
+      }
+
+      // Phase 3 B2: Enrich routing log payload with semantic hint telemetry
+      // Must happen before any outcome log fires, so all paths get the telemetry.
+      if (routingResult?._routingLogPayload && routingResult._semanticCandidates) {
+        const candidates = routingResult._semanticCandidates
+        routingResult._routingLogPayload.semantic_hint_count = candidates.length
+        routingResult._routingLogPayload.semantic_top_score = Math.max(
+          ...candidates.map(c => c.similarity_score),
+        )
+        // Check if the LLM's chosen action matches any semantic hint candidate
+        // Match by panelId, workspace.id, entry.id, or note.id — the resolved target IDs
+        const resolvedIds = [
+          resolution.panelId,
+          resolution.workspace?.id,
+          resolution.entry?.id,
+          resolution.note?.id,
+          resolution.semanticPanelId,
+        ].filter(Boolean) as string[]
+
+        if (resolvedIds.length > 0) {
+          routingResult._routingLogPayload.semantic_hint_used = candidates.some(c => {
+            const candidateId = c.slots_json.candidateId as string | undefined
+            const itemId = c.slots_json.itemId as string | undefined
+            return resolvedIds.includes(candidateId ?? '') || resolvedIds.includes(itemId ?? '')
+          })
         }
       }
 

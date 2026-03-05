@@ -6,12 +6,12 @@ import { redactQueryText } from '@/lib/chat/routing-log/redaction'
 import {
   OPTION_A_TENANT_ID,
   OPTION_A_USER_ID,
-  EMBEDDING_MODEL_VERSION_NONE,
   MEMORY_SCHEMA_VERSION,
   MEMORY_TOOL_VERSION,
   MEMORY_DEFAULT_TTL_DAYS,
 } from '@/lib/chat/routing-log/types'
 import type { MemoryWritePayload } from '@/lib/chat/routing-log/memory-write-payload'
+import { computeEmbedding, EMBEDDING_MODEL_VERSION } from '@/lib/chat/routing-log/embedding-service'
 
 const UPSERT_SQL = `
   INSERT INTO chat_routing_memory_index (
@@ -25,11 +25,11 @@ const UPSERT_SQL = `
   ) VALUES (
     $1, $2, $3, $4,
     $5, $6,
-    NULL, $7,
-    $8,
-    $9, $10, $11,
-    $12, $13, $14,
-    $15, 1, now(), now() + interval '${MEMORY_DEFAULT_TTL_DAYS} days'
+    $7, $8,
+    $9,
+    $10, $11, $12,
+    $13, $14, $15,
+    $16, 1, now(), now() + interval '${MEMORY_DEFAULT_TTL_DAYS} days'
   )
   ON CONFLICT (tenant_id, user_id, query_fingerprint, context_fingerprint, schema_version, tool_version)
     WHERE is_deleted = false
@@ -37,6 +37,11 @@ const UPSERT_SQL = `
     success_count = chat_routing_memory_index.success_count + 1,
     last_success_at = now(),
     ttl_expires_at = now() + interval '${MEMORY_DEFAULT_TTL_DAYS} days',
+    semantic_embedding = COALESCE(EXCLUDED.semantic_embedding, chat_routing_memory_index.semantic_embedding),
+    embedding_model_version = CASE
+      WHEN EXCLUDED.semantic_embedding IS NOT NULL THEN EXCLUDED.embedding_model_version
+      ELSE chat_routing_memory_index.embedding_model_version
+    END,
     updated_at = now()
 `
 
@@ -71,10 +76,16 @@ export async function POST(request: NextRequest) {
 
     const contextFingerprint = sha256Hex(canonicalJsonSerialize(stripVolatileFields(payload.context_snapshot)))
 
+    // Phase 3: compute embedding for semantic search (fail-open — null on failure)
+    const embedding = await computeEmbedding(normalizedText, queryFingerprint)
+    // pgvector expects the vector as a string like '[0.1,0.2,...]' or null
+    const embeddingParam = embedding ? `[${embedding.join(',')}]` : null
+    const embeddingModelVersion = embedding ? EMBEDDING_MODEL_VERSION : 'none'
+
     await serverPool.query(UPSERT_SQL, [
       OPTION_A_TENANT_ID, OPTION_A_USER_ID, 'routing_dispatcher', payload.intent_class,
       queryFingerprint, redactedText,
-      EMBEDDING_MODEL_VERSION_NONE,
+      embeddingParam, embeddingModelVersion,
       contextFingerprint,
       payload.intent_id, JSON.stringify(payload.slots_json), JSON.stringify(payload.target_ids),
       payload.schema_version, payload.tool_version, 'default',
