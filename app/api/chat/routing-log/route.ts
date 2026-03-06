@@ -72,8 +72,8 @@ export async function POST(request: NextRequest) {
     // Full snapshot is still stored in context_snapshot_json for diagnostics.
     const contextFingerprint = sha256Hex(canonicalJsonSerialize(stripVolatileFields(contextSnapshot)))
 
-    // Phase 3 B2: build semantic_hint_metadata JSON when any B2 telemetry present
-    const semanticHintMeta = (payload.semantic_hint_count != null || payload.b2_status != null)
+    // Phase 3 B2/3c: build semantic_hint_metadata JSON when any B2 or clarifier telemetry present
+    const semanticHintMeta = (payload.semantic_hint_count != null || payload.b2_status != null || payload.b2_clarifier_status != null)
       ? JSON.stringify({
           count: payload.semantic_hint_count,
           top_score: payload.semantic_top_score,
@@ -82,6 +82,15 @@ export async function POST(request: NextRequest) {
           b2_raw_count: payload.b2_raw_count,
           b2_validated_count: payload.b2_validated_count,
           b2_latency_ms: payload.b2_latency_ms,
+          b2_clarifier_status: payload.b2_clarifier_status,
+          b2_clarifier_match_count: payload.b2_clarifier_match_count,
+          b2_clarifier_top_match_rank: payload.b2_clarifier_top_match_rank,
+          b2_clarifier_top_match_id: payload.b2_clarifier_top_match_id,
+          b2_clarifier_top_score: payload.b2_clarifier_top_score,
+          b2_clarifier_message_id: payload.b2_clarifier_message_id,
+          b2_clarifier_option_ids: payload.b2_clarifier_option_ids,
+          clarifier_origin_message_id: payload.clarifier_origin_message_id,
+          selected_option_id: payload.selected_option_id,
         })
       : null
 

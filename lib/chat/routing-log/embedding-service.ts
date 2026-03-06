@@ -18,7 +18,7 @@ import { join } from 'path'
 // ---------------------------------------------------------------------------
 
 const EMBEDDING_MODEL = 'text-embedding-3-small'
-const EMBEDDING_TIMEOUT_MS = 600
+const EMBEDDING_TIMEOUT_MS = 1200
 
 /** Version string stored in embedding_model_version column */
 export const EMBEDDING_MODEL_VERSION = 'openai:text-embedding-3-small@v1'

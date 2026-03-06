@@ -98,6 +98,10 @@ function findFuzzyPanelMatch(token: string): string | null {
   for (const term of KNOWN_PANEL_TERMS) {
     const distance = levenshteinDistance(token, term)
     if (distance <= MAX_FUZZY_DISTANCE && distance < bestDistance) {
+      // Guard: distance-2 matches must share the first character to avoid
+      // false positives like "budget" → "widget" (b≠w, distance 2).
+      // Distance-1 matches are allowed unconditionally (genuine typos).
+      if (distance === 2 && token[0] !== term[0]) continue
       bestDistance = distance
       bestMatch = term
     }

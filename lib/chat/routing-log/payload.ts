@@ -56,4 +56,18 @@ export interface RoutingLogPayload {
   b2_raw_count?: number        // candidates from API (before Gate 3 validation)
   b2_validated_count?: number   // candidates after Gate 3 validation
   b2_latency_ms?: number        // B2 lookup wall-clock time
+
+  // Phase 3c: Clarifier assist telemetry — set when grounding clarifier is shown
+  // Preserves Phase 3a lookup status precision (empty vs timeout vs error).
+  b2_clarifier_status?: 'not_applicable' | 'no_b2_empty' | 'no_b2_timeout' | 'no_b2_error' | 'no_match' | 'matched_no_reorder' | 'reordered' | 'shadow_reordered'
+  b2_clarifier_match_count?: number        // grounding candidates matching B2 candidates
+  b2_clarifier_top_match_rank?: number     // original 1-based rank of top B2-matched candidate
+  b2_clarifier_top_match_id?: string       // ID of top B2-matched grounding candidate
+  b2_clarifier_top_score?: number          // similarity score of top matched B2 candidate
+  b2_clarifier_message_id?: string         // clarifier message ID (for selection correlation)
+  b2_clarifier_option_ids?: string[]       // ordered list of grounding candidate IDs as shown
+
+  // Phase 3c: Selection correlation — set on the selection turn (user picks from clarifier)
+  clarifier_origin_message_id?: string     // clarifier message ID that spawned this selection
+  selected_option_id?: string              // ID of the option the user selected
 }

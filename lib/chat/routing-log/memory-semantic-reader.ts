@@ -22,11 +22,9 @@ export interface SemanticLookupResult {
   latencyMs: number
 }
 
-/** Semantic lookup timeout: 800ms (embedding API ~200-400ms + DB ~100ms + HTTP overhead).
- *  The OpenAI embedding API takes 200-400ms from this environment; the server-side
- *  EMBEDDING_TIMEOUT_MS is 600ms. Client ceiling must exceed that to avoid premature
- *  timeout. Separate from MEMORY_READ_TIMEOUT_MS (150ms) used by B1 exact lookup. */
-export const MEMORY_SEMANTIC_READ_TIMEOUT_MS = 800
+/** Client-side semantic lookup timeout. Must exceed server-side EMBEDDING_TIMEOUT_MS (1200ms)
+ *  to avoid premature client timeout. Separate from MEMORY_READ_TIMEOUT_MS (150ms) used by B1. */
+export const MEMORY_SEMANTIC_READ_TIMEOUT_MS = 2000
 
 const SEMANTIC_LOOKUP_ENDPOINT = '/api/chat/routing-memory/semantic-lookup'
 const SEMANTIC_READ_SLOW_THRESHOLD_MS = 200

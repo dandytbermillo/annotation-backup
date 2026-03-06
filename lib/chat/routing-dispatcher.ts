@@ -85,6 +85,7 @@ import { lookupExactMemory } from '@/lib/chat/routing-log/memory-reader'
 import { lookupSemanticMemory, type SemanticCandidate, type SemanticLookupResult } from '@/lib/chat/routing-log/memory-semantic-reader'
 import { validateMemoryCandidate } from '@/lib/chat/routing-log/memory-validator'
 import { buildResultFromMemory } from '@/lib/chat/routing-log/memory-action-builder'
+import { computeClarifierReorderTelemetry } from '@/lib/chat/routing-log/clarifier-reorder'
 
 // =============================================================================
 // Phase 1 Observe-Only — Routing Log Helpers
@@ -480,6 +481,21 @@ export interface RoutingDispatcherResult {
 
   /** Phase 3 B2: Semantic memory candidates for Lane D selection (never direct-execute) */
   _semanticCandidates?: SemanticCandidate[]
+
+  /** Phase 3c: Clarifier reorder telemetry (set inside dispatchRoutingInner when clarifier fires) */
+  _b2ClarifierTelemetry?: {
+    status: string
+    messageId: string
+    optionIds: string[]
+    matchCount: number
+    topMatchOriginalRank?: number
+    topMatchId?: string
+    topMatchScore?: number
+  }
+
+  /** Phase 3c: Selection correlation — set on selection turns (user picks from clarifier) */
+  _clarifierOriginMessageId?: string
+  _selectedOptionId?: string
 }
 
 /** Type alias for grounding actions (extracted from RoutingDispatcherResult for reuse) */
@@ -1163,8 +1179,16 @@ export async function dispatchRouting(
   // Phase 2b: Exact memory lookup (Lane B1) — before tier chain
   // If a valid memory match is found, return early without calling dispatchRoutingInner.
   // This prevents double-logging (Gate 6): either memory path logs OR Phase 1 wrapper logs.
+  //
+  // Guard: skip B1 when any selection context is active (lastClarification OR
+  // widgetSelectionContext). Ordinals ("2", "first") and label inputs belong to
+  // the clarification intercept (Tier 1d) or widget resolver which clears state
+  // properly. B1 replay would bypass state cleanup and selection correlation.
+  // Note: widget-context grounding clarifiers clear lastClarification and use
+  // widgetSelectionContext instead, so both must be checked.
   // ---------------------------------------------------------------------------
-  if (memoryReadEnabled) {
+  const hasActiveSelectionContext = !!ctx.lastClarification || !!ctx.widgetSelectionContext
+  if (memoryReadEnabled && !hasActiveSelectionContext) {
     try {
       const isLatchEnabled = process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1 === 'true'
       const lookupSnapshot = buildContextSnapshot({
@@ -1227,6 +1251,7 @@ export async function dispatchRouting(
   // ---------------------------------------------------------------------------
   const semanticReadEnabled = process.env.NEXT_PUBLIC_CHAT_ROUTING_MEMORY_SEMANTIC_READ === 'true'
   let semanticCandidatesForLaneD: SemanticCandidate[] | undefined
+  let b2LookupStatus: 'ok' | 'empty' | 'timeout' | 'error' | 'disabled' | undefined
 
   // B2 telemetry: track every B2 outcome (only when B2-eligible: memoryReadEnabled=true)
   let b2Telemetry: { status: string; rawCount?: number; validatedCount?: number; topScore?: number; latencyMs?: number } | undefined
@@ -1253,6 +1278,7 @@ export async function dispatchRouting(
         raw_query_text: ctx.trimmedInput,
         context_snapshot: lookupSnapshot,
       })
+      b2LookupStatus = lookupResult.status
 
       // Map structured result to b2Telemetry
       if (lookupResult.status === 'ok') {
@@ -1292,7 +1318,7 @@ export async function dispatchRouting(
   let routingError: unknown
 
   try {
-    result = await dispatchRoutingInner(ctx)
+    result = await dispatchRoutingInner(ctx, semanticCandidatesForLaneD, b2LookupStatus)
   } catch (err) {
     routingError = err
   }
@@ -1321,6 +1347,24 @@ export async function dispatchRouting(
         logPayload.b2_validated_count = b2Telemetry.validatedCount
         logPayload.semantic_top_score = b2Telemetry.topScore ?? logPayload.semantic_top_score
         logPayload.b2_latency_ms = b2Telemetry.latencyMs
+      }
+
+      // Phase 3c: clarifier reorder telemetry (from dispatchRoutingInner)
+      if (result?._b2ClarifierTelemetry) {
+        const ct = result._b2ClarifierTelemetry
+        logPayload.b2_clarifier_status = ct.status as RoutingLogPayload['b2_clarifier_status']
+        logPayload.b2_clarifier_match_count = ct.matchCount
+        logPayload.b2_clarifier_top_match_rank = ct.topMatchOriginalRank
+        logPayload.b2_clarifier_top_match_id = ct.topMatchId
+        logPayload.b2_clarifier_top_score = ct.topMatchScore
+        logPayload.b2_clarifier_message_id = ct.messageId
+        logPayload.b2_clarifier_option_ids = ct.optionIds
+      }
+
+      // Phase 3c: selection correlation (from dispatchRoutingInner handleSelectOption sites)
+      if (result?._clarifierOriginMessageId) {
+        logPayload.clarifier_origin_message_id = result._clarifierOriginMessageId
+        logPayload.selected_option_id = result._selectedOptionId
       }
 
       await recordRoutingLog(logPayload)
@@ -1353,7 +1397,9 @@ export async function dispatchRouting(
 }
 
 async function dispatchRoutingInner(
-  ctx: RoutingDispatcherContext
+  ctx: RoutingDispatcherContext,
+  semanticCandidatesForReorder?: SemanticCandidate[],
+  b2LookupStatus?: 'ok' | 'empty' | 'timeout' | 'error' | 'disabled',
 ): Promise<RoutingDispatcherResult> {
   const defaultResult: RoutingDispatcherResult = {
     handled: false,
@@ -1363,6 +1409,32 @@ async function dispatchRoutingInner(
     classifierTimeout: false,
     classifierError: false,
     isFollowUp: false,
+  }
+
+  // Phase 3c: Clarifier assist flag (shadow mode — compute reorder, log, but don't apply)
+  const clarifierAssistEnabled = process.env.NEXT_PUBLIC_CHAT_ROUTING_SEMANTIC_CLARIFIER_ASSIST_ENABLED === 'true'
+
+  /** Phase 3c: Thin wrapper — delegates to extracted pure function, attaches to result */
+  function attachClarifierReorderTelemetry(
+    result: RoutingDispatcherResult,
+    groundingCandidates: GroundingCandidate[],
+    clarifierMsgId: string,
+    lookupStatus?: 'ok' | 'empty' | 'timeout' | 'error' | 'disabled',
+  ): void {
+    if (!clarifierAssistEnabled) return
+    result._b2ClarifierTelemetry = computeClarifierReorderTelemetry(
+      groundingCandidates, semanticCandidatesForReorder, clarifierMsgId, lookupStatus,
+    )
+  }
+
+  /** Phase 3c: Centralized selection correlation wrapper.
+   * Captures clarifier_origin_message_id + selected_option_id on defaultResult
+   * before delegating to the actual handleSelectOption. Covers all paths:
+   * dispatcher Tier 3, clarification intercept ordinals, LLM selections, etc. */
+  const wrappedHandleSelectOption = (option: SelectionOption) => {
+    defaultResult._clarifierOriginMessageId = ctx.lastClarification?.messageId
+    defaultResult._selectedOptionId = option.id
+    ctx.handleSelectOption(option)
   }
 
   // Feature flag: selection intent arbitration (focus latch model)
@@ -1541,7 +1613,7 @@ async function dispatchRoutingInner(
     setPendingOptionsMessageId: ctx.setPendingOptionsMessageId,
     setPendingOptionsGraceCount: ctx.setPendingOptionsGraceCount,
     setNotesScopeFollowUpActive: ctx.setNotesScopeFollowUpActive,
-    handleSelectOption: ctx.handleSelectOption,
+    handleSelectOption: wrappedHandleSelectOption,
     repairMemory: ctx.repairMemory,
     setRepairMemory: ctx.setRepairMemory,
     incrementRepairMemoryTurn: ctx.incrementRepairMemoryTurn,
@@ -1656,7 +1728,7 @@ async function dispatchRoutingInner(
       setPendingOptionsMessageId: ctx.setPendingOptionsMessageId,
       setPendingOptionsGraceCount: ctx.setPendingOptionsGraceCount,
       setNotesScopeFollowUpActive: ctx.setNotesScopeFollowUpActive,
-      handleSelectOption: ctx.handleSelectOption,
+      handleSelectOption: wrappedHandleSelectOption,
       repairMemory: ctx.repairMemory,
       setRepairMemory: ctx.setRepairMemory,
       incrementRepairMemoryTurn: ctx.incrementRepairMemoryTurn,
@@ -2210,6 +2282,7 @@ async function dispatchRoutingInner(
         })),
       })
       ctx.setIsLoading(false)
+      attachClarifierReorderTelemetry(defaultResult, scopedGroundingResult.llmCandidates, clarifierMsgId, b2LookupStatus)
       return {
         ...defaultResult,
         handled: true,
@@ -3087,7 +3160,7 @@ async function dispatchRoutingInner(
       }
 
       ctx.setIsLoading(false)
-      ctx.handleSelectOption(optionToSelect)
+      wrappedHandleSelectOption(optionToSelect)
       return {
         ...defaultResult,
         handled: true,
@@ -3172,7 +3245,7 @@ async function dispatchRoutingInner(
       }
 
       ctx.setIsLoading(false)
-      ctx.handleSelectOption(optionToSelect)
+      wrappedHandleSelectOption(optionToSelect)
       return {
         ...defaultResult,
         handled: true,
@@ -3260,7 +3333,7 @@ async function dispatchRoutingInner(
                 data: matchedOption.data as SelectionOption['data'],
               }
               ctx.setIsLoading(false)
-              ctx.handleSelectOption(optionToSelect)
+              wrappedHandleSelectOption(optionToSelect)
               return {
                 ...defaultResult,
                 handled: true,
@@ -3366,7 +3439,7 @@ async function dispatchRoutingInner(
           data: selectedOption.data as SelectionOption['data'],
         }
         ctx.setIsLoading(false)
-        ctx.handleSelectOption(optionToSelect)
+        wrappedHandleSelectOption(optionToSelect)
         return {
           ...defaultResult,
           handled: true,
@@ -3413,7 +3486,7 @@ async function dispatchRoutingInner(
           data: labelMatch.data as SelectionOption['data'],
         }
         ctx.setIsLoading(false)
-        ctx.handleSelectOption(optionToSelect)
+        wrappedHandleSelectOption(optionToSelect)
         return {
           ...defaultResult,
           handled: true,
@@ -3694,7 +3767,7 @@ async function dispatchRoutingInner(
         data: selectionResult.matchedChatOption.data as SelectionOption['data'],
       }
 
-      ctx.handleSelectOption(optionToSelect)
+      wrappedHandleSelectOption(optionToSelect)
       return {
         ...defaultResult,
         handled: true,
@@ -3877,7 +3950,7 @@ async function dispatchRoutingInner(
                     sourceContext,
                   },
                 })
-                ctx.handleSelectOption(matchingOption as unknown as SelectionOption)
+                wrappedHandleSelectOption(matchingOption as unknown as SelectionOption)
                 ctx.setIsLoading(false)
                 return {
                   ...defaultResult,
@@ -4009,7 +4082,7 @@ async function dispatchRoutingInner(
     setPendingOptionsGraceCount: ctx.setPendingOptionsGraceCount,
     setActiveOptionSetId: ctx.setActiveOptionSetId,
     setLastClarification: ctx.setLastClarification,
-    handleSelectOption: ctx.handleSelectOption,
+    handleSelectOption: wrappedHandleSelectOption,
     hasActiveOptionSet: ctx.pendingOptions.length > 0 && ctx.activeOptionSetId !== null,
     hasSoftActiveSelectionLike,
     hasVisibleWidgetList: hasVisibleWidgetItems,
@@ -4223,7 +4296,7 @@ async function dispatchRoutingInner(
         // not handleSelectOption (which doesn't handle 'widget_option' type).
         if (matchingOption && 'type' in matchingOption && 'data' in matchingOption
             && groundingResult.selectedCandidate!.type !== 'widget_option') {
-          ctx.handleSelectOption(matchingOption as unknown as SelectionOption)
+          wrappedHandleSelectOption(matchingOption as unknown as SelectionOption)
           ctx.setIsLoading(false)
           return {
             ...defaultResult,
@@ -4261,7 +4334,7 @@ async function dispatchRoutingInner(
             sublabel: messageOption.sublabel,
             data: messageOption.data as SelectionOption['data'],
           }
-          ctx.handleSelectOption(optionToSelect)
+          wrappedHandleSelectOption(optionToSelect)
           ctx.setIsLoading(false)
           return {
             ...defaultResult,
@@ -4418,7 +4491,7 @@ async function dispatchRoutingInner(
                 // not handleSelectOption (which doesn't handle 'widget_option' type).
                 if (matchingOption && 'type' in matchingOption && 'data' in matchingOption
                     && selected.type !== 'widget_option') {
-                  ctx.handleSelectOption(matchingOption as unknown as SelectionOption)
+                  wrappedHandleSelectOption(matchingOption as unknown as SelectionOption)
                   ctx.setIsLoading(false)
                   return {
                     ...defaultResult,
@@ -4458,7 +4531,7 @@ async function dispatchRoutingInner(
                     sublabel: messageOption.sublabel,
                     data: messageOption.data as SelectionOption['data'],
                   }
-                  ctx.handleSelectOption(optionToSelect)
+                  wrappedHandleSelectOption(optionToSelect)
                   ctx.setIsLoading(false)
                   return {
                     ...defaultResult,
@@ -4596,6 +4669,7 @@ async function dispatchRoutingInner(
               // Per incubation plan §Observability: LLM generated clarifier wording
               void debugLog({ component: 'ChatNavigation', action: 'selection_clarifier_llm_generated', metadata: { candidateCount: groundingResult.llmCandidates.length, input: ctx.trimmedInput } })
 
+              attachClarifierReorderTelemetry(defaultResult, groundingResult.llmCandidates, clarifierMsgId, b2LookupStatus)
               return {
                 ...defaultResult,
                 handled: true,
@@ -4644,6 +4718,7 @@ async function dispatchRoutingInner(
             // Per incubation plan §Observability: template fallback used on LLM failure
             void debugLog({ component: 'ChatNavigation', action: 'selection_clarifier_llm_fallback_template', metadata: { reason: 'llm_timeout', candidateCount: groundingResult.llmCandidates.length, input: ctx.trimmedInput } })
 
+            attachClarifierReorderTelemetry(defaultResult, groundingResult.llmCandidates, clarifierMsgId, b2LookupStatus)
             return {
               ...defaultResult,
               handled: true,
@@ -4703,6 +4778,7 @@ async function dispatchRoutingInner(
         // Per incubation plan §Observability: template fallback (LLM disabled)
         void debugLog({ component: 'ChatNavigation', action: 'selection_clarifier_llm_fallback_template', metadata: { reason: 'llm_disabled', candidateCount: groundingResult.llmCandidates.length, input: ctx.trimmedInput } })
 
+        attachClarifierReorderTelemetry(defaultResult, groundingResult.llmCandidates, clarifierMsgId, b2LookupStatus)
         return {
           ...defaultResult,
           handled: true,

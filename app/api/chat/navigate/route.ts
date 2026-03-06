@@ -669,6 +669,13 @@ export async function POST(request: NextRequest) {
     if (hintInjectionEnabled && actionableHints.length > 0) {
       const topHint = actionableHints[0]
       semanticHintContext = `Context: A similar query was previously resolved successfully with target "${topHint.candidate_label}" (ID: ${topHint.candidate_id}, action: ${topHint.action_type}). Consider this as a candidate if it matches the current context, but verify independently.`
+      console.log('[navigate-b2-hint] injecting semantic hint into prompt:', {
+        candidateLabel: topHint.candidate_label,
+        candidateId: topHint.candidate_id,
+        actionType: topHint.action_type,
+        score: topHint.similarity_score,
+        totalHints: actionableHints.length,
+      })
     }
 
     // Phase 2a.3: Handle clarification-mode interpretation

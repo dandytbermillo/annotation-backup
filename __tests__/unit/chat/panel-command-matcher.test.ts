@@ -36,6 +36,14 @@ describe('matchVisiblePanelCommand', () => {
     expect(result.type).toBe('exact')
     expect(result.matches.map(m => m.id)).toEqual(['recent'])
   })
+
+  test('does NOT fuzzy-match "budget" to "widget" (different first char, distance 2)', () => {
+    const widgets: VisibleWidget[] = [
+      { id: 'widget-manager', title: 'Widget Manager', type: 'widget_manager' },
+    ]
+    const result = matchVisiblePanelCommand('show budget', widgets)
+    expect(result.type).toBe('none')
+  })
 })
 
 // =============================================================================

@@ -220,21 +220,79 @@ The ~620ms latencies correlate with `EMBEDDING_TIMEOUT_MS = 600` (server-side em
 
 | b2_status | Observed in Soak | Notes |
 |-----------|-----------------|-------|
-| `no_candidates` | Yes | Embedding succeeded, no similar entries |
-| `timeout_or_error` | Yes | Embedding timeout / client timeout |
+| `no_candidates` | Yes | Embedding succeeded, no similar entries above 0.92 |
+| `timeout_or_error` | Yes | Embedding timeout at server ceiling |
+| `discarded_handled` | Yes | "could you open budget100" (score 0.933), "can you show budget100" (score 0.924) |
+| `candidates_found` | Unit test only | Requires tier chain unhandled + B2 candidates (rare in practice) |
 | `skipped` | Unit test only | Requires `semanticReadEnabled=false` with `memoryReadEnabled=true` |
-| `candidates_found` | Unit test only | Requires embedding success + entries above 0.92 + tier chain unhandled |
-| `discarded_handled` | Unit test only | Requires `candidates_found` + tier chain handles |
 
-`candidates_found` and `discarded_handled` require the embedding API to complete within 600ms AND memory entries with cosine similarity >= 0.92. The current slow-network environment prevents embedding completion within the timeout. On a faster connection, these statuses would appear for queries like "please open budget100" (which scored 0.963 similarity in earlier direct-API testing).
+---
+
+## Timeout Tuning
+
+### Problem
+Initial values (`EMBEDDING_TIMEOUT_MS=600`, `MEMORY_SEMANTIC_READ_TIMEOUT_MS=800`) caused near-100% embedding timeouts in the current network environment. All B2 turns showed `timeout_or_error` or were misreported as `no_candidates` (before the `lookup_status` fix).
+
+### Proof-Mode Soak (temporary 1500/2500)
+Raised timeouts temporarily to prove B2 candidate path works end-to-end:
+- **"could you open budget100"**: `discarded_handled`, raw=1, valid=1, top_score=0.933, latency=1131ms
+- Confirmed B2 pipeline is functional when embedding completes
+
+### 10-Turn Baseline Soak (1200/2000) — Accepted Phase 3a Baseline
+
+Ran 10 B2-eligible turns (deduped by `interaction_id`), all with novel phrasings that miss B1. This is the **accepted Phase 3a baseline** for future comparisons.
+
+**Status distribution (per-interaction):**
+
+| b2_status | Count | % |
+|-----------|-------|---|
+| no_candidates | 8 | 80% |
+| timeout_or_error | 1 | 10% |
+| discarded_handled | 1 | 10% |
+
+**Latency (per-interaction):**
+
+| Metric | Value |
+|--------|-------|
+| p50 | 385ms |
+| p95 | 1462ms |
+| min | 222ms |
+| max | 1661ms |
+
+**Per-query detail:**
+
+| Query | b2_status | b2_ms | top_score |
+|-------|-----------|-------|-----------|
+| go to budget100 | no_candidates | 397 | — |
+| take me to budget100 | no_candidates | 744 | — |
+| bring up budget100 | no_candidates | 264 | — |
+| can you show budget100 | discarded_handled | 268 | 0.924 |
+| display budget100 | no_candidates | 245 | — |
+| access budget100 | no_candidates | 763 | — |
+| load budget100 | timeout_or_error | 1218 | — |
+| pull up budget100 | no_candidates | 222 | — |
+| switch to budget100 | no_candidates | 373 | — |
+| open links panel b | no_candidates | 1661 | — |
+
+**Decision**: `timeout_or_error` = 10% (below 20% threshold). **Lock 1200/2000.**
+
+### Final Locked Values
+
+| Constant | File | Value | Previous |
+|----------|------|-------|----------|
+| `EMBEDDING_TIMEOUT_MS` | `lib/chat/routing-log/embedding-service.ts:21` | 1200ms | 600ms |
+| `MEMORY_SEMANTIC_READ_TIMEOUT_MS` | `lib/chat/routing-log/memory-semantic-reader.ts:27` | 2000ms | 800ms |
+
+**Escalation rule**: If future soak shows `timeout_or_error` > 20%, move `EMBEDDING_TIMEOUT_MS` to 1500ms.
 
 ---
 
 ## Monitoring Queries
 
-### Per-row detail
+### Per-interaction detail (deduped)
 ```sql
-SELECT created_at, raw_query_text, routing_lane,
+SELECT DISTINCT ON (interaction_id)
+       created_at, raw_query_text, routing_lane,
        semantic_hint_metadata->>'b2_status' AS b2_status,
        semantic_hint_metadata->>'b2_raw_count' AS b2_raw,
        semantic_hint_metadata->>'b2_validated_count' AS b2_valid,
@@ -242,28 +300,110 @@ SELECT created_at, raw_query_text, routing_lane,
        semantic_hint_metadata->>'top_score' AS top_score
 FROM chat_routing_durable_log
 WHERE semantic_hint_metadata IS NOT NULL
-ORDER BY created_at DESC
-LIMIT 10;
+ORDER BY interaction_id, created_at ASC;
 ```
 
-### Distribution
+### Status distribution (per-interaction)
 ```sql
-SELECT semantic_hint_metadata->>'b2_status' AS b2_status,
-       COUNT(*) AS cnt,
-       ROUND(AVG((semantic_hint_metadata->>'b2_latency_ms')::numeric), 0) AS avg_ms,
-       ROUND(AVG((semantic_hint_metadata->>'b2_raw_count')::numeric), 1) AS avg_raw,
-       ROUND(AVG((semantic_hint_metadata->>'b2_validated_count')::numeric), 1) AS avg_valid
-FROM chat_routing_durable_log
-WHERE semantic_hint_metadata IS NOT NULL
-  AND semantic_hint_metadata->>'b2_status' IS NOT NULL
+SELECT b2_status, COUNT(*) AS turns,
+       ROUND(AVG(b2_ms), 0) AS avg_ms,
+       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY b2_ms) AS p50_ms,
+       PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY b2_ms) AS p95_ms
+FROM (
+  SELECT DISTINCT ON (interaction_id)
+         (semantic_hint_metadata->>'b2_status') AS b2_status,
+         (semantic_hint_metadata->>'b2_latency_ms')::numeric AS b2_ms
+  FROM chat_routing_durable_log
+  WHERE semantic_hint_metadata IS NOT NULL
+    AND semantic_hint_metadata->>'b2_status' IS NOT NULL
+  ORDER BY interaction_id, created_at ASC
+) sub
 GROUP BY 1
-ORDER BY cnt DESC;
+ORDER BY turns DESC;
 ```
+
+### Timeout rate check (decision rule: escalate if > 20%)
+```sql
+SELECT
+  COUNT(*) FILTER (WHERE b2_status = 'timeout_or_error') AS timeout_turns,
+  COUNT(*) AS total_turns,
+  ROUND(100.0 * COUNT(*) FILTER (WHERE b2_status = 'timeout_or_error') / COUNT(*), 1) AS timeout_pct
+FROM (
+  SELECT DISTINCT ON (interaction_id)
+         (semantic_hint_metadata->>'b2_status') AS b2_status
+  FROM chat_routing_durable_log
+  WHERE semantic_hint_metadata IS NOT NULL
+    AND semantic_hint_metadata->>'b2_status' IS NOT NULL
+  ORDER BY interaction_id, created_at ASC
+) sub;
+```
+
+---
+
+## Phase 3b Structural Analysis — Hint Injection Coverage Gap
+
+### Finding
+
+Phase 3b semantic hint injection code exists and is fully implemented behind `CHAT_ROUTING_SEMANTIC_HINT_INJECTION_ENABLED`. The pipeline:
+
+1. B2 candidates validated via Gate 3 (`memory-validator.ts`) against live UI snapshot
+2. Attached to routing result when `!result.handled` (`routing-dispatcher.ts:1301`)
+3. Sanitized to minimal payloads (`chat-navigation-panel.tsx:2090`)
+4. Sent to navigate API as `semantic_hints` field
+5. Server validates (max 5, length caps, action allowlist, score bounds) (`navigate/route.ts:625`)
+6. Near-tie detection: top 2 scores within 0.03 → force clarify (`navigate/route.ts:647`)
+7. Top hint composed into context string → injected into LLM prompt (`intent-prompt.ts:933`)
+8. Post-LLM: `semantic_hint_used` checks if resolved target matches any hint candidate (`chat-navigation-panel.tsx:2178`)
+
+### Structural Coverage Problem
+
+For hint injection to fire, **both** conditions must be true simultaneously:
+
+1. **Gate 3 passes** (`validatedCount > 0`) — requires target widget+item present in live UI snapshot
+2. **Tier chain unhandled** (`!result.handled`) — requires all tiers (0-5) to miss
+
+These conditions are **nearly mutually exclusive in practice**:
+
+- **Widget removed from dashboard** → Gate 3 rejects all candidates (`target_widget_gone`, `memory-validator.ts:59`) → `validatedCount = 0` → no hints attached. Tier chain also misses, but there are no hints to inject.
+- **Widget present on dashboard** → Gate 3 passes. But grounding tiers (Tier 4/4.5) also see the same widget items in the live snapshot and handle the query → `result.handled = true` → candidates become `discarded_handled`.
+
+The only window: widget is present (Gate 3 passes) AND query phrasing is unusual enough that all grounding tiers miss. Since Tier 4.5 uses an LLM that sees the same widget items, this window is extremely narrow — the grounding LLM's semantic understanding covers the same space as B2's embedding similarity.
+
+### Evidence
+
+- **3a soak (10-turn baseline)**: `candidates_found` was **0%** — never observed in soak. Every B2 hit was `discarded_handled` (10%) because Tier 4/5 handled.
+- **Memory index analysis**: All 30 B2 memory entries target widget items (`execute_widget_item` action type, `w_links_b`/`w_links_a`/`w_recent_widget` widgets). These are the same objects the grounding tiers reason over.
+
+### Root Cause
+
+Current B2 memory and grounding tiers reason over the **same object set** (widget items in the live snapshot). B2 stores entries from previously successful grounding actions. A semantically similar query against the same objects will be handled by the same grounding tiers that created the original memory entry — making the hint redundant.
+
+### Decision: Freeze as Experimental
+
+**Status**: `CHAT_ROUTING_SEMANTIC_HINT_INJECTION_ENABLED=false` (locked off).
+
+The 3b injection code is functional, gated, and costs nothing to keep. But it should not be treated as a production feature or drive soak effort under the current architecture.
+
+**Do not:**
+- Relax Gate 3 to allow unvalidated candidates as hints (turns grounded memory into speculative prompt bias)
+- Inject hints when `result.handled` (breaks tier authority model, adds interference to correct outcomes)
+- Spend further soak effort trying to prove coverage under current architecture
+
+**Revisit when any of these conditions change:**
+1. **Broader memory sources** — Memory covers cross-session or cross-entry patterns not in the current live snapshot (e.g., user preferences, previously visited entries)
+2. **Clarifier ranking** — Hints are used to rank disambiguation options rather than select actions (different code path, not constrained by the attach gate)
+3. **Tier authority redesign** — Tier 4/4.5 scope changes in a way that reduces overlap with B2's semantic space
+
+### Remaining Observability Log
+
+A `[navigate-b2-hint]` console log was added at `navigate/route.ts:672` during this analysis. It fires only when injection is enabled and actionable hints exist. Retained for future debugging.
 
 ---
 
 ## Next Steps
 
-1. **Faster network test**: Re-run soak on a faster connection to observe `candidates_found` and `discarded_handled` statuses
-2. **Embedding timeout tuning**: Consider increasing `EMBEDDING_TIMEOUT_MS` from 600ms if slow-network environments are common
-3. **Phase 3b**: Once B2 telemetry is stable and `candidates_found` is observed, proceed to semantic hint injection (`CHAT_ROUTING_SEMANTIC_HINT_INJECTION_ENABLED`)
+1. **Monitor timeout rate**: Run the timeout rate check query periodically. If `timeout_or_error` > 20%, move `EMBEDDING_TIMEOUT_MS` to 1500ms.
+2. **Phase 3b**: Frozen as experimental. Revisit only when memory sources broaden, hints target clarifier ranking, or tier authority is redesigned. See "Phase 3b Structural Analysis" above.
+3. **Optional refinements** (deferred):
+   - Add `b2_lookup_reason` field to propagate server-side `lookup_status` to durable log (only if ambiguity still hurts analysis)
+   - Per-interaction dedup in monitoring dashboards
