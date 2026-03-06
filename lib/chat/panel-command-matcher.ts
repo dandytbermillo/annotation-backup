@@ -155,7 +155,14 @@ function normalizeToTokenSet(s: string): Set<string> {
       // Step 4: Return original (possibly deduped) token
       return canonicalTokens[t] ?? deduped
     })
-    .filter(t => !STOPWORDS.has(t))
+    .filter((t, idx, arr) => {
+      // Preserve single-char stopwords (only "a") at the LAST position.
+      // Trailing "a" in "Links Panel A" is a badge letter, not the article "a".
+      // Stripping it causes asymmetric matching: Panel A loses its distinguishing
+      // token while Panels B–E keep theirs.
+      if (t.length === 1 && idx === arr.length - 1) return true
+      return !STOPWORDS.has(t)
+    })
   return new Set(tokens)
 }
 

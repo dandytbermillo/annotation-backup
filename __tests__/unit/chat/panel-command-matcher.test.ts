@@ -447,12 +447,12 @@ describe('matchVisiblePanelCommand — normalization order (stopword after norma
 // =============================================================================
 
 describe('matchVisiblePanelCommand — best-specificity tiebreaker', () => {
-  test('"open links panel b" with A and B → single exact match for B (stopword tiebreaker)', () => {
-    // "Links Panel A" → tokens {links, panel} (badge 'a' stripped as stopword)
+  test('"open links panel b" with A and B → single exact match for B', () => {
+    // "Links Panel A" → tokens {links, panel, a} (trailing "a" preserved as badge letter)
     // "Links Panel B" → tokens {links, panel, b}
     // Input → tokens {open, links, panel, b}
-    // Both are subsets of input → both exact matches
-    // Tiebreaker: B has 3 tokens > A's 2 → only B survives
+    // Panel A: {links, panel, a} ⊄ input (a not in input) → no match
+    // Panel B: {links, panel, b} ⊂ input → exact match
     const widgets: VisibleWidget[] = [
       { id: 'links-panel-a', title: 'Links Panel A', type: 'links_note_tiptap' },
       { id: 'links-panel-b', title: 'Links Panel B', type: 'links_note_tiptap' },
@@ -476,6 +476,61 @@ describe('matchVisiblePanelCommand — best-specificity tiebreaker', () => {
     const result = matchVisiblePanelCommand('budget report panel', widgets)
     expect(result.type).toBe('exact')
     expect(result.matches.length).toBe(2)
+  })
+})
+
+// =============================================================================
+// Badge letter "a" stopword fix — trailing single-char tokens preserved
+// =============================================================================
+
+describe('matchVisiblePanelCommand — badge letter "a" preservation', () => {
+  const abcWidgets: VisibleWidget[] = [
+    { id: 'links-panel-a', title: 'Links Panel A', type: 'links_note_tiptap' },
+    { id: 'links-panel-b', title: 'Links Panel B', type: 'links_note_tiptap' },
+    { id: 'links-panel-c', title: 'Links Panel C', type: 'links_note_tiptap' },
+  ]
+
+  test('"open links panel" with A/B/C → none (no single-panel false match for A)', () => {
+    // Previously: "Links Panel A" had tokens {links, panel} (badge "a" stripped)
+    // → false exact match for A only. Now "a" is preserved as badge letter.
+    // All three panels have 3 tokens {links, panel, a/b/c} — none is subset of
+    // input {open, links, panel} (missing badge letter). → type: 'none'
+    const result = matchVisiblePanelCommand('open links panel', abcWidgets)
+    expect(result.type).toBe('none')
+  })
+
+  test('"links panel" with A/B/C → partial match for all 3 (disambiguation)', () => {
+    // Input tokens {links, panel} ⊂ each title's {links, panel, x} → partial
+    const result = matchVisiblePanelCommand('links panel', abcWidgets)
+    expect(result.type).toBe('partial')
+    expect(result.matches.length).toBe(3)
+  })
+
+  test('"links panel a" → exact match for A only', () => {
+    // Input tokens {links, panel, a} — trailing "a" preserved
+    // Panel A {links, panel, a} ⊂ input → exact
+    // Panel B {links, panel, b} — b not in input → no match
+    const result = matchVisiblePanelCommand('links panel a', abcWidgets)
+    expect(result.type).toBe('exact')
+    expect(result.matches.length).toBe(1)
+    expect(result.matches[0].id).toBe('links-panel-a')
+  })
+
+  test('"open links panel a" → exact match for A only', () => {
+    // Input tokens {open, links, panel, a} — trailing "a" preserved
+    // Panel A {links, panel, a} ⊂ input → exact
+    const result = matchVisiblePanelCommand('open links panel a', abcWidgets)
+    expect(result.type).toBe('exact')
+    expect(result.matches.length).toBe(1)
+    expect(result.matches[0].id).toBe('links-panel-a')
+  })
+
+  test('"a links panel" → "a" stripped (not trailing) → partial match all 3', () => {
+    // "a" at index 0 (not last) → treated as article, stripped
+    // tokens: {links, panel} → partial match for all 3
+    const result = matchVisiblePanelCommand('a links panel', abcWidgets)
+    expect(result.type).toBe('partial')
+    expect(result.matches.length).toBe(3)
   })
 })
 

@@ -266,10 +266,6 @@ export interface PanelDisambiguationHandlerContext {
 export interface PanelDisambiguationHandlerResult extends HandlerResult {
   matchType?: 'exact' | 'partial' | 'none'
   matchCount?: number
-  /** Message ID of the clarifier (multi-match case only). Used by Phase 3c telemetry. */
-  clarifierMessageId?: string
-  /** Matched panel candidates as {id, label, type} for Phase 3c telemetry. */
-  clarifierCandidates?: Array<{ id: string; label: string; type: string }>
 }
 
 // =============================================================================

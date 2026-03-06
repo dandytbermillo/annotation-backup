@@ -130,13 +130,7 @@ export function handlePanelDisambiguation(
     })
 
     setIsLoading(false)
-    return {
-      handled: true,
-      matchType: matchResult.type,
-      matchCount: matchResult.matches.length,
-      clarifierMessageId: messageId,
-      clarifierCandidates: matchResult.matches.map(m => ({ id: m.id, label: m.title, type: 'panel_drawer' })),
-    }
+    return { handled: true, matchType: matchResult.type, matchCount: matchResult.matches.length }
   }
 
   // Single high-confidence panel match → open directly (deterministic, Rule 1)

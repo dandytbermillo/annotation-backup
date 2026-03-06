@@ -85,7 +85,7 @@ import { lookupExactMemory } from '@/lib/chat/routing-log/memory-reader'
 import { lookupSemanticMemory, type SemanticCandidate, type SemanticLookupResult } from '@/lib/chat/routing-log/memory-semantic-reader'
 import { validateMemoryCandidate } from '@/lib/chat/routing-log/memory-validator'
 import { buildResultFromMemory } from '@/lib/chat/routing-log/memory-action-builder'
-import { computeClarifierReorderTelemetry } from '@/lib/chat/routing-log/clarifier-reorder'
+import { computeClarifierReorderTelemetry, type ReorderableCandidate } from '@/lib/chat/routing-log/clarifier-reorder'
 
 // =============================================================================
 // Phase 1 Observe-Only — Routing Log Helpers
@@ -1180,15 +1180,21 @@ export async function dispatchRouting(
   // If a valid memory match is found, return early without calling dispatchRoutingInner.
   // This prevents double-logging (Gate 6): either memory path logs OR Phase 1 wrapper logs.
   //
-  // Guard: skip B1 when any selection context is active (lastClarification OR
-  // widgetSelectionContext). Ordinals ("2", "first") and label inputs belong to
-  // the clarification intercept (Tier 1d) or widget resolver which clears state
-  // properly. B1 replay would bypass state cleanup and selection correlation.
-  // Note: widget-context grounding clarifiers clear lastClarification and use
-  // widgetSelectionContext instead, so both must be checked.
+  // Guard: skip B1 when a selection context is active AND the input looks like
+  // a selection (ordinal, short label) rather than a new command. Ordinals
+  // ("2", "first") belong to the clarification intercept (Tier 1d) or widget
+  // resolver. B1 replay would bypass state cleanup and selection correlation.
+  // However, full commands like "open links panel b" must still reach B1 even
+  // when widgetSelectionContext persists (TTL=2 turns from a prior clarifier).
+  // The looksLikeNewCommand escape (ACTION_VERB_PATTERN + !isSelectionOnly)
+  // lets commands through while blocking bare ordinals.
   // ---------------------------------------------------------------------------
   const hasActiveSelectionContext = !!ctx.lastClarification || !!ctx.widgetSelectionContext
-  if (memoryReadEnabled && !hasActiveSelectionContext) {
+  const inputIsSelectionLike = isSelectionLike(ctx.trimmedInput)
+  const b1InputLooksLikeNewCommand = ACTION_VERB_PATTERN.test(ctx.trimmedInput)
+    && !isSelectionOnly(ctx.trimmedInput, 10, [], 'embedded').isSelection
+  const shouldSkipB1ForSelection = hasActiveSelectionContext && inputIsSelectionLike && !b1InputLooksLikeNewCommand
+  if (memoryReadEnabled && !shouldSkipB1ForSelection) {
     try {
       const isLatchEnabled = process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1 === 'true'
       const lookupSnapshot = buildContextSnapshot({
@@ -1417,7 +1423,7 @@ async function dispatchRoutingInner(
   /** Phase 3c: Thin wrapper — delegates to extracted pure function, attaches to result */
   function attachClarifierReorderTelemetry(
     result: RoutingDispatcherResult,
-    groundingCandidates: GroundingCandidate[],
+    groundingCandidates: ReorderableCandidate[],
     clarifierMsgId: string,
     lookupStatus?: 'ok' | 'empty' | 'timeout' | 'error' | 'disabled',
   ): void {
@@ -1430,9 +1436,12 @@ async function dispatchRoutingInner(
   /** Phase 3c: Centralized selection correlation wrapper.
    * Captures clarifier_origin_message_id + selected_option_id on defaultResult
    * before delegating to the actual handleSelectOption. Covers all paths:
-   * dispatcher Tier 3, clarification intercept ordinals, LLM selections, etc. */
+   * dispatcher Tier 3, clarification intercept ordinals, LLM selections, etc.
+   * Falls back to widgetSelectionContext.optionSetId when lastClarification is
+   * null (widget-context clarifiers clear lastClarification at line 918). */
   const wrappedHandleSelectOption = (option: SelectionOption) => {
-    defaultResult._clarifierOriginMessageId = ctx.lastClarification?.messageId
+    defaultResult._clarifierOriginMessageId =
+      ctx.lastClarification?.messageId ?? ctx.widgetSelectionContext?.optionSetId
     defaultResult._selectedOptionId = option.id
     ctx.handleSelectOption(option)
   }
@@ -2385,6 +2394,10 @@ async function dispatchRoutingInner(
       })
 
       if (panelResult.handled) {
+        // Phase 3c: attach clarifier telemetry for panel disambiguation clarifiers
+        if (panelResult.clarifierMessageId && panelResult.clarifierCandidates) {
+          attachClarifierReorderTelemetry(defaultResult, panelResult.clarifierCandidates, panelResult.clarifierMessageId, b2LookupStatus)
+        }
         return {
           ...defaultResult,
           handled: true,
@@ -2709,6 +2722,10 @@ async function dispatchRoutingInner(
       openPanelDrawer: ctx.openPanelDrawer,
     })
     if (panelDisambiguationResult.handled) {
+      // Phase 3c: attach clarifier telemetry for panel disambiguation clarifiers
+      if (panelDisambiguationResult.clarifierMessageId && panelDisambiguationResult.clarifierCandidates) {
+        attachClarifierReorderTelemetry(defaultResult, panelDisambiguationResult.clarifierCandidates, panelDisambiguationResult.clarifierMessageId, b2LookupStatus)
+      }
       return {
         ...defaultResult,
         handled: true,

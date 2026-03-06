@@ -17,6 +17,8 @@ This session implemented three changes:
 
 Additionally:
 4. **Fuzzy match false positive fix**: "budget" was fuzzy-matching to "widget" (Levenshtein distance 2, different first char). Added a first-character guard for distance-2 matches.
+5. **Panel disambiguation telemetry wiring**: Extended `attachClarifierReorderTelemetry` to 2 new panel disambiguation call sites (scope-cue + main Tier 2c) so B2 shadow telemetry is captured for panel clarifiers.
+6. **Badge letter "a" stopword fix**: Trailing single-char stopwords preserved as badge identifiers. Fixes "Links Panel A" losing its distinguishing token during normalization, which caused false single-match for "open links panel".
 
 ---
 
@@ -75,7 +77,7 @@ Status taxonomy (7 values):
 
 `wrappedHandleSelectOption` (lines 1426-1430) captures `ctx.lastClarification?.messageId` and `option.id` on `defaultResult` before delegating to `ctx.handleSelectOption`. Replaces all 15+ `ctx.handleSelectOption` references in `dispatchRoutingInner`. Both `handleClarificationIntercept` call sites (lines 1608, 1723) receive the wrapper, which propagates to all 14 `handleSelectOption` calls in `chat-routing-clarification-intercept.ts` and 4 calls in `chat-routing-pre-clarification.ts`.
 
-**Known gap**: Widget-context clarifiers clear `lastClarification` (line 918), so `ctx.lastClarification?.messageId` is null at selection time for widget options. Selection correlation for widget-context clarifiers requires a separate approach (deferred).
+**Note**: Widget-context clarifiers clear `lastClarification` (line 918), but `wrappedHandleSelectOption` (line 1444) falls back to `ctx.widgetSelectionContext?.optionSetId`, so widget selections correctly populate `clarifier_origin_message_id`.
 
 ### 4. Telemetry Fields + Route Handler
 
@@ -97,22 +99,80 @@ selected_option_id?: string
 
 Extended `semanticHintMeta` JSON builder condition to include `payload.b2_clarifier_status != null`. All `b2_clarifier_*` and selection correlation fields serialized into `semantic_hint_metadata` JSONB.
 
-### 5. B1 Selection Context Guard
+### 5. B1 Selection Context Guard (Narrowed)
 
-**File**: `lib/chat/routing-dispatcher.ts` (line 1190)
+**File**: `lib/chat/routing-dispatcher.ts` (line 1192-1197)
 
 Changed:
 ```typescript
-// Before:
-if (memoryReadEnabled) {
-// After:
+// Before (too broad — blocked B1 for ALL queries during widgetSelectionContext TTL):
 const hasActiveSelectionContext = !!ctx.lastClarification || !!ctx.widgetSelectionContext
 if (memoryReadEnabled && !hasActiveSelectionContext) {
+
+// After (narrowed — only blocks B1 for selection-like inputs, not commands):
+const hasActiveSelectionContext = !!ctx.lastClarification || !!ctx.widgetSelectionContext
+const inputIsSelectionLike = isSelectionLike(ctx.trimmedInput)
+const b1InputLooksLikeNewCommand = ACTION_VERB_PATTERN.test(ctx.trimmedInput)
+  && !isSelectionOnly(ctx.trimmedInput, 10, [], 'embedded').isSelection
+const shouldSkipB1ForSelection = hasActiveSelectionContext && inputIsSelectionLike && !b1InputLooksLikeNewCommand
+if (memoryReadEnabled && !shouldSkipB1ForSelection) {
 ```
 
-When either `lastClarification` or `widgetSelectionContext` is active, B1 is skipped. The input flows to `dispatchRoutingInner()` where the clarification intercept (Tier 1d) or universal widget resolver (Tier 3.5) handles it deterministically.
+Three-part condition: B1 is only skipped when (a) selection context is active, (b) input is selection-like (ordinal, short label), AND (c) input does NOT look like a new command (no action verb). This allows "open links panel b" through B1 for auto-execute while still blocking bare ordinals ("2", "first") from B1 during an active clarifier.
 
-### 6. Fuzzy Match First-Character Guard
+**Regression fixed**: The initial broad guard (`!!ctx.widgetSelectionContext`) blocked B1 for ALL queries during the 2-turn TTL window. "open links panel b" would skip B1, fall through to the tier chain, and produce a single-option clarifier instead of auto-executing. The narrowed guard uses the `looksLikeNewCommand` escape (same pattern as Tier 3.6 line 3828) to let commands through.
+
+### 6. Panel Disambiguation Telemetry Wiring
+
+**File**: `lib/chat/routing-dispatcher.ts`
+
+Wired `attachClarifierReorderTelemetry` at 2 new panel disambiguation call sites so B2 shadow telemetry is captured when Tier 2c produces a multi-match clarifier:
+
+- **Site 1** (scope-cue dashboard path, after line ~2396): When `handlePanelDisambiguation` is called from the scope-cue dashboard branch and produces a multi-match clarifier
+- **Site 2** (main Tier 2c, after line ~2724): When `handlePanelDisambiguation` is called from the main panel disambiguation tier
+
+Both sites check `panelResult.clarifierMessageId && panelResult.clarifierCandidates` before attaching telemetry.
+
+**File**: `lib/chat/chat-routing-panel-disambiguation.ts` (lines 133-139)
+
+Extended `PanelDisambiguationHandlerResult` return to include `clarifierMessageId` and `clarifierCandidates` for the multi-match path.
+
+**File**: `lib/chat/chat-routing-types.ts` (lines 269-272)
+
+Added to `PanelDisambiguationHandlerResult`:
+```typescript
+clarifierMessageId?: string
+clarifierCandidates?: Array<{ id: string; label: string; type: string }>
+```
+
+### 7. Badge Letter "a" Stopword Fix
+
+**File**: `lib/chat/panel-command-matcher.ts` (line 158)
+
+**Root cause**: The `STOPWORDS` set includes `'a'` (English article). When normalizing "Links Panel A", the badge letter "a" was stripped, reducing the title's token set to `{links, panel}`. This caused asymmetric matching: Panel A lost its distinguishing token while Panels B–E kept theirs. For "open links panel", only Panel A matched (false single-match), producing a single-option clarifier instead of disambiguation.
+
+**Fix**: Preserve single-character stopwords at the **last position** of the token array. A trailing "a" is a badge identifier, not the English article. Mid-position "a" (e.g., "open **a** links panel") is still correctly stripped.
+
+```typescript
+// Before:
+.filter(t => !STOPWORDS.has(t))
+
+// After:
+.filter((t, idx, arr) => {
+  if (t.length === 1 && idx === arr.length - 1) return true
+  return !STOPWORDS.has(t)
+})
+```
+
+**Behavior change**:
+| Input | Before (bug) | After (fix) |
+|---|---|---|
+| `open links panel` (A/B/C visible) | Exact match for A only → single-option clarifier | `none` → falls to Tier 4/LLM → all 3 shown |
+| `links panel` (A/B/C visible) | Partial for all 3 → disambiguation | Same |
+| `links panel a` | Exact for A (worked by accident) | Exact for A (correct — badge preserved) |
+| `open links panel a` | Exact for A (badge stripped, coincidental) | Exact for A (badge preserved in both) |
+
+### 8. Fuzzy Match First-Character Guard
 
 **File**: `lib/chat/panel-command-matcher.ts` (line 103)
 
@@ -132,10 +192,12 @@ NEXT_PUBLIC_CHAT_ROUTING_SEMANTIC_CLARIFIER_ASSIST_ENABLED=true
 
 | File | Change |
 |------|--------|
-| `lib/chat/routing-dispatcher.ts` | B2 status capture, dispatchRoutingInner params, clarifier telemetry wiring (4 sites), selection correlation wrapper (15+ replacements), B1 guard, log payload serialization |
+| `lib/chat/routing-dispatcher.ts` | B2 status capture, dispatchRoutingInner params, clarifier telemetry wiring (4+2 sites), selection correlation wrapper (15+ replacements), B1 guard, log payload serialization |
 | `lib/chat/routing-log/payload.ts` | Added `b2_clarifier_*` fields + selection correlation fields |
 | `app/api/chat/routing-log/route.ts` | Extended `semanticHintMeta` JSON builder for Phase 3c fields |
-| `lib/chat/panel-command-matcher.ts` | First-character guard for distance-2 fuzzy matches |
+| `lib/chat/panel-command-matcher.ts` | First-character guard for distance-2 fuzzy matches; badge letter "a" stopword preservation |
+| `lib/chat/chat-routing-panel-disambiguation.ts` | Return `clarifierMessageId` + `clarifierCandidates` from multi-match path |
+| `lib/chat/chat-routing-types.ts` | Added `clarifierMessageId`, `clarifierCandidates` to `PanelDisambiguationHandlerResult` |
 | `.env.local` | Added `NEXT_PUBLIC_CHAT_ROUTING_SEMANTIC_CLARIFIER_ASSIST_ENABLED=true` |
 
 ## Files Created
@@ -170,8 +232,9 @@ Key suites:
   - optionIds order: 1 test
   - messageId pass-through: 1 test
 
-- panel-command-matcher.test.ts: 42/42 passed
+- panel-command-matcher.test.ts: 47/47 passed
   - Includes regression test: "show budget" does NOT match Widget Manager
+  - Badge letter "a" preservation: 5 new tests (trailing "a" kept, mid-position "a" stripped)
 ```
 
 ---
@@ -210,6 +273,22 @@ Context snapshot showed `has_last_clarification: false`, `has_pending_options: f
 
 Debug log confirmed: `universal_resolver_widget_selection` at tier 3.5 handled both ordinals correctly.
 
+### Badge Letter "a" Stopword Fix
+
+**Before**: "open links panel" with Panels A/B/C → single-option clarifier for Links Panel A only (badge "a" stripped, false exact match)
+
+**After**: Two correct behaviors observed:
+
+| Input | Route | Badge | Options |
+|-------|-------|-------|---------|
+| `links panel` | Tier 2c `panel_disambiguation_pre_llm` | Safe Clarifier | A, B, C |
+| `open links panel` | Tier 4 known-noun → Tier 4.5 grounding LLM | LLM-Influenced | A, B, C |
+
+Debug log confirms:
+- `panel_disambiguation_pre_llm`: matchType=partial, matchCount=3 for "links panel"
+- `known_noun_command_execute`: "open links panel" → quick-links (generic) → falls to grounding LLM
+- `grounding_llm_need_more_info`: LLM correctly identifies all 3 panels
+
 ### Fuzzy Match Fix
 
 **Before**: "show budget" -> normalized to `{show, widget}` -> matched Widget Manager -> single-option clarifier "Which option did you mean? Widget Manager?"
@@ -220,11 +299,13 @@ Debug log confirmed: `universal_resolver_widget_selection` at tier 3.5 handled b
 
 ## Investigation Trail (B1 Guard)
 
-The B1 guard required three iterations to get right:
+The B1 guard required four iterations to get right:
 
 1. **First attempt**: `!ctx.lastClarification` — failed because widget-context grounding clarifiers clear `lastClarification` (line 918) and use `widgetSelectionContext` instead
 2. **Diagnosis**: DB showed `has_last_clarification: false` for all ordinal inputs. Debug log showed `clarification_bypass_widget_context` confirming the widget path
-3. **Final fix**: `!ctx.lastClarification || !ctx.widgetSelectionContext` — covers both chat-origin and widget-context clarifiers
+3. **Second fix**: `!!ctx.lastClarification || !!ctx.widgetSelectionContext` — covers both chat-origin and widget-context clarifiers, ordinals ("2") correctly route to Deterministic
+4. **Regression**: Guard was too broad — `!!ctx.widgetSelectionContext` blocks B1 for ALL queries during the 2-turn TTL window. "open links panel b" skipped B1, fell through tier chain, produced single-option clarifier instead of auto-execute
+5. **Final fix**: Narrowed guard to three-part condition: `hasActiveSelectionContext && inputIsSelectionLike && !b1InputLooksLikeNewCommand`. Uses `isSelectionLike()` to gate on ordinal-type inputs, and `ACTION_VERB_PATTERN + !isSelectionOnly` escape to let commands ("open links panel b") through to B1
 
 Key evidence from debug logs:
 - `grounding_clarifier_widget_context` at line 924: confirms clarifier built via widget path
@@ -235,11 +316,11 @@ Key evidence from debug logs:
 
 ## Known Gaps (Deferred)
 
-### 1. Selection Correlation for Widget-Context Clarifiers
+### 1. ~~Selection Correlation for Widget-Context Clarifiers~~ (Resolved)
 
-Widget-context clarifiers clear `lastClarification` (line 918), so `wrappedHandleSelectOption` reads `ctx.lastClarification?.messageId` as null. The `clarifier_origin_message_id` field is empty for widget selections. Fix requires either:
-- Storing the widget clarifier message ID in a separate field on `widgetSelectionContext`
-- OR reading it from `widgetSelectionContext` in the wrapper
+~~Widget-context clarifiers clear `lastClarification` (line 918), so `wrappedHandleSelectOption` reads `ctx.lastClarification?.messageId` as null.~~
+
+**Fixed**: `wrappedHandleSelectOption` (line 1444) now falls back to `ctx.widgetSelectionContext?.optionSetId` when `ctx.lastClarification?.messageId` is null. Widget-context selections correctly populate `clarifier_origin_message_id`.
 
 ### 2. Server-Side Clarifier Telemetry
 
@@ -291,7 +372,7 @@ ORDER BY created_at DESC;
 
 ## Next Steps
 
-1. **Selection correlation for widget-context clarifiers**: Store widget clarifier message ID so `wrappedHandleSelectOption` can read it
+1. ~~**Selection correlation for widget-context clarifiers**~~: Resolved — `wrappedHandleSelectOption` (line 1444) already falls back to `widgetSelectionContext?.optionSetId`
 2. **Server-side clarifier telemetry**: Add Phase 3c telemetry at `stored_pending_options` path in `chat-navigation-panel.tsx`
 3. **Shadow soak for `shadow_reordered`**: Build up B2 memory entries with diverse queries to produce B2-grounding overlap
 4. **Evaluate promotion criteria**: When `shadow_reordered` turns show B2's top match = user's actual pick >= 60%, promote from shadow to active
