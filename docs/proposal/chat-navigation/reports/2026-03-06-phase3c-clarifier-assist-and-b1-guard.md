@@ -218,7 +218,7 @@ Root cause: For `option`-type grounding LLM candidates (not widget), `findLastOp
 
 Fix: When message history lookup fails, reconstruct execution data from `{id, label, type}` using `reconstructSnapshotData` (imported from `chat-routing-clarification-utils.ts`). This ensures `pendingOptions` and `lastClarification` are always set for grounding LLM clarifiers.
 
-**Status**: Implemented, not yet runtime-proven. The "show budget" soak exercised the all-widget branch (Fix #1), not this mixed/chat-option fallback. This fix targets a separate scenario: first-time grounding LLM clarifiers with non-widget `option`-type candidates not found in message history.
+**Status**: Implemented, not yet runtime-proven. The "show budget" soak exercised the all-widget branch (Fix #1), not this mixed/chat-option fallback. This fix targets a separate scenario: first-time grounding LLM clarifiers with non-widget `option`-type candidates not found in message history. Current environment does not provide a reliable repro — all items are folders visible in widget panels, so grounding candidates are always `widget_option` type. Requires intentionally creating a dataset with non-widget entries to exercise this path.
 
 ### 13. Feature Flag
 
