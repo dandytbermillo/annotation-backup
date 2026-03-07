@@ -65,6 +65,7 @@ import { maybeFormatSnippetWithHs3, stripMarkdownHeadersForUI, dedupeHeaderPath 
 // Prereq 4: Cross-corpus handlers (pill selection still used locally)
 import { handleCrossCorpusPillSelection } from '@/lib/chat/cross-corpus-handler'
 import { recordMemoryEntry, recordRoutingLog, revalidateMemoryHit, fireOutcomeLog, fireFailedOutcomeLog, type RoutingLogPayload } from '@/lib/chat/routing-log'
+import { computeClarifierReorderTelemetry } from '@/lib/chat/routing-log/clarifier-reorder'
 import { buildTurnSnapshot } from '@/lib/chat/ui-snapshot-builder'
 
 export interface ChatNavigationPanelProps {
@@ -2605,7 +2606,15 @@ function ChatNavigationPanelContent({
         resolution.action === 'list_workspaces'
       ) && resolution.options && resolution.options.length > 0
 
+      // Single message ID for the entire server-side clarifier event.
+      // Reused across setPendingOptionsMessageId, setLastClarification, saveLastOptionsShown,
+      // Phase 3c telemetry, and the actual assistant ChatMessage (line 2803+).
+      // Without this, each Date.now() call produces a different ID, breaking correlation.
+      let serverClarifierMsgId: string | null = null
+
       if (hasSelectableOptions && resolution.options) {
+        serverClarifierMsgId = `assistant-${Date.now()}`
+
         // Store new pending options for hybrid selection
         const newPendingOptions: PendingOptionState[] = resolution.options.map((opt, idx) => ({
           index: idx + 1,
@@ -2616,7 +2625,7 @@ function ChatNavigationPanelContent({
           data: opt.data,
         }))
         setPendingOptions(newPendingOptions)
-        setPendingOptionsMessageId(`assistant-${Date.now()}`)
+        setPendingOptionsMessageId(serverClarifierMsgId)
         setPendingOptionsGraceCount(0)  // Fresh options, no grace yet
         // Note: lastOptions state removed - now using findLastOptionsMessage() as source of truth
 
@@ -2630,20 +2639,45 @@ function ChatNavigationPanelContent({
         setLastClarification({
           type: 'option_selection',
           originalIntent: resolution.action || 'select',
-          messageId: `assistant-${Date.now()}`,
+          messageId: serverClarifierMsgId,
           timestamp: Date.now(),
           clarificationQuestion: resolution.message || 'Which one would you like?',
           options: postApiOpts,
           metaCount: 0,
         })
         // Grounding-set soft-active: persist options for post-action shorthand resolution
-        saveLastOptionsShown(postApiOpts, `assistant-${Date.now()}`)
+        saveLastOptionsShown(postApiOpts, serverClarifierMsgId)
 
         void debugLog({
           component: 'ChatNavigation',
           action: 'stored_pending_options',
-          metadata: { count: newPendingOptions.length },
+          metadata: { count: newPendingOptions.length, messageId: serverClarifierMsgId },
         })
+
+        // Phase 3c: compute clarifier reorder telemetry for server-side clarifiers.
+        // These options bypass dispatchRoutingInner, so telemetry must be attached here.
+        // Enriching _routingLogPayload ensures fireOutcomeLog includes the fields.
+        if (routingResult?._routingLogPayload && process.env.NEXT_PUBLIC_CHAT_ROUTING_SEMANTIC_CLARIFIER_ASSIST_ENABLED === 'true') {
+          const serverClarifierCandidates = resolution.options!.map(opt => ({
+            id: opt.id,
+            label: opt.label,
+            type: opt.type,
+          }))
+          const telemetry = computeClarifierReorderTelemetry(
+            serverClarifierCandidates,
+            routingResult._semanticCandidates,
+            serverClarifierMsgId,
+            routingResult._b2LookupStatus,
+          )
+          const lp = routingResult._routingLogPayload
+          lp.b2_clarifier_status = telemetry.status as RoutingLogPayload['b2_clarifier_status']
+          lp.b2_clarifier_match_count = telemetry.matchCount
+          lp.b2_clarifier_top_match_rank = telemetry.topMatchOriginalRank
+          lp.b2_clarifier_top_match_id = telemetry.topMatchId
+          lp.b2_clarifier_top_score = telemetry.topMatchScore
+          lp.b2_clarifier_message_id = telemetry.messageId
+          lp.b2_clarifier_option_ids = telemetry.optionIds
+        }
       } else {
         // Only clear pending options for explicit navigation/action commands
         // Do NOT clear on fallback/error responses (preserves options for retry)
@@ -2773,7 +2807,7 @@ function ChatNavigationPanelContent({
         resolution.action === 'confirm_delete' ||
         resolution.action === 'confirm_panel_write'
       ) && resolution.options
-      const assistantMessageId = `assistant-${Date.now()}`
+      const assistantMessageId = serverClarifierMsgId ?? `assistant-${Date.now()}`
       // Override message content if all suggestions were filtered out (user rejected them)
       // Per suggestion-fallback-polish-plan.md: filter rejected labels from fallback
       // Phase 2a.2: Skip typo fallback when pendingOptions exist - let LLM handle with context

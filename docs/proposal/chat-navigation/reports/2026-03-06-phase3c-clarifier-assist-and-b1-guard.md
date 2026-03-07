@@ -19,6 +19,10 @@ Additionally:
 4. **Fuzzy match false positive fix**: "budget" was fuzzy-matching to "widget" (Levenshtein distance 2, different first char). Added a first-character guard for distance-2 matches.
 5. **Panel disambiguation telemetry wiring**: Extended `attachClarifierReorderTelemetry` to 2 new panel disambiguation call sites (scope-cue + main Tier 2c) so B2 shadow telemetry is captured for panel clarifiers.
 6. **Badge letter "a" stopword fix**: Trailing single-char stopwords preserved as badge identifiers. Fixes "Links Panel A" losing its distinguishing token during normalization, which caused false single-match for "open links panel".
+7. **Type boundary fix**: Widened `attachClarifierReorderTelemetry` parameter from `GroundingCandidate[]` to `ReorderableCandidate[]` so panel disambiguation candidates (which lack `source` field) are type-safe.
+8. **Selection correlation propagation fix**: Clarification intercept return paths were creating new objects without `_clarifierOriginMessageId`/`_selectedOptionId` set by `wrappedHandleSelectOption` on `defaultResult`. Fixed by propagating these fields into the return objects at both intercept sites.
+9. **Widget-context selection correlation**: Tier 3.5 universal resolver widget path (`universal_resolver_widget`, `universal_resolver_chat_widget_option`) executes selections via `groundingAction` without calling `wrappedHandleSelectOption`. Fixed by setting `defaultResult._clarifierOriginMessageId` from `widgetSelectionContext.optionSetId` at these sites.
+10. **Grounding LLM first-time candidate fix**: `bindGroundingClarifierOptions` failed to build `pendingOptions` for first-time grounding LLM clarifiers because `findLastOptionsMessage` couldn't find candidates in message history (the clarifier message hadn't been added yet). Fixed by reconstructing execution data via `reconstructSnapshotData` as fallback.
 
 ---
 
@@ -178,7 +182,45 @@ clarifierCandidates?: Array<{ id: string; label: string; type: string }>
 
 Added guard in `findFuzzyPanelMatch`: distance-2 matches must share the first character with the target term. Blocks "budget" -> "widget" (b != w) while preserving legitimate distance-2 typo corrections like "shwo" -> "show" (s = s).
 
-### 7. Feature Flag
+### 9. Type Boundary Fix
+
+**File**: `lib/chat/routing-dispatcher.ts` (line 1426)
+
+`attachClarifierReorderTelemetry` closure parameter widened from `GroundingCandidate[]` to `ReorderableCandidate[]` (imported from `clarifier-reorder.ts`). `ReorderableCandidate` requires only `{ id, label, type, actionHint? }` — the minimal shape needed by `computeClarifierReorderTelemetry`. Panel disambiguation candidates `{ id, label, type: string }` satisfy this interface. Existing grounding sites still work since `GroundingCandidate` is structurally compatible.
+
+**Discovery**: The pre-existing syntax error in `__tests__/unit/use-panel-close-handler.test.tsx:87` caused `tsc` to skip the entire check phase (`Check time: 0.00s`, `Types: 89`). All type errors were masked. With the broken file excluded (`tsconfig.check.json`), the TS2345 errors at lines 2399 and 2727 were confirmed.
+
+### 10. Selection Correlation Propagation Fix
+
+**File**: `lib/chat/routing-dispatcher.ts` (lines 1679, 1785)
+
+`wrappedHandleSelectOption` sets `_clarifierOriginMessageId` and `_selectedOptionId` on `defaultResult` (via closure). But both `handleClarificationIntercept` return paths (primary at line 1679, replay at line 1785) created new objects without these fields. The log serialization at line 1371 reads `result._clarifierOriginMessageId` — which was always undefined for selection turns.
+
+Fix: Both return objects now propagate the fields from `defaultResult`:
+```typescript
+_clarifierOriginMessageId: defaultResult._clarifierOriginMessageId,
+_selectedOptionId: defaultResult._selectedOptionId,
+```
+
+### 11. Widget-Context Selection Correlation
+
+**File**: `lib/chat/routing-dispatcher.ts` (Tier 3.5 universal resolver)
+
+Root cause: grounding LLM clarifiers for widget items use `widgetSelectionContext` (not `lastClarification`). When the user selects via ordinal "2", the Tier 3.5 universal resolver widget path handles it via `groundingAction` — bypassing `wrappedHandleSelectOption` entirely. The selection correlation fields were never set.
+
+Fix: Set `defaultResult._clarifierOriginMessageId = ctx.widgetSelectionContext?.optionSetId` and `defaultResult._selectedOptionId` at both widget resolution sites (`universal_resolver_widget` and `universal_resolver_chat_widget_option`) before the `...defaultResult` spread return.
+
+### 12. Grounding LLM First-Time Candidate Fix
+
+**File**: `lib/chat/routing-dispatcher.ts` (`bindGroundingClarifierOptions`)
+
+Root cause: For `option`-type grounding LLM candidates (not widget), `findLastOptionsMessage(ctx.messages)` tried to find execution data from message history. But for first-time queries, the clarifier message hadn't been added yet (`ctx.addMessage` at line 4713 runs AFTER `bindGroundingClarifierOptions` at line 4698). Result: `pendingOptions.length === 0` → `lastClarification` cleared → intercept couldn't handle ordinals.
+
+Fix: When message history lookup fails, reconstruct execution data from `{id, label, type}` using `reconstructSnapshotData` (imported from `chat-routing-clarification-utils.ts`). This ensures `pendingOptions` and `lastClarification` are always set for grounding LLM clarifiers.
+
+**Status**: Implemented, not yet runtime-proven. The "show budget" soak exercised the all-widget branch (Fix #1), not this mixed/chat-option fallback. This fix targets a separate scenario: first-time grounding LLM clarifiers with non-widget `option`-type candidates not found in message history.
+
+### 13. Feature Flag
 
 **File**: `.env.local`
 
@@ -192,7 +234,7 @@ NEXT_PUBLIC_CHAT_ROUTING_SEMANTIC_CLARIFIER_ASSIST_ENABLED=true
 
 | File | Change |
 |------|--------|
-| `lib/chat/routing-dispatcher.ts` | B2 status capture, dispatchRoutingInner params, clarifier telemetry wiring (4+2 sites), selection correlation wrapper (15+ replacements), B1 guard, log payload serialization |
+| `lib/chat/routing-dispatcher.ts` | B2 status capture, dispatchRoutingInner params, clarifier telemetry wiring (4+2 sites), selection correlation wrapper (15+ replacements), B1 guard, log payload serialization, type boundary fix (`ReorderableCandidate`), selection correlation propagation at 2 intercept return sites, widget-context correlation at 2 Tier 3.5 sites, `bindGroundingClarifierOptions` first-time candidate fallback via `reconstructSnapshotData` |
 | `lib/chat/routing-log/payload.ts` | Added `b2_clarifier_*` fields + selection correlation fields |
 | `app/api/chat/routing-log/route.ts` | Extended `semanticHintMeta` JSON builder for Phase 3c fields |
 | `lib/chat/panel-command-matcher.ts` | First-character guard for distance-2 fuzzy matches; badge letter "a" stopword preservation |
@@ -213,7 +255,12 @@ NEXT_PUBLIC_CHAT_ROUTING_SEMANTIC_CLARIFIER_ASSIST_ENABLED=true
 
 ### Type-Check
 ```
-npm run type-check -> clean
+npm run type-check -> 1 error (pre-existing syntax error in use-panel-close-handler.test.tsx:87)
+
+IMPORTANT: This syntax error causes tsc to skip the entire check phase (Check time: 0.00s).
+Actual type checking requires excluding that file:
+  npx tsc --noEmit -p tsconfig.check.json -> 0 routing-dispatcher errors
+  (957 pre-existing errors in other files, unrelated to this work)
 ```
 
 ### Unit Tests
@@ -289,6 +336,25 @@ Debug log confirms:
 - `known_noun_command_execute`: "open links panel" → quick-links (generic) → falls to grounding LLM
 - `grounding_llm_need_more_info`: LLM correctly identifies all 3 panels
 
+### Panel Disambiguation Telemetry + Selection Correlation (End-to-End)
+
+"links panel" → Safe Clarifier (A/B/C) → user types "2" → "Opening Links Panel B..." Deterministic.
+
+**Clarifier row** ("links panel"):
+| Field | Value |
+|-------|-------|
+| `b2_clarifier_status` | `no_b2_empty` |
+| `b2_clarifier_message_id` | `assistant-1772841665476` |
+| `b2_clarifier_option_ids` | `["9add1baf-...", "2567b058-...", "f0b39336-..."]` |
+
+**Selection row** ("2"):
+| Field | Value |
+|-------|-------|
+| `clarifier_origin_message_id` | `assistant-1772841665476` |
+| `selected_option_id` | `2567b058-...` (Links Panel B) |
+
+**Correlation confirmed**: `clarifier_origin_message_id` on selection row = `b2_clarifier_message_id` on clarifier row. `selected_option_id` is the 2nd element in `b2_clarifier_option_ids` — matches user selecting option 2.
+
 ### Fuzzy Match Fix
 
 **Before**: "show budget" -> normalized to `{show, widget}` -> matched Widget Manager -> single-option clarifier "Which option did you mean? Widget Manager?"
@@ -322,9 +388,20 @@ Key evidence from debug logs:
 
 **Fixed**: `wrappedHandleSelectOption` (line 1444) now falls back to `ctx.widgetSelectionContext?.optionSetId` when `ctx.lastClarification?.messageId` is null. Widget-context selections correctly populate `clarifier_origin_message_id`.
 
-### 2. Server-Side Clarifier Telemetry
+### 2. ~~Server-Side Clarifier Telemetry~~ (Resolved)
 
-Navigate API responses that return selectable options (`chat-navigation-panel.tsx:2608-2638`) do not go through `dispatchRoutingInner`, so Phase 3c telemetry is not attached. These clarifiers bypass the grounding tier entirely.
+~~Navigate API responses that return selectable options do not go through `dispatchRoutingInner`.~~
+
+**Fixed**: Server-side clarifier telemetry computed at the `stored_pending_options` path in `chat-navigation-panel.tsx`. Message ID contract unified to single `serverClarifierMsgId`. Widget-context selection correlation added at Tier 3.5 universal resolver sites (`universal_resolver_widget`, `universal_resolver_chat_widget_option`). First-time grounding LLM candidate fix ensures `pendingOptions`/`lastClarification` are populated via `reconstructSnapshotData` fallback.
+
+**Soak validated** (2026-03-07):
+| Row | Query | `cl_msg_id` | `origin_msg` | `sel_id` |
+|-----|-------|-------------|-------------|----------|
+| "show budget" | routing_attempt | `assistant-1772847952654` | — | — |
+| "2" | routing_attempt | — | `assistant-1772847952654` | `98cec0f2-...9074` |
+| "2" | execution_outcome | — | `assistant-1772847952654` | `98cec0f2-...9074` |
+
+Correlation confirmed: `origin_msg` on selection rows = `cl_msg_id` on clarifier row.
 
 ### 3. B2 Clarifier Assist Coverage
 

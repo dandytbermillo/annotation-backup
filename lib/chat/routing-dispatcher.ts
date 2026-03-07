@@ -58,6 +58,7 @@ import type { CrossCorpusHandlerContext, CrossCorpusHandlerResult } from '@/lib/
 import type { DocRetrievalHandlerContext, DocRetrievalHandlerResult } from '@/lib/chat/doc-routing'
 
 import { handleClarificationIntercept, handlePanelDisambiguation, handleCorrection, handleMetaExplain, handleFollowUp } from '@/lib/chat/chat-routing'
+import { reconstructSnapshotData } from '@/lib/chat/chat-routing-clarification-utils'
 import { handleCrossCorpusRetrieval } from '@/lib/chat/cross-corpus-handler'
 import { handleDocRetrieval } from '@/lib/chat/doc-routing'
 import { isAffirmationPhrase, isRejectionPhrase, matchesReshowPhrases, matchesShowAllHeuristic, hasGraceSkipActionVerb, hasQuestionIntent, ACTION_VERB_PATTERN, isCommandLike, isPoliteImperativeRequest } from '@/lib/chat/query-patterns'
@@ -496,6 +497,9 @@ export interface RoutingDispatcherResult {
   /** Phase 3c: Selection correlation — set on selection turns (user picks from clarifier) */
   _clarifierOriginMessageId?: string
   _selectedOptionId?: string
+
+  /** Phase 3c: B2 lookup status for server-side clarifier telemetry (set in dispatchRouting) */
+  _b2LookupStatus?: 'ok' | 'empty' | 'timeout' | 'error' | 'disabled'
 }
 
 /** Type alias for grounding actions (extracted from RoutingDispatcherResult for reuse) */
@@ -999,7 +1003,7 @@ function bindGroundingClarifierOptions(
     }
 
     // For option-type candidates, attempt to find a full option with data.
-    // Per universal-selection-resolver-plan.md Phase 3: only register if we can attach execution data.
+    // Prefer message history (has full execution data), fall back to reconstructed data.
     const messageOption = ctx.findLastOptionsMessage(ctx.messages)?.options.find(opt => opt.id === candidate.id)
     if (messageOption) {
       pendingOptions.push({
@@ -1010,9 +1014,20 @@ function bindGroundingClarifierOptions(
         type: messageOption.type,
         data: messageOption.data,
       })
+    } else {
+      // Candidate not in message history (first-time grounding LLM clarifier).
+      // Reconstruct execution data from candidate type/id so the intercept can
+      // handle ordinal selections on the next turn (e.g., "2" → budget200).
+      // Without this, lastClarification is cleared and ordinals fall to the API,
+      // bypassing wrappedHandleSelectOption and losing selection correlation.
+      pendingOptions.push({
+        index,
+        id: candidate.id,
+        label: candidate.label,
+        type: candidate.type,
+        data: reconstructSnapshotData({ id: candidate.id, label: candidate.label, type: candidate.type }),
+      })
     }
-    // If candidate not found in message history, we cannot attach execution data.
-    // Per plan: do NOT add to pendingOptions (would be unexecutable).
   })
 
   // Per universal-selection-resolver-plan.md Phase 3 (lines 76-78):
@@ -1332,6 +1347,11 @@ export async function dispatchRouting(
   // Attach semantic candidates to result (only if tier chain didn't handle it)
   if (!routingError && result && !result.handled && semanticCandidatesForLaneD) {
     result._semanticCandidates = semanticCandidatesForLaneD
+  }
+
+  // Phase 3c: expose B2 lookup status for server-side clarifier telemetry in sendMessage
+  if (!routingError && result && b2LookupStatus) {
+    result._b2LookupStatus = b2LookupStatus
   }
 
   // Phase 1 observe-only logging (fail-open, non-blocking) — only when Phase 1 is enabled
@@ -1687,6 +1707,9 @@ async function dispatchRoutingInner(
       classifierError: false,
       isFollowUp: false,
       _devProvenanceHint: clarificationResult._devProvenanceHint,
+      // Phase 3c: propagate selection correlation set by wrappedHandleSelectOption
+      _clarifierOriginMessageId: defaultResult._clarifierOriginMessageId,
+      _selectedOptionId: defaultResult._selectedOptionId,
     }
   }
 
@@ -1790,6 +1813,9 @@ async function dispatchRoutingInner(
         classifierError: false,
         isFollowUp: false,
         _devProvenanceHint: replayInterceptResult._devProvenanceHint,
+        // Phase 3c: propagate selection correlation set by wrappedHandleSelectOption
+        _clarifierOriginMessageId: defaultResult._clarifierOriginMessageId,
+        _selectedOptionId: defaultResult._selectedOptionId,
       }
     }
 
@@ -3706,6 +3732,12 @@ async function dispatchRoutingInner(
       })
 
       ctx.setIsLoading(false)
+
+      // Phase 3c: selection correlation for widget-context selections.
+      // Widget path doesn't call wrappedHandleSelectOption, so set directly.
+      defaultResult._clarifierOriginMessageId = ctx.widgetSelectionContext?.optionSetId
+      defaultResult._selectedOptionId = selectionResult.groundingAction.itemId
+
       // Clear widget selection context after successful resolution
       ctx.clearWidgetSelectionContext()
       if (selectionResult.groundingAction?.type === 'execute_widget_item') {
@@ -3748,6 +3780,10 @@ async function dispatchRoutingInner(
       if (selectionResult.matchedChatOption.type === 'widget_option') {
         const widgetInfo = resolveWidgetItemFromSnapshots(ctx.getVisibleSnapshots, selectionResult.matchedChatOption.id)
         if (widgetInfo) {
+          // Phase 3c: selection correlation for chat widget_option selections
+          defaultResult._clarifierOriginMessageId =
+            ctx.lastClarification?.messageId ?? ctx.widgetSelectionContext?.optionSetId
+          defaultResult._selectedOptionId = selectionResult.matchedChatOption.id
           trySetWidgetLatch({ widgetId: widgetInfo.widgetId, trigger: 'universal_resolver_chat_widget_option' })
           return {
             ...defaultResult,
