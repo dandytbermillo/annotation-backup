@@ -86,7 +86,7 @@ import { lookupExactMemory } from '@/lib/chat/routing-log/memory-reader'
 import { lookupSemanticMemory, type SemanticCandidate, type SemanticLookupResult } from '@/lib/chat/routing-log/memory-semantic-reader'
 import { validateMemoryCandidate } from '@/lib/chat/routing-log/memory-validator'
 import { buildResultFromMemory } from '@/lib/chat/routing-log/memory-action-builder'
-import { computeClarifierReorderTelemetry, type ReorderableCandidate } from '@/lib/chat/routing-log/clarifier-reorder'
+import { computeClarifierReorderTelemetry, reorderClarifierCandidates, type ReorderableCandidate } from '@/lib/chat/routing-log/clarifier-reorder'
 
 // =============================================================================
 // Phase 1 Observe-Only — Routing Log Helpers
@@ -1020,12 +1020,16 @@ function bindGroundingClarifierOptions(
       // handle ordinal selections on the next turn (e.g., "2" → budget200).
       // Without this, lastClarification is cleared and ordinals fall to the API,
       // bypassing wrappedHandleSelectOption and losing selection correlation.
+
+      // visible_panels candidates carry generic 'option' type in the grounding pipeline
+      // but must be converted to 'panel_drawer' for the selection/execution pipeline.
+      const executionType = candidate.source === 'visible_panels' ? 'panel_drawer' : candidate.type
       pendingOptions.push({
         index,
         id: candidate.id,
         label: candidate.label,
-        type: candidate.type,
-        data: reconstructSnapshotData({ id: candidate.id, label: candidate.label, type: candidate.type }),
+        type: executionType,
+        data: reconstructSnapshotData({ id: candidate.id, label: candidate.label, type: executionType }),
       })
     }
   })
@@ -1439,6 +1443,9 @@ async function dispatchRoutingInner(
 
   // Phase 3c: Clarifier assist flag (shadow mode — compute reorder, log, but don't apply)
   const clarifierAssistEnabled = process.env.NEXT_PUBLIC_CHAT_ROUTING_SEMANTIC_CLARIFIER_ASSIST_ENABLED === 'true'
+  // Phase 3c active: actually apply reorder to clarifier candidate order (dev-only trial)
+  const clarifierReorderActive = clarifierAssistEnabled
+    && process.env.NEXT_PUBLIC_CHAT_ROUTING_SEMANTIC_CLARIFIER_REORDER_ACTIVE === 'true'
 
   /** Phase 3c: Thin wrapper — delegates to extracted pure function, attaches to result */
   function attachClarifierReorderTelemetry(
@@ -1451,6 +1458,23 @@ async function dispatchRoutingInner(
     result._b2ClarifierTelemetry = computeClarifierReorderTelemetry(
       groundingCandidates, semanticCandidatesForReorder, clarifierMsgId, lookupStatus,
     )
+    // Upgrade shadow_reordered → reordered when active mode actually applied the reorder
+    if (clarifierReorderActive && result._b2ClarifierTelemetry.status === 'shadow_reordered') {
+      result._b2ClarifierTelemetry.status = 'reordered'
+    }
+  }
+
+  /**
+   * Phase 3c active: optionally reorder grounding candidates by B2 semantic match.
+   * When active flag is off, returns candidates unchanged (shadow-only telemetry).
+   * When active flag is on, promotes B2-matched items to the front of the list.
+   * Only applies to grounding candidates, not panel disambiguation candidates.
+   */
+  function maybeActiveReorder<T extends ReorderableCandidate>(candidates: T[]): T[] {
+    if (!clarifierReorderActive || !semanticCandidatesForReorder?.length) return candidates
+    const result = reorderClarifierCandidates(candidates, semanticCandidatesForReorder)
+    if (!result.reordered) return candidates
+    return result.candidates as T[]
   }
 
   /** Phase 3c: Centralized selection correlation wrapper.
@@ -2291,8 +2315,9 @@ async function dispatchRoutingInner(
       })
 
       const clarifierMsgId = `assistant-${Date.now()}`
-      const clarifierContent = buildGroundedClarifier(scopedGroundingResult.llmCandidates)
-      const boundOptions = bindGroundingClarifierOptions(ctx, scopedGroundingResult.llmCandidates, clarifierMsgId)
+      const effectiveScopedCandidates = maybeActiveReorder(scopedGroundingResult.llmCandidates)
+      const clarifierContent = buildGroundedClarifier(effectiveScopedCandidates)
+      const boundOptions = bindGroundingClarifierOptions(ctx, effectiveScopedCandidates, clarifierMsgId)
 
       // Store the actual clarifier question text for reply-context (clarifier-reply mode)
       if (ctx.widgetSelectionContext && ctx.widgetSelectionContext.optionSetId === clarifierMsgId) {
@@ -4689,6 +4714,56 @@ async function dispatchRoutingInner(
                     },
                   }
                 }
+
+                // Visible-panel candidate selected by LLM — open panel drawer.
+                // Panel candidates carry type: 'option' + source: 'visible_panels' in the
+                // grounding pipeline. Without this handler, LLM-selected panel candidates
+                // silently fall through to Tier 5 (no handler for option-type without
+                // message history, referent, or widget_option match).
+                if (selected.source === 'visible_panels') {
+                  void debugLog({
+                    component: 'ChatNavigation',
+                    action: 'grounding_llm_panel_execute',
+                    metadata: {
+                      candidateId: selected.id,
+                      candidateLabel: selected.label,
+                      confidence: llmResult.response!.confidence,
+                    },
+                  })
+
+                  const panelMeta = classifyExecutionMeta({
+                    matchKind: 'partial' as const,
+                    candidateCount: groundingResult.llmCandidates.length,
+                    resolverPath: 'handleGroundingSet',
+                  })
+                  ctx.openPanelDrawer(selected.id, selected.label, panelMeta)
+
+                  const panelMsg: ChatMessage = {
+                    id: `assistant-${Date.now()}`,
+                    role: 'assistant',
+                    content: `Opening ${selected.label}...`,
+                    timestamp: new Date(),
+                    isError: false,
+                  }
+                  ctx.addMessage(panelMsg)
+                  ctx.setIsLoading(false)
+
+                  return {
+                    ...defaultResult,
+                    handled: true,
+                    handledByTier: 4,
+                    tierLabel: 'grounding_llm_panel_execute',
+                    clarificationCleared,
+                    isNewQuestionOrCommandDetected,
+                    classifierCalled,
+                    classifierResult,
+                    classifierTimeout,
+                    classifierLatencyMs,
+                    classifierError,
+                    isFollowUp,
+                    _devProvenanceHint: 'llm_executed' as const,
+                  }
+                }
               }
             }
 
@@ -4701,11 +4776,12 @@ async function dispatchRoutingInner(
               })
 
               const clarifierMsgId = `assistant-${Date.now()}`
-              const boundOptions = bindGroundingClarifierOptions(ctx, groundingResult.llmCandidates, clarifierMsgId)
+              const effectiveCandidates = maybeActiveReorder(groundingResult.llmCandidates)
+              const boundOptions = bindGroundingClarifierOptions(ctx, effectiveCandidates, clarifierMsgId)
               const clarifierMsg: ChatMessage = {
                 id: clarifierMsgId,
                 role: 'assistant',
-                content: buildGroundedClarifier(groundingResult.llmCandidates),
+                content: buildGroundedClarifier(effectiveCandidates),
                 timestamp: new Date(),
                 isError: false,
                 options: boundOptions.map(opt => ({
@@ -4720,7 +4796,7 @@ async function dispatchRoutingInner(
               ctx.setIsLoading(false)
 
               // Per incubation plan §Observability: LLM generated clarifier wording
-              void debugLog({ component: 'ChatNavigation', action: 'selection_clarifier_llm_generated', metadata: { candidateCount: groundingResult.llmCandidates.length, input: ctx.trimmedInput } })
+              void debugLog({ component: 'ChatNavigation', action: 'selection_clarifier_llm_generated', metadata: { candidateCount: effectiveCandidates.length, input: ctx.trimmedInput } })
 
               attachClarifierReorderTelemetry(defaultResult, groundingResult.llmCandidates, clarifierMsgId, b2LookupStatus)
               return {
@@ -4750,11 +4826,12 @@ async function dispatchRoutingInner(
             })
 
             const clarifierMsgId = `assistant-${Date.now()}`
-            const boundOptions = bindGroundingClarifierOptions(ctx, groundingResult.llmCandidates, clarifierMsgId)
+            const effectiveCandidatesTimeout = maybeActiveReorder(groundingResult.llmCandidates)
+            const boundOptions = bindGroundingClarifierOptions(ctx, effectiveCandidatesTimeout, clarifierMsgId)
             const clarifierMsg: ChatMessage = {
               id: clarifierMsgId,
               role: 'assistant',
-              content: buildGroundedClarifier(groundingResult.llmCandidates),
+              content: buildGroundedClarifier(effectiveCandidatesTimeout),
               timestamp: new Date(),
               isError: false,
               options: boundOptions.map(opt => ({
@@ -4810,11 +4887,12 @@ async function dispatchRoutingInner(
         })
 
         const clarifierMsgId = `assistant-${Date.now()}`
-        const boundOptions = bindGroundingClarifierOptions(ctx, groundingResult.llmCandidates, clarifierMsgId)
+        const effectiveCandidatesFallback = maybeActiveReorder(groundingResult.llmCandidates)
+        const boundOptions = bindGroundingClarifierOptions(ctx, effectiveCandidatesFallback, clarifierMsgId)
         const clarifierMsg: ChatMessage = {
           id: clarifierMsgId,
           role: 'assistant',
-          content: buildGroundedClarifier(groundingResult.llmCandidates),
+          content: buildGroundedClarifier(effectiveCandidatesFallback),
           timestamp: new Date(),
           isError: false,
           options: boundOptions.map(opt => ({

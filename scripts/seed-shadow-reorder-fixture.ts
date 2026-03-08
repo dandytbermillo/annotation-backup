@@ -17,17 +17,23 @@
  *   from items-table IDs (45bfa4cf-...). The seed must use the grounding candidate
  *   ID so computeClarifierReorderTelemetry can match.
  *
- * Isolation: Uses scope_source='phase3c_seed' for easy cleanup.
+ * Batches:
+ *   shadow  — phase3c_seed         (original shadow-mode soak, 12 queries)
+ *   active  — phase3c_seed_active  (active-mode trial, 12 fresh queries)
  *
  * Usage:
- *   npx tsx scripts/seed-shadow-reorder-fixture.ts           # Seed entries
- *   npx tsx scripts/seed-shadow-reorder-fixture.ts --dry-run  # Preview without writing
- *   npx tsx scripts/seed-shadow-reorder-fixture.ts --verify   # Check existing entries
- *   npx tsx scripts/seed-shadow-reorder-fixture.ts --cleanup  # Remove seeded entries
+ *   npx tsx scripts/seed-shadow-reorder-fixture.ts                        # Seed shadow batch
+ *   npx tsx scripts/seed-shadow-reorder-fixture.ts --batch active         # Seed active batch
+ *   npx tsx scripts/seed-shadow-reorder-fixture.ts --batch active --dry-run
+ *   npx tsx scripts/seed-shadow-reorder-fixture.ts --batch active --verify
+ *   npx tsx scripts/seed-shadow-reorder-fixture.ts --batch active --cleanup
+ *   npx tsx scripts/seed-shadow-reorder-fixture.ts --batch all --verify   # Verify both batches
+ *   npx tsx scripts/seed-shadow-reorder-fixture.ts --batch all --cleanup  # Clean both batches
  *
  * After seeding, soak test:
- *   1. "show budget" in chat → clarifier with budget100 and budget200
- *   2. Check durable log: b2_clarifier_status should be 'shadow_reordered'
+ *   1. Type a query from the batch in chat → clarifier with budget100 and budget200
+ *   2. Check durable log: b2_clarifier_status should be 'shadow_reordered' (shadow)
+ *      or budget200 at rank 1 (active)
  *   3. Select the option → verify correlation fields
  */
 
@@ -35,6 +41,59 @@ import { Pool } from 'pg'
 import { readFileSync, existsSync } from 'fs'
 import { join } from 'path'
 import { createHash } from 'crypto'
+
+// ---------------------------------------------------------------------------
+// Batch definitions
+// ---------------------------------------------------------------------------
+
+interface BatchConfig {
+  name: string
+  scopeSource: string
+  queries: string[]
+}
+
+const BATCH_SHADOW: BatchConfig = {
+  name: 'shadow',
+  scopeSource: 'phase3c_seed',
+  queries: [
+    'show budget',      // Exact test query — cosine 1.0 for B2, B1-safe via context mismatch
+    'display budget',   // Semantic variant
+    'open budget',      // Semantic variant
+    'bring up budget',  // Semantic variant
+    'view budget',      // Semantic variant
+    'check budget',     // Semantic variant
+    'pull up budget',   // Semantic variant
+    'find budget',      // Semantic variant
+    'go to budget',     // Semantic variant
+    'look at budget',   // Semantic variant
+    'see budget',       // Semantic variant
+    'get budget',       // Semantic variant
+  ],
+}
+
+const BATCH_ACTIVE: BatchConfig = {
+  name: 'active',
+  scopeSource: 'phase3c_seed_active',
+  queries: [
+    'reveal budget',       // Fresh variant — not in shadow batch
+    'present budget',      // Fresh variant
+    'access budget',       // Fresh variant
+    'load budget',         // Fresh variant
+    'navigate to budget',  // Fresh variant
+    'browse budget',       // Fresh variant
+    'locate budget',       // Fresh variant
+    'search budget',       // Fresh variant
+    'explore budget',      // Fresh variant
+    'preview budget',      // Fresh variant
+    'inspect budget',      // Fresh variant
+    'review budget',       // Fresh variant
+  ],
+}
+
+const ALL_BATCHES: Record<string, BatchConfig> = {
+  shadow: BATCH_SHADOW,
+  active: BATCH_ACTIVE,
+}
 
 // ---------------------------------------------------------------------------
 // Config
@@ -47,20 +106,6 @@ import { createHash } from 'crypto'
 // Verified from soak log: b2_clarifier_option_ids includes this UUID at position 2.
 const BUDGET200_GROUNDING_ID = '98cec0f2-b869-412e-93a8-9162e00b9074'
 const BUDGET200_LABEL = 'budget200'
-
-// Seed queries: includes the exact test query "show budget" plus semantic variants.
-// B1 avoidance: we use a deliberately different context_fingerprint (SEED_CONTEXT)
-// so B1 exact lookup misses (it matches on query_fingerprint + context_fingerprint).
-// B2 semantic lookup ignores context_fingerprint, so it finds these by cosine similarity.
-const SEED_QUERIES = [
-  'show budget',      // Exact test query — cosine 1.0 for B2, B1-safe via context mismatch
-  'display budget',   // Semantic variant
-  'open budget',      // Semantic variant
-  'bring up budget',  // Semantic variant
-]
-
-// Isolation marker — all seeded rows use this scope_source for cleanup
-const SEED_SCOPE_SOURCE = 'phase3c_seed'
 
 // Memory index constants (must match lib/chat/routing-log/types.ts)
 const OPTION_A_TENANT_ID = 'default'
@@ -77,6 +122,24 @@ const args = process.argv.slice(2)
 const dryRun = args.includes('--dry-run')
 const verifyOnly = args.includes('--verify')
 const cleanupOnly = args.includes('--cleanup')
+
+function parseBatchArg(): string {
+  const idx = args.indexOf('--batch')
+  if (idx === -1 || idx + 1 >= args.length) return 'shadow' // default
+  return args[idx + 1]
+}
+
+const batchArg = parseBatchArg()
+
+function resolveBatches(): BatchConfig[] {
+  if (batchArg === 'all') return Object.values(ALL_BATCHES)
+  const batch = ALL_BATCHES[batchArg]
+  if (!batch) {
+    console.error(`Unknown batch: "${batchArg}". Valid: ${Object.keys(ALL_BATCHES).join(', ')}, all`)
+    process.exit(1)
+  }
+  return [batch]
+}
 
 // ---------------------------------------------------------------------------
 // Database
@@ -233,11 +296,57 @@ const UPSERT_SQL = `
 `
 
 // ---------------------------------------------------------------------------
+// Overlap check
+// ---------------------------------------------------------------------------
+
+/**
+ * Check for overlap between the target batch queries and other batches or
+ * non-seed B1-sensitive entries. Fails if any overlap is found.
+ */
+async function checkOverlap(batch: BatchConfig): Promise<boolean> {
+  let hasOverlap = false
+
+  // 1. Check against other batch query lists (in-memory)
+  for (const [name, other] of Object.entries(ALL_BATCHES)) {
+    if (name === batch.name) continue
+    const otherNormalized = new Set(other.queries.map(normalizeForStorage))
+    for (const q of batch.queries) {
+      if (otherNormalized.has(normalizeForStorage(q))) {
+        console.error(`  OVERLAP: "${q}" exists in batch "${name}"`)
+        hasOverlap = true
+      }
+    }
+  }
+
+  // 2. Check against non-seed B1 entries in the DB
+  for (const q of batch.queries) {
+    const normalized = normalizeForStorage(q)
+    const fp = sha256Hex(normalized)
+    const { rows } = await pool.query(`
+      SELECT scope_source, context_fingerprint
+      FROM chat_routing_memory_index
+      WHERE query_fingerprint = $1
+        AND tenant_id = $2 AND user_id = $3
+        AND schema_version = $4 AND tool_version = $5
+        AND is_deleted = false
+        AND scope_source NOT LIKE 'phase3c_seed%'
+    `, [fp, OPTION_A_TENANT_ID, OPTION_A_USER_ID, MEMORY_SCHEMA_VERSION, MEMORY_TOOL_VERSION])
+
+    if (rows.length > 0) {
+      console.error(`  OVERLAP: "${q}" has ${rows.length} non-seed B1 entry(ies) (scope: ${rows.map((r: Record<string, string>) => r.scope_source).join(', ')})`)
+      hasOverlap = true
+    }
+  }
+
+  return hasOverlap
+}
+
+// ---------------------------------------------------------------------------
 // Verify
 // ---------------------------------------------------------------------------
 
-async function verify() {
-  console.log('\n--- Verification: phase3c_seed entries for budget200 B ---\n')
+async function verify(batch: BatchConfig) {
+  console.log(`\n--- Verification: ${batch.name} batch (scope_source='${batch.scopeSource}') ---\n`)
 
   const { rows } = await pool.query(`
     SELECT normalized_query_text, intent_id,
@@ -248,11 +357,11 @@ async function verify() {
     WHERE scope_source = $1
       AND is_deleted = false
     ORDER BY created_at DESC
-  `, [SEED_SCOPE_SOURCE])
+  `, [batch.scopeSource])
 
   if (rows.length === 0) {
-    console.log('No phase3c_seed entries found.')
-    console.log('Run without flags to seed entries.')
+    console.log(`No ${batch.scopeSource} entries found.`)
+    console.log('Run without --verify to seed entries.')
   } else {
     console.log(`Found ${rows.length} seeded entries:\n`)
     for (const row of rows) {
@@ -261,8 +370,9 @@ async function verify() {
     }
   }
 
-  // Also check if "show budget" has a B1-eligible exact entry (would defeat the test)
-  const testNormalized = normalizeForStorage('show budget')
+  // B1 safety check for the first query in the batch
+  const testQuery = batch.queries[0]
+  const testNormalized = normalizeForStorage(testQuery)
   const testFingerprint = sha256Hex(testNormalized)
   const { rows: b1Rows } = await pool.query(`
     SELECT normalized_query_text, scope_source, intent_id, context_fingerprint
@@ -274,19 +384,19 @@ async function verify() {
     LIMIT 5
   `, [testFingerprint, OPTION_A_TENANT_ID, OPTION_A_USER_ID, MEMORY_SCHEMA_VERSION, MEMORY_TOOL_VERSION])
 
-  console.log(`\n--- B1 exact-hit check for "show budget" ---\n`)
+  console.log(`\n--- B1 exact-hit check for "${testQuery}" ---\n`)
   if (b1Rows.length > 0) {
-    // B1 matches on (query_fingerprint, context_fingerprint). Entries with our seed
-    // context_fingerprint won't match runtime context, so they're B1-safe.
-    const dangerous = b1Rows.filter((r: Record<string, unknown>) => r.scope_source !== SEED_SCOPE_SOURCE)
+    const dangerous = b1Rows.filter((r: Record<string, unknown>) =>
+      typeof r.scope_source === 'string' && !r.scope_source.startsWith('phase3c_seed')
+    )
     if (dangerous.length > 0) {
-      console.log('WARNING: Non-seed B1 entries exist for "show budget":')
+      console.log(`WARNING: Non-seed B1 entries exist for "${testQuery}":`)
       for (const row of dangerous) {
         console.log(`  scope: ${row.scope_source}, intent: ${row.intent_id}, ctx_fp: ${(row.context_fingerprint as string).slice(0, 12)}...`)
       }
       console.log('\nThese may cause B1 auto-execute, bypassing the clarifier.')
     } else {
-      console.log(`Found ${b1Rows.length} entry(ies) with matching query_fingerprint, but all are phase3c_seed`)
+      console.log(`Found ${b1Rows.length} entry(ies) with matching query_fingerprint, but all are phase3c_seed*`)
       console.log(`(with context_fingerprint ${CONTEXT_FINGERPRINT.slice(0, 12)}... — won't match runtime context).`)
       console.log('B1-safe: runtime context will produce a different context_fingerprint.')
     }
@@ -299,13 +409,13 @@ async function verify() {
 // Cleanup
 // ---------------------------------------------------------------------------
 
-async function cleanup() {
-  console.log(`\n--- Cleanup: removing all scope_source='${SEED_SCOPE_SOURCE}' entries ---\n`)
+async function cleanup(batch: BatchConfig) {
+  console.log(`\n--- Cleanup: removing all scope_source='${batch.scopeSource}' entries ---\n`)
 
   const { rowCount } = await pool.query(`
     DELETE FROM chat_routing_memory_index
     WHERE scope_source = $1
-  `, [SEED_SCOPE_SOURCE])
+  `, [batch.scopeSource])
 
   console.log(`Deleted ${rowCount} rows.`)
 }
@@ -314,12 +424,25 @@ async function cleanup() {
 // Seed
 // ---------------------------------------------------------------------------
 
-async function seed() {
-  console.log(`\n--- Seeding ${SEED_QUERIES.length} entries for shadow_reordered fixture ---\n`)
+async function seed(batch: BatchConfig) {
+  console.log(`\n--- Seeding ${batch.queries.length} entries for ${batch.name} batch ---\n`)
   console.log(`Target: ${BUDGET200_LABEL} (${BUDGET200_GROUNDING_ID})`)
-  console.log(`Scope:  ${SEED_SCOPE_SOURCE}`)
+  console.log(`Scope:  ${batch.scopeSource}`)
   console.log(`Context FP: ${CONTEXT_FINGERPRINT.slice(0, 16)}... (deliberately different from runtime)`)
   console.log(`Mode:   ${dryRun ? 'DRY RUN' : 'LIVE'}\n`)
+
+  // Overlap check (skip in dry-run — still useful to see)
+  console.log('--- Overlap check ---\n')
+  const hasOverlap = await checkOverlap(batch)
+  if (hasOverlap && !dryRun) {
+    console.error('\nFAILED: Overlap detected. Resolve before seeding.')
+    console.error('Use --dry-run to preview without this check blocking.')
+    return
+  } else if (hasOverlap) {
+    console.log('\n(overlap detected but --dry-run — continuing preview)\n')
+  } else {
+    console.log('  No overlap found.\n')
+  }
 
   const slotsJson = {
     action_type: 'execute_widget_item',
@@ -335,7 +458,7 @@ async function seed() {
   let successCount = 0
   let failCount = 0
 
-  for (const rawQuery of SEED_QUERIES) {
+  for (const rawQuery of batch.queries) {
     const normalizedText = normalizeForStorage(rawQuery)
     const queryFingerprint = sha256Hex(normalizedText)
 
@@ -359,7 +482,7 @@ async function seed() {
 
     try {
       await pool.query(UPSERT_SQL, [
-        OPTION_A_TENANT_ID, OPTION_A_USER_ID, SEED_SCOPE_SOURCE, 'action_intent',
+        OPTION_A_TENANT_ID, OPTION_A_USER_ID, batch.scopeSource, 'action_intent',
         queryFingerprint, normalizedText,
         `[${embedding.join(',')}]`, 'openai:text-embedding-3-small@v1',
         CONTEXT_FINGERPRINT,
@@ -383,15 +506,19 @@ async function seed() {
 // ---------------------------------------------------------------------------
 
 async function main() {
+  const batches = resolveBatches()
+
   try {
-    if (cleanupOnly) {
-      await cleanup()
-    } else if (verifyOnly) {
-      await verify()
-    } else {
-      await seed()
-      console.log('\n--- Post-seed verification ---')
-      await verify()
+    for (const batch of batches) {
+      if (cleanupOnly) {
+        await cleanup(batch)
+      } else if (verifyOnly) {
+        await verify(batch)
+      } else {
+        await seed(batch)
+        console.log('\n--- Post-seed verification ---')
+        await verify(batch)
+      }
     }
   } finally {
     await pool.end()

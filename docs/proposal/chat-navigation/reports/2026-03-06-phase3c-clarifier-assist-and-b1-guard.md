@@ -1,7 +1,8 @@
-# Phase 3c: Clarifier Assist (Shadow Mode) + B1 Selection Context Guard
+# Phase 3c: Clarifier Assist (Shadow → Active) + B1 Selection Context Guard
 
-**Date**: 2026-03-06
+**Date**: 2026-03-06 (shadow), 2026-03-08 (active mode validated)
 **Phase**: Phase 3c — Semantic Memory Clarifier Assist
+**Status**: Validated in dev, behind flag (`NEXT_PUBLIC_CHAT_ROUTING_SEMANTIC_CLARIFIER_REORDER_ACTIVE=true`)
 **Parent plan**: `docs/proposal/chat-navigation/plan/panels/chat/meta/multi_layer/semantic-memory-clarifier-assist-plan.md`
 **Predecessor**: Phase 3a (B2 telemetry, validated), Phase 3b (Lane D hint injection, frozen)
 
@@ -220,13 +221,39 @@ Fix: When message history lookup fails, reconstruct execution data from `{id, la
 
 **Status**: Implemented, not yet runtime-proven. The "show budget" soak exercised the all-widget branch (Fix #1), not this mixed/chat-option fallback. This fix targets a separate scenario: first-time grounding LLM clarifiers with non-widget `option`-type candidates not found in message history. Current environment does not provide a reliable repro — all items are folders visible in widget panels, so grounding candidates are always `widget_option` type. Requires intentionally creating a dataset with non-widget entries to exercise this path.
 
-### 13. Feature Flag
+### 13. Feature Flags
 
 **File**: `.env.local`
 
 ```
 NEXT_PUBLIC_CHAT_ROUTING_SEMANTIC_CLARIFIER_ASSIST_ENABLED=true
+NEXT_PUBLIC_CHAT_ROUTING_SEMANTIC_CLARIFIER_REORDER_ACTIVE=true
 ```
+
+### 14. Active Reorder Implementation (2026-03-08)
+
+**File**: `lib/chat/routing-dispatcher.ts`
+
+Added `maybeActiveReorder()` helper gated by `NEXT_PUBLIC_CHAT_ROUTING_SEMANTIC_CLARIFIER_REORDER_ACTIVE`. When active + B2 candidates available, applies `reorderClarifierCandidates()` to the candidate list before both `bindGroundingClarifierOptions` and `buildGroundedClarifier`. Applied at 4 grounding clarifier paths:
+
+- Scope-cue widget clarifier (`effectiveScopedCandidates`)
+- LLM `need_more_info` clarifier (`effectiveCandidates`)
+- LLM timeout clarifier (`effectiveCandidatesTimeout`)
+- LLM disabled fallback clarifier (`effectiveCandidatesFallback`)
+
+### 16. Telemetry Status Alignment (2026-03-08)
+
+**File**: `lib/chat/routing-dispatcher.ts` (`attachClarifierReorderTelemetry`)
+
+The pure function `computeClarifierReorderTelemetry` always emits `shadow_reordered` (it has no knowledge of the active flag). Per `semantic-memory-clarifier-assist-plan.md` §6a line 119, active-mode runs should emit `reordered`, not `shadow_reordered`. Fix: `attachClarifierReorderTelemetry` upgrades `shadow_reordered` → `reordered` when `clarifierReorderActive` is true.
+
+Note: all prior active-mode telemetry (batches on 2026-03-08) was logged as `shadow_reordered`. This is a cosmetic telemetry label fix, not a behavioral change.
+
+### 15. Embedding Timeout Increase (2026-03-08)
+
+**File**: `lib/chat/routing-log/embedding-service.ts`
+
+Changed `EMBEDDING_TIMEOUT_MS` from 1200 to 1500. Rationale: "show budget" and "bring up budget" intermittently hit `timeout_or_error` with latencies of 1217–1242ms — just over the 1200ms ceiling. The 1500ms threshold accommodates observed OpenAI API latency jitter while staying under the 2000ms client-side timeout (`MEMORY_SEMANTIC_READ_TIMEOUT_MS`). Validated: both queries cleared after the change.
 
 ---
 
@@ -240,7 +267,8 @@ NEXT_PUBLIC_CHAT_ROUTING_SEMANTIC_CLARIFIER_ASSIST_ENABLED=true
 | `lib/chat/panel-command-matcher.ts` | First-character guard for distance-2 fuzzy matches; badge letter "a" stopword preservation |
 | `lib/chat/chat-routing-panel-disambiguation.ts` | Return `clarifierMessageId` + `clarifierCandidates` from multi-match path |
 | `lib/chat/chat-routing-types.ts` | Added `clarifierMessageId`, `clarifierCandidates` to `PanelDisambiguationHandlerResult` |
-| `.env.local` | Added `NEXT_PUBLIC_CHAT_ROUTING_SEMANTIC_CLARIFIER_ASSIST_ENABLED=true` |
+| `lib/chat/routing-log/embedding-service.ts` | `EMBEDDING_TIMEOUT_MS` 1200→1500 (B2 latency jitter fix) |
+| `.env.local` | Added `NEXT_PUBLIC_CHAT_ROUTING_SEMANTIC_CLARIFIER_ASSIST_ENABLED=true`, `NEXT_PUBLIC_CHAT_ROUTING_SEMANTIC_CLARIFIER_REORDER_ACTIVE=true` |
 
 ## Files Created
 
@@ -403,9 +431,44 @@ Key evidence from debug logs:
 
 Correlation confirmed: `origin_msg` on selection rows = `cl_msg_id` on clarifier row.
 
-### 3. B2 Clarifier Assist Coverage
+### 3. B2 Clarifier Assist Coverage (Updated 2026-03-08)
 
-Current soak shows `b2_clarifier_status: no_b2_empty` — B2 has no candidates for "show budget" queries. The clarifier assist will only produce `shadow_reordered` when B2 has stored memory entries that match grounding candidates. This requires more diverse usage patterns to build up the memory index.
+Seed strategy: B1-safe via fake `context_fingerprint` (`active_panel_count: 99`), so B1 exact lookup misses but B2 cosine finds the entry at ~1.0. Seed script: `scripts/seed-shadow-reorder-fixture.ts` (supports `--batch shadow`, `--batch active`, `--batch all`).
+
+#### Shadow-mode validation (2026-03-07)
+
+12/12 shadow_reordered, 12/12 selection correlation (100%). Controlled soak with shadow batch queries (show, display, open, bring up, view, check, pull up, find, go to, look at, see, get budget). All had `b2_clarifier_top_match_rank: 2` (budget200 promoted from rank 2).
+
+#### Active-mode validation (2026-03-08)
+
+**Batch 1** (12 queries, `EMBEDDING_TIMEOUT_MS=1200`, before telemetry label fix):
+- 11/12 reordered (logged as `shadow_reordered` — stale label, see item 16), 11/11 selection correlation on reordered turns
+- 1 failure: "show budget" → `no_b2_error` (`b2_status: timeout_or_error`, latency 1218ms)
+- "bring up budget" also hit `no_b2_error` in a prior run (latency 1217ms)
+
+**Root cause investigation**: Both failures had latencies 17–29ms over the 1200ms `EMBEDDING_TIMEOUT_MS` ceiling. Not query-specific — an intermittent B2 embedding API latency issue. Fix: raised `EMBEDDING_TIMEOUT_MS` to 1500 in `embedding-service.ts`.
+
+**Post-fix single test** ("show budget" only, before telemetry label fix):
+- Reordered at 1242ms latency (logged as `shadow_reordered` — stale label) — would have failed under old 1200ms ceiling
+- Selection confirmed budget200 via follow-up execution_outcome row
+
+**Sanity batch** (5 queries, `EMBEDDING_TIMEOUT_MS=1500`, before telemetry label fix):
+
+| # | Query | B2 Status (logged) | B2 Status (correct) | Rank | Latency | Selected |
+|---|-------|---------------------|----------------------|------|---------|----------|
+| 1 | show budget | shadow_reordered | reordered | 2→1 | 1319ms | budget200 |
+| 2 | bring up budget | shadow_reordered | reordered | 2→1 | 476ms | budget200 |
+| 3 | display budget | shadow_reordered | reordered | 2→1 | 995ms | budget200 |
+| 4 | open budget | shadow_reordered | reordered | 2→1 | 267ms | budget200 |
+| 5 | find budget | shadow_reordered | reordered | 2→1 | 364ms | budget200 |
+
+5/5 reordered, 5/5 selection correlation. Both previously flaky queries (show budget, bring up budget) cleared.
+
+**Note**: All active-mode rows above were logged before the telemetry label fix (item 16). They carry `shadow_reordered` in the DB. Post-fix runs should emit `reordered`. Pending one post-fix validation query.
+
+#### Decision
+
+Phase 3c active reorder validated in dev. Remains behind `NEXT_PUBLIC_CHAT_ROUTING_SEMANTIC_CLARIFIER_REORDER_ACTIVE` flag until broader rollout confidence.
 
 ---
 
@@ -449,7 +512,10 @@ ORDER BY created_at DESC;
 
 ## Next Steps
 
-1. ~~**Selection correlation for widget-context clarifiers**~~: Resolved — `wrappedHandleSelectOption` (line 1444) already falls back to `widgetSelectionContext?.optionSetId`
+1. ~~**Selection correlation for widget-context clarifiers**~~: Resolved (2026-03-06)
 2. **Server-side clarifier telemetry**: Add Phase 3c telemetry at `stored_pending_options` path in `chat-navigation-panel.tsx`
-3. **Shadow soak for `shadow_reordered`**: Build up B2 memory entries with diverse queries to produce B2-grounding overlap
-4. **Evaluate promotion criteria**: When `shadow_reordered` turns show B2's top match = user's actual pick >= 60%, promote from shadow to active
+3. ~~**Shadow soak for `shadow_reordered`**~~: Proven — 12/12 shadow_reordered, 12/12 selection correlation (2026-03-07)
+4. ~~**Active-mode validation**~~: Validated — 11/12 batch + 5/5 sanity batch after timeout fix (2026-03-08)
+5. ~~**Embedding timeout fix**~~: `EMBEDDING_TIMEOUT_MS` 1200→1500, both flaky queries cleared (2026-03-08)
+6. **Seed cleanup**: Run `npx tsx scripts/seed-shadow-reorder-fixture.ts --cleanup --batch all` when no longer needed
+7. **Stage 4 — Bounded LLM Optimize**: Next main-plan stage per `multi-layer-routing-reliability-plan-v3_5.md` §12 item 4. LLM selector over validator-approved candidates.
