@@ -561,7 +561,7 @@ Plan is complete only when:
 - unresolved always returns safe clarifier
 - regression suite covers stale-latch, clarifier-reply, and context drift scenarios
 
-## 18) Anti-pattern pre-read compliance
+## 18) Anti-pattern pre-read compliance 
 
 Mandatory pre-read:
 - `codex/codex_needs_to_avoid/isolation-reactivity-anti-patterns.md`
