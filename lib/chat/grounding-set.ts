@@ -126,6 +126,213 @@ export interface GroundingSetResult {
 }
 
 // =============================================================================
+// G4 Validator Gate — Stage 4 pre-LLM candidate validation
+// =============================================================================
+
+/** Reasons a candidate may be rejected by the validator gate */
+export type CandidateRejectionReason =
+  | 'empty_id'
+  | 'empty_label'
+  | 'invalid_type'
+  | 'invalid_source'
+  | 'duplicate_id'
+  | 'label_too_long'
+
+/** Result of candidate validation */
+export interface CandidateValidationResult {
+  validated: GroundingCandidate[]
+  rejected: Array<{ candidate: GroundingCandidate; reason: CandidateRejectionReason }>
+  stats: {
+    totalIn: number
+    totalOut: number
+    duplicatesRemoved: number
+    rejectionsByReason: Partial<Record<CandidateRejectionReason, number>>
+  }
+}
+
+const VALID_CANDIDATE_TYPES = new Set<string>(['option', 'widget_option', 'referent', 'capability'])
+const VALID_GROUNDING_SOURCES = new Set<string>(['active_options', 'visible_panels', 'paused_snapshot', 'widget_list', 'recent_referent', 'capability'])
+const MAX_LABEL_LENGTH = 200
+
+/**
+ * Stage 4 G4: Validate grounding candidates before they enter the LLM prompt.
+ *
+ * Checks: non-empty ID, non-empty label, known type, known source, no duplicate IDs, label length cap.
+ * Pure function — no side effects, no network calls.
+ */
+export function validateGroundingCandidates(
+  candidates: GroundingCandidate[]
+): CandidateValidationResult {
+  const validated: GroundingCandidate[] = []
+  const rejected: CandidateValidationResult['rejected'] = []
+  const seenIds = new Set<string>()
+  const rejectionsByReason: Partial<Record<CandidateRejectionReason, number>> = {}
+
+  function reject(candidate: GroundingCandidate, reason: CandidateRejectionReason) {
+    rejected.push({ candidate, reason })
+    rejectionsByReason[reason] = (rejectionsByReason[reason] ?? 0) + 1
+  }
+
+  for (const c of candidates) {
+    // Check 1: ID non-empty
+    if (!c.id || c.id.trim().length === 0) {
+      reject(c, 'empty_id')
+      continue
+    }
+
+    // Check 2: Label non-empty
+    if (!c.label || c.label.trim().length === 0) {
+      reject(c, 'empty_label')
+      continue
+    }
+
+    // Check 3: Known type
+    if (!VALID_CANDIDATE_TYPES.has(c.type)) {
+      reject(c, 'invalid_type')
+      continue
+    }
+
+    // Check 4: Known source
+    if (!VALID_GROUNDING_SOURCES.has(c.source)) {
+      reject(c, 'invalid_source')
+      continue
+    }
+
+    // Check 5: Label length cap
+    if (c.label.length > MAX_LABEL_LENGTH) {
+      reject(c, 'label_too_long')
+      continue
+    }
+
+    // Check 6: Duplicate ID (keep first occurrence)
+    if (seenIds.has(c.id)) {
+      reject(c, 'duplicate_id')
+      continue
+    }
+
+    seenIds.add(c.id)
+    validated.push(c)
+  }
+
+  return {
+    validated,
+    rejected,
+    stats: {
+      totalIn: candidates.length,
+      totalOut: validated.length,
+      duplicatesRemoved: rejectionsByReason['duplicate_id'] ?? 0,
+      rejectionsByReason,
+    },
+  }
+}
+
+// =============================================================================
+// G2+G3 Candidate Cap + Deterministic Trim — Stage 4
+// =============================================================================
+
+/** Max validated candidates passed to Lane D LLM (plan §8 line 330) */
+const LLM_CANDIDATE_CAP = 8
+
+/**
+ * Source priority for deterministic trim (plan §8 lines 334-339).
+ * Lower number = higher priority (kept first when trimming).
+ *
+ * Plan-specified signals not yet available on GroundingCandidate:
+ *   - context compatibility score (deferred)
+ *   - recency / last_success_at (deferred — needs memory join)
+ *   - prior success count (deferred — needs memory join)
+ *   - risk tier preference (deferred — no mutation intents yet)
+ *
+ * Current trim uses: source priority → type priority → stable ID tie-break.
+ */
+const SOURCE_PRIORITY: Record<string, number> = {
+  'active_options': 0,    // highest: currently shown to user
+  'paused_snapshot': 1,   // recently shown, still recoverable
+  'visible_panels': 2,    // panels on screen
+  'widget_list': 3,       // widget items
+  'recent_referent': 4,   // contextual referents
+  'capability': 5,        // system capabilities (lowest)
+}
+
+const TYPE_PRIORITY: Record<string, number> = {
+  'option': 0,            // chat options (highest — user is interacting)
+  'widget_option': 1,     // widget items
+  'referent': 2,          // referents
+  'capability': 3,        // capabilities (lowest)
+}
+
+/** Result of cap+trim operation */
+export interface CandidateCapTrimResult {
+  capped: GroundingCandidate[]
+  trimmed: GroundingCandidate[]
+  stats: {
+    preCapCount: number
+    postCapCount: number
+    wasTrimmed: boolean
+    trimmedIds: string[]
+  }
+}
+
+/**
+ * Stage 4 G2+G3: Cap validated candidates at LLM_CANDIDATE_CAP (8).
+ * When over cap, rank deterministically and take top N.
+ *
+ * Deterministic rank order:
+ *   1. Source priority (active_options > paused_snapshot > visible_panels > widget_list > recent_referent > capability)
+ *   2. Type priority (option > widget_option > referent > capability)
+ *   3. Stable tie-break: candidate ID ascending (plan §8 line 342)
+ *
+ * Invariant: same input + same snapshot → same trimmed set/order (plan §8 line 343).
+ * Pure function — no side effects.
+ */
+export function capAndTrimCandidates(
+  candidates: GroundingCandidate[]
+): CandidateCapTrimResult {
+  if (candidates.length <= LLM_CANDIDATE_CAP) {
+    return {
+      capped: candidates,
+      trimmed: [],
+      stats: {
+        preCapCount: candidates.length,
+        postCapCount: candidates.length,
+        wasTrimmed: false,
+        trimmedIds: [],
+      },
+    }
+  }
+
+  // Sort deterministically
+  const sorted = [...candidates].sort((a, b) => {
+    // 1. Source priority (lower = higher priority)
+    const srcA = SOURCE_PRIORITY[a.source] ?? 99
+    const srcB = SOURCE_PRIORITY[b.source] ?? 99
+    if (srcA !== srcB) return srcA - srcB
+
+    // 2. Type priority (lower = higher priority)
+    const typeA = TYPE_PRIORITY[a.type] ?? 99
+    const typeB = TYPE_PRIORITY[b.type] ?? 99
+    if (typeA !== typeB) return typeA - typeB
+
+    // 3. Stable tie-break: candidate ID ascending
+    return a.id.localeCompare(b.id)
+  })
+
+  const capped = sorted.slice(0, LLM_CANDIDATE_CAP)
+  const trimmed = sorted.slice(LLM_CANDIDATE_CAP)
+
+  return {
+    capped,
+    trimmed,
+    stats: {
+      preCapCount: candidates.length,
+      postCapCount: capped.length,
+      wasTrimmed: true,
+      trimmedIds: trimmed.map(c => c.id),
+    },
+  }
+}
+
+// =============================================================================
 // Constants
 // =============================================================================
 

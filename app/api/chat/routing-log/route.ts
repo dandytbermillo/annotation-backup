@@ -72,8 +72,9 @@ export async function POST(request: NextRequest) {
     // Full snapshot is still stored in context_snapshot_json for diagnostics.
     const contextFingerprint = sha256Hex(canonicalJsonSerialize(stripVolatileFields(contextSnapshot)))
 
-    // Phase 3 B2/3c: build semantic_hint_metadata JSON when any B2 or clarifier telemetry present
-    const semanticHintMeta = (payload.semantic_hint_count != null || payload.b2_status != null || payload.b2_clarifier_status != null)
+    // Phase 3 B2/3c + Stage 4: build semantic_hint_metadata JSON when any telemetry present
+    const hasSemanticMeta = payload.semantic_hint_count != null || payload.b2_status != null || payload.b2_clarifier_status != null || payload.llm_decision != null || payload.llm_g4_total_in != null
+    const semanticHintMeta = hasSemanticMeta
       ? JSON.stringify({
           count: payload.semantic_hint_count,
           top_score: payload.semantic_top_score,
@@ -91,6 +92,29 @@ export async function POST(request: NextRequest) {
           b2_clarifier_option_ids: payload.b2_clarifier_option_ids,
           clarifier_origin_message_id: payload.clarifier_origin_message_id,
           selected_option_id: payload.selected_option_id,
+          // Stage 4: Bounded LLM telemetry
+          llm_decision: payload.llm_decision,
+          llm_confidence: payload.llm_confidence,
+          llm_latency_ms: payload.llm_latency_ms,
+          llm_choice_id: payload.llm_choice_id,
+          llm_candidate_count: payload.llm_candidate_count,
+          llm_rejection_reason: payload.llm_rejection_reason,
+          // Stage 4 G4: Validator gate telemetry
+          llm_g4_total_in: payload.llm_g4_total_in,
+          llm_g4_total_out: payload.llm_g4_total_out,
+          llm_g4_duplicates_removed: payload.llm_g4_duplicates_removed,
+          llm_g4_rejections: payload.llm_g4_rejections,
+          // Stage 4 G2+G3: Cap/trim telemetry
+          llm_g23_pre_cap_count: payload.llm_g23_pre_cap_count,
+          llm_g23_post_cap_count: payload.llm_g23_post_cap_count,
+          llm_g23_was_trimmed: payload.llm_g23_was_trimmed,
+          llm_g23_trimmed_ids: payload.llm_g23_trimmed_ids,
+          // Stage 4 G1: Shadow threshold telemetry
+          llm_g1_shadow_rejected: payload.llm_g1_shadow_rejected,
+          // Stage 4 G5: TOCTOU shadow revalidation telemetry
+          llm_g5_toctou_result: payload.llm_g5_toctou_result,
+          llm_g5_toctou_reason: payload.llm_g5_toctou_reason,
+          llm_g5_toctou_window_ms: payload.llm_g5_toctou_window_ms,
         })
       : null
 

@@ -70,4 +70,32 @@ export interface RoutingLogPayload {
   // Phase 3c: Selection correlation — set on the selection turn (user picks from clarifier)
   clarifier_origin_message_id?: string     // clarifier message ID that spawned this selection
   selected_option_id?: string              // ID of the option the user selected
+
+  // Stage 4: Bounded LLM telemetry — set when Tier 4.5 grounding LLM is called
+  llm_decision?: 'select' | 'need_more_info' | 'timeout' | 'error' | 'disabled'
+  llm_confidence?: number                  // LLM-reported confidence (0.0-1.0)
+  llm_latency_ms?: number                  // LLM round-trip wall-clock time
+  llm_choice_id?: string                   // choiceId returned by LLM (before validation)
+  llm_candidate_count?: number             // candidates passed to LLM (post-G4 validation)
+  llm_rejection_reason?: 'invalid_choice_id' | 'low_confidence' | 'timeout' | 'error' | null
+
+  // Stage 4 G4: Validator gate telemetry
+  llm_g4_total_in?: number                 // candidates before G4 validation
+  llm_g4_total_out?: number                // candidates after G4 validation
+  llm_g4_duplicates_removed?: number       // duplicate IDs removed
+  llm_g4_rejections?: Record<string, number>  // rejection reason → count
+
+  // Stage 4 G2+G3: Cap/trim telemetry
+  llm_g23_pre_cap_count?: number           // validated candidates before cap
+  llm_g23_post_cap_count?: number          // candidates after cap (sent to LLM)
+  llm_g23_was_trimmed?: boolean            // whether cap was applied
+  llm_g23_trimmed_ids?: string[]           // IDs of trimmed candidates (if any)
+
+  // Stage 4 G1: Shadow threshold telemetry (no behavior change)
+  llm_g1_shadow_rejected?: boolean         // true when select survives 0.4 but would fail 0.75
+
+  // Stage 4 G5: TOCTOU revalidation telemetry (shadow mode — no behavior change)
+  llm_g5_toctou_result?: 'pass' | 'fail' | 'not_revalidated'
+  llm_g5_toctou_reason?: string            // fail/not_revalidated reason code
+  llm_g5_toctou_window_ms?: number         // ms between turnSnapshot capture and revalidation check
 }

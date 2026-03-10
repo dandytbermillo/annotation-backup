@@ -45,6 +45,12 @@ export interface GroundingLLMResult {
   response?: GroundingLLMResponse
   error?: string
   latencyMs: number
+  /** Stage 4 telemetry: reason if LLM decision was downgraded from select to need_more_info */
+  rejectionReason?: 'invalid_choice_id' | 'low_confidence' | null
+  /** Stage 4 telemetry: raw choiceId from LLM before validation (may differ from response.choiceId) */
+  rawChoiceId?: string | null
+  /** Stage 4 G1 shadow: true when select survives 0.4 but would be rejected at 0.75 */
+  g1ShadowRejected?: boolean
 }
 
 // =============================================================================
@@ -53,6 +59,9 @@ export interface GroundingLLMResult {
 
 const GROUNDING_LLM_TIMEOUT_MS = 2000
 const MIN_CONFIDENCE_SELECT = 0.4
+// Stage 4 G1: Shadow threshold — log would-be rejections without changing behavior.
+// Once telemetry confirms acceptable impact, MIN_CONFIDENCE_SELECT will be raised to match.
+const G1_SHADOW_CONFIDENCE_THRESHOLD = 0.75
 
 // Feature flag (client-side)
 export function isGroundingLLMEnabled(): boolean {
@@ -185,6 +194,10 @@ export async function callGroundingLLM(
       confidence: innerResponse.confidence,
     }
 
+    // Stage 4 telemetry: capture raw choiceId before validation
+    const rawChoiceId = parsed.choiceId
+    let rejectionReason: 'invalid_choice_id' | 'low_confidence' | null = null
+
     // Safety: validate choiceId for select decisions
     if (parsed.decision === 'select') {
       const validIds = request.candidates.map(c => c.id)
@@ -199,12 +212,14 @@ export async function callGroundingLLM(
             decision: parsed.decision,
           },
         })
+        rejectionReason = 'invalid_choice_id'
         parsed.decision = 'need_more_info'
         parsed.choiceId = null
       }
 
       // Enforce confidence threshold
       if (parsed.confidence < MIN_CONFIDENCE_SELECT) {
+        rejectionReason = 'low_confidence'
         parsed.decision = 'need_more_info'
         parsed.choiceId = null
       }
@@ -214,6 +229,10 @@ export async function callGroundingLLM(
     if (parsed.decision !== 'select') {
       parsed.choiceId = null
     }
+
+    // Stage 4 G1 shadow: detect selects that survive 0.4 but would fail 0.75
+    const g1ShadowRejected = parsed.decision === 'select'
+      && parsed.confidence < G1_SHADOW_CONFIDENCE_THRESHOLD
 
     const latencyMs = Date.now() - startTime
 
@@ -227,6 +246,7 @@ export async function callGroundingLLM(
         confidence: parsed.confidence,
         decision: parsed.decision,
         latencyMs,
+        ...(g1ShadowRejected ? { g1ShadowRejected: true } : {}),
       },
     })
 
@@ -234,6 +254,9 @@ export async function callGroundingLLM(
       success: true,
       response: parsed,
       latencyMs,
+      rejectionReason,
+      rawChoiceId,
+      g1ShadowRejected,
     }
 
   } catch (error) {

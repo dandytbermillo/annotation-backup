@@ -64,7 +64,7 @@ import { handleDocRetrieval } from '@/lib/chat/doc-routing'
 import { isAffirmationPhrase, isRejectionPhrase, matchesReshowPhrases, matchesShowAllHeuristic, hasGraceSkipActionVerb, hasQuestionIntent, ACTION_VERB_PATTERN, isCommandLike, isPoliteImperativeRequest } from '@/lib/chat/query-patterns'
 import { handleKnownNounRouting } from '@/lib/chat/known-noun-routing'
 import { callClarificationLLMClient, isLLMFallbackEnabledClient } from '@/lib/chat/clarification-llm-fallback'
-import { handleGroundingSetFallback, buildGroundingContext, checkSoftActiveWindow, isSelectionLike } from '@/lib/chat/grounding-set'
+import { handleGroundingSetFallback, buildGroundingContext, checkSoftActiveWindow, isSelectionLike, validateGroundingCandidates, capAndTrimCandidates } from '@/lib/chat/grounding-set'
 import type { GroundingCandidate } from '@/lib/chat/grounding-set'
 import { buildTurnSnapshot } from '@/lib/chat/ui-snapshot-builder'
 import { callGroundingLLM, isGroundingLLMEnabled } from '@/lib/chat/grounding-llm-fallback'
@@ -497,6 +497,32 @@ export interface RoutingDispatcherResult {
   /** Phase 3c: Selection correlation — set on selection turns (user picks from clarifier) */
   _clarifierOriginMessageId?: string
   _selectedOptionId?: string
+
+  /** Stage 4: Bounded LLM telemetry — set when Tier 4.5 grounding LLM is called */
+  _llmTelemetry?: {
+    decision: 'select' | 'need_more_info' | 'timeout' | 'error' | 'disabled'
+    confidence?: number
+    latencyMs?: number
+    choiceId?: string | null
+    candidateCount: number
+    rejectionReason?: 'invalid_choice_id' | 'low_confidence' | 'timeout' | 'error' | null
+    /** G4 validator gate telemetry */
+    g4TotalIn?: number
+    g4TotalOut?: number
+    g4DuplicatesRemoved?: number
+    g4Rejections?: Partial<Record<string, number>>
+    /** G2+G3 cap/trim telemetry */
+    g23PreCapCount?: number
+    g23PostCapCount?: number
+    g23WasTrimmed?: boolean
+    g23TrimmedIds?: string[]
+    /** G1 shadow: select survived 0.4 but would fail 0.75 */
+    g1ShadowRejected?: boolean
+    /** G5 TOCTOU shadow revalidation */
+    g5ToctouResult?: 'pass' | 'fail' | 'not_revalidated'
+    g5ToctouReason?: string
+    g5ToctouWindowMs?: number
+  }
 
   /** Phase 3c: B2 lookup status for server-side clarifier telemetry (set in dispatchRouting) */
   _b2LookupStatus?: 'ok' | 'empty' | 'timeout' | 'error' | 'disabled'
@@ -1395,6 +1421,41 @@ export async function dispatchRouting(
       if (result?._clarifierOriginMessageId) {
         logPayload.clarifier_origin_message_id = result._clarifierOriginMessageId
         logPayload.selected_option_id = result._selectedOptionId
+      }
+
+      // Stage 4: Bounded LLM telemetry
+      if (result?._llmTelemetry) {
+        const lt = result._llmTelemetry
+        logPayload.llm_decision = lt.decision
+        logPayload.llm_confidence = lt.confidence
+        logPayload.llm_latency_ms = lt.latencyMs
+        logPayload.llm_choice_id = lt.choiceId ?? undefined
+        logPayload.llm_candidate_count = lt.candidateCount
+        logPayload.llm_rejection_reason = lt.rejectionReason
+        // G4 validator gate telemetry
+        logPayload.llm_g4_total_in = lt.g4TotalIn
+        logPayload.llm_g4_total_out = lt.g4TotalOut
+        logPayload.llm_g4_duplicates_removed = lt.g4DuplicatesRemoved
+        if (lt.g4Rejections && Object.keys(lt.g4Rejections).length > 0) {
+          logPayload.llm_g4_rejections = lt.g4Rejections as Record<string, number>
+        }
+        // G2+G3 cap/trim telemetry
+        logPayload.llm_g23_pre_cap_count = lt.g23PreCapCount
+        logPayload.llm_g23_post_cap_count = lt.g23PostCapCount
+        logPayload.llm_g23_was_trimmed = lt.g23WasTrimmed
+        if (lt.g23TrimmedIds && lt.g23TrimmedIds.length > 0) {
+          logPayload.llm_g23_trimmed_ids = lt.g23TrimmedIds
+        }
+        // G1 shadow threshold telemetry — only emit when true (would-be rejection)
+        if (lt.g1ShadowRejected === true) {
+          logPayload.llm_g1_shadow_rejected = true
+        }
+        // G5 TOCTOU shadow revalidation telemetry — only emitted on select path
+        if (lt.g5ToctouResult) {
+          logPayload.llm_g5_toctou_result = lt.g5ToctouResult
+          logPayload.llm_g5_toctou_reason = lt.g5ToctouReason
+          logPayload.llm_g5_toctou_window_ms = lt.g5ToctouWindowMs
+        }
       }
 
       await recordRoutingLog(logPayload)
@@ -4513,12 +4574,69 @@ async function dispatchRoutingInner(
         // Fall through — verify question should reach intent API, not grounding LLM.
       } else if (isGroundingLLMEnabled()) {
         try {
+          // Stage 4 G4: Validate candidates before they enter the LLM prompt
+          const g4Validation = validateGroundingCandidates(groundingResult.llmCandidates)
+
+          if (g4Validation.rejected.length > 0) {
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'g4_validator_rejected',
+              metadata: {
+                input: ctx.trimmedInput,
+                totalIn: g4Validation.stats.totalIn,
+                totalOut: g4Validation.stats.totalOut,
+                rejections: g4Validation.stats.rejectionsByReason,
+              },
+            })
+          }
+
+          // If all candidates rejected, skip LLM — fall through to clarifier/Tier 5
+          if (g4Validation.validated.length === 0) {
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'g4_validator_all_rejected',
+              metadata: {
+                input: ctx.trimmedInput,
+                totalIn: g4Validation.stats.totalIn,
+                rejections: g4Validation.stats.rejectionsByReason,
+              },
+            })
+            // Attach G4 telemetry even when skipping LLM
+            defaultResult._llmTelemetry = {
+              decision: 'error',
+              candidateCount: 0,
+              rejectionReason: null,
+              g4TotalIn: g4Validation.stats.totalIn,
+              g4TotalOut: 0,
+              g4DuplicatesRemoved: g4Validation.stats.duplicatesRemoved,
+              g4Rejections: g4Validation.stats.rejectionsByReason,
+            }
+            // Fall through to Tier 5 / clarifier
+          } else {
+          // Stage 4 G2+G3: Cap and trim validated candidates
+          const g23CapTrim = capAndTrimCandidates(g4Validation.validated)
+
+          if (g23CapTrim.stats.wasTrimmed) {
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'g23_cap_trimmed',
+              metadata: {
+                input: ctx.trimmedInput,
+                preCapCount: g23CapTrim.stats.preCapCount,
+                postCapCount: g23CapTrim.stats.postCapCount,
+                trimmedIds: g23CapTrim.stats.trimmedIds,
+              },
+            })
+          }
+
+          const llmCandidates = g23CapTrim.capped
+
           // Per incubation plan §Observability: log LLM attempt
-          void debugLog({ component: 'ChatNavigation', action: 'selection_dual_source_llm_attempt', metadata: { input: ctx.trimmedInput, candidateCount: groundingResult.llmCandidates.length, activeWidgetId } })
+          void debugLog({ component: 'ChatNavigation', action: 'selection_dual_source_llm_attempt', metadata: { input: ctx.trimmedInput, candidateCount: llmCandidates.length, activeWidgetId } })
 
           const llmResult = await callGroundingLLM({
             userInput: ctx.trimmedInput,
-            candidates: groundingResult.llmCandidates.map(c => ({
+            candidates: llmCandidates.map(c => ({
               id: c.id,
               label: c.label,
               type: c.type,
@@ -4543,6 +4661,27 @@ async function dispatchRoutingInner(
           // Per incubation plan §Observability: log LLM result
           void debugLog({ component: 'ChatNavigation', action: 'selection_dual_source_llm_result', metadata: { success: llmResult.success, decision: llmResult.response?.decision, choiceId: llmResult.response?.choiceId, latencyMs: llmResult.latencyMs } })
 
+          // Stage 4: Capture bounded LLM telemetry for durable log
+          defaultResult._llmTelemetry = {
+            decision: llmResult.success
+              ? (llmResult.response?.decision ?? 'error')
+              : (llmResult.error === 'Timeout' ? 'timeout' : 'error'),
+            confidence: llmResult.response?.confidence,
+            latencyMs: llmResult.latencyMs,
+            choiceId: llmResult.rawChoiceId,
+            candidateCount: llmCandidates.length,
+            rejectionReason: llmResult.rejectionReason ?? null,
+            g4TotalIn: g4Validation.stats.totalIn,
+            g4TotalOut: g4Validation.stats.totalOut,
+            g4DuplicatesRemoved: g4Validation.stats.duplicatesRemoved,
+            g4Rejections: g4Validation.stats.rejectionsByReason,
+            g23PreCapCount: g23CapTrim.stats.preCapCount,
+            g23PostCapCount: g23CapTrim.stats.postCapCount,
+            g23WasTrimmed: g23CapTrim.stats.wasTrimmed,
+            g23TrimmedIds: g23CapTrim.stats.wasTrimmed ? g23CapTrim.stats.trimmedIds : undefined,
+            g1ShadowRejected: llmResult.g1ShadowRejected,
+          }
+
           if (llmResult.success && llmResult.response) {
             if (llmResult.response.decision === 'select' && llmResult.response.choiceId) {
               // LLM selected a candidate — find and execute
@@ -4551,6 +4690,91 @@ async function dispatchRoutingInner(
               )
 
               if (selected) {
+                // ---------------------------------------------------------------
+                // Stage 4 G5: TOCTOU shadow revalidation (log-only, no behavior change)
+                // Check if the selected candidate's backing target still exists.
+                // Three outcomes: pass (verified fresh), fail (target gone),
+                // not_revalidated (no reliable freshness source for this candidate type).
+                // ---------------------------------------------------------------
+                const toctouWindowMs = Date.now() - turnSnapshot.capturedAtMs
+                let toctouResult: 'pass' | 'fail' | 'not_revalidated' = 'not_revalidated'
+                let toctouReason: string | null = null
+
+                if (selected.source === 'active_options') {
+                  // Check if option still exists in current pending options
+                  const stillInPending = ctx.pendingOptions.some(opt => opt.id === selected.id)
+                  if (stillInPending) {
+                    toctouResult = 'pass'
+                  } else {
+                    toctouResult = 'fail'
+                    toctouReason = 'option_not_in_pending'
+                  }
+                } else if (selected.source === 'paused_snapshot') {
+                  // Check if option still exists in clarification snapshot
+                  const stillInSnapshot = ctx.clarificationSnapshot?.options.some(opt => opt.id === selected.id)
+                  if (stillInSnapshot) {
+                    toctouResult = 'pass'
+                  } else {
+                    toctouResult = 'fail'
+                    toctouReason = 'snapshot_option_gone'
+                  }
+                } else if (selected.source === 'widget_list') {
+                  // Rebuild fresh snapshot to check if widget option still exists
+                  const freshSnapshot = buildTurnSnapshot({})
+                  const stillExists = freshSnapshot.openWidgets.some(w =>
+                    w.options.some(opt => opt.id === selected.id)
+                  )
+                  if (stillExists) {
+                    toctouResult = 'pass'
+                  } else {
+                    toctouResult = 'fail'
+                    toctouReason = 'widget_option_gone'
+                  }
+                } else if (selected.source === 'visible_panels') {
+                  // Fresh panel state via widget snapshot registry (not the stale ctx.uiContext closure).
+                  // selected.id is the panel UUID; match against panelId on fresh visible snapshots.
+                  const freshSnapshots = ctx.getVisibleSnapshots()
+                  const stillVisible = freshSnapshots.some(s => s.panelId === selected.id)
+                  if (stillVisible) {
+                    toctouResult = 'pass'
+                  } else {
+                    toctouResult = 'fail'
+                    toctouReason = 'panel_not_visible'
+                  }
+                } else if (selected.source === 'recent_referent') {
+                  // Referent registry is static but referenced target may be stale.
+                  // No reliable freshness check available in shadow mode.
+                  toctouResult = 'not_revalidated'
+                  toctouReason = 'referent_no_freshness_source'
+                } else if (selected.source === 'capability') {
+                  // Capabilities are static definitions but may have stateful preconditions.
+                  // No reliable freshness check available.
+                  toctouResult = 'not_revalidated'
+                  toctouReason = 'capability_no_freshness_source'
+                }
+
+                // Attach G5 telemetry to LLM telemetry block
+                if (defaultResult._llmTelemetry) {
+                  defaultResult._llmTelemetry.g5ToctouResult = toctouResult
+                  defaultResult._llmTelemetry.g5ToctouReason = toctouReason ?? undefined
+                  defaultResult._llmTelemetry.g5ToctouWindowMs = toctouWindowMs
+                }
+
+                void debugLog({
+                  component: 'ChatNavigation',
+                  action: 'g5_toctou_shadow',
+                  metadata: {
+                    candidateId: selected.id,
+                    candidateSource: selected.source,
+                    result: toctouResult,
+                    reason: toctouReason,
+                    windowMs: toctouWindowMs,
+                  },
+                })
+                // ---------------------------------------------------------------
+                // End G5 TOCTOU shadow
+                // ---------------------------------------------------------------
+
                 void debugLog({
                   component: 'ChatNavigation',
                   action: 'grounding_llm_select',
@@ -4865,6 +5089,7 @@ async function dispatchRoutingInner(
               _devProvenanceHint: 'llm_influenced' as const,
             }
           }
+        } // end G4 validated.length > 0 else block
         } catch (error) {
           void debugLog({
             component: 'ChatNavigation',
@@ -4876,6 +5101,11 @@ async function dispatchRoutingInner(
       } else {
         // Grounding LLM disabled — show clarifier with candidates instead of falling through
         // This prevents the main API from misinterpreting widget-scoped selection as panel commands
+        defaultResult._llmTelemetry = {
+          decision: 'disabled',
+          candidateCount: groundingResult.llmCandidates.length,
+          rejectionReason: null,
+        }
         void debugLog({
           component: 'ChatNavigation',
           action: 'grounding_llm_disabled_clarifier',
