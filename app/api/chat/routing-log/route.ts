@@ -73,7 +73,7 @@ export async function POST(request: NextRequest) {
     const contextFingerprint = sha256Hex(canonicalJsonSerialize(stripVolatileFields(contextSnapshot)))
 
     // Phase 3 B2/3c + Stage 4: build semantic_hint_metadata JSON when any telemetry present
-    const hasSemanticMeta = payload.semantic_hint_count != null || payload.b2_status != null || payload.b2_clarifier_status != null || payload.llm_decision != null || payload.llm_g4_total_in != null
+    const hasSemanticMeta = payload.semantic_hint_count != null || payload.b2_status != null || payload.b2_clarifier_status != null || payload.llm_decision != null || payload.llm_g4_total_in != null || payload.s5_lookup_attempted != null
     const semanticHintMeta = hasSemanticMeta
       ? JSON.stringify({
           count: payload.semantic_hint_count,
@@ -115,6 +115,20 @@ export async function POST(request: NextRequest) {
           llm_g5_toctou_result: payload.llm_g5_toctou_result,
           llm_g5_toctou_reason: payload.llm_g5_toctou_reason,
           llm_g5_toctou_window_ms: payload.llm_g5_toctou_window_ms,
+          // Stage 4 G7: Near-tie guard telemetry
+          llm_g7_near_tie_detected: payload.llm_g7_near_tie_detected,
+          llm_g7_margin: payload.llm_g7_margin,
+          llm_g7_top1_score: payload.llm_g7_top1_score,
+          llm_g7_top2_score: payload.llm_g7_top2_score,
+          llm_g7_candidate_basis: payload.llm_g7_candidate_basis,
+          // Stage 5: Semantic resolution reuse shadow telemetry
+          s5_lookup_attempted: payload.s5_lookup_attempted,
+          s5_candidate_count: payload.s5_candidate_count,
+          s5_top_similarity: payload.s5_top_similarity,
+          s5_validation_result: payload.s5_validation_result,
+          s5_replayed_intent_id: payload.s5_replayed_intent_id,
+          s5_replayed_target_id: payload.s5_replayed_target_id,
+          s5_fallback_reason: payload.s5_fallback_reason,
         })
       : null
 

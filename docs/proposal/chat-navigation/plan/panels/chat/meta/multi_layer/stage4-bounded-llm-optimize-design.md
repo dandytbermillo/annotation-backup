@@ -3,7 +3,7 @@
 **Date**: 2026-03-08
 **Parent plan**: `multi-layer-routing-reliability-plan-v3_5.md` §12 item 4
 **Predecessor**: Stage 3 (Semantic Assist) — Phase 3c validated 2026-03-08
-**Status**: Partial implementation — G4 + G2/G3 shipped, G1 + G5 shadow mode active, G6 audited (all 2026-03-09); G7 not started
+**Status**: **Implementation complete, enforcement deferred** (2026-03-10). G4 + G2/G3 shipped, G1 + G5 + G7 shadow-frozen, G6 audited. G8/G9/G10 deferred. Successor: Stage 5.
 
 ---
 
@@ -33,7 +33,7 @@ Stage 4 is a **contract hardening pass** over this existing path, not a parallel
 | G4 | Validator-only input (§6 line 206) | 6-check structural validator before LLM | Implemented (structural checks) | High | **Implemented** 2026-03-09 |
 | G5 | TOCTOU revalidation before commit (§7 lines 237-243) | Shadow mode: pass/fail/not_revalidated logged, no behavior change. `visible_panels` upgraded to real pass/fail via fresh registry reader. | Shadow — fail path unexercised, `recent_referent`/`capability` still not_revalidated | High | **Shadow mode** 2026-03-09 |
 | G6 | Single-candidate: stay in Lane D (§8 lines 316-321) | No shortcut — full LLM pipeline runs | Compliant (code audit) | Medium | **Audited** 2026-03-09 |
-| G7 | Near-tie guard: `top1 - top2 < 0.02` → clarifier (§7.1 line 295) | Not present | Missing | Medium | Not started |
+| G7 | Near-tie guard: `top1 - top2 < 0.02` → clarifier (§7.1 line 295) | Shadow mode: Option A (B2 scores), log-only. Runtime-unproven (0 rows with >= 2 B2-scored candidates). | Shadow — blocked on upstream B2 coverage | Medium | **Shadow mode** 2026-03-10 |
 | G8 | Risk-tier differentiation (§7.1 lines 283-289) | No differentiation — all candidates treated equally | Missing | Low (no mutation intents yet) | Deferred |
 | G9 | Idempotency: at-most-once for mutations (§7 lines 265-269) | Not present | Missing | Low (no mutation intents yet) | Deferred |
 | G10 | Provenance: explicit Lane D label (§6, §14) | `grounding_llm_*` tier labels exist | Partial — rename/formalize | Low | Deferred |
@@ -49,10 +49,8 @@ Stage 4 is a **contract hardening pass** over this existing path, not a parallel
 
 **Shadow mode (observation only, no behavior change):**
 - G1: Confidence threshold — shadow at 0.75, live at 0.4. Absent-path validated; true-path pending sample growth. Enforcement after shadow data confirms acceptable impact. See §4a.
-- G5: TOCTOU revalidation — pass/fail/not_revalidated logged on select path. Pass and not_revalidated validated; fail unexercised. Enforcement blocked until fail path fires and not_revalidated sources are upgraded. See §4c.
-
-**Should-fix (medium priority):**
-- G7: Near-tie guard
+- G5: TOCTOU revalidation — pass/fail/not_revalidated logged on select path. `visible_panels` upgraded from `not_revalidated` to real pass/fail via fresh registry reader (2026-03-09). Pass validated for widget_list and visible_panels; fail unexercised; `recent_referent`/`capability` remain not_revalidated. Enforcement blocked until fail path fires and remaining not_revalidated sources are exempted. See §4c.
+- G7: Near-tie guard — shadow mode, Option A (B2 scores). Unit-proven (8/8). Runtime-unproven: 0 Tier 4.5 rows have >= 2 validated B2-scored candidates. Blocked on upstream B2 coverage, not a G7 defect. See §4e.
 
 **Deferred (low priority — no current use case):**
 - G8: Risk-tier differentiation (requires mutation intents)
@@ -216,12 +214,32 @@ The plan's near-tie guard (§7.1 line 295) is a general ambiguity rule: `top1_sc
 | B | LLM confidence | Post-LLM; measures selector certainty | Single scalar, no per-candidate ranking |
 | C | Hybrid: B2 when available, skip guard otherwise | Pragmatic | Inconsistent behavior depending on B2 availability |
 
-**Recommendation**: Option A for candidates with B2 scores. For candidates without B2 scores (pure grounding), the guard does not apply (no semantic ranking exists to compare). Log which path was taken.
+**Decision**: Option A — B2 semantic similarity. Locked 2026-03-10.
 
-If the LLM returns `select` and the top two B2-scored candidates differ by less than 0.02:
-- Override to `need_more_info`
-- Route to clarifier
-- Log near-tie suppression
+**Shadow mode implemented (2026-03-10)**: Log-only, no behavior change.
+
+After LLM returns `select`, the guard computes the margin between the top-2 B2-scored candidates in the post-G4/post-G2 set (`llmCandidates`). If margin < 0.02, logs `g7_near_tie_detected`. Does not override the LLM decision in shadow mode.
+
+**Constraints**:
+- Only fires when >= 2 validated candidates have B2 scores; otherwise G7 fields are absent (no pseudo-margin invented)
+- Operates on the post-G4/post-G2 candidate set — the set that actually reached the LLM
+- B2 score mapping uses `slots_json.itemId`/`slots_json.candidateId` — same matching logic as `reorderClarifierCandidates`
+
+**Files**:
+- `lib/chat/routing-dispatcher.ts:4701-4750` — G7 shadow check on select path, before candidate execution
+- `lib/chat/routing-dispatcher.ts:526-530` — G7 fields in `_llmTelemetry` type
+- `lib/chat/routing-dispatcher.ts:1467-1471` — G7 serialization to log payload
+- Telemetry: `llm_g7_near_tie_detected`, `llm_g7_margin`, `llm_g7_top1_score`, `llm_g7_top2_score`, `llm_g7_candidate_basis` in `semantic_hint_metadata`
+- `lib/chat/routing-log/payload.ts:103-108` — field definitions
+- `app/api/chat/routing-log/route.ts:118-122` — persistence
+
+**Unit tests**: 8/8 pass in `__tests__/unit/chat/stage4-shadow-telemetry.test.ts` — covers near-tie detected, exact tie, no near-tie, boundary (margin = 0.02), < 2 B2-scored candidates, no B2 scores, partial B2 coverage, and B2 map exclusion.
+
+**Runtime validation**: Not yet proven. Current data has 0 Tier 4.5 rows with >= 2 validated B2-scored candidates (`max(b2_validated_count) = 1`). Some rows have B2 hits (`b2_status = discarded_handled`) but none with sufficient overlap to trigger G7. This is an upstream B2 coverage gap, not a G7 defect. Runtime validation will come when B2 produces >= 2 scored candidates on a select path.
+
+**Enforcement (not yet started)**:
+- On near-tie detected: override `select` → `need_more_info`, route to clarifier
+- Enforcement blocked until: (a) runtime shadow data confirms the guard fires in practice, (b) margin threshold (0.02) is validated against real B2 score distributions
 
 **Note**: B2 candidates are available via `semanticCandidatesForReorder` in the dispatcher. The guard only fires when B2 scores are present for at least two candidates in the validated set.
 
@@ -259,27 +277,34 @@ Audit question: when exactly 1 validated candidate reaches Tier 4.5, does the sy
 | Near-tie suppression rate | Near-tie guard triggers / total `select` decisions | Durable log (new field) |
 | Candidate trim rate | Trim operations / total Tier 4.5 entries | Debug log |
 
-### Baseline capture (before Stage 4 changes)
+### Baseline capture
 
-Before implementing any gap fix, capture current values for:
+Pre-Stage 4 baseline values are available in the durable log (rows before 2026-03-09). Key metrics:
 - LLM selector success rate
 - Clarifier rate
-- Confidence distribution at the current 0.4 threshold
+- Confidence distribution at the 0.4 threshold
 - Average/P95 LLM latency
 
 **Baseline exclusion**: Lane E-first rows (routing_attempt with `clarifier/E/failed/unhandled`) are excluded from Stage 4 baseline queries. These queries never traversed the Tier 4.5 bounded-selector path due to upstream question-intent classification. See `question-intent-overclassification.md` for details.
 
 ---
 
-## 6) Rollout plan
+## 6) Rollout status
 
-1. **Baseline capture** — Measure current Tier 4.5 metrics (selector success rate, clarifier rate, confidence distribution, latency) before any changes
-2. **Shadow metrics** — Add telemetry for G1 (would-be rejections at 0.75) and G5 (TOCTOU revalidation result) without changing behavior
-3. **G4 validator gate** — Formalize validated-candidate-only input. Do this before measuring or enforcing other gaps — metrics on an unvalidated candidate set are less trustworthy.
-4. **G2+G3 candidate cap** — Low risk, apply immediately (rarely triggers in practice)
-5. **G1 confidence threshold** — Switch from 0.4 to 0.75 after shadow metrics confirm acceptable clarifier rate increase
-6. **G5 TOCTOU** — Enable in shadow (log-only) first, then enforce
-7. **G7 near-tie guard** — Enable after TOCTOU is stable
+| Step | Description | Status |
+|------|-------------|--------|
+| 1 | **Baseline capture** — Measure Tier 4.5 metrics before changes | Done (pre-Stage 4 data in durable log) |
+| 2 | **G4 validator gate** — Formalize validated-candidate-only input | **Shipped** 2026-03-09 |
+| 3 | **G2+G3 candidate cap** — Cap at 8, deterministic sort when trimming | **Shipped** 2026-03-09 |
+| 4 | **G1 shadow** — Log would-be rejections at 0.75 without changing live 0.4 | **Shadow active** 2026-03-09 |
+| 5 | **G5 TOCTOU shadow** — Log pass/fail/not_revalidated on select path | **Shadow active** 2026-03-09. `visible_panels` upgraded to real pass/fail 2026-03-09. |
+| 6 | **G6 audit** — Confirm single-candidate behavior is compliant | **Audited** 2026-03-09 |
+| 7 | **G7 near-tie shadow** — Log near-tie detection using B2 scores | **Shadow active** 2026-03-10. Runtime-unproven (0 rows with >= 2 B2-scored candidates). |
+| 8 | **G1 enforcement** — Raise `MIN_CONFIDENCE_SELECT` from 0.4 to 0.75 | **Shadow-frozen** 2026-03-10. 0.4 stays live, 0.75 shadow-only. Revisit after more real selects in 0.4–0.75 band. |
+| 9 | **G5 enforcement** — Reject on TOCTOU fail | **Shadow-frozen** 2026-03-10. Pending fail-path evidence + exemption policy for `recent_referent`/`capability`. |
+| 10 | **G7 enforcement** — Override select → clarifier on near-tie | **Shadow-frozen** 2026-03-10. Blocked on Stage 5 B2 resolution-layer coverage (0 rows with >= 2 B2-scored candidates). |
+
+**Stage 4 completion decision (2026-03-10)**: Implementation complete, enforcement deferred. All gaps have shadow telemetry or are shipped. Enforcement requires data that does not yet exist — stalling the roadmap on sparse-data decisions is not productive. Shadow telemetry continues passively. Enforcement revisited when data thresholds are met or Stage 5 B2 upgrades produce richer candidate overlap.
 
 All changes behind feature flags. Kill switch: `CHAT_ROUTING_BOUNDED_LLM_STAGE4_ENABLED`.
 

@@ -98,4 +98,22 @@ export interface RoutingLogPayload {
   llm_g5_toctou_result?: 'pass' | 'fail' | 'not_revalidated'
   llm_g5_toctou_reason?: string            // fail/not_revalidated reason code
   llm_g5_toctou_window_ms?: number         // ms between turnSnapshot capture and revalidation check
+
+  // Stage 4 G7: Near-tie guard telemetry (shadow mode — no behavior change)
+  // Only emitted when >= 2 validated candidates have B2 scores on select path
+  llm_g7_near_tie_detected?: boolean       // true when top1 - top2 < 0.02
+  llm_g7_margin?: number                   // score difference between top-1 and top-2 B2 candidates
+  llm_g7_top1_score?: number               // B2 similarity score of highest-scored candidate
+  llm_g7_top2_score?: number               // B2 similarity score of second-highest candidate
+  llm_g7_candidate_basis?: string          // 'b2_scored_validated' — which candidate set was scored
+
+  // Stage 5: Semantic resolution reuse shadow telemetry
+  // Emitted when B2 returns validated candidates (Stage 5 evaluation ran)
+  s5_lookup_attempted?: boolean            // true = Stage 5 evaluation ran on B2 candidates
+  s5_candidate_count?: number              // B2 validated candidates evaluated by Stage 5
+  s5_top_similarity?: number               // highest similarity score among evaluated candidates
+  s5_validation_result?: string            // mutually exclusive outcome (see S5ValidationResult)
+  s5_replayed_intent_id?: string           // only on shadow_replay_eligible
+  s5_replayed_target_id?: string           // only on shadow_replay_eligible
+  s5_fallback_reason?: string              // detail on why Stage 5 fell through
 }

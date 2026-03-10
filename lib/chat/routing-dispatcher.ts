@@ -87,6 +87,7 @@ import { lookupSemanticMemory, type SemanticCandidate, type SemanticLookupResult
 import { validateMemoryCandidate } from '@/lib/chat/routing-log/memory-validator'
 import { buildResultFromMemory } from '@/lib/chat/routing-log/memory-action-builder'
 import { computeClarifierReorderTelemetry, reorderClarifierCandidates, type ReorderableCandidate } from '@/lib/chat/routing-log/clarifier-reorder'
+import { evaluateStage5Replay } from '@/lib/chat/routing-log/stage5-evaluator'
 
 // =============================================================================
 // Phase 1 Observe-Only — Routing Log Helpers
@@ -522,7 +523,16 @@ export interface RoutingDispatcherResult {
     g5ToctouResult?: 'pass' | 'fail' | 'not_revalidated'
     g5ToctouReason?: string
     g5ToctouWindowMs?: number
+    /** G7 near-tie guard (shadow mode) */
+    g7NearTieDetected?: boolean
+    g7Margin?: number
+    g7Top1Score?: number
+    g7Top2Score?: number
+    g7CandidateBasis?: string
   }
+
+  /** Stage 5: Semantic resolution reuse shadow telemetry (set in dispatchRouting, before tier chain) */
+  _s5Telemetry?: import('./routing-log/stage5-evaluator').S5EvaluationResult
 
   /** Phase 3c: B2 lookup status for server-side clarifier telemetry (set in dispatchRouting) */
   _b2LookupStatus?: 'ok' | 'empty' | 'timeout' | 'error' | 'disabled'
@@ -1363,6 +1373,21 @@ export async function dispatchRouting(
   }
 
   // ---------------------------------------------------------------------------
+  // Stage 5: Semantic resolution reuse (shadow mode — log-only, no execution)
+  // Runs after B2 lookup, before tier chain. Evaluates whether B2 candidates
+  // would qualify for auto-replay. Slice 1: always falls through to tier chain.
+  // ---------------------------------------------------------------------------
+  let s5Telemetry: import('./routing-log/stage5-evaluator').S5EvaluationResult | undefined
+
+  if (semanticCandidatesForLaneD && semanticCandidatesForLaneD.length > 0) {
+    try {
+      s5Telemetry = evaluateStage5Replay(semanticCandidatesForLaneD, turnSnapshotForLog)
+    } catch {
+      // Stage 5 eval failed — fail-open, no telemetry
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Normal tier chain
   // ---------------------------------------------------------------------------
   let result: RoutingDispatcherResult | undefined
@@ -1377,6 +1402,11 @@ export async function dispatchRouting(
   // Attach semantic candidates to result (only if tier chain didn't handle it)
   if (!routingError && result && !result.handled && semanticCandidatesForLaneD) {
     result._semanticCandidates = semanticCandidatesForLaneD
+  }
+
+  // Stage 5: attach shadow telemetry to result
+  if (!routingError && result && s5Telemetry) {
+    result._s5Telemetry = s5Telemetry
   }
 
   // Phase 3c: expose B2 lookup status for server-side clarifier telemetry in sendMessage
@@ -1456,6 +1486,25 @@ export async function dispatchRouting(
           logPayload.llm_g5_toctou_reason = lt.g5ToctouReason
           logPayload.llm_g5_toctou_window_ms = lt.g5ToctouWindowMs
         }
+        // G7 near-tie guard telemetry — only emitted when >= 2 B2-scored candidates
+        if (lt.g7CandidateBasis) {
+          logPayload.llm_g7_near_tie_detected = lt.g7NearTieDetected
+          logPayload.llm_g7_margin = lt.g7Margin
+          logPayload.llm_g7_top1_score = lt.g7Top1Score
+          logPayload.llm_g7_top2_score = lt.g7Top2Score
+          logPayload.llm_g7_candidate_basis = lt.g7CandidateBasis
+        }
+      }
+
+      // Stage 5: Shadow telemetry — emitted when B2 returned validated candidates
+      if (s5Telemetry) {
+        logPayload.s5_lookup_attempted = s5Telemetry.attempted
+        logPayload.s5_candidate_count = s5Telemetry.candidateCount
+        logPayload.s5_top_similarity = s5Telemetry.topSimilarity
+        logPayload.s5_validation_result = s5Telemetry.validationResult
+        logPayload.s5_replayed_intent_id = s5Telemetry.replayedIntentId
+        logPayload.s5_replayed_target_id = s5Telemetry.replayedTargetId
+        logPayload.s5_fallback_reason = s5Telemetry.fallbackReason
       }
 
       await recordRoutingLog(logPayload)
@@ -4684,6 +4733,71 @@ async function dispatchRoutingInner(
 
           if (llmResult.success && llmResult.response) {
             if (llmResult.response.decision === 'select' && llmResult.response.choiceId) {
+              // ---------------------------------------------------------------
+              // Stage 4 G7: Near-tie guard (shadow mode — log only, no behavior change)
+              // When >= 2 validated candidates have B2 scores, check if the margin
+              // between top-1 and top-2 is below the configured threshold.
+              // Only computed on the post-G4/post-G2 candidate set (llmCandidates).
+              // ---------------------------------------------------------------
+              const G7_NEAR_TIE_MARGIN = 0.02
+              if (semanticCandidatesForReorder && semanticCandidatesForReorder.length > 0) {
+                // Build B2 score map: grounding candidate ID → best similarity score
+                // Same matching logic as clarifier-reorder.ts:144-156
+                const b2ScoreMap = new Map<string, number>()
+                for (const sc of semanticCandidatesForReorder) {
+                  const itemId = sc.slots_json?.itemId as string | undefined
+                  const candidateId = sc.slots_json?.candidateId as string | undefined
+                  for (const id of [itemId, candidateId]) {
+                    if (id) {
+                      const existing = b2ScoreMap.get(id)
+                      if (existing === undefined || sc.similarity_score > existing) {
+                        b2ScoreMap.set(id, sc.similarity_score)
+                      }
+                    }
+                  }
+                }
+
+                // Score the post-G4/post-G2 candidate set
+                const b2ScoredCandidates = llmCandidates
+                  .map(c => ({ id: c.id, score: b2ScoreMap.get(c.id) }))
+                  .filter((c): c is { id: string; score: number } => c.score !== undefined)
+                  .sort((a, b) => b.score - a.score)
+
+                if (b2ScoredCandidates.length >= 2) {
+                  const top1Score = b2ScoredCandidates[0].score
+                  const top2Score = b2ScoredCandidates[1].score
+                  const margin = top1Score - top2Score
+                  const nearTieDetected = margin < G7_NEAR_TIE_MARGIN
+
+                  if (defaultResult._llmTelemetry) {
+                    defaultResult._llmTelemetry.g7NearTieDetected = nearTieDetected
+                    defaultResult._llmTelemetry.g7Margin = margin
+                    defaultResult._llmTelemetry.g7Top1Score = top1Score
+                    defaultResult._llmTelemetry.g7Top2Score = top2Score
+                    defaultResult._llmTelemetry.g7CandidateBasis = 'b2_scored_validated'
+                  }
+
+                  if (nearTieDetected) {
+                    void debugLog({
+                      component: 'ChatNavigation',
+                      action: 'g7_near_tie_detected',
+                      metadata: {
+                        input: ctx.trimmedInput,
+                        margin,
+                        top1Score,
+                        top2Score,
+                        top1Id: b2ScoredCandidates[0].id,
+                        top2Id: b2ScoredCandidates[1].id,
+                      },
+                    })
+                  }
+                }
+                // else: fewer than 2 B2-scored candidates → G7 fields absent (by design)
+              }
+              // ---------------------------------------------------------------
+              // End G7 near-tie guard shadow
+              // ---------------------------------------------------------------
+
               // LLM selected a candidate — find and execute
               const selected = groundingResult.llmCandidates.find(
                 c => c.id === llmResult.response!.choiceId

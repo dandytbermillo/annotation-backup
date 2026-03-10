@@ -5,7 +5,7 @@
  * All output values MUST match migration 067 CHECK constraints exactly.
  *
  * ChatProvenance union (from chat-navigation-context.tsx):
- *   'deterministic' | 'llm_executed' | 'llm_influenced' | 'llm_clarifier' | 'safe_clarifier' | 'memory_exact'
+ *   'deterministic' | 'llm_executed' | 'llm_influenced' | 'llm_clarifier' | 'safe_clarifier' | 'memory_exact' | 'memory_semantic'
  */
 
 import type { RoutingLane, DecisionSource, ResultStatus, RiskTier } from './types'
@@ -53,6 +53,7 @@ export function provenanceToDecisionSource(hint: string | undefined): DecisionSo
     case 'llm_clarifier': return 'clarifier'
     case 'safe_clarifier': return 'clarifier'
     case 'memory_exact': return 'memory_exact'
+    case 'memory_semantic': return 'memory_semantic'
     default: return 'clarifier'
   }
 }
@@ -68,8 +69,9 @@ export function deriveResultStatus(
   provenanceHint: string | undefined,
   tierLabel: string | undefined,
 ): ResultStatus {
-  // Memory-exact: always 'executed' (validated against live snapshot before use)
+  // Memory lanes: always 'executed' (validated against live snapshot before use)
   if (provenanceHint === 'memory_exact') return 'executed'
+  if (provenanceHint === 'memory_semantic') return 'executed'
 
   // Clarifier paths: always 'clarified'
   if (provenanceHint === 'safe_clarifier') return 'clarified'
