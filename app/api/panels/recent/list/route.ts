@@ -107,6 +107,7 @@ export async function POST(request: NextRequest) {
         title: item.name,
         name: item.name,
         subtitle: item.parentName,
+        accessedAt: item.accessedAt,
         entryId: item.entryId,
         workspaceId: item.type === 'workspace' ? item.id : undefined,
         dashboardId: item.dashboardId,

@@ -118,7 +118,7 @@ export async function POST(request: NextRequest) {
     // in one transaction. Increment winner only if UPSERT wrote to a different row.
     const replaySourceRowId = payload.replay_source_row_id
     let winnerIncremented = false
-    let winnerIncrementSkippedReason: 'same_row' | 'source_missing' | undefined
+    let winnerIncrementSkippedReason: 'same_row' | 'scope_mismatch' | 'source_missing' | undefined
 
     if (replaySourceRowId) {
       const client = await serverPool.connect()
@@ -128,12 +128,15 @@ export async function POST(request: NextRequest) {
         const writtenRowId = upsertResult.rows[0]?.id as string | undefined
 
         if (writtenRowId && writtenRowId !== replaySourceRowId) {
-          await client.query(WINNER_INCREMENT_SQL, [
+          const incrementResult = await client.query(WINNER_INCREMENT_SQL, [
             replaySourceRowId,
             OPTION_A_TENANT_ID,
             OPTION_A_USER_ID,
           ])
-          winnerIncremented = true
+          winnerIncremented = (incrementResult.rowCount ?? 0) > 0
+          if (!winnerIncremented) {
+            winnerIncrementSkippedReason = 'scope_mismatch'
+          }
         } else {
           winnerIncrementSkippedReason = 'same_row'
         }
@@ -146,7 +149,7 @@ export async function POST(request: NextRequest) {
       }
     } else {
       await serverPool.query(UPSERT_SQL, upsertParams)
-      winnerIncrementSkippedReason = replaySourceRowId === undefined ? 'source_missing' : undefined
+      winnerIncrementSkippedReason = 'source_missing'
     }
 
     return NextResponse.json({

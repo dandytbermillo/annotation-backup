@@ -5231,6 +5231,67 @@ async function dispatchRoutingInner(
                 metadata: { input: ctx.trimmedInput },
               })
 
+              // Single visible-panel candidate + command form → auto-execute.
+              // A single-option clarifier for command-form panel requests adds friction
+              // without disambiguation value. The bounded LLM already evaluated the
+              // candidate set (scoped by panel evidence matching).
+              // Provenance: 'llm_executed' — LLM was consulted in the pipeline.
+              // This does NOT violate strict-exact rules: no verb stripping for
+              // deterministic authorization. The candidate was found through advisory
+              // panel evidence matching, the LLM was consulted, and execution is a
+              // post-LLM single-candidate heuristic.
+              const singlePanelCandidate = groundingResult.llmCandidates.length === 1
+                && isExplicitCommand(ctx.trimmedInput)
+                && groundingResult.llmCandidates[0].source === 'visible_panels'
+                ? groundingResult.llmCandidates[0]
+                : null
+
+              if (singlePanelCandidate && ctx.openPanelDrawer) {
+                void debugLog({
+                  component: 'ChatNavigation',
+                  action: 'grounding_llm_single_panel_auto_execute',
+                  metadata: {
+                    candidateId: singlePanelCandidate.id,
+                    candidateLabel: singlePanelCandidate.label,
+                    llmDecision: llmResult.response.decision,
+                    reason: 'single_visible_panel_command_form',
+                  },
+                })
+
+                const panelMeta = classifyExecutionMeta({
+                  matchKind: 'partial' as const,
+                  candidateCount: 1,
+                  resolverPath: 'handleGroundingSet',
+                })
+                ctx.openPanelDrawer(singlePanelCandidate.id, singlePanelCandidate.label, panelMeta)
+
+                const panelMsg: ChatMessage = {
+                  id: `assistant-${Date.now()}`,
+                  role: 'assistant',
+                  content: `Opening ${singlePanelCandidate.label}...`,
+                  timestamp: new Date(),
+                  isError: false,
+                }
+                ctx.addMessage(panelMsg)
+                ctx.setIsLoading(false)
+
+                return {
+                  ...defaultResult,
+                  handled: true,
+                  handledByTier: 4,
+                  tierLabel: 'grounding_llm_single_panel_auto_execute',
+                  clarificationCleared,
+                  isNewQuestionOrCommandDetected,
+                  classifierCalled,
+                  classifierResult,
+                  classifierTimeout,
+                  classifierLatencyMs,
+                  classifierError,
+                  isFollowUp,
+                  _devProvenanceHint: 'llm_executed' as const,
+                }
+              }
+
               const clarifierMsgId = `assistant-${Date.now()}`
               const effectiveCandidates = maybeActiveReorder(groundingResult.llmCandidates)
               const boundOptions = bindGroundingClarifierOptions(ctx, effectiveCandidates, clarifierMsgId)

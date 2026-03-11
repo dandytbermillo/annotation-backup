@@ -253,14 +253,37 @@ Audit question: when exactly 1 validated candidate reaches Tier 4.5, does the sy
 
 **Findings** (from `routing-dispatcher.ts:4536-4928`):
 
-- **No single-candidate shortcut exists.** The Tier 4.5 path is identical regardless of candidate count: G4 validate → G2/G3 cap/trim → call grounding LLM → dispatch on LLM decision.
-- **LLM is always called.** No `if (candidates.length === 1)` guard or auto-select bypass. The LLM receives the single candidate and returns `select` or `need_more_info` like any other case.
+- **LLM is always called.** No `if (candidates.length === 1)` guard or auto-select bypass before the LLM call. The LLM receives the single candidate and returns `select` or `need_more_info` like any other case.
 - **On `select`**: the system executes the candidate (same as multi-candidate select).
-- **On `need_more_info`**: the system shows a clarifier (same as multi-candidate need_more_info).
+- **On `need_more_info`**: the system shows a clarifier (same as multi-candidate need_more_info), **except** for the narrow exception below.
 - **No backward path to Lane A deterministic.** No Tier 4.5 branch hands a candidate back to deterministic matchers.
 - **No-model shortcut**: not implemented (depends on G5 TOCTOU, which is not started).
 
-**Status**: Compliant by code audit. No runtime trace of a single-candidate Tier 4.5 interaction has been captured yet.
+### §4 Exception: Single visible-panel LLM abstain override (2026-03-10)
+
+**Approved policy change** — narrow exception to the `need_more_info` → clarifier contract.
+
+When the bounded LLM returns `need_more_info` but **all three** conditions hold:
+
+1. Exactly 1 candidate in the grounding set
+2. That candidate has `source: 'visible_panels'`
+3. The input is a command form (`isExplicitCommand(input) === true`)
+
+...the system **overrides the LLM abstain** and auto-executes the panel open. A single-option clarifier ("Which option did you mean? Links Panel A?") adds no disambiguation value for command-form panel requests.
+
+**What this is**: An LLM abstain override for a narrow panel-command case. The LLM ran, it said `need_more_info`, and the code overrides that decision based on a heuristic.
+
+**What this is NOT**: A generic single-candidate auto-execute rule. The exception applies only to `visible_panels` + command form. All other `need_more_info` cases (widget items, referents, capabilities, non-command inputs) still show a clarifier.
+
+**Provenance**: `llm_executed` (not `deterministic`). The LLM was consulted in the pipeline. The execution is a post-LLM heuristic, not a strict-exact deterministic match.
+
+**Strict-exact compliance**: No verb stripping for deterministic authorization. The candidate was found through advisory panel evidence matching. `matchKind` remains `'partial'`, not `'registry_exact'`.
+
+**Implementation**: `routing-dispatcher.ts:5234` — `grounding_llm_single_panel_auto_execute` branch.
+
+**Test coverage**: `__tests__/unit/chat/single-panel-auto-execute.test.ts` — 1 positive test (auto-execute fires) + 2 negative tests (non-command input → clarifier, non-visible_panels source → clarifier).
+
+**Status**: Implemented and tested (2026-03-10). Not runtime-validated yet.
 
 ---
 
