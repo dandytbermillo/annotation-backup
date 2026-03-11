@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { serverPool } from '@/lib/db/pool'
-import { normalizeForStorage, computeQueryFingerprint } from '@/lib/chat/routing-log/normalization'
+import { normalizeForStorage, computeQueryFingerprint, sha256Hex } from '@/lib/chat/routing-log/normalization'
 import {
   OPTION_A_TENANT_ID,
   OPTION_A_USER_ID,
@@ -8,6 +8,7 @@ import {
   MEMORY_TOOL_VERSION,
 } from '@/lib/chat/routing-log/types'
 import { computeEmbedding } from '@/lib/chat/routing-log/embedding-service'
+import { canonicalJsonSerialize, stripVolatileFields } from '@/lib/chat/routing-log/context-snapshot'
 import type { ContextSnapshotV1 } from '@/lib/chat/routing-log/context-snapshot'
 
 /**
@@ -23,7 +24,8 @@ import type { ContextSnapshotV1 } from '@/lib/chat/routing-log/context-snapshot'
  * 7. Cosine similarity >= 0.92 — floor threshold
  */
 const SEMANTIC_LOOKUP_SQL = `
-  SELECT intent_id, intent_class, slots_json, target_ids, risk_tier,
+  SELECT id AS matched_row_id,
+         intent_id, intent_class, slots_json, target_ids, risk_tier,
          success_count, context_fingerprint,
          1 - (semantic_embedding <=> $3) AS similarity_score
   FROM chat_routing_memory_index
@@ -87,6 +89,7 @@ export async function POST(request: NextRequest) {
     ])
 
     const candidates = rows.map((row: Record<string, unknown>) => ({
+      matched_row_id: row.matched_row_id as string,
       intent_id: row.intent_id as string,
       intent_class: row.intent_class as string,
       slots_json: row.slots_json as Record<string, unknown>,
@@ -97,7 +100,17 @@ export async function POST(request: NextRequest) {
       similarity_score: Number(row.similarity_score),
     }))
 
-    return NextResponse.json({ candidates, lookup_status: candidates.length > 0 ? 'ok' : 'empty_results' }, { status: 200 })
+    // Compute current context fingerprint using same formula as memory write route.
+    // Stage 5 evaluator uses this to compare against each candidate's stored fingerprint.
+    const currentContextFingerprint = sha256Hex(
+      canonicalJsonSerialize(stripVolatileFields(payload.context_snapshot))
+    )
+
+    return NextResponse.json({
+      candidates,
+      lookup_status: candidates.length > 0 ? 'ok' : 'empty_results',
+      current_context_fingerprint: currentContextFingerprint,
+    }, { status: 200 })
   } catch (err: unknown) {
     // Fail-open: return empty candidates on DB/embedding errors
     console.warn('[routing-memory] semantic lookup failed (non-fatal):', (err as Error).message)

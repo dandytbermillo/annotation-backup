@@ -4,7 +4,7 @@
 **Parent plan**: `multi-layer-routing-reliability-plan-v3_5.md`
 **Predecessor**: Stage 4 (Bounded Selector Hardening) — implementation complete, enforcement deferred 2026-03-10
 **Ordering rationale**: `stage-ordering-rationale.md`
-**Status**: Slice 1 (shadow mode) implemented and runtime-validated 2026-03-10. Slice 2 (enforcement) not started.
+**Status**: Slice 2 (enforcement) closed 2026-03-10. Ordinal replay bug fixed (Fix A + Fix B). Writeback semantics deferred to Slice 3.
 
 ---
 
@@ -93,7 +93,7 @@ After a candidate passes replay eligibility, it must pass live validation before
 | **Context compatible** | Current `context_fingerprint` matches or is compatible with stored fingerprint | Reject → fall through |
 | **Single match** | Exactly one candidate passes all gates. If multiple pass, treat as ambiguous. | Reject (`rejected_ambiguous`) → fall through to Stage 4 |
 
-**What "context compatible" means**: The strict interpretation is exact fingerprint match. The relaxed interpretation allows replay when the context is a superset (e.g., more panels open than before, but the target panel is still there). First implementation slice uses **strict match only**. Relaxation is a future tuning decision after telemetry.
+**What "context compatible" means**: Exact fingerprint match. The current context fingerprint is computed server-side using `sha256Hex(canonicalJsonSerialize(stripVolatileFields(context_snapshot)))` — the same formula as memory writes. Each candidate's stored `context_fingerprint` must match the current one. **Implemented as Gate 0 in `evaluateStage5Replay()` (Fix B, 2026-03-10).** Relaxation to superset matching is a future tuning decision after telemetry (Slice 3).
 
 **What validation does NOT check**:
 - Permission changes (`permission_signature` is hardcoded `'default'` — not meaningful until real permission data is stored)
@@ -132,7 +132,7 @@ User input arrives at dispatchRouting()
 - `result_status: 'executed'`
 - The action from `slots_json` (same as the original execution)
 
-**Memory write on replay**: Successful replay increments `success_count` and updates `last_success_at` on the matched memory entry. No new row created.
+**Memory write on replay**: Successful replay writes via standard UPSERT keyed on current query/context. Same-text replay increments `success_count` on existing row. Different-text replay creates a new row (does NOT increment the semantically matched winner). Matched-entry increment deferred to Slice 3.
 
 ---
 
@@ -211,18 +211,66 @@ Both consume `lookupSemanticMemory()` output. Stage 5 checks first (higher bar).
   - B1 hit queries: no `s5_*` fields (correct — B1 resolves before B2)
 - **Proof scope**: routing_attempt row only. No replay execution path tested (shadow mode).
 
-### Slice 2: Enforcement (gated)
+### Slice 2: Enforcement (gated) — **Implemented 2026-03-10**
+
 - On validated replay, actually execute and return `handled: true`
 - Behind feature flag: `NEXT_PUBLIC_STAGE5_RESOLUTION_REUSE_ENABLED`
-- Promotion criteria:
-  - Shadow data shows > X% replay candidates would have been correct
-  - Zero false-positive replays on incorrect targets
-  - Latency reduction measurable
+- `buildResultFromMemory()` constructs replay result from `winnerCandidate`
+- Provenance override: `_devProvenanceHint = 'memory_semantic'`, `tierLabel = 'memory_semantic:<intent_id>'`
+- Dedicated log builder: `buildRoutingLogPayloadFromSemanticMemory()` — `routing_lane: 'B2'`, `decision_source: 'memory_semantic'`
+- s5_* telemetry inline in log payload (early-return path skips general finalization)
+- Memory write: standard UPSERT keyed on `query_fingerprint` — same-text increments, different-text creates new row
+- `replay_build_failed` safety net: if `buildResultFromMemory()` returns null, downgrades telemetry
+- Unit tests: 27/27 passing (16 Slice 1 + 11 Slice 2)
+- **Runtime proof**: "review budget" → `replay_executed`, Memory-Semantic badge, `routing_lane=B2`
 
-### Slice 3: Tuning
-- Adjust `S5_REPLAY_THRESHOLD` based on similarity score distribution
-- Relax context fingerprint matching if strict match is too narrow
-- Add `permission_signature` validation if needed
+#### Fix A: Selection-context guard — **Implemented 2026-03-10**
+
+- **Problem**: Ordinal "2" replayed to budget200 via Stage 5 when user intended to select from an active clarifier (e.g., Links Panel B)
+- **Fix**: Added `&& !shouldSkipB1ForSelection` to Stage 5 block condition (same guard as B1 at line 1302)
+- **Behavior**: When `hasActiveSelectionContext && inputIsSelectionLike && !looksLikeNewCommand`, Stage 5 is skipped entirely
+- **Location**: `routing-dispatcher.ts` line ~1439
+
+#### Fix B: Context fingerprint gate — **Implemented 2026-03-10**
+
+- **Problem**: B2 SQL does not filter by `context_fingerprint`. Cross-context replays possible (e.g., ordinal stored in context A replays in context B)
+- **Fix**: 4-file change:
+  1. Server route (`semantic-lookup/route.ts`): computes `current_context_fingerprint` using `sha256Hex(canonicalJsonSerialize(stripVolatileFields(context_snapshot)))` — same formula as memory write
+  2. Client reader (`memory-semantic-reader.ts`): extracts `currentContextFingerprint` from response
+  3. Dispatcher (`routing-dispatcher.ts`): threads `b2CurrentContextFingerprint` to `evaluateStage5Replay()`
+  4. Evaluator (`stage5-evaluator.ts`): Gate 0 — `candidate.context_fingerprint !== currentContextFingerprint` → `rejected_context_mismatch`
+- **Fail-open**: When `currentContextFingerprint` is undefined (server error), Gate 0 is skipped
+- **Priority**: Lowest in closest-to-passing chain: target > risk_tier > action_type > context_mismatch
+- Unit tests: 33/33 passing (27 Slice 2 + 6 Fix B)
+
+#### Slice 2 closure — 2026-03-10
+
+- **Enforcement**: runtime-validated on the routing_attempt path. "review budget" → `replay_executed`, `routing_lane=B2`, `decision_source=memory_semantic`, Memory-Semantic badge.
+- **Ordinal replay bug**: runtime-proven fixed. "2" in active clarifier context → `routing_lane=A`, `decision_source=deterministic`, `provenance=clarification_intercept`. No `memory_semantic` replay.
+- **Durable log evidence**: pre-fix row (`B2`/`memory_semantic`/`replay_executed`) vs post-fix row (`A`/`deterministic`/`clarification_intercept`) in same database, same query text.
+- **Writeback semantics**: replay writes key on current query/context via standard UPSERT. Does not increment the originally matched semantic winner row. Accepted for Slice 2; deferred to Slice 3.
+- **Unit tests**: 33/33 passing (Slice 1 + Slice 2 + Fix B).
+
+### Slice 3: Tuning and writeback hardening
+
+#### 3a: Writeback accounting (data/update semantics) — **Implemented 2026-03-10**
+
+- **Problem**: Different-text semantic replays create a new row but don't increment the matched winner's `success_count`
+- **Fix**: Single-transaction replay-hit accounting on the existing `POST /api/chat/routing-memory` route
+  1. B2 lookup SQL now returns `matched_row_id` (memory index row UUID) per candidate
+  2. `SemanticCandidate.matchedRowId` carries the winner's row ID (separate from target/candidate IDs)
+  3. `MemoryWritePayload.replay_source_row_id` passes the winner ID to the server
+  4. Server flow: `BEGIN` → UPSERT (returns `written_row_id`) → if `written_row_id != replay_source_row_id`, increment winner → `COMMIT`
+- **Dedup**: Row-id comparison after UPSERT. Same-row replays (same text) don't double-count. Different-row replays increment the winner once.
+- **Scope safety**: Winner increment SQL includes `AND tenant_id = $2 AND user_id = $3` to prevent cross-scope writes.
+- **Telemetry**: Server response includes `winner_incremented` and `winner_increment_skipped_reason` (`same_row` | `source_missing`).
+- **Semantics change**: After Slice 3a, `success_count` means "row strength as a semantic source" (both direct executions AND semantic replays from other phrasings), not just "exact row executions."
+- Unit tests: 39/39 passing (33 Slice 2 + 6 Slice 3a)
+
+#### 3b: Replay policy hardening (eligibility policy)
+- Context fingerprint relaxation: evaluate strict vs superset matching from telemetry
+- Additional replay-policy hardening beyond ordinals (if needed after telemetry review)
+- `permission_signature` validation (when real permission data is stored)
 
 ---
 
@@ -259,15 +307,19 @@ Per `stage-ordering-rationale.md`:
 
 | Component | File | Status |
 |-----------|------|--------|
-| B2 semantic lookup (client) | `lib/chat/routing-log/memory-semantic-reader.ts` | Exists |
+| B2 semantic lookup (server) | `app/api/chat/routing-memory/semantic-lookup/route.ts` | **Fix B: returns `current_context_fingerprint`** |
+| B2 semantic lookup (client) | `lib/chat/routing-log/memory-semantic-reader.ts` | **Fix B: extracts `currentContextFingerprint`** |
 | Memory write (client) | `lib/chat/routing-log/memory-write-payload.ts` | Exists |
 | Memory index table | `migrations/068_chat_routing_memory_index.up.sql` | Exists |
 | Resolution memory table | `migrations/069_chat_routing_resolution_memory.up.sql` | Schema only |
 | Embedding service | `lib/chat/routing-log/embedding-service.ts` | Exists |
 | Clarifier reorder | `lib/chat/routing-log/clarifier-reorder.ts` | Exists |
 | Context snapshot | `lib/chat/routing-log/context-snapshot.ts` | Exists |
-| Stage 5 evaluator (pure function) | `lib/chat/routing-log/stage5-evaluator.ts` | **Slice 1 complete** |
-| Stage 5 dispatcher wiring | `lib/chat/routing-dispatcher.ts` (lines ~1376, ~1410, ~1499) | **Slice 1 complete** |
+| Stage 5 evaluator | `lib/chat/routing-log/stage5-evaluator.ts` | **Slice 2 + Fix B complete** (Gate 0: context fingerprint) |
+| Stage 5 dispatcher wiring | `lib/chat/routing-dispatcher.ts` | **Slice 2 + Fix A/B complete** |
 | Stage 5 telemetry fields | `lib/chat/routing-log/payload.ts` | **Slice 1 complete** |
 | Stage 5 persistence | `app/api/chat/routing-log/route.ts` | **Slice 1 complete** |
-| Stage 5 unit tests | `__tests__/unit/chat/stage5-shadow-telemetry.test.ts` | **16/16 passing** |
+| Stage 5 unit tests | `__tests__/unit/chat/stage5-shadow-telemetry.test.ts` | **33/33 passing** |
+| Provenance mapping | `lib/chat/routing-log/mapping.ts` | **Slice 2: memory_semantic support** |
+| Provenance type | `lib/chat/chat-navigation-context.tsx` | **Slice 2: memory_semantic in union** |
+| Provenance badge | `components/chat/ChatMessageList.tsx` | **Slice 2: Memory-Semantic badge** |

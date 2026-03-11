@@ -5,6 +5,7 @@
  * Slice 1: shadow-only — logs what would happen, never executes.
  *
  * Pipeline per candidate:
+ * 0. Context fingerprint match (Fix B — rejects cross-context replays, fail-open if unavailable)
  * 1. Action type allowlist (execute_widget_item, execute_referent)
  * 2. Risk tier gate (low only)
  * 3. Target exists + visible (reuses validateMemoryCandidate from memory-validator)
@@ -37,13 +38,14 @@ const S5_ACTION_ALLOWLIST = new Set(['execute_widget_item', 'execute_referent'])
 
 /**
  * Validation result — mutually exclusive, final.
- * Priority for 0-survivor case: target > risk_tier > action_type
+ * Priority for 0-survivor case: target > risk_tier > action_type > context_mismatch
  * (closest-to-passing reported first)
  */
 export type S5ValidationResult =
   | 'shadow_replay_eligible'
   | 'replay_executed'
   | 'replay_build_failed'
+  | 'rejected_context_mismatch'
   | 'rejected_action_type'
   | 'rejected_risk_tier'
   | 'rejected_target_gone'
@@ -59,6 +61,8 @@ export interface S5EvaluationResult {
   replayedIntentId?: string
   replayedTargetId?: string
   fallbackReason?: string
+  /** The single surviving candidate — only set on shadow_replay_eligible */
+  winnerCandidate?: SemanticCandidate
 }
 
 /**
@@ -66,11 +70,14 @@ export interface S5EvaluationResult {
  *
  * @param candidates - B2 validated candidates (already Gate 3 passed, >= 0.92 similarity)
  * @param turnSnapshot - Current live UI snapshot for target validation
+ * @param currentContextFingerprint - Current context fingerprint (computed server-side).
+ *        When provided, candidates whose stored context_fingerprint doesn't match are rejected.
  * @returns Evaluation result with shadow telemetry fields
  */
 export function evaluateStage5Replay(
   candidates: SemanticCandidate[],
   turnSnapshot: MinimalTurnSnapshot,
+  currentContextFingerprint?: string,
 ): S5EvaluationResult {
   const candidateCount = candidates.length
   const topSimilarity = candidateCount > 0
@@ -78,6 +85,7 @@ export function evaluateStage5Replay(
     : undefined
 
   // Per-gate rejection counters (for closest-to-passing reporting)
+  let rejContextMismatch = 0
   let rejActionType = 0
   let rejRiskTier = 0
   let rejTarget = 0
@@ -86,6 +94,14 @@ export function evaluateStage5Replay(
   const survivors: SemanticCandidate[] = []
 
   for (const c of candidates) {
+    // Gate 0: context fingerprint match (Fix B — strict context check)
+    // Candidates stored in a different UI context must not replay cross-context.
+    // When currentContextFingerprint is not available (e.g., server error), skip this gate (fail-open).
+    if (currentContextFingerprint && c.context_fingerprint !== currentContextFingerprint) {
+      rejContextMismatch++
+      continue
+    }
+
     // Gate 1: action type allowlist
     const actionType = c.slots_json.action_type as string | undefined
     if (!actionType || !S5_ACTION_ALLOWLIST.has(actionType)) {
@@ -126,6 +142,7 @@ export function evaluateStage5Replay(
       validationResult: 'shadow_replay_eligible',
       replayedIntentId: winner.intent_id,
       replayedTargetId: targetId,
+      winnerCandidate: winner,
     }
   }
 
@@ -140,7 +157,7 @@ export function evaluateStage5Replay(
   }
 
   // 0 survivors — report closest-to-passing rejection
-  // Priority: target (passed action_type + risk_tier) > risk_tier (passed action_type) > action_type
+  // Priority: target (passed all prior gates) > risk_tier > action_type > context_mismatch
   let validationResult: S5ValidationResult = 'no_eligible'
   let fallbackReason: string | undefined
 
@@ -155,6 +172,9 @@ export function evaluateStage5Replay(
   } else if (rejActionType > 0) {
     validationResult = 'rejected_action_type'
     fallbackReason = `${rejActionType}_not_in_allowlist`
+  } else if (rejContextMismatch > 0) {
+    validationResult = 'rejected_context_mismatch'
+    fallbackReason = `${rejContextMismatch}_fingerprint_mismatch`
   }
 
   return {

@@ -227,6 +227,57 @@ function buildRoutingLogPayloadFromMemory(
   }
 }
 
+/**
+ * Build a routing log payload for Stage 5 semantic memory replay (Slice 2).
+ * Same structure as B1's builder but with routing_lane='B2', decision_source='memory_semantic'.
+ * Includes s5_* telemetry fields inline (early-return path skips general finalization).
+ */
+function buildRoutingLogPayloadFromSemanticMemory(
+  ctx: RoutingDispatcherContext,
+  replayResult: RoutingDispatcherResult,
+  turnSnapshot: ReturnType<typeof buildTurnSnapshot>,
+  s5Telemetry: import('./routing-log/stage5-evaluator').S5EvaluationResult,
+): RoutingLogPayload {
+  const isLatchEnabled = process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1 === 'true'
+  const lastUserMessage = [...ctx.messages].reverse().find(m => m.role === 'user')
+  const turnIndex = ctx.messages.filter(m => m.role === 'user').length
+  const sessionId = getRoutingLogSessionId()
+  const interactionId = lastUserMessage?.id ?? deriveFallbackInteractionId(sessionId, turnIndex, ctx.trimmedInput)
+
+  const snapshot = buildContextSnapshot({
+    openWidgetCount: turnSnapshot.openWidgets.length,
+    pendingOptionsCount: ctx.pendingOptions.length,
+    activeOptionSetId: ctx.activeOptionSetId,
+    hasLastClarification: ctx.lastClarification !== null,
+    hasLastSuggestion: ctx.lastSuggestion !== null,
+    latchEnabled: isLatchEnabled,
+    messageCount: ctx.messages.length,
+  })
+
+  return {
+    raw_query_text: ctx.trimmedInput,
+    context_snapshot: snapshot,
+    session_id: sessionId,
+    interaction_id: interactionId,
+    turn_index: turnIndex,
+    routing_lane: 'B2',
+    decision_source: 'memory_semantic',
+    risk_tier: replayResult._memoryCandidate?.risk_tier ?? 'low',
+    provenance: replayResult.tierLabel ?? 'memory_semantic',
+    result_status: 'executed',
+    tier_label: replayResult.tierLabel,
+    handled_by_tier: undefined,
+    // Stage 5 telemetry (inline — early-return path skips general finalization)
+    s5_lookup_attempted: s5Telemetry.attempted,
+    s5_candidate_count: s5Telemetry.candidateCount,
+    s5_top_similarity: s5Telemetry.topSimilarity,
+    s5_validation_result: s5Telemetry.validationResult,
+    s5_replayed_intent_id: s5Telemetry.replayedIntentId,
+    s5_replayed_target_id: s5Telemetry.replayedTargetId,
+    s5_fallback_reason: s5Telemetry.fallbackReason,
+  }
+}
+
 // =============================================================================
 // Helpers
 // =============================================================================
@@ -1312,6 +1363,7 @@ export async function dispatchRouting(
   // ---------------------------------------------------------------------------
   const semanticReadEnabled = process.env.NEXT_PUBLIC_CHAT_ROUTING_MEMORY_SEMANTIC_READ === 'true'
   let semanticCandidatesForLaneD: SemanticCandidate[] | undefined
+  let b2CurrentContextFingerprint: string | undefined
   let b2LookupStatus: 'ok' | 'empty' | 'timeout' | 'error' | 'disabled' | undefined
 
   // B2 telemetry: track every B2 outcome (only when B2-eligible: memoryReadEnabled=true)
@@ -1340,6 +1392,7 @@ export async function dispatchRouting(
         context_snapshot: lookupSnapshot,
       })
       b2LookupStatus = lookupResult.status
+      b2CurrentContextFingerprint = lookupResult.currentContextFingerprint
 
       // Map structured result to b2Telemetry
       if (lookupResult.status === 'ok') {
@@ -1373,15 +1426,80 @@ export async function dispatchRouting(
   }
 
   // ---------------------------------------------------------------------------
-  // Stage 5: Semantic resolution reuse (shadow mode — log-only, no execution)
+  // Stage 5: Semantic resolution reuse
   // Runs after B2 lookup, before tier chain. Evaluates whether B2 candidates
-  // would qualify for auto-replay. Slice 1: always falls through to tier chain.
+  // qualify for auto-replay.
+  // - Shadow mode (default): log what would happen, always fall through
+  // - Enforcement mode (NEXT_PUBLIC_STAGE5_RESOLUTION_REUSE_ENABLED): actually replay
+  //
+  // Guard: skip Stage 5 when active selection context + selection-like input.
+  // Same protection as B1 (line 1302). Ordinals like "2" are context-sensitive
+  // and must not replay cross-context semantic matches.
   // ---------------------------------------------------------------------------
   let s5Telemetry: import('./routing-log/stage5-evaluator').S5EvaluationResult | undefined
 
-  if (semanticCandidatesForLaneD && semanticCandidatesForLaneD.length > 0) {
+  if (semanticCandidatesForLaneD && semanticCandidatesForLaneD.length > 0 && !shouldSkipB1ForSelection) {
     try {
-      s5Telemetry = evaluateStage5Replay(semanticCandidatesForLaneD, turnSnapshotForLog)
+      s5Telemetry = evaluateStage5Replay(semanticCandidatesForLaneD, turnSnapshotForLog, b2CurrentContextFingerprint)
+
+      // Slice 2: enforcement — actually replay when eligible and flag is on
+      const s5EnforcementEnabled = process.env.NEXT_PUBLIC_STAGE5_RESOLUTION_REUSE_ENABLED === 'true'
+      if (s5EnforcementEnabled && s5Telemetry.validationResult === 'shadow_replay_eligible' && s5Telemetry.winnerCandidate) {
+        const s5DefaultResult: RoutingDispatcherResult = {
+          handled: false,
+          clarificationCleared: false,
+          isNewQuestionOrCommandDetected: false,
+          classifierCalled: false,
+          classifierTimeout: false,
+          classifierError: false,
+          isFollowUp: false,
+        }
+        const replayResult = buildResultFromMemory(s5Telemetry.winnerCandidate, s5DefaultResult) as RoutingDispatcherResult | null
+        if (replayResult) {
+          // Override provenance for semantic memory (distinct from B1 memory_exact)
+          replayResult.tierLabel = `memory_semantic:${s5Telemetry.winnerCandidate.intent_id}`
+          replayResult._devProvenanceHint = 'memory_semantic'
+
+          // Update telemetry to reflect actual execution
+          s5Telemetry = { ...s5Telemetry, validationResult: 'replay_executed' }
+          replayResult._s5Telemetry = s5Telemetry
+
+          // Build log payload (includes s5_* + B2 telemetry inline)
+          try {
+            const logPayload = buildRoutingLogPayloadFromSemanticMemory(ctx, replayResult, turnSnapshotForLog, s5Telemetry)
+            // Attach B2 telemetry (same finalization as general path)
+            if (b2Telemetry) {
+              b2Telemetry.status = 'discarded_handled'
+              logPayload.b2_status = b2Telemetry.status as RoutingLogPayload['b2_status']
+              logPayload.b2_raw_count = b2Telemetry.rawCount
+              logPayload.b2_validated_count = b2Telemetry.validatedCount
+              logPayload.semantic_top_score = b2Telemetry.topScore ?? logPayload.semantic_top_score
+              logPayload.b2_latency_ms = b2Telemetry.latencyMs
+            }
+            replayResult._pendingMemoryLog = logPayload
+            replayResult._routingLogPayload = logPayload
+          } catch { /* fail-open: log builder failed */ }
+
+          // Build memory write payload via standard UPSERT (keyed on query_fingerprint).
+          // Slice 3a: attach replay_source_row_id so the server can do transactional
+          // winner-row increment when the UPSERT writes to a different row.
+          if (memoryWriteEnabled) {
+            try {
+              const writePayload = buildMemoryWritePayload(ctx, replayResult, turnSnapshotForLog)
+              if (writePayload && s5Telemetry.winnerCandidate?.matchedRowId) {
+                writePayload.replay_source_row_id = s5Telemetry.winnerCandidate.matchedRowId
+              }
+              replayResult._pendingMemoryWrite = writePayload ?? undefined
+            } catch { /* fail-open */ }
+          }
+
+          // Early return — sendMessage() handles commit-point revalidation + log + write
+          return replayResult
+        } else {
+          // buildResultFromMemory returned null — downgrade telemetry (safety net)
+          s5Telemetry = { ...s5Telemetry, validationResult: 'replay_build_failed', fallbackReason: 'buildResultFromMemory_returned_null' }
+        }
+      }
     } catch {
       // Stage 5 eval failed — fail-open, no telemetry
     }

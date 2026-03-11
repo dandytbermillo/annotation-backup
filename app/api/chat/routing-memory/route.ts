@@ -43,6 +43,27 @@ const UPSERT_SQL = `
       ELSE chat_routing_memory_index.embedding_model_version
     END,
     updated_at = now()
+  RETURNING id
+`
+
+/**
+ * Slice 3a: Increment success_count on the semantically matched winner row.
+ * Only fires when the UPSERT wrote to a DIFFERENT row than the winner.
+ * Scoped to same tenant/user to prevent cross-scope increment.
+ *
+ * After Slice 3a, success_count means "row strength as a semantic source"
+ * (both direct executions AND semantic replays from other phrasings),
+ * not just "exact row executions."
+ */
+const WINNER_INCREMENT_SQL = `
+  UPDATE chat_routing_memory_index
+  SET success_count = success_count + 1,
+      last_success_at = now(),
+      updated_at = now()
+  WHERE id = $1
+    AND tenant_id = $2
+    AND user_id = $3
+    AND is_deleted = false
 `
 
 /**
@@ -82,7 +103,7 @@ export async function POST(request: NextRequest) {
     const embeddingParam = embedding ? `[${embedding.join(',')}]` : null
     const embeddingModelVersion = embedding ? EMBEDDING_MODEL_VERSION : 'none'
 
-    await serverPool.query(UPSERT_SQL, [
+    const upsertParams = [
       OPTION_A_TENANT_ID, OPTION_A_USER_ID, 'routing_dispatcher', payload.intent_class,
       queryFingerprint, redactedText,
       embeddingParam, embeddingModelVersion,
@@ -90,9 +111,49 @@ export async function POST(request: NextRequest) {
       payload.intent_id, JSON.stringify(payload.slots_json), JSON.stringify(payload.target_ids),
       payload.schema_version, payload.tool_version, 'default',
       payload.risk_tier,
-    ])
+    ]
 
-    return NextResponse.json({ status: 'ok' }, { status: 200 })
+    // Slice 3a: transactional replay-hit accounting
+    // When replay_source_row_id is present (semantic replay), do UPSERT + conditional winner increment
+    // in one transaction. Increment winner only if UPSERT wrote to a different row.
+    const replaySourceRowId = payload.replay_source_row_id
+    let winnerIncremented = false
+    let winnerIncrementSkippedReason: 'same_row' | 'source_missing' | undefined
+
+    if (replaySourceRowId) {
+      const client = await serverPool.connect()
+      try {
+        await client.query('BEGIN')
+        const upsertResult = await client.query(UPSERT_SQL, upsertParams)
+        const writtenRowId = upsertResult.rows[0]?.id as string | undefined
+
+        if (writtenRowId && writtenRowId !== replaySourceRowId) {
+          await client.query(WINNER_INCREMENT_SQL, [
+            replaySourceRowId,
+            OPTION_A_TENANT_ID,
+            OPTION_A_USER_ID,
+          ])
+          winnerIncremented = true
+        } else {
+          winnerIncrementSkippedReason = 'same_row'
+        }
+        await client.query('COMMIT')
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {})
+        throw txErr
+      } finally {
+        client.release()
+      }
+    } else {
+      await serverPool.query(UPSERT_SQL, upsertParams)
+      winnerIncrementSkippedReason = replaySourceRowId === undefined ? 'source_missing' : undefined
+    }
+
+    return NextResponse.json({
+      status: 'ok',
+      winner_incremented: winnerIncremented,
+      winner_increment_skipped_reason: winnerIncrementSkippedReason,
+    }, { status: 200 })
   } catch (err: unknown) {
     // Fail-open: log warning, return 200 to avoid polluting client error handling
     console.warn('[routing-memory] server upsert failed (non-fatal):', (err as Error).message)

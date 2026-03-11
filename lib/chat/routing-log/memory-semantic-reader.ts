@@ -13,6 +13,8 @@ import type { MemoryLookupResult } from './memory-reader'
 
 export interface SemanticCandidate extends MemoryLookupResult {
   similarity_score: number
+  /** Memory index row UUID — used for Slice 3a replay-hit accounting. Separate from target/candidate IDs. */
+  matchedRowId?: string
 }
 
 /** Structured result from semantic lookup — disambiguates empty vs timeout vs error vs disabled. */
@@ -20,6 +22,8 @@ export interface SemanticLookupResult {
   status: 'ok' | 'empty' | 'timeout' | 'error' | 'disabled'
   candidates: SemanticCandidate[]
   latencyMs: number
+  /** Current context fingerprint computed server-side. Stage 5 uses this to compare against candidate fingerprints. */
+  currentContextFingerprint?: string
 }
 
 /** Client-side semantic lookup timeout. Must exceed server-side EMBEDDING_TIMEOUT_MS (1200ms)
@@ -66,15 +70,23 @@ export async function lookupSemanticMemory(payload: {
         const data = await res.json()
         const candidates = data.candidates as SemanticCandidate[] | undefined
         const lookupStatus = data.lookup_status as string | undefined
+        const currentContextFingerprint = data.current_context_fingerprint as string | undefined
 
         // Use server-reported lookup_status when available for truthful telemetry
         if (lookupStatus === 'embedding_failure' || lookupStatus === 'server_error') {
-          return { status: 'error' as const, candidates: [] as SemanticCandidate[] }
+          return { status: 'error' as const, candidates: [] as SemanticCandidate[], currentContextFingerprint }
         }
         if (candidates && candidates.length > 0) {
-          return { status: 'ok' as const, candidates }
+          // Map server snake_case matched_row_id → camelCase matchedRowId
+          for (const c of candidates) {
+            const raw = c as unknown as Record<string, unknown>
+            if (raw.matched_row_id && !c.matchedRowId) {
+              c.matchedRowId = raw.matched_row_id as string
+            }
+          }
+          return { status: 'ok' as const, candidates, currentContextFingerprint }
         }
-        return { status: 'empty' as const, candidates: [] as SemanticCandidate[] }
+        return { status: 'empty' as const, candidates: [] as SemanticCandidate[], currentContextFingerprint }
       }),
       new Promise<typeof TIMEOUT_SENTINEL>((resolve) => {
         timer = setTimeout(() => {

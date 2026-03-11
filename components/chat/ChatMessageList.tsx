@@ -30,6 +30,7 @@ const PROVENANCE_STYLES: Record<ChatProvenance, { emoji: string; label: string; 
   llm_clarifier: { emoji: '\uD83D\uDDE8\uFE0F\uD83E\uDDE0', label: 'LLM-Clarifier', className: 'bg-orange-900/50 text-orange-300 border-orange-600/30' },
   safe_clarifier: { emoji: '\uD83D\uDDE8\uFE0F', label: 'Safe Clarifier', className: 'bg-gray-800 text-gray-100 border-gray-500/60' },
   memory_exact: { emoji: '\uD83D\uDCBE', label: 'Memory-Exact', className: 'bg-cyan-900/50 text-cyan-300 border-cyan-600/30' },
+  memory_semantic: { emoji: '\uD83E\uDDE0\uD83D\uDCBE', label: 'Memory-Semantic', className: 'bg-purple-900/50 text-purple-300 border-purple-600/30' },
 }
 
 function ProvenanceBadge({ provenance }: { provenance: ChatProvenance }) {

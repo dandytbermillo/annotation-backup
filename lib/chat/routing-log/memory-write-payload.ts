@@ -62,6 +62,10 @@ export interface MemoryWritePayload {
   risk_tier: RiskTier
   schema_version: string
   tool_version: string
+  /** Slice 3a: memory index row UUID of the semantically matched winner.
+   *  When present, server performs transactional replay-hit accounting:
+   *  increments winner's success_count if the UPSERT wrote to a different row. */
+  replay_source_row_id?: string
 }
 
 // --- Builder ---
