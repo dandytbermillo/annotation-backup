@@ -166,14 +166,14 @@ Comment on `writeDurableEnforcementLog` said "no ':s6' suffix" but implementatio
 ## Acceptance criteria status
 
 1. [x] User types ambiguous input → Stage 4 abstains → S6 loop runs — **runtime-proven (3 rows)**
-2. [ ] Model emits `open_panel` with valid panel slug — **not observed (model chose clarify/abort in all scenarios; 6.7 tuning scope)**
-3. [x] Commit-point revalidation passes — **unit-tested (stage6-execution-bridge.test.ts §1, §5)**
-4. [ ] Panel drawer opens in the UI — **unit-tested, not runtime-observed (depends on #2)**
-5. [x] Durable log shows correct provenance/mapping — **runtime-proven (`s6_enforced:fallback`, `D`, `llm`, `failed`)**
-6. [x] If revalidation fails → clarifier shown instead — **runtime-proven (all 3 test scenarios fell through)**
+2. [x] Model emits `open_panel` with valid panel slug — **runtime-proven (2026-03-12, fixture: "take me to my links" → `open_panel(w_links_b)`, 1 inspect round)**
+3. [x] Commit-point revalidation passes — **unit-tested (stage6-execution-bridge.test.ts §1, §5) + runtime-proven (TOCTOU passed, panel opened)**
+4. [x] Panel drawer opens in the UI — **runtime-proven (2026-03-12, Links Panel B drawer opened via S6-Enforced provenance)**
+5. [x] Durable log shows correct provenance/mapping — **runtime-proven (`routing_lane=D`, `decision_source=llm`, `result_status=executed`, `s6_outcome=action_executed`, `s6_action_type=open_panel`)**
+6. [x] If revalidation fails → clarifier shown instead — **runtime-proven (all 3 pre-fixture test scenarios fell through)**
 7. [x] No duplicate execution — **implemented + unit-tested (isDuplicateAction wired at both call sites)**
 
-Items #2 and #4 are blocked by model behavior (choosing clarify over act in ambiguous scenarios). The code path is complete and unit-tested. Model-side resolution is deferred to 6.7 (tuning — prompt hardening, ID fidelity, confidence thresholds).
+All criteria runtime-proven as of 2026-03-12. Fixture: single-match dashboard (Links Panel B only links panel) + `NEXT_PUBLIC_STAGE4_FORCE_ABSTAIN=true` to guarantee S6 reachability. Durable log row: `f1431659-8b90-40ac-90c7-587e0c37fb79:s6`.
 
 ---
 

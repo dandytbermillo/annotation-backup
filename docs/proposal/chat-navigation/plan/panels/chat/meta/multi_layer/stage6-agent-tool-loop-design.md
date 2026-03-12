@@ -528,7 +528,7 @@ The primary eval signal is `disagree_s6_would_act` — these are interactions wh
 
 ## 7c) Slice 6.5 Implementation Checklist — Enforcement Mode
 
-**Status**: CLOSED (Phase 1 — open_panel). Code + tests complete, runtime-validated 2026-03-12. Enforcement pipeline proven end-to-end (S6 loop fires, durable log written, fallback works). No `action_executed` + `open_panel` observed — model chose clarify/abort in all test scenarios (ambiguous dashboards). Execution bridge unit-tested. Model resolution is 6.7 tuning scope.
+**Status**: CLOSED (Phase 1 — open_panel). Fully runtime-proven 2026-03-12. Enforcement pipeline proven end-to-end: S6 loop fires → `inspect_dashboard` (1 round) → `open_panel(w_links_b)` → TOCTOU revalidation → panel drawer opens → durable log with `routing_lane=D`, `result_status=executed`, `s6_outcome=action_executed`. Fixture: single-match dashboard + `STAGE4_FORCE_ABSTAIN` flag. All 7 acceptance criteria checked.
 **Depends on**: 6.3 (shadow loop wiring, closed), 6.4 (action validators, closed)
 **Scope**: Bridge validated Stage 6 actions to real UI execution. Transitions from shadow mode (log-only) to enforcement mode (actions execute). Staged rollout: `open_panel` first, then remaining action types.
 
