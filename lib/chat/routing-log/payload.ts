@@ -131,4 +131,6 @@ export interface RoutingLogPayload {
   s6_action_rejection_reason?: string     // rejection reason when action_status is 'rejected'
   s6_clarify_candidate_count?: number     // candidate count when clarification chosen
   s6_abort_reason?: string                // reason if outcome was abort
+  s6_evidence_gate?: string               // open_panel evidence gate result (allowed, ambiguous_siblings)
+  s6_evidence_sibling_count?: number      // sibling panel count when evidence gate is ambiguous
 }

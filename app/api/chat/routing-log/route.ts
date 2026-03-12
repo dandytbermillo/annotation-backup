@@ -142,6 +142,8 @@ export async function POST(request: NextRequest) {
           s6_action_rejection_reason: payload.s6_action_rejection_reason,
           s6_clarify_candidate_count: payload.s6_clarify_candidate_count,
           s6_abort_reason: payload.s6_abort_reason,
+          s6_evidence_gate: payload.s6_evidence_gate,
+          s6_evidence_sibling_count: payload.s6_evidence_sibling_count,
         })
       : null
 

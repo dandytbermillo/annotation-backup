@@ -503,7 +503,7 @@ The primary eval signal is `disagree_s6_would_act` — these are interactions wh
 - No A/B feature-flag rollout infrastructure
 - No backfill scripts
 
-### 6.7 (tuning) — overall status: OPEN
+### 6.7 (tuning) — overall status: CLOSED (2026-03-12)
 
 **Slice 1: Prompt hardening** — CLOSED (2026-03-12, environment limitation)
 - panelSlug→widgetId mapping made explicit
@@ -519,10 +519,24 @@ The primary eval signal is `disagree_s6_would_act` — these are interactions wh
 - Single-retry contract: `structRetried` boolean flag. First structural failure → error feedback to model → one correction attempt. Second failure → immediate abort.
 - Traced as `invalid_<type>` in tool trace. 4 new tests (3 retry-succeed + 1 double-failure-abort).
 
-**Remaining 6.7 slices:**
-- Runtime fixture: create a dashboard/test state where single-match `open_panel` is reachable by Stage 6 (required to validate act path)
-- Confidence thresholds for act vs clarify boundary
-- Tool-call efficiency (reduce unnecessary inspect rounds)
+**Runtime fixture** — CLOSED (2026-03-12)
+- `NEXT_PUBLIC_STAGE4_FORCE_ABSTAIN` flag in `grounding-llm-fallback.ts` forces Stage 4 → `need_more_info`, guaranteeing S6 reachability
+- SQL fixture: single-match dashboard (Links Panel B only links panel) with 4 visible panels
+- Runtime result: `action_executed` + `open_panel(w_links_b)` in 1 inspect round. Durable log row confirmed all success columns.
+- Flag removed after validation. Fixture script retained at `test_scripts/s6-enforcement-fixture.sql`.
+
+**Slice 3: open_panel evidence gate** — CLOSED (2026-03-12, prompt-first behavior validated; evidence gate unit-proven safety net)
+- Evidence-based act/clarify boundary, not numeric confidence threshold.
+- `evaluateOpenPanelEvidence()` in route: extracts base name from panel labels, counts siblings with same base name.
+- Single match → `allowed` (action proceeds). Badge siblings (e.g., "Links Panel A/B/C") → `ambiguous_siblings` (downgraded to `clarification_accepted`).
+- Prompt Rule 6 refined: explicit badge-variant clarify instruction.
+- Telemetry: `s6_evidence_gate` (`allowed` | `ambiguous_siblings`), `s6_evidence_sibling_count`. (`target_not_found` is unreachable — `validateOpenPanel` rejects first.)
+- Non-open_panel actions bypass the gate (open_panel only for Slice 3).
+- 5 new tests (§13): single match, badge siblings, unique among siblings, non-open_panel passthrough, single-visible badge variant.
+
+**Tool-call efficiency** — CLOSED (2026-03-12, accepted as-is)
+- Efficiency baseline acceptable: single `inspect_dashboard` round sufficient for panel requests in current environment.
+- No further optimization justified from current data. Revisit only if later metrics show multi-round churn or latency pressure on non-panel action types.
 
 ---
 

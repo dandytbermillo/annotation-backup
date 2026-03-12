@@ -245,6 +245,8 @@ async function writeDurableShadowLog(
       s6_action_rejection_reason: result.telemetry.s6_action_rejection_reason,
       s6_clarify_candidate_count: result.telemetry.s6_clarify_candidate_count,
       s6_abort_reason: result.telemetry.s6_abort_reason,
+      s6_evidence_gate: result.telemetry.s6_evidence_gate,
+      s6_evidence_sibling_count: result.telemetry.s6_evidence_sibling_count,
     }
 
     await recordRoutingLog(payload)
@@ -306,6 +308,8 @@ async function writeDurableEnforcementLog(
       s6_action_rejection_reason: result.telemetry.s6_action_rejection_reason,
       s6_clarify_candidate_count: result.telemetry.s6_clarify_candidate_count,
       s6_abort_reason: result.telemetry.s6_abort_reason,
+      s6_evidence_gate: result.telemetry.s6_evidence_gate,
+      s6_evidence_sibling_count: result.telemetry.s6_evidence_sibling_count,
     }
 
     await recordRoutingLog(payload)

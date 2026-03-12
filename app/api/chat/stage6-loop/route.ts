@@ -175,7 +175,7 @@ RULES:
 3. For open_panel: the panelSlug MUST be a widgetId value copied exactly from inspect_dashboard results. Panels are the widgets shown on the dashboard.
 4. ALL target IDs (panelSlug, widgetId, itemId, entryId) MUST be copied character-for-character from tool results. NEVER fabricate, guess, or modify IDs.
 5. ACT when exactly one target matches the user's intent — do not clarify single matches.
-6. CLARIFY only when 2+ targets match with no distinguishing signal.
+6. CLARIFY only when 2+ targets match with no distinguishing signal. For open_panel: if multiple panels share the same base name with different badges (e.g., "Links Panel A", "Links Panel B"), always CLARIFY with their IDs — never guess which badge variant the user means.
 7. ABORT only when no target matches at all after inspecting available state.
 8. You may call at most ${maxRounds} inspection tools before deciding.`
 }
@@ -263,6 +263,61 @@ function validateResponseStructure(parsed: ParsedLLMResponse): string | null {
   }
 
   return null
+}
+
+// ============================================================================
+// Evidence Gate — open_panel ambiguity check (Slice 6.7.3)
+// ============================================================================
+
+/**
+ * Extract base name from a panel label by stripping trailing badge.
+ * "Links Panel A" → "links panel", "Recent" → "recent", "Summary 1" → "summary"
+ */
+function extractBaseName(label: string): string {
+  return label.replace(/\s+[A-Za-z0-9]$/, '').trim().toLowerCase()
+}
+
+interface EvidenceGateResult {
+  allowed: boolean
+  reason: 'single_match' | 'ambiguous_siblings' | 'target_not_found'
+  siblingCount?: number
+  siblingIds?: string[]
+}
+
+/**
+ * Check whether the model's open_panel decision is supported by
+ * single-match evidence in the dashboard snapshot.
+ *
+ * If the target panel has sibling panels (same base name, different badge),
+ * the evidence is ambiguous and the action should be downgraded to clarify.
+ */
+function evaluateOpenPanelEvidence(
+  panelSlug: string,
+  dashboardWidgets: { widgetId: string; label: string }[],
+): EvidenceGateResult {
+  const target = dashboardWidgets.find(
+    w => w.widgetId.toLowerCase() === panelSlug.toLowerCase(),
+  )
+
+  if (!target) {
+    return { allowed: false, reason: 'target_not_found' }
+  }
+
+  const targetBase = extractBaseName(target.label)
+  const siblings = dashboardWidgets.filter(
+    w => extractBaseName(w.label) === targetBase,
+  )
+
+  if (siblings.length <= 1) {
+    return { allowed: true, reason: 'single_match' }
+  }
+
+  return {
+    allowed: false,
+    reason: 'ambiguous_siblings',
+    siblingCount: siblings.length,
+    siblingIds: siblings.map(s => s.widgetId),
+  }
 }
 
 // ============================================================================
@@ -644,6 +699,51 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         const actionResult = await validateAction(
           parsed, validationSnapshots, userId,
         )
+
+        // Evidence gate for open_panel (Slice 6.7.3):
+        // If validator says executed but dashboard evidence shows sibling panels
+        // (same base name, different badge), downgrade to clarify.
+        if (
+          actionResult.status === 'executed'
+          && parsed.action === 'open_panel'
+          && clientSnapshots.dashboard.status === 'ok'
+        ) {
+          const evidenceResult = evaluateOpenPanelEvidence(
+            parsed.panelSlug ?? '',
+            clientSnapshots.dashboard.data.widgets,
+          )
+
+          if (!evidenceResult.allowed && evidenceResult.reason === 'ambiguous_siblings') {
+            toolTrace.push('evidence_gate:ambiguous')
+            const downgraded = buildLoopResult(
+              'clarification_accepted',
+              inspectRoundsUsed,
+              toolTrace,
+              startTime,
+              loopInput.escalationReason,
+              parsed,
+            )
+            downgraded.telemetry.s6_evidence_gate = 'ambiguous_siblings'
+            downgraded.telemetry.s6_evidence_sibling_count = evidenceResult.siblingCount
+            downgraded.telemetry.s6_action_type = 'open_panel'
+            downgraded.telemetry.s6_action_target_id = parsed.panelSlug ?? ''
+            return NextResponse.json(downgraded)
+          }
+
+          // Record evidence gate pass in telemetry
+          const result = buildLoopResultWithAction(
+            'action_executed',
+            inspectRoundsUsed,
+            toolTrace,
+            startTime,
+            loopInput.escalationReason,
+            parsed,
+            actionResult,
+          )
+          result.telemetry.s6_evidence_gate = evidenceResult.allowed ? 'allowed' : evidenceResult.reason
+          return NextResponse.json(result)
+        }
+
         const outcome: S6LoopOutcome = actionResult.status === 'executed'
           ? 'action_executed'
           : 'action_rejected'

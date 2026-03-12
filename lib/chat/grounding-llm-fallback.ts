@@ -137,16 +137,6 @@ export async function callGroundingLLM(
     }
   }
 
-  // Dev fixture: force Stage 4 to abstain so queries route to Stage 6.
-  // Used for S6 enforcement runtime validation only.
-  if (process.env.NEXT_PUBLIC_STAGE4_FORCE_ABSTAIN === 'true') {
-    return {
-      success: true,
-      response: { decision: 'need_more_info', choiceId: null, confidence: 0 },
-      latencyMs: Date.now() - startTime,
-    }
-  }
-
   try {
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), GROUNDING_LLM_TIMEOUT_MS)

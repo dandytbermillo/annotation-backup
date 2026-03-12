@@ -414,4 +414,10 @@ export interface S6LoopTelemetry {
   s6_abort_reason?: string
   /** Tools called, in order. */
   s6_tool_trace: string[]
+  /** Evidence gate result for open_panel (Slice 6.7.3).
+   *  Only 'allowed' and 'ambiguous_siblings' are reachable — target_not_found
+   *  is caught by validateOpenPanel() before the evidence gate runs. */
+  s6_evidence_gate?: 'allowed' | 'ambiguous_siblings'
+  /** Number of sibling panels sharing base name (when ambiguous). */
+  s6_evidence_sibling_count?: number
 }
