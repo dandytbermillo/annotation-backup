@@ -89,6 +89,11 @@ import { buildResultFromMemory } from '@/lib/chat/routing-log/memory-action-buil
 import { computeClarifierReorderTelemetry, reorderClarifierCandidates, type ReorderableCandidate } from '@/lib/chat/routing-log/clarifier-reorder'
 import { evaluateStage5Replay } from '@/lib/chat/routing-log/stage5-evaluator'
 
+// Stage 6: shadow loop (fire-and-forget) + enforcement loop (awaitable)
+import { runS6ShadowLoop, runS6EnforcementLoop } from '@/lib/chat/stage6-loop-controller'
+import { executeS6OpenPanel, isDuplicateAction } from '@/lib/chat/stage6-execution-bridge'
+import type { S6ParsedAction, S6ActionSignature } from '@/lib/chat/stage6-execution-bridge'
+
 // =============================================================================
 // Phase 1 Observe-Only — Routing Log Helpers
 // =============================================================================
@@ -475,7 +480,7 @@ export interface RoutingDispatcherResult {
   /** Whether any tier handled the input */
   handled: boolean
   /** Which tier handled it (for telemetry) */
-  handledByTier?: 0 | 1 | 2 | 3 | 4 | 5
+  handledByTier?: 0 | 1 | 2 | 3 | 4 | 5 | 6
   /** Tier label for logging */
   tierLabel?: string
   /** Pass-through from clarification intercept */
@@ -1668,6 +1673,9 @@ async function dispatchRoutingInner(
     classifierError: false,
     isFollowUp: false,
   }
+
+  // Stage 6 duplicate-action guard: tracks executed S6 actions within this dispatch call
+  const s6ExecutedActions: S6ActionSignature[] = []
 
   // Phase 3c: Clarifier assist flag (shadow mode — compute reorder, log, but don't apply)
   const clarifierAssistEnabled = process.env.NEXT_PUBLIC_CHAT_ROUTING_SEMANTIC_CLARIFIER_ASSIST_ENABLED === 'true'
@@ -5231,6 +5239,79 @@ async function dispatchRoutingInner(
                 metadata: { input: ctx.trimmedInput },
               })
 
+              // Stage 6: enforcement or shadow on Stage 4 abstain
+              {
+                const s6SessionId = getRoutingLogSessionId()
+                const s6TurnIndex = ctx.messages.filter(m => m.role === 'user').length
+                const s6LastMsg = [...ctx.messages].reverse().find(m => m.role === 'user')
+                const s6InteractionId = s6LastMsg?.id ?? deriveFallbackInteractionId(s6SessionId, s6TurnIndex, ctx.trimmedInput)
+                const s6Params = {
+                  userInput: ctx.trimmedInput,
+                  groundingCandidates: groundingResult.llmCandidates.map(c => ({
+                    id: c.id,
+                    label: c.label,
+                    source: c.source ?? c.type ?? 'unknown',
+                  })),
+                  escalationReason: 'stage4_abstain' as const,
+                  interactionId: s6InteractionId,
+                  sessionId: s6SessionId,
+                  turnIndex: s6TurnIndex,
+                }
+
+                // Enforcement mode: await S6 loop, execute if action_executed, else fall through
+                if (process.env.NEXT_PUBLIC_STAGE6_ENFORCE_ENABLED === 'true') {
+                  const s6Result = await runS6EnforcementLoop(s6Params)
+                  if (s6Result?.outcome === 'action_executed' && s6Result.actionResult?.action === 'open_panel') {
+                    const targetId = s6Result.telemetry.s6_action_target_id ?? ''
+                    const s6Sig: S6ActionSignature = { interactionId: s6InteractionId, actionType: 'open_panel', targetId }
+                    if (!isDuplicateAction(s6Sig, s6ExecutedActions)) {
+                      const parsedAction: S6ParsedAction = {
+                        action: 'open_panel',
+                        panelSlug: targetId,
+                      }
+                      const bridgeResult = await executeS6OpenPanel(
+                        s6Result.actionResult,
+                        parsedAction,
+                        (panelId, panelTitle) => ctx.openPanelDrawer(panelId, panelTitle),
+                      )
+                      if (bridgeResult.executed) {
+                        s6ExecutedActions.push(s6Sig)
+                        const s6Msg: ChatMessage = {
+                          id: `assistant-${Date.now()}`,
+                          role: 'assistant',
+                          content: `Opening ${bridgeResult.panelLabel ?? bridgeResult.panelSlug}...`,
+                          timestamp: new Date(),
+                          isError: false,
+                        }
+                        ctx.addMessage(s6Msg)
+                        ctx.setIsLoading(false)
+
+                        return {
+                          ...defaultResult,
+                          handled: true,
+                          handledByTier: 6,
+                          tierLabel: `s6_enforced:open_panel`,
+                          clarificationCleared,
+                          isNewQuestionOrCommandDetected,
+                          classifierCalled,
+                          classifierResult,
+                          classifierTimeout,
+                          classifierLatencyMs,
+                          classifierError,
+                          isFollowUp,
+                          _devProvenanceHint: 's6_enforced' as const,
+                        }
+                      }
+                    }
+                    // Bridge failed, TOCTOU stale, or duplicate → fall through to normal clarifier
+                  }
+                  // S6 loop returned non-action or null → fall through to normal clarifier
+                } else {
+                  // Shadow mode: fire-and-forget
+                  void runS6ShadowLoop(s6Params)
+                }
+              }
+
               // Single visible-panel candidate + command form → auto-execute.
               // A single-option clarifier for command-form panel requests adds friction
               // without disambiguation value. The bounded LLM already evaluated the
@@ -5341,6 +5422,79 @@ async function dispatchRoutingInner(
               action: 'grounding_llm_timeout',
               metadata: { error: llmResult.error, latencyMs: llmResult.latencyMs },
             })
+
+            // Stage 6: enforcement or shadow on Stage 4 timeout
+            {
+              const s6SessionId = getRoutingLogSessionId()
+              const s6TurnIndex = ctx.messages.filter(m => m.role === 'user').length
+              const s6LastMsg = [...ctx.messages].reverse().find(m => m.role === 'user')
+              const s6InteractionId = s6LastMsg?.id ?? deriveFallbackInteractionId(s6SessionId, s6TurnIndex, ctx.trimmedInput)
+              const s6Params = {
+                userInput: ctx.trimmedInput,
+                groundingCandidates: groundingResult.llmCandidates.map(c => ({
+                  id: c.id,
+                  label: c.label,
+                  source: c.source ?? c.type ?? 'unknown',
+                })),
+                escalationReason: 'stage4_timeout' as const,
+                interactionId: s6InteractionId,
+                sessionId: s6SessionId,
+                turnIndex: s6TurnIndex,
+              }
+
+              // Enforcement mode: await S6 loop, execute if action_executed, else fall through
+              if (process.env.NEXT_PUBLIC_STAGE6_ENFORCE_ENABLED === 'true') {
+                const s6Result = await runS6EnforcementLoop(s6Params)
+                if (s6Result?.outcome === 'action_executed' && s6Result.actionResult?.action === 'open_panel') {
+                  const targetId = s6Result.telemetry.s6_action_target_id ?? ''
+                  const s6Sig: S6ActionSignature = { interactionId: s6InteractionId, actionType: 'open_panel', targetId }
+                  if (!isDuplicateAction(s6Sig, s6ExecutedActions)) {
+                    const parsedAction: S6ParsedAction = {
+                      action: 'open_panel',
+                      panelSlug: targetId,
+                    }
+                    const bridgeResult = await executeS6OpenPanel(
+                      s6Result.actionResult,
+                      parsedAction,
+                      (panelId, panelTitle) => ctx.openPanelDrawer(panelId, panelTitle),
+                    )
+                    if (bridgeResult.executed) {
+                      s6ExecutedActions.push(s6Sig)
+                      const s6Msg: ChatMessage = {
+                        id: `assistant-${Date.now()}`,
+                        role: 'assistant',
+                        content: `Opening ${bridgeResult.panelLabel ?? bridgeResult.panelSlug}...`,
+                        timestamp: new Date(),
+                        isError: false,
+                      }
+                      ctx.addMessage(s6Msg)
+                      ctx.setIsLoading(false)
+
+                      return {
+                        ...defaultResult,
+                        handled: true,
+                        handledByTier: 6,
+                        tierLabel: `s6_enforced:open_panel`,
+                        clarificationCleared,
+                        isNewQuestionOrCommandDetected,
+                        classifierCalled,
+                        classifierResult,
+                        classifierTimeout,
+                        classifierLatencyMs,
+                        classifierError,
+                        isFollowUp,
+                        _devProvenanceHint: 's6_enforced' as const,
+                      }
+                    }
+                  }
+                  // Bridge failed, TOCTOU stale, or duplicate → fall through to timeout clarifier
+                }
+                // S6 loop returned non-action or null → fall through to timeout clarifier
+              } else {
+                // Shadow mode: fire-and-forget
+                void runS6ShadowLoop(s6Params)
+              }
+            }
 
             const clarifierMsgId = `assistant-${Date.now()}`
             const effectiveCandidatesTimeout = maybeActiveReorder(groundingResult.llmCandidates)

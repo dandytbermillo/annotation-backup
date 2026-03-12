@@ -73,7 +73,7 @@ export async function POST(request: NextRequest) {
     const contextFingerprint = sha256Hex(canonicalJsonSerialize(stripVolatileFields(contextSnapshot)))
 
     // Phase 3 B2/3c + Stage 4: build semantic_hint_metadata JSON when any telemetry present
-    const hasSemanticMeta = payload.semantic_hint_count != null || payload.b2_status != null || payload.b2_clarifier_status != null || payload.llm_decision != null || payload.llm_g4_total_in != null || payload.s5_lookup_attempted != null
+    const hasSemanticMeta = payload.semantic_hint_count != null || payload.b2_status != null || payload.b2_clarifier_status != null || payload.llm_decision != null || payload.llm_g4_total_in != null || payload.s5_lookup_attempted != null || payload.s6_loop_entered != null
     const semanticHintMeta = hasSemanticMeta
       ? JSON.stringify({
           count: payload.semantic_hint_count,
@@ -129,6 +129,19 @@ export async function POST(request: NextRequest) {
           s5_replayed_intent_id: payload.s5_replayed_intent_id,
           s5_replayed_target_id: payload.s5_replayed_target_id,
           s5_fallback_reason: payload.s5_fallback_reason,
+          // Stage 6: Agent Tool Loop shadow telemetry
+          s6_loop_entered: payload.s6_loop_entered,
+          s6_escalation_reason: payload.s6_escalation_reason,
+          s6_inspect_rounds: payload.s6_inspect_rounds,
+          s6_outcome: payload.s6_outcome,
+          s6_duration_ms: payload.s6_duration_ms,
+          s6_tool_trace: payload.s6_tool_trace,
+          s6_action_type: payload.s6_action_type,
+          s6_action_target_id: payload.s6_action_target_id,
+          s6_action_status: payload.s6_action_status,
+          s6_action_rejection_reason: payload.s6_action_rejection_reason,
+          s6_clarify_candidate_count: payload.s6_clarify_candidate_count,
+          s6_abort_reason: payload.s6_abort_reason,
         })
       : null
 

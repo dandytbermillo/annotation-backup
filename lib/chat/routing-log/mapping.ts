@@ -5,7 +5,7 @@
  * All output values MUST match migration 067 CHECK constraints exactly.
  *
  * ChatProvenance union (from chat-navigation-context.tsx):
- *   'deterministic' | 'llm_executed' | 'llm_influenced' | 'llm_clarifier' | 'safe_clarifier' | 'memory_exact' | 'memory_semantic'
+ *   'deterministic' | 'llm_executed' | 'llm_influenced' | 'llm_clarifier' | 'safe_clarifier' | 'memory_exact' | 'memory_semantic' | 's6_enforced'
  */
 
 import type { RoutingLane, DecisionSource, ResultStatus, RiskTier } from './types'
@@ -24,6 +24,7 @@ import type { RoutingLane, DecisionSource, ResultStatus, RiskTier } from './type
  * | 3    | A    | Deterministic ordinal/selection |
  * | 4    | D    | Grounding/LLM-assisted |
  * | 5    | D    | Classifier/LLM-assisted |
+ * | 6    | D    | Stage 6 agent tool loop |
  * | undefined | E | Clarifier/fallback lane |
  */
 export function tierToLane(tier: number | undefined): RoutingLane {
@@ -34,6 +35,7 @@ export function tierToLane(tier: number | undefined): RoutingLane {
     case 3: return 'A'
     case 4: return 'D'
     case 5: return 'D'
+    case 6: return 'D'
     default: return 'E'
   }
 }
@@ -54,6 +56,7 @@ export function provenanceToDecisionSource(hint: string | undefined): DecisionSo
     case 'safe_clarifier': return 'clarifier'
     case 'memory_exact': return 'memory_exact'
     case 'memory_semantic': return 'memory_semantic'
+    case 's6_enforced': return 'llm'
     default: return 'clarifier'
   }
 }
@@ -84,6 +87,9 @@ export function deriveResultStatus(
 
   // LLM-confirmed execute
   if (provenanceHint === 'llm_executed') return 'executed'
+
+  // Stage 6 enforced execute
+  if (provenanceHint === 's6_enforced') return 'executed'
 
   // LLM-influenced: check tierLabel for execute/select indicators
   if (provenanceHint === 'llm_influenced') {

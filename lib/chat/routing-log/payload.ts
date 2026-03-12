@@ -116,4 +116,19 @@ export interface RoutingLogPayload {
   s5_replayed_intent_id?: string           // only on shadow_replay_eligible
   s5_replayed_target_id?: string           // only on shadow_replay_eligible
   s5_fallback_reason?: string              // detail on why Stage 5 fell through
+
+  // Stage 6: Agent Tool Loop shadow telemetry
+  // Emitted as a separate execution_outcome row when shadow loop completes
+  s6_loop_entered?: boolean               // true = Stage 6 shadow loop fired
+  s6_escalation_reason?: string           // why Stage 4 escalated (stage4_abstain, stage4_timeout)
+  s6_inspect_rounds?: number              // inspect tool calls made in loop
+  s6_outcome?: string                     // S6LoopOutcome (action_executed, clarification_accepted, abort, etc.)
+  s6_duration_ms?: number                 // loop wall-clock time
+  s6_tool_trace?: string[]                // ordered tool/action names from loop
+  s6_action_type?: string                 // terminal action type (open_widget_item, open_panel, navigate_entry)
+  s6_action_target_id?: string            // target ID of the terminal action
+  s6_action_status?: string               // action execution status
+  s6_action_rejection_reason?: string     // rejection reason when action_status is 'rejected'
+  s6_clarify_candidate_count?: number     // candidate count when clarification chosen
+  s6_abort_reason?: string                // reason if outcome was abort
 }
