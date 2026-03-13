@@ -303,6 +303,24 @@ export interface S6LoopInput {
   escalationReason: S6EscalationReason
   /** Loop constraints. */
   constraints: S6LoopConstraints
+  /** Content-intent context (6x.3). Present only when escalationReason is 'content_intent'. */
+  contentContext?: S6ContentContext
+}
+
+/**
+ * Context for content-intent escalation (6x.3).
+ * Tells the model which note is the anchored target and what type of
+ * content question the user is asking.
+ */
+export interface S6ContentContext {
+  /** Resolved note item UUID — the anchor for inspect_note_content. */
+  noteItemId: string
+  /** Note title (for prompt readability). */
+  noteTitle: string
+  /** How the anchor was resolved. */
+  anchorSource: 'active_widget' | 'resolved_reference'
+  /** Content-intent type classified from the user's query. */
+  intentType: 'summary' | 'question' | 'find_text'
 }
 
 export interface S6GroundingCandidate {
@@ -316,6 +334,7 @@ export type S6EscalationReason =
   | 'stage4_abstain'           // need_more_info
   | 'stage4_low_confidence'    // below threshold (future: G1 enforcement)
   | 'stage4_timeout'           // LLM call timed out
+  | 'content_intent'           // content-intent classifier matched (6x.3)
 
 export interface S6LoopConstraints {
   /** Max inspect calls before the loop must decide. */

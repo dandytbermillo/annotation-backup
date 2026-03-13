@@ -207,6 +207,15 @@ function buildUserMessage(input: S6LoopInput): string {
     lines.push(`  - Widget="${w.widgetId}" Label="${w.label}" Items=${w.itemCount}`)
   }
 
+  // Content-intent anchor (6x.3): tell the model which note is the target
+  if (input.contentContext) {
+    const cc = input.contentContext
+    lines.push(`\nCONTENT CONTEXT:`)
+    lines.push(`This is a content-intent request (type: ${cc.intentType}).`)
+    lines.push(`The anchored note is itemId="${cc.noteItemId}" title="${cc.noteTitle}" (resolved via ${cc.anchorSource}).`)
+    lines.push(`Use this itemId when calling inspect_note_content unless later inspection proves the anchor wrong.`)
+  }
+
   lines.push(`\nWhat do you do? JSON only.`)
   return lines.join('\n')
 }
@@ -813,6 +822,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             downgraded.telemetry.s6_evidence_sibling_count = evidenceResult.siblingCount
             downgraded.telemetry.s6_action_type = 'open_panel'
             downgraded.telemetry.s6_action_target_id = parsed.panelSlug ?? ''
+            attachContentTelemetry(downgraded, contentCallsUsed, contentCharsUsed)
             return NextResponse.json(downgraded)
           }
 
@@ -827,37 +837,38 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             actionResult,
           )
           result.telemetry.s6_evidence_gate = evidenceResult.allowed ? 'allowed' : evidenceResult.reason
+          attachContentTelemetry(result, contentCallsUsed, contentCharsUsed)
           return NextResponse.json(result)
         }
 
         const outcome: S6LoopOutcome = actionResult.status === 'executed'
           ? 'action_executed'
           : 'action_rejected'
-        return NextResponse.json(
-          buildLoopResultWithAction(outcome, inspectRoundsUsed, toolTrace, startTime, loopInput.escalationReason, parsed, actionResult),
-        )
+        const actionLoopResult = buildLoopResultWithAction(outcome, inspectRoundsUsed, toolTrace, startTime, loopInput.escalationReason, parsed, actionResult)
+        attachContentTelemetry(actionLoopResult, contentCallsUsed, contentCharsUsed)
+        return NextResponse.json(actionLoopResult)
       }
 
       // ── Terminal: clarify ──
       if (parsed.type === 'clarify') {
-        return NextResponse.json(
-          buildLoopResult('clarification_accepted', inspectRoundsUsed, toolTrace, startTime, loopInput.escalationReason, parsed),
-        )
+        const clarifyResult = buildLoopResult('clarification_accepted', inspectRoundsUsed, toolTrace, startTime, loopInput.escalationReason, parsed)
+        attachContentTelemetry(clarifyResult, contentCallsUsed, contentCharsUsed)
+        return NextResponse.json(clarifyResult)
       }
 
       // ── Terminal: abort ──
       if (parsed.type === 'abort') {
-        return NextResponse.json(
-          buildLoopResult('abort', inspectRoundsUsed, toolTrace, startTime, loopInput.escalationReason, parsed),
-        )
+        const abortResult = buildLoopResult('abort', inspectRoundsUsed, toolTrace, startTime, loopInput.escalationReason, parsed)
+        attachContentTelemetry(abortResult, contentCallsUsed, contentCharsUsed)
+        return NextResponse.json(abortResult)
       }
 
       // ── Inspect tool ──
       if (parsed.type === 'inspect' && parsed.tool) {
         if (inspectRoundsUsed >= loopInput.constraints.maxInspectRounds) {
-          return NextResponse.json(
-            buildLoopResult('max_rounds_exhausted', inspectRoundsUsed, toolTrace, startTime, loopInput.escalationReason),
-          )
+          const maxRoundsResult = buildLoopResult('max_rounds_exhausted', inspectRoundsUsed, toolTrace, startTime, loopInput.escalationReason)
+          attachContentTelemetry(maxRoundsResult, contentCallsUsed, contentCharsUsed)
+          return NextResponse.json(maxRoundsResult)
         }
 
         // Content budget enforcement (6x.3)
