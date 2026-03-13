@@ -420,4 +420,11 @@ export interface S6LoopTelemetry {
   s6_evidence_gate?: 'allowed' | 'ambiguous_siblings'
   /** Number of sibling panels sharing base name (when ambiguous). */
   s6_evidence_sibling_count?: number
+  // Content extension telemetry (6x.3)
+  /** Whether any content tool was called in this loop. */
+  s6_content_tool_used?: boolean
+  /** Number of content-tool calls made in this loop. */
+  s6_content_call_count?: number
+  /** Total characters returned across all content tool responses. */
+  s6_content_chars_returned?: number
 }

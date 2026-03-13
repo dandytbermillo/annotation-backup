@@ -311,7 +311,7 @@ Not for:
 - general chat fallback
 - generic widget-body explanation/search outside note content
 
-Widget content retrieval remains in overall plan scope, but it is a later slice after note-only validation succeeds and body-text search infrastructure is defined.
+Widget content retrieval remains in overall plan scope, but it is a later slice after note-only validation succeeds and per-widget content contracts are defined.
 
 ## 10. Telemetry
 
