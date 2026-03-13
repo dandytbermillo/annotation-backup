@@ -1,6 +1,6 @@
 # Multi-Layer Routing Reliability Plan (v3.5)
 
-**Status:** Ready for Phase 1 (observe-only)
+**Status:** CLOSED (2026-03-12). All 6 rollout stages complete. Completion report: `reports/2026-03-12-multi-layer-routing-v3_5-completion-report.md`
 **Owner:** Chat Navigation
 **Last updated:** 2026-03-03
 **Scope:** Replace brittle rule-heavy matching with a retrieval-first, validator-gated, bounded-LLM architecture while preserving strict execution safety.
