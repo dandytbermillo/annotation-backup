@@ -148,6 +148,11 @@ export async function POST(request: NextRequest) {
           s6_content_tool_used: payload.s6_content_tool_used,
           s6_content_call_count: payload.s6_content_call_count,
           s6_content_chars_returned: payload.s6_content_chars_returned,
+          // Stage 6 content answer telemetry (6x.4)
+          s6_answer_outcome: payload.s6_answer_outcome,
+          s6_answer_grounded: payload.s6_answer_grounded,
+          s6_answer_cited_count: payload.s6_answer_cited_count,
+          s6_answer_reason: payload.s6_answer_reason,
         })
       : null
 

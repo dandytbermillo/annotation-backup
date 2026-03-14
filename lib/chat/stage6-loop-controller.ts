@@ -255,6 +255,11 @@ async function writeDurableShadowLog(
       s6_content_tool_used: result.telemetry.s6_content_tool_used,
       s6_content_call_count: result.telemetry.s6_content_call_count,
       s6_content_chars_returned: result.telemetry.s6_content_chars_returned,
+      // Content answer telemetry (6x.4)
+      s6_answer_outcome: result.telemetry.s6_answer_outcome,
+      s6_answer_grounded: result.telemetry.s6_answer_grounded,
+      s6_answer_cited_count: result.telemetry.s6_answer_cited_count,
+      s6_answer_reason: result.telemetry.s6_answer_reason,
     }
 
     await recordRoutingLog(payload)
@@ -322,6 +327,11 @@ async function writeDurableEnforcementLog(
       s6_content_tool_used: result.telemetry.s6_content_tool_used,
       s6_content_call_count: result.telemetry.s6_content_call_count,
       s6_content_chars_returned: result.telemetry.s6_content_chars_returned,
+      // Content answer telemetry (6x.4)
+      s6_answer_outcome: result.telemetry.s6_answer_outcome,
+      s6_answer_grounded: result.telemetry.s6_answer_grounded,
+      s6_answer_cited_count: result.telemetry.s6_answer_cited_count,
+      s6_answer_reason: result.telemetry.s6_answer_reason,
     }
 
     await recordRoutingLog(payload)

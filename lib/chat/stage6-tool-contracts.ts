@@ -15,6 +15,8 @@
  *   §6 Validation rules
  */
 
+import type { S6ContentAnswerResult, S6ContentAnswerOutcome } from './stage6-content-tool-contracts'
+
 // ============================================================================
 // §1 Snapshot Payloads (Observation Model)
 // ============================================================================
@@ -369,6 +371,8 @@ export interface S6LoopResult {
   actionResult?: S6ActionResult
   /** Clarification result (only if outcome is 'clarification_*'). */
   clarificationResult?: S6ClarificationResponse
+  /** Content answer result (only if outcome is 'content_answered'). */
+  contentAnswerResult?: S6ContentAnswerResult
   /** Telemetry for durable log. */
   telemetry: S6LoopTelemetry
 }
@@ -381,6 +385,7 @@ export type S6LoopOutcome =
   | 'abort'
   | 'timeout'
   | 'max_rounds_exhausted'
+  | 'content_answered'
 
 // ============================================================================
 // §6 Validation Rules
@@ -446,4 +451,13 @@ export interface S6LoopTelemetry {
   s6_content_call_count?: number
   /** Total characters returned across all content tool responses. */
   s6_content_chars_returned?: number
+  // Content answer telemetry (6x.4)
+  /** How the content query resolved (answered, clarified, abort). */
+  s6_answer_outcome?: S6ContentAnswerOutcome
+  /** Whether the answer was grounded in retrieved evidence. */
+  s6_answer_grounded?: boolean
+  /** Number of unique snippet IDs cited as evidence. */
+  s6_answer_cited_count?: number
+  /** Reason for clarify or abort outcome. */
+  s6_answer_reason?: string
 }

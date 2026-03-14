@@ -137,4 +137,9 @@ export interface RoutingLogPayload {
   s6_content_tool_used?: boolean          // whether any content tool was called in this loop
   s6_content_call_count?: number          // number of content-tool calls made
   s6_content_chars_returned?: number      // total characters returned across content tool responses
+  // Content answer telemetry (6x.4)
+  s6_answer_outcome?: string              // S6ContentAnswerOutcome (answered, clarified, abort)
+  s6_answer_grounded?: boolean            // whether answer was grounded in evidence
+  s6_answer_cited_count?: number          // number of unique cited snippet IDs
+  s6_answer_reason?: string               // reason for clarify or abort outcome
 }
