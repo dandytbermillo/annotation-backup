@@ -28,6 +28,7 @@ import type {
   S6LoopResult,
   S6EscalationReason,
   S6GroundingCandidate,
+  S6ContentContext,
   S6DashboardSnapshot,
   S6InspectDashboardResponse,
 } from './stage6-tool-contracts'
@@ -47,6 +48,8 @@ export interface S6ShadowLoopParams {
   sessionId: string
   /** Turn index for durable log row */
   turnIndex: number
+  /** Content-intent context (6x.3). Present only when escalationReason is 'content_intent'. */
+  contentContext?: S6ContentContext
 }
 
 /**
@@ -162,6 +165,7 @@ async function executeS6Loop(
       timeoutMs: S6_LOOP_LIMITS.TIMEOUT_MS_DEFAULT,
       clarificationAllowed: true,
     },
+    contentContext: params.contentContext,
   }
 
   const controller = new AbortController()
@@ -247,6 +251,10 @@ async function writeDurableShadowLog(
       s6_abort_reason: result.telemetry.s6_abort_reason,
       s6_evidence_gate: result.telemetry.s6_evidence_gate,
       s6_evidence_sibling_count: result.telemetry.s6_evidence_sibling_count,
+      // Content extension telemetry (6x.3)
+      s6_content_tool_used: result.telemetry.s6_content_tool_used,
+      s6_content_call_count: result.telemetry.s6_content_call_count,
+      s6_content_chars_returned: result.telemetry.s6_content_chars_returned,
     }
 
     await recordRoutingLog(payload)
@@ -310,6 +318,10 @@ async function writeDurableEnforcementLog(
       s6_abort_reason: result.telemetry.s6_abort_reason,
       s6_evidence_gate: result.telemetry.s6_evidence_gate,
       s6_evidence_sibling_count: result.telemetry.s6_evidence_sibling_count,
+      // Content extension telemetry (6x.3)
+      s6_content_tool_used: result.telemetry.s6_content_tool_used,
+      s6_content_call_count: result.telemetry.s6_content_call_count,
+      s6_content_chars_returned: result.telemetry.s6_content_chars_returned,
     }
 
     await recordRoutingLog(payload)

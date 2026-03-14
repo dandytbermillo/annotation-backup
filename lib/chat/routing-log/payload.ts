@@ -133,4 +133,8 @@ export interface RoutingLogPayload {
   s6_abort_reason?: string                // reason if outcome was abort
   s6_evidence_gate?: string               // open_panel evidence gate result (allowed, ambiguous_siblings)
   s6_evidence_sibling_count?: number      // sibling panel count when evidence gate is ambiguous
+  // Content extension telemetry (6x.3)
+  s6_content_tool_used?: boolean          // whether any content tool was called in this loop
+  s6_content_call_count?: number          // number of content-tool calls made
+  s6_content_chars_returned?: number      // total characters returned across content tool responses
 }

@@ -91,6 +91,7 @@ import { evaluateStage5Replay } from '@/lib/chat/routing-log/stage5-evaluator'
 
 // Stage 6: shadow loop (fire-and-forget) + enforcement loop (awaitable)
 import { runS6ShadowLoop, runS6EnforcementLoop } from '@/lib/chat/stage6-loop-controller'
+import { classifyContentIntent, type NoteAnchorContext } from '@/lib/chat/content-intent-classifier'
 import { executeS6OpenPanel, isDuplicateAction } from '@/lib/chat/stage6-execution-bridge'
 import type { S6ParsedAction, S6ActionSignature } from '@/lib/chat/stage6-execution-bridge'
 
@@ -1278,9 +1279,12 @@ export async function dispatchRouting(
   const phase1Enabled = process.env.NEXT_PUBLIC_CHAT_ROUTING_OBSERVE_ONLY === 'true'
   const memoryReadEnabled = process.env.NEXT_PUBLIC_CHAT_ROUTING_MEMORY_READ === 'true'
   const memoryWriteEnabled = process.env.NEXT_PUBLIC_CHAT_ROUTING_MEMORY_WRITE === 'true'
+  const shadowEnabled = process.env.NEXT_PUBLIC_STAGE6_SHADOW_ENABLED === 'true'
 
   // Fast path: when ALL instrumentation is disabled, skip wrapper overhead entirely.
-  if (!phase1Enabled && !memoryReadEnabled && !memoryWriteEnabled) {
+  // Stage 6 shadow must also keep the wrapper active — the content-intent block (6x.3)
+  // lives in the wrapper region and would be bypassed without this check.
+  if (!phase1Enabled && !memoryReadEnabled && !memoryWriteEnabled && !shadowEnabled) {
     return dispatchRoutingInner(ctx)
   }
 
@@ -1431,6 +1435,52 @@ export async function dispatchRouting(
   }
 
   // ---------------------------------------------------------------------------
+  // Content-intent check (Stage 6x.3, Step 4)
+  // Runs before Stage 5 replay and Stage 4 LLM. Shadow-only in Step 4;
+  // enforcement deferred to 6x.5 (UI answer path).
+  // The flag suppresses Stage 5 replay and later generic S6 triggers.
+  // Gated on shadow flag: when shadow is off, the classifier does not run
+  // and routing behaves identically to pre-Step-4 code.
+  // ---------------------------------------------------------------------------
+  let contentIntentMatchedThisTurn = false
+
+  if (process.env.NEXT_PUBLIC_STAGE6_SHADOW_ENABLED === 'true') {
+    const activeNoteId = ctx.uiContext?.workspace?.activeNoteId ?? null
+    const activeNote = activeNoteId
+      ? ctx.uiContext?.workspace?.openNotes?.find(n => n.id === activeNoteId)
+      : null
+    const noteAnchor: NoteAnchorContext = {
+      activeNoteItemId: activeNoteId,
+      activeNoteTitle: activeNote?.title ?? null,
+    }
+
+    const contentResult = classifyContentIntent(ctx.trimmedInput, noteAnchor)
+    if (contentResult.isContentIntent && contentResult.noteAnchor) {
+      const s6SessionId = getRoutingLogSessionId()
+      const s6TurnIndex = ctx.messages.filter(m => m.role === 'user').length
+      const s6LastMsg = [...ctx.messages].reverse().find(m => m.role === 'user')
+      const s6InteractionId = s6LastMsg?.id ?? deriveFallbackInteractionId(s6SessionId, s6TurnIndex, ctx.trimmedInput)
+      const s6Params = {
+        userInput: ctx.trimmedInput,
+        groundingCandidates: [] as import('./stage6-tool-contracts').S6GroundingCandidate[],
+        escalationReason: 'content_intent' as const,
+        interactionId: s6InteractionId,
+        sessionId: s6SessionId,
+        turnIndex: s6TurnIndex,
+        contentContext: {
+          noteItemId: contentResult.noteAnchor.itemId,
+          noteTitle: contentResult.noteAnchor.title,
+          anchorSource: contentResult.noteAnchor.source,
+          intentType: contentResult.intentType!,
+        },
+      }
+      void runS6ShadowLoop(s6Params)
+      contentIntentMatchedThisTurn = true
+      // Fall through to normal routing — shadow doesn't block
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Stage 5: Semantic resolution reuse
   // Runs after B2 lookup, before tier chain. Evaluates whether B2 candidates
   // qualify for auto-replay.
@@ -1440,10 +1490,12 @@ export async function dispatchRouting(
   // Guard: skip Stage 5 when active selection context + selection-like input.
   // Same protection as B1 (line 1302). Ordinals like "2" are context-sensitive
   // and must not replay cross-context semantic matches.
+  // Also skip when content-intent matched (6x.3) — navigation replay must not
+  // hijack content queries.
   // ---------------------------------------------------------------------------
   let s5Telemetry: import('./routing-log/stage5-evaluator').S5EvaluationResult | undefined
 
-  if (semanticCandidatesForLaneD && semanticCandidatesForLaneD.length > 0 && !shouldSkipB1ForSelection) {
+  if (semanticCandidatesForLaneD && semanticCandidatesForLaneD.length > 0 && !shouldSkipB1ForSelection && !contentIntentMatchedThisTurn) {
     try {
       s5Telemetry = evaluateStage5Replay(semanticCandidatesForLaneD, turnSnapshotForLog, b2CurrentContextFingerprint)
 
@@ -1517,7 +1569,7 @@ export async function dispatchRouting(
   let routingError: unknown
 
   try {
-    result = await dispatchRoutingInner(ctx, semanticCandidatesForLaneD, b2LookupStatus)
+    result = await dispatchRoutingInner(ctx, semanticCandidatesForLaneD, b2LookupStatus, contentIntentMatchedThisTurn)
   } catch (err) {
     routingError = err
   }
@@ -1663,6 +1715,7 @@ async function dispatchRoutingInner(
   ctx: RoutingDispatcherContext,
   semanticCandidatesForReorder?: SemanticCandidate[],
   b2LookupStatus?: 'ok' | 'empty' | 'timeout' | 'error' | 'disabled',
+  contentIntentMatchedThisTurn = false,
 ): Promise<RoutingDispatcherResult> {
   const defaultResult: RoutingDispatcherResult = {
     handled: false,
@@ -5240,7 +5293,8 @@ async function dispatchRoutingInner(
               })
 
               // Stage 6: enforcement or shadow on Stage 4 abstain
-              {
+              // Skip if content-intent already triggered S6 for this turn (6x.3)
+              if (!contentIntentMatchedThisTurn) {
                 const s6SessionId = getRoutingLogSessionId()
                 const s6TurnIndex = ctx.messages.filter(m => m.role === 'user').length
                 const s6LastMsg = [...ctx.messages].reverse().find(m => m.role === 'user')
@@ -5424,7 +5478,8 @@ async function dispatchRoutingInner(
             })
 
             // Stage 6: enforcement or shadow on Stage 4 timeout
-            {
+            // Skip if content-intent already triggered S6 for this turn (6x.3)
+            if (!contentIntentMatchedThisTurn) {
               const s6SessionId = getRoutingLogSessionId()
               const s6TurnIndex = ctx.messages.filter(m => m.role === 'user').length
               const s6LastMsg = [...ctx.messages].reverse().find(m => m.role === 'user')

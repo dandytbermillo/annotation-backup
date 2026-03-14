@@ -1,0 +1,178 @@
+/**
+ * Content-Intent Classifier (Stage 6x.3, Step 3)
+ *
+ * Pure function classifier that detects whether user input is asking
+ * about note content (summary, question, find-text). Requires a
+ * pre-resolved note anchor — no DB access, no side effects.
+ *
+ * Used by the dispatcher to decide WHEN to enter the content-aware
+ * Stage 6 loop path with escalationReason: 'content_intent'.
+ *
+ * In Slice 1, activeNoteItemId is non-null only when the active widget
+ * is a note-capable surface. The 'resolved_reference' anchor source
+ * exists for forward compatibility but is not produced yet.
+ *
+ * Design: stage6-content-retrieval-and-explanation-design.md §9.2
+ */
+
+import { isExplicitCommand } from '@/lib/chat/input-classifiers'
+
+// ============================================================================
+// Types
+// ============================================================================
+
+export interface NoteAnchorContext {
+  activeNoteItemId: string | null
+  activeNoteTitle: string | null
+}
+
+export interface ContentIntentResult {
+  isContentIntent: boolean
+  intentType: 'summary' | 'question' | 'find_text' | null
+  noteAnchor: {
+    itemId: string
+    title: string
+    source: 'active_widget' | 'resolved_reference'
+  } | null
+}
+
+// ============================================================================
+// Internal patterns
+// ============================================================================
+
+/** Selection inputs that must never trigger content intent. */
+const SELECTION_PATTERN = /^([1-9]|[a-e]|first|second|third|fourth|fifth|last)$/i
+
+/** Semantic-session phrases — belong to the semantic lane, not content. */
+const SEMANTIC_SESSION_PATTERN =
+  /\b(my\s+session|my\s+activity|my\s+history|what\s+have\s+i\s+been\s+doing|what\s+did\s+we\s+do|why\s+did\s+i)\b/i
+
+/** Dashboard/meta/greeting phrases — not content queries. */
+const DASHBOARD_META_PATTERN =
+  /^(help|hello|hi|hey|what\s+can\s+you\s+do|what\s+panels?\s+(are|is)\s+open|how\s+do\s+i)\b/i
+
+/**
+ * Non-note surface references — if the input explicitly targets
+ * a dashboard, panel, or workspace, it is not a note content query
+ * even when a note anchor is present.
+ */
+const NON_NOTE_SCOPE_PATTERN =
+  /\b(the\s+dashboard|this\s+panel|the\s+panel|links\s+panel|the\s+workspace|this\s+workspace|the\s+sidebar)\b/i
+
+// --- Intent detection patterns (ordered by specificity) ---
+
+// find_text: most specific
+const FIND_TEXT_PATTERNS = [
+  /\b(find|search\s+for|look\s+for)\b.+\b(in|inside|within)\b/i,
+  /\b(find|search\s+for|look\s+for)\b/i,
+  /\bwhere\s+does\s+it\s+(say|mention|talk\s+about)\b/i,
+  /\bdoes\s+(it|this|the\s+note)\s+(contain|include)\b/i,
+]
+
+// summary: moderately specific
+const SUMMARY_PATTERNS = [
+  /\b(summarize|summary\s+of|overview\s+of)\b/i,
+  /\bgive\s+me\s+a\s+summary\b/i,
+  /\bwhat('s|s|\s+is)\s+in\s+(this|the|my)\s+(note|document|page)\b/i,
+  /\bwhat\s+does\s+(this|the|my)\s+(note|document|page)\s+say\b(?!\s+about)/i,
+]
+
+// question: broadest — checked last
+const QUESTION_PATTERNS = [
+  /\bwhat\s+does\s+(it|this|this\s+note|the\s+note|my\s+note)\s+(say|mention|talk)\s+about\b/i,
+  /\b(explain|tell\s+me\s+about)\s+what('s|s|\s+is)\s+(in\s+here|in\s+this|in\s+the\s+note)\b/i,
+  /\bexplain\s+(this|the)\s+(note|document|page|content)\b/i,
+  /\bdoes\s+(this|it)\s+mention\b/i,
+  /\bwhat\s+does\s+it\s+say\b/i,
+]
+
+// ============================================================================
+// Classifier
+// ============================================================================
+
+const FALSE_RESULT: ContentIntentResult = {
+  isContentIntent: false,
+  intentType: null,
+  noteAnchor: null,
+}
+
+function makeResult(
+  intentType: 'summary' | 'question' | 'find_text',
+  anchor: NoteAnchorContext,
+): ContentIntentResult {
+  return {
+    isContentIntent: true,
+    intentType,
+    noteAnchor: {
+      itemId: anchor.activeNoteItemId!,
+      title: anchor.activeNoteTitle ?? '',
+      source: 'active_widget',
+    },
+  }
+}
+
+function matchesAny(text: string, patterns: RegExp[]): boolean {
+  return patterns.some(p => p.test(text))
+}
+
+/**
+ * Classify whether user input is a content-intent query about a note.
+ *
+ * Pure function: no store access, no DB, no side effects.
+ * The dispatcher pre-resolves the anchor from active widget state.
+ */
+export function classifyContentIntent(
+  input: string,
+  anchor: NoteAnchorContext,
+): ContentIntentResult {
+  // 1. Anchor guard: no note anchor = no content intent
+  if (!anchor.activeNoteItemId) {
+    return FALSE_RESULT
+  }
+
+  const trimmed = input.trim()
+  if (!trimmed) return FALSE_RESULT
+
+  const lower = trimmed.toLowerCase()
+
+  // 2. Navigation-command guard
+  if (isExplicitCommand(trimmed)) {
+    return FALSE_RESULT
+  }
+
+  // 3. Selection guard
+  if (SELECTION_PATTERN.test(lower)) {
+    return FALSE_RESULT
+  }
+
+  // 4. Dashboard/meta guard
+  if (DASHBOARD_META_PATTERN.test(lower)) {
+    return FALSE_RESULT
+  }
+
+  // 5. Semantic-session guard
+  if (SEMANTIC_SESSION_PATTERN.test(lower)) {
+    return FALSE_RESULT
+  }
+
+  // 6. Non-note scope guard
+  if (NON_NOTE_SCOPE_PATTERN.test(lower)) {
+    return FALSE_RESULT
+  }
+
+  // 7. Intent detection (ordered: find_text → summary → question)
+  if (matchesAny(lower, FIND_TEXT_PATTERNS)) {
+    return makeResult('find_text', anchor)
+  }
+
+  if (matchesAny(lower, SUMMARY_PATTERNS)) {
+    return makeResult('summary', anchor)
+  }
+
+  if (matchesAny(lower, QUESTION_PATTERNS)) {
+    return makeResult('question', anchor)
+  }
+
+  // 8. No match
+  return FALSE_RESULT
+}

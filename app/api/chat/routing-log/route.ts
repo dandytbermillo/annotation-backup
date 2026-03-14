@@ -144,6 +144,10 @@ export async function POST(request: NextRequest) {
           s6_abort_reason: payload.s6_abort_reason,
           s6_evidence_gate: payload.s6_evidence_gate,
           s6_evidence_sibling_count: payload.s6_evidence_sibling_count,
+          // Stage 6 content extension telemetry (6x.3)
+          s6_content_tool_used: payload.s6_content_tool_used,
+          s6_content_call_count: payload.s6_content_call_count,
+          s6_content_chars_returned: payload.s6_content_chars_returned,
         })
       : null
 
