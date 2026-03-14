@@ -90,7 +90,7 @@ import { computeClarifierReorderTelemetry, reorderClarifierCandidates, type Reor
 import { evaluateStage5Replay } from '@/lib/chat/routing-log/stage5-evaluator'
 
 // Stage 6: shadow loop (fire-and-forget) + enforcement loop (awaitable)
-import { runS6ShadowLoop, runS6EnforcementLoop } from '@/lib/chat/stage6-loop-controller'
+import { runS6ShadowLoop, runS6EnforcementLoop, executeS6Loop, writeDurableEnforcementLog } from '@/lib/chat/stage6-loop-controller'
 import { classifyContentIntent, type NoteAnchorContext } from '@/lib/chat/content-intent-classifier'
 import { executeS6OpenPanel, isDuplicateAction } from '@/lib/chat/stage6-execution-bridge'
 import type { S6ParsedAction, S6ActionSignature } from '@/lib/chat/stage6-execution-bridge'
@@ -1474,9 +1474,55 @@ export async function dispatchRouting(
           intentType: contentResult.intentType!,
         },
       }
+      // Try awaiting the loop — if it returns a content answer, surface it.
+      // Otherwise fall back to shadow (fire-and-forget) + normal routing.
+      try {
+        const loopResult = await executeS6Loop(s6Params)
+        if (loopResult?.outcome === 'content_answered' && loopResult.contentAnswerResult?.answerText) {
+          const answerText = loopResult.contentAnswerResult.answerText
+          const assistantMessage: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: answerText,
+            timestamp: new Date(),
+            isError: false,
+          }
+          ctx.addMessage(assistantMessage)
+          ctx.setIsLoading(false)
+
+          // Durable telemetry: write enforcement-style log for the surfaced answer
+          void writeDurableEnforcementLog(s6Params, loopResult)
+
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'content_intent_answered',
+            metadata: {
+              noteItemId: contentResult.noteAnchor!.itemId,
+              intentType: contentResult.intentType,
+              citedCount: loopResult.contentAnswerResult.citedSnippetIds?.length ?? 0,
+            },
+          })
+
+          return {
+            handled: true,
+            handledByTier: 6,
+            tierLabel: 'content_intent_answered',
+            clarificationCleared: false,
+            isNewQuestionOrCommandDetected: false,
+            classifierCalled: false,
+            classifierTimeout: false,
+            classifierError: false,
+            isFollowUp: false,
+            _devProvenanceHint: 'content_answered',
+          }
+        }
+      } catch (err) {
+        console.warn('[routing-dispatcher] Content-intent loop failed:', (err as Error).message)
+      }
+
+      // Loop didn't produce an answer — fall back to shadow + normal routing
       void runS6ShadowLoop(s6Params)
       contentIntentMatchedThisTurn = true
-      // Fall through to normal routing — shadow doesn't block
     }
   }
 

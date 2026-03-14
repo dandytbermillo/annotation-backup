@@ -133,7 +133,7 @@ export async function runS6EnforcementLoop(
 // Internal
 // ============================================================================
 
-async function executeS6Loop(
+export async function executeS6Loop(
   params: S6ShadowLoopParams,
 ): Promise<S6LoopResult | null> {
   // Pre-compute client-side snapshots in parallel
@@ -274,7 +274,7 @@ async function writeDurableShadowLog(
  * with the dispatcher-built routing log row for the same interaction.
  * Provenance: s6_enforced:<action_type> when action executed, s6_enforced:fallback otherwise.
  */
-async function writeDurableEnforcementLog(
+export async function writeDurableEnforcementLog(
   params: S6ShadowLoopParams,
   result: S6LoopResult,
 ): Promise<void> {

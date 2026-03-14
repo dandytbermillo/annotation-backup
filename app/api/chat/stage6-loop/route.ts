@@ -113,7 +113,7 @@ const S6_RESPONSE_SCHEMA: import('@google/generative-ai').ObjectSchema = {
     },
     itemId: {
       type: SchemaType.STRING,
-      description: 'Item ID from inspect results (required for open_widget_item)',
+      description: 'Item ID (required for open_widget_item and inspect_note_content)',
     },
     entryId: {
       type: SchemaType.STRING,
@@ -766,7 +766,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       model: process.env.STAGE6_LLM_MODEL || 'gemini-2.0-flash',
       generationConfig: {
         temperature: 0.1,
-        maxOutputTokens: 500,
+        maxOutputTokens: 1024,
         responseMimeType: 'application/json',
         responseSchema: S6_RESPONSE_SCHEMA,
       },
@@ -807,11 +807,31 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         )
       }
 
+      // Auto-fill itemId for inspect_note_content in content-intent loops (6x.4).
+      // Gemini structured output often omits optional fields — the server knows
+      // the anchored note from contentContext, so fill it in rather than failing.
+      if (parsed.type === 'inspect' && parsed.tool === 'inspect_note_content' && !parsed.itemId && loopInput.contentContext) {
+        parsed.itemId = loopInput.contentContext.noteItemId
+      }
+
+      // Auto-fill citedSnippetIds for answer in content-intent loops (6x.4).
+      // Gemini structured output often omits or empties optional arrays.
+      // If the model answered after inspecting content, cite all retrieved snippets.
+      if (parsed.type === 'answer' && parsed.text && sessionSnippetRegistry.size > 0) {
+        if (!parsed.citedSnippetIds || parsed.citedSnippetIds.length === 0) {
+          parsed.citedSnippetIds = [...sessionSnippetRegistry.keys()]
+        }
+        if (parsed.grounded === undefined) {
+          parsed.grounded = true
+        }
+      }
+
       // Structural validation: check required fields per type.
       // On first failure, feed error back to model for one retry.
       // On second failure, abort immediately.
       const structError = validateResponseStructure(parsed)
       if (structError) {
+        console.warn(`[stage6-loop] Structural validation failed:`, structError, `| Model sent:`, JSON.stringify(parsed).slice(0, 300))
         toolTrace.push(`invalid_${parsed.type}`)
         if (!structRetried) {
           structRetried = true
