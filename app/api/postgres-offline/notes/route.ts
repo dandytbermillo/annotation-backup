@@ -13,21 +13,21 @@ export async function POST(request: NextRequest) {
     // Use workspace scoping if feature is enabled
     if (FEATURE_WORKSPACE_SCOPING) {
       const result = await WorkspaceStore.withWorkspace(serverPool, async ({ client, workspaceId }) => {
-        // Insert with workspace_id
+        // Insert without workspace_id (notes table does not have this column)
         const insertResult = await client.query(
-          `INSERT INTO notes (id, title, metadata, workspace_id, created_at, updated_at)
-           VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3::jsonb, $4, NOW(), NOW())
+          `INSERT INTO notes (id, title, metadata, created_at, updated_at)
+           VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3::jsonb, NOW(), NOW())
            ON CONFLICT (id) DO NOTHING
            RETURNING id, title, metadata, created_at, updated_at`,
-          [idOrNull, title, JSON.stringify(metadata), workspaceId]
+          [idOrNull, title, JSON.stringify(metadata)]
         )
 
         if (insertResult.rows.length === 0 && idOrNull) {
-          // Check if note exists in this workspace
+          // Check if note exists
           const existing = await client.query(
             `SELECT id, title, metadata, created_at, updated_at
-             FROM notes WHERE id = $1 AND workspace_id = $2`,
-            [idOrNull, workspaceId]
+             FROM notes WHERE id = $1`,
+            [idOrNull]
           )
           if (existing.rows.length > 0) {
             return { data: existing.rows[0], status: 200 }

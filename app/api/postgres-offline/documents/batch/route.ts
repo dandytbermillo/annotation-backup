@@ -153,12 +153,11 @@ async function handleBatchSave(operations: any[], logLabel: string): Promise<Bat
     for (const entry of grouped.values()) {
       // Ensure the parent note row exists so workspace scoping remains consistent
       await client.query(
-        `INSERT INTO notes (id, title, metadata, workspace_id, created_at, updated_at)
-         VALUES ($1::uuid, 'Untitled', '{}'::jsonb, $2::uuid, NOW(), NOW())
-         ON CONFLICT (id) DO UPDATE SET 
-           workspace_id = COALESCE(notes.workspace_id, EXCLUDED.workspace_id),
+        `INSERT INTO notes (id, title, metadata, created_at, updated_at)
+         VALUES ($1::uuid, 'Untitled', '{}'::jsonb, NOW(), NOW())
+         ON CONFLICT (id) DO UPDATE SET
            updated_at = NOW()`,
-        [entry.noteKey, workspaceId]
+        [entry.noteKey]
       )
 
       const contentString = JSON.stringify(entry.contentJson)

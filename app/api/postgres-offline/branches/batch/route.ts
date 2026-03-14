@@ -95,21 +95,12 @@ export async function POST(request: NextRequest) {
             ? String(id).trim()
             : uuidv5(`branch:${id || Date.now()}`, ID_NAMESPACE)
 
-          if (workspaceId) {
-            await client.query(
-              `INSERT INTO notes (id, title, metadata, workspace_id, created_at, updated_at)
-               VALUES ($1::uuid, 'Untitled', '{}'::jsonb, $2::uuid, NOW(), NOW())
-               ON CONFLICT (id) DO NOTHING`,
-              [noteKey, workspaceId]
-            )
-          } else {
-            await client.query(
-              `INSERT INTO notes (id, title, metadata, created_at, updated_at)
-               VALUES ($1::uuid, 'Untitled', '{}'::jsonb, NOW(), NOW())
-               ON CONFLICT (id) DO NOTHING`,
-              [noteKey]
-            )
-          }
+          await client.query(
+            `INSERT INTO notes (id, title, metadata, created_at, updated_at)
+             VALUES ($1::uuid, 'Untitled', '{}'::jsonb, NOW(), NOW())
+             ON CONFLICT (id) DO NOTHING`,
+            [noteKey]
+          )
 
           const parentValue = parentId || null
           const branchType = type || 'note'

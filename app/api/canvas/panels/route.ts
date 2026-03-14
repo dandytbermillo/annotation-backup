@@ -95,9 +95,9 @@ export async function POST(request: NextRequest) {
 
     console.log(`[Canvas Panels API] Creating panel ${id} for note ${noteId}`)
 
-    // Get workspace_id from note
+    // Get workspace_id from items table (notes table does not have workspace_id)
     const workspaceResult = await client.query(
-      'SELECT workspace_id FROM notes WHERE id = $1',
+      'SELECT workspace_id FROM items WHERE id = $1 AND deleted_at IS NULL',
       [noteId]
     )
 
@@ -142,7 +142,6 @@ export async function POST(request: NextRequest) {
         schema_version,
         position,
         dimensions,
-        workspace_id,
         panel_id,
         title,
         metadata,
@@ -151,7 +150,7 @@ export async function POST(request: NextRequest) {
       )
       VALUES (
         gen_random_uuid(), $2, $3, $4, $5, $6, $7, $8, $9, $10, '1', 1,
-        $11::jsonb, $12::jsonb, $13, $1, $14, $15::jsonb, NOW(), NOW()
+        $11::jsonb, $12::jsonb, $1, $13, $14::jsonb, NOW(), NOW()
       )
       ON CONFLICT (note_id, panel_id) DO UPDATE SET
         position_x_world = EXCLUDED.position_x_world,
@@ -161,8 +160,8 @@ export async function POST(request: NextRequest) {
         z_index = EXCLUDED.z_index,
         state = EXCLUDED.state,
         updated_by = EXCLUDED.updated_by,
-        title = COALESCE(EXCLUDED.title, panels.title),  -- Update title if provided
-        metadata = COALESCE(EXCLUDED.metadata, panels.metadata),  -- Update metadata if provided
+        title = COALESCE(EXCLUDED.title, panels.title),
+        metadata = COALESCE(EXCLUDED.metadata, panels.metadata),
         revision_token = (COALESCE(panels.revision_token::integer, 0) + 1)::text,
         position = EXCLUDED.position,
         dimensions = EXCLUDED.dimensions,
@@ -170,7 +169,7 @@ export async function POST(request: NextRequest) {
         last_accessed = NOW()
       RETURNING id, panel_id, revision_token, updated_at`,
       [
-        id,  // This is the panel_id (text) like "main" or "branch-xxx"
+        id,  // $1 - panel_id (text) like "main" or "branch-xxx"
         noteId,
         type,
         position.x,
@@ -180,11 +179,10 @@ export async function POST(request: NextRequest) {
         zIndex,
         state,
         updatedBy || null,
-        JSON.stringify(position), // Keep JSONB in sync for backward compatibility
+        JSON.stringify(position),
         JSON.stringify(size),
-        workspaceId,
-        title || null,  // $14 - panel title
-        metadata ? JSON.stringify(metadata) : null  // $15 - panel metadata (includes annotationType)
+        title || null,  // $13
+        metadata ? JSON.stringify(metadata) : null  // $14
       ]
     )
 

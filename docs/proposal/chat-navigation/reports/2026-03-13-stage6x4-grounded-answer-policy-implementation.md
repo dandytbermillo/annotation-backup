@@ -208,7 +208,97 @@ Content-intent is scoped to **notes only** (Slice 1). Links panels and other wid
 
 ---
 
+## Addendum: Infrastructure Fixes (2026-03-14)
+
+During runtime testing of 6x.4, note creation and editing inside entry workspaces failed. Investigation revealed systemic schema mismatches across the persistence layer — multiple API routes referenced columns that do not exist on their target tables.
+
+### Root Cause
+
+The `notes` and `panels` tables never had a `workspace_id` column (no migration ever added it), but numerous API routes assumed they did. The `document_saves` table had a trigger referencing a non-existent column name. These errors were masked in default-workspace contexts but surfaced when testing from entry workspaces.
+
+### Fix 1: Empty Workspace — Control Center Toggle Not Wired
+
+**Problem**: When a workspace has no open notes, the canvas is hidden (`visibility: hidden`), and its built-in Control Center (with "+ Note" button) is hidden too. The `WorkspaceControlCenterToggle` component exists as a fallback but was never wired.
+
+**File**: `components/annotation-app-shell.tsx`
+**Fix**: Added `controlCenterProps` to `workspaceViewProps` with `visible: openNotes.length === 0`, connecting `handleNewNoteFromToolbar`, recent notes, and constellation toggle.
+
+### Fix 2: Knowledge Base Root Not Found in Entry Workspaces
+
+**Problem**: `GET /api/items?parentId=null` filtered by `WHERE workspace_id = $1`, but the Knowledge Base root has `workspace_id = NULL`. Entry workspaces could never find it.
+
+**File**: `app/api/items/route.ts` (GET handler, parentId branch)
+**Fix**: Changed to `WHERE (workspace_id = $1 OR workspace_id IS NULL)` so system-level items (Knowledge Base root) are always discoverable.
+
+### Fix 3: Entry Workspace ID Not in `workspaces` Table
+
+**Problem**: Entry workspaces exist in `note_workspaces` but not in `workspaces`. The POST handler returned 404 when the requested workspace wasn't found.
+
+**File**: `app/api/items/route.ts` (POST handler)
+**Fix**: When the requested workspace isn't in `workspaces`, fall back to the default workspace instead of returning 404. Logs a warning for observability.
+
+### Fix 4: `notes` Table — Phantom `workspace_id` Column
+
+**Problem**: The `notes` table has **no** `workspace_id` column, but 7 API routes referenced it in INSERT, SELECT, UPDATE, and WHERE clauses.
+
+**Verified**: `SELECT column_name FROM information_schema.columns WHERE table_name = 'notes' AND column_name = 'workspace_id'` → 0 rows.
+
+**Files fixed** (removed `workspace_id` from `notes` queries):
+
+| File | Change |
+|------|--------|
+| `app/api/items/route.ts` | Removed `workspace_id` from notes INSERT |
+| `app/api/postgres-offline/documents/route.ts` | Changed `SELECT workspace_id FROM notes` → `FROM items`; removed UPDATE to `notes.workspace_id` |
+| `app/api/postgres-offline/documents/batch/route.ts` | Removed `workspace_id` from notes INSERT |
+| `app/api/postgres-offline/branches/batch/route.ts` | Removed `workspace_id` from notes INSERT |
+| `app/api/postgres-offline/notes/route.ts` | Removed `workspace_id` from INSERT and WHERE clauses |
+| `app/api/postgres-offline/notes/[id]/route.ts` | Removed `workspace_id` from WHERE clause |
+
+### Fix 5: `panels` Table — Phantom `workspace_id` Column
+
+**Problem**: The `panels` table has **no** `workspace_id` column, but 3 API routes included it in INSERT statements.
+
+**Verified**: `SELECT column_name FROM information_schema.columns WHERE table_name = 'panels' AND column_name = 'workspace_id'` → 0 rows.
+
+**Files fixed** (removed `workspace_id` from `panels` INSERTs):
+
+| File | Change |
+|------|--------|
+| `app/api/canvas/panels/route.ts` | Removed `workspace_id` from INSERT; changed workspace lookup from `notes` → `items` |
+| `app/api/postgres-offline/panels/route.ts` | Removed `workspace_id` from INSERT; changed workspace lookup from `notes` → `items` |
+| `app/api/panels/[panelId]/rename/route.ts` | Removed `workspace_id` from INSERT; changed workspace lookup from `notes` → `items` |
+
+### Fix 6: `document_saves` Trigger — Wrong Column Name
+
+**Problem**: The `document_saves_search_trigger()` function referenced `NEW.search_vector`, but the actual column is `search_tsv`. Every document save failed with `record "new" has no field "search_vector"`.
+
+**Fix**: Replaced the trigger function via SQL:
+```sql
+CREATE OR REPLACE FUNCTION document_saves_search_trigger()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.search_tsv := to_tsvector('english', unaccent(coalesce(pm_extract_text(NEW.content), '')));
+  RETURN NEW;
+END
+$$ LANGUAGE plpgsql;
+```
+
+### Safety Verification
+
+| Table | Has `workspace_id`? | Action |
+|-------|-------------------|--------|
+| `notes` | **No** | Removed all references — were runtime errors |
+| `panels` | **No** | Removed all references — were runtime errors |
+| `items` | **Yes** | Now used as workspace_id source (replaces `notes`) |
+| `document_saves` | **Yes** | Untouched — correctly uses workspace_id |
+| `workspace_panels` | **Yes** | Untouched — unaffected |
+
+All removals eliminated references to non-existent columns. No working functionality was broken.
+
+---
+
 ## Next Steps
 
 - **6x.5**: Surface answers to users (enforcement mode wiring)
 - **Links panel support**: Extend content-intent classifier, add `inspect_widget_content` handler, generalize `S6ContentContext` beyond notes
+- **Schema audit**: Consider adding `workspace_id` to `notes` and `panels` tables via migration if workspace-scoped queries are needed in the future, or remove remaining dead-code references

@@ -13,9 +13,9 @@ export async function POST(request: Request) {
     // Generate a panel_id if not provided
     const actualPanelId = panel_id || `panel_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-    // Get workspace_id from the note
+    // Get workspace_id from items table (notes table does not have workspace_id)
     const noteResult = await pool.query(
-      'SELECT workspace_id FROM notes WHERE id = $1',
+      'SELECT workspace_id FROM items WHERE id = $1 AND deleted_at IS NULL',
       [note_id]
     );
 
@@ -29,8 +29,8 @@ export async function POST(request: Request) {
     const workspace_id = noteResult.rows[0].workspace_id;
 
     const result = await pool.query(
-      `INSERT INTO panels (id, note_id, panel_id, position, dimensions, state, title, type, workspace_id, last_accessed)
-       VALUES (gen_random_uuid(), $1, $2, $3::jsonb, $4::jsonb, $5, $6, $7, $8, NOW())
+      `INSERT INTO panels (id, note_id, panel_id, position, dimensions, state, title, type, last_accessed)
+       VALUES (gen_random_uuid(), $1, $2, $3::jsonb, $4::jsonb, $5, $6, $7, NOW())
        RETURNING *`,
       [
         note_id,
@@ -40,7 +40,6 @@ export async function POST(request: Request) {
         state || 'active',
         title || null,
         type || 'editor',
-        workspace_id
       ]
     );
 

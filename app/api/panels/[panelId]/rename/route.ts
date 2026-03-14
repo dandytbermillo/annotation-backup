@@ -74,21 +74,20 @@ export async function POST(
       )
 
       if (panelCheck.rows.length === 0) {
-        // Get workspace_id from note
+        // Get workspace_id from items table (notes table does not have workspace_id)
         const noteResult = await client.query(
-          'SELECT workspace_id FROM notes WHERE id = $1',
+          'SELECT workspace_id FROM items WHERE id = $1 AND deleted_at IS NULL',
           [noteId]
         )
 
         if (noteResult.rows.length > 0) {
           await client.query(
-            `INSERT INTO panels (id, note_id, panel_id, title, workspace_id, position, dimensions, state, type, last_accessed)
-             VALUES (gen_random_uuid(), $1, $2, $3, $4, $5::jsonb, $6::jsonb, 'active', 'editor', NOW())`,
+            `INSERT INTO panels (id, note_id, panel_id, title, position, dimensions, state, type, last_accessed)
+             VALUES (gen_random_uuid(), $1, $2, $3, $4::jsonb, $5::jsonb, 'active', 'editor', NOW())`,
             [
               noteId,
               panelId,
               trimmedTitle,
-              noteResult.rows[0].workspace_id,
               JSON.stringify({ x: 0, y: 0 }),
               JSON.stringify({ width: 800, height: 600 })
             ]

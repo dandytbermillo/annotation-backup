@@ -16,8 +16,8 @@ export async function GET(
       const result = await WorkspaceStore.withWorkspace(serverPool, async ({ client, workspaceId }) => {
         return client.query(
           `SELECT id, title, metadata, created_at, updated_at
-           FROM notes WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL`,
-          [id, workspaceId]
+           FROM notes WHERE id = $1 AND deleted_at IS NULL`,
+          [id]
         )
       })
 

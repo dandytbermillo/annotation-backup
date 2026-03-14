@@ -58,8 +58,9 @@ export async function POST(request: NextRequest) {
     const baseVersion = baseVersionRaw
 
     const result = await WorkspaceStore.withWorkspace(serverPool, async ({ client, workspaceId }) => {
+      // Get workspace_id from items table (notes table does not have workspace_id)
       const noteRow = await client.query<{ workspace_id: string | null }>(
-        `SELECT workspace_id FROM notes WHERE id = $1`,
+        `SELECT workspace_id FROM items WHERE id = $1 AND deleted_at IS NULL`,
         [noteKey]
       )
 
@@ -77,11 +78,6 @@ export async function POST(request: NextRequest) {
         await client.query('SELECT set_config($1, $2, false)', ['app.current_workspace_id', noteWorkspaceId])
         effectiveWorkspaceId = noteWorkspaceId
         resetWorkspaceAtEnd = true
-      } else if (!noteWorkspaceId) {
-        await client.query(
-          `UPDATE notes SET workspace_id = $1, updated_at = NOW() WHERE id = $2`,
-          [workspaceId, noteKey]
-        )
       }
 
       try {

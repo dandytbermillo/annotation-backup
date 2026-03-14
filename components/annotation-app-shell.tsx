@@ -2250,6 +2250,13 @@ const initialWorkspaceSyncRef = useRef(false)
     previewPortalProps: workspacePreviewPortalProps,
     constellationPanelProps: constellationPanelProps,
     onMainAreaContextMenu: handleContextMenu,
+    controlCenterProps: {
+      onCreateNote: handleNewNoteFromToolbar,
+      onOpenRecent: () => setToolbarActivePanel("recents"),
+      onToggleCanvas: toggleConstellationView,
+      showConstellationPanel,
+      visible: openNotes.length === 0,
+    },
   }
 
   if (process.env.NODE_ENV === "test" && typeof globalThis !== "undefined") {

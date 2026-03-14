@@ -66,13 +66,13 @@ export async function GET(request: NextRequest) {
         values = [activeWorkspaceId, type, limit]
       } else if (parentId !== undefined) {
         query = `
-          SELECT 
+          SELECT
             id, type, parent_id, path, name, slug, position,
             metadata, icon, color, last_accessed_at,
             created_at, updated_at
-          FROM items 
-          WHERE workspace_id = $1
-            AND ${parentId === 'null' ? 'parent_id IS NULL' : 'parent_id = $2'} 
+          FROM items
+          WHERE (workspace_id = $1 OR workspace_id IS NULL)
+            AND ${parentId === 'null' ? 'parent_id IS NULL' : 'parent_id = $2'}
             AND deleted_at IS NULL
           ORDER BY type DESC, position, name
         `
@@ -176,14 +176,16 @@ export async function POST(request: NextRequest) {
           requestedWorkspaceId,
         ])
         if (exists.rowCount === 0) {
-          return NextResponse.json({ error: 'Workspace not found' }, { status: 404 })
+          // Workspace may exist in note_workspaces but not in workspaces table.
+          // Fall back to default workspace so items FK constraint is satisfied.
+          console.warn(`[items POST] Requested workspace ${requestedWorkspaceId} not in workspaces table, using default ${workspaceId}`)
+        } else {
+          await client.query('SELECT set_config($1, $2, false)', [
+            'app.current_workspace_id',
+            requestedWorkspaceId,
+          ])
+          activeWorkspaceId = requestedWorkspaceId
         }
-
-        await client.query('SELECT set_config($1, $2, false)', [
-          'app.current_workspace_id',
-          requestedWorkspaceId,
-        ])
-        activeWorkspaceId = requestedWorkspaceId
       }
 
       if (!type || !name) {
@@ -294,14 +296,14 @@ export async function POST(request: NextRequest) {
         if (type === 'note') {
           await client.query(
             `
-              INSERT INTO notes (id, title, metadata, workspace_id, created_at, updated_at)
-              VALUES ($1, $2, $3, $4, $5, $6)
+              INSERT INTO notes (id, title, metadata, created_at, updated_at)
+              VALUES ($1, $2, $3, $4, $5)
               ON CONFLICT (id) DO UPDATE SET
                 title = EXCLUDED.title,
                 metadata = EXCLUDED.metadata,
                 updated_at = EXCLUDED.updated_at
             `,
-            [row.id, row.name, metadata, activeWorkspaceId, row.created_at, row.updated_at],
+            [row.id, row.name, metadata, row.created_at, row.updated_at],
           )
 
           // Fire-and-forget: index note for retrieval (non-blocking)
