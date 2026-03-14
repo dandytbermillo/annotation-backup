@@ -317,6 +317,27 @@ export interface S6ContentAnswerResult {
 
   /** Model's abort reason (for 'abort' outcome). */
   abortReason?: string
+
+  /** Whether any retrieved snippet was truncated (6x.5). */
+  contentTruncated?: boolean
+
+  /** Cited snippet display data for UI (6x.6). Not telemetry — display only. */
+  citedSnippets?: CitedSnippet[]
+}
+
+/**
+ * Display-only snippet evidence for surfaced content answers (6x.6).
+ * Attached to ChatMessage for inline citation reveal.
+ */
+export interface CitedSnippet {
+  /** Display index (1-based, for user-facing "Snippet 1", "Snippet 2") */
+  index: number
+  /** The snippet text (plain text, from inspect_note_content response) */
+  text: string
+  /** Whether this snippet was truncated at extraction time */
+  truncated: boolean
+  /** Section heading if available (from ProseMirror heading detection) */
+  sectionHeading?: string
 }
 
 // ============================================================================
@@ -526,6 +547,12 @@ export interface S6ContentTelemetry {
 
   /** Number of content-tool calls made in this loop. */
   s6_content_call_count?: number
+
+  // Auto-fill transparency markers (6x.5)
+  /** Whether citedSnippetIds was server-filled (Gemini structured output omitted it). */
+  s6_citations_autofilled?: boolean
+  /** Whether grounded was server-filled (Gemini structured output omitted it). */
+  s6_grounded_autofilled?: boolean
 }
 
 // ============================================================================

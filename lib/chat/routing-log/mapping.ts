@@ -57,6 +57,7 @@ export function provenanceToDecisionSource(hint: string | undefined): DecisionSo
     case 'memory_exact': return 'memory_exact'
     case 'memory_semantic': return 'memory_semantic'
     case 's6_enforced': return 'llm'
+    case 'content_answered': return 'llm'
     default: return 'clarifier'
   }
 }
@@ -90,6 +91,9 @@ export function deriveResultStatus(
 
   // Stage 6 enforced execute
   if (provenanceHint === 's6_enforced') return 'executed'
+
+  // Content-answered: treated as 'executed' (grounded answer successfully surfaced)
+  if (provenanceHint === 'content_answered') return 'executed'
 
   // LLM-influenced: check tierLabel for execute/select indicators
   if (provenanceHint === 'llm_influenced') {

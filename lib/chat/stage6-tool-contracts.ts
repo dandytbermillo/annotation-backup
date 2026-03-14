@@ -460,4 +460,9 @@ export interface S6LoopTelemetry {
   s6_answer_cited_count?: number
   /** Reason for clarify or abort outcome. */
   s6_answer_reason?: string
+  // Auto-fill transparency markers (6x.5)
+  /** Whether citedSnippetIds was server-filled. */
+  s6_citations_autofilled?: boolean
+  /** Whether grounded was server-filled. */
+  s6_grounded_autofilled?: boolean
 }

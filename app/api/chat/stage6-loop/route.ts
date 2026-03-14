@@ -30,7 +30,7 @@ import type {
 import { S6_INSPECT_LIMITS } from '@/lib/chat/stage6-tool-contracts'
 import type { S6ActionResult } from '@/lib/chat/stage6-tool-contracts'
 import { S6_CONTENT_LIMITS } from '@/lib/chat/stage6-content-tool-contracts'
-import type { S6ContentAnswerResult } from '@/lib/chat/stage6-content-tool-contracts'
+import type { S6ContentAnswerResult, CitedSnippet } from '@/lib/chat/stage6-content-tool-contracts'
 import { queryNoteContent } from '@/lib/chat/stage6-content-query'
 import { extractSnippetsFromText, applyCallLimits } from '@/lib/chat/stage6-content-handlers'
 import { withWorkspaceClient } from '@/lib/workspace/workspace-store'
@@ -783,8 +783,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // Content budget subcaps (6x.3)
     let contentCallsUsed = 0
     let contentCharsUsed = 0
-    // Session snippet registry (6x.4): maps session-scoped snippetId → sourceItemId
-    const sessionSnippetRegistry = new Map<string, string>()
+    // Session snippet registry (6x.4 + 6x.6): maps session-scoped snippetId → display data
+    const sessionSnippetRegistry = new Map<string, { sourceItemId: string; text: string; truncated: boolean; sectionHeading?: string }>()
+    // Truncation tracking (6x.5): set when any snippet or response is truncated
+    let anySnippetTruncated = false
 
     // First turn: system + context
     let response = await chat.sendMessage(systemPrompt + '\n\n' + userMessage)
@@ -817,12 +819,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // Auto-fill citedSnippetIds for answer in content-intent loops (6x.4).
       // Gemini structured output often omits or empties optional arrays.
       // If the model answered after inspecting content, cite all retrieved snippets.
+      // 6x.5: per-attempt flags so only the accepted answer's auto-fill state is logged.
+      let thisAttemptCitationsAutofilled = false
+      let thisAttemptGroundedAutofilled = false
       if (parsed.type === 'answer' && parsed.text && sessionSnippetRegistry.size > 0) {
         if (!parsed.citedSnippetIds || parsed.citedSnippetIds.length === 0) {
           parsed.citedSnippetIds = [...sessionSnippetRegistry.keys()]
+          thisAttemptCitationsAutofilled = true
         }
         if (parsed.grounded === undefined) {
           parsed.grounded = true
+          thisAttemptGroundedAutofilled = true
         }
       }
 
@@ -977,7 +984,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         }
 
         // Validate single-note scope: all cited snippets must come from the same source item
-        const sourceItems = new Set(parsed.citedSnippetIds.map(id => sessionSnippetRegistry.get(id)))
+        const sourceItems = new Set(parsed.citedSnippetIds.map(id => sessionSnippetRegistry.get(id)?.sourceItemId).filter(Boolean))
         if (sourceItems.size > 1) {
           toolTrace.push('answer_cross_note')
           if (!structRetried) {
@@ -995,11 +1002,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         }
 
         // Build content answer result
+        // Build cited snippet display data (6x.6): only include cited snippets, not full registry
+        const citedSnippets: CitedSnippet[] = parsed.citedSnippetIds
+          .map((id: string, i: number) => {
+            const entry = sessionSnippetRegistry.get(id)
+            if (!entry) return null
+            return { index: i + 1, text: entry.text, truncated: entry.truncated, sectionHeading: entry.sectionHeading }
+          })
+          .filter((s): s is CitedSnippet => s !== null)
+
         const contentAnswerResult: S6ContentAnswerResult = {
           outcome: 'answered',
           grounded: true,
           citedSnippetIds: parsed.citedSnippetIds,
           answerText: parsed.text,
+          contentTruncated: anySnippetTruncated,
+          citedSnippets,
         }
 
         const answerLoopResult = buildLoopResult('content_answered', inspectRoundsUsed, toolTrace, startTime, loopInput.escalationReason, parsed)
@@ -1009,6 +1027,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         answerLoopResult.telemetry.s6_answer_outcome = 'answered'
         answerLoopResult.telemetry.s6_answer_grounded = true
         answerLoopResult.telemetry.s6_answer_cited_count = new Set(parsed.citedSnippetIds).size
+        // Auto-fill transparency (6x.5): scoped to this accepted answer attempt
+        if (thisAttemptCitationsAutofilled) answerLoopResult.telemetry.s6_citations_autofilled = true
+        if (thisAttemptGroundedAutofilled) answerLoopResult.telemetry.s6_grounded_autofilled = true
 
         attachContentTelemetry(answerLoopResult, contentCallsUsed, contentCharsUsed)
         return NextResponse.json(answerLoopResult)
@@ -1058,12 +1079,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             if (snippet.snippetId) {
               const sessionScopedId = `c${callIndex}_${snippet.snippetId}`
               snippet.snippetId = sessionScopedId
-              sessionSnippetRegistry.set(sessionScopedId, sourceItemId)
+              sessionSnippetRegistry.set(sessionScopedId, {
+                sourceItemId,
+                text: snippet.text ?? '',
+                truncated: (snippet as any).truncated ?? false,
+                sectionHeading: (snippet as any).sectionHeading ?? undefined,
+              })
             }
           }
 
           const charsReturned = snippets.reduce((sum, s) => sum + (s.text?.length ?? 0), 0)
           contentCharsUsed += charsReturned
+
+          // Track truncation state (6x.5): check both per-snippet and response-level flags
+          const responseTruncated = (resultObj?.truncated as boolean) ?? false
+          if (responseTruncated || snippets.some((s: any) => s.truncated)) {
+            anySnippetTruncated = true
+          }
         }
 
         // Safety envelope for content tools (6x.3)

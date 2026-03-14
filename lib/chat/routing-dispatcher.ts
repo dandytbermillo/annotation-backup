@@ -1474,54 +1474,74 @@ export async function dispatchRouting(
           intentType: contentResult.intentType!,
         },
       }
-      // Try awaiting the loop — if it returns a content answer, surface it.
-      // Otherwise fall back to shadow (fire-and-forget) + normal routing.
+      // Single-execution rule (6x.5): the loop runs exactly once per content-intent turn.
+      // The result is used for both surfacing and durable logging. No shadow rerun.
       try {
         const loopResult = await executeS6Loop(s6Params)
-        if (loopResult?.outcome === 'content_answered' && loopResult.contentAnswerResult?.answerText) {
-          const answerText = loopResult.contentAnswerResult.answerText
-          const assistantMessage: ChatMessage = {
-            id: `assistant-${Date.now()}`,
-            role: 'assistant',
-            content: answerText,
-            timestamp: new Date(),
-            isError: false,
-          }
-          ctx.addMessage(assistantMessage)
-          ctx.setIsLoading(false)
-
-          // Durable telemetry: write enforcement-style log for the surfaced answer
+        if (loopResult) {
+          // Always write durable log from the awaited result (6x.5 single-execution)
           void writeDurableEnforcementLog(s6Params, loopResult)
 
-          void debugLog({
-            component: 'ChatNavigation',
-            action: 'content_intent_answered',
-            metadata: {
-              noteItemId: contentResult.noteAnchor!.itemId,
-              intentType: contentResult.intentType,
-              citedCount: loopResult.contentAnswerResult.citedSnippetIds?.length ?? 0,
-            },
-          })
+          if (loopResult.outcome === 'content_answered' && loopResult.contentAnswerResult?.answerText) {
+            // Strip citation markers (e.g., "(c0_s0, c0_s1)") — meaningless to users (6x.5)
+            let displayText = loopResult.contentAnswerResult.answerText
+              .replace(/\s*\((?:based on\s+)?c\d+_s\d+(?:,\s*c\d+_s\d+)*\)\.?/gi, '')
+              .trim()
 
-          return {
-            handled: true,
-            handledByTier: 6,
-            tierLabel: 'content_intent_answered',
-            clarificationCleared: false,
-            isNewQuestionOrCommandDetected: false,
-            classifierCalled: false,
-            classifierTimeout: false,
-            classifierError: false,
-            isFollowUp: false,
-            _devProvenanceHint: 'content_answered',
+            // Append truncation warning if snippets were partial (6x.5)
+            if (loopResult.contentAnswerResult.contentTruncated) {
+              displayText += '\n\n_This answer is based on partial note content._'
+            }
+
+            const assistantMessage: ChatMessage = {
+              id: `assistant-${Date.now()}`,
+              role: 'assistant',
+              content: displayText,
+              timestamp: new Date(),
+              isError: false,
+              // "Show more" button — opens full note in View Panel (gated by contentTruncated)
+              itemId: s6Params.contentContext?.noteItemId,
+              itemName: s6Params.contentContext?.noteTitle ?? undefined,
+              corpus: 'notes',
+              contentTruncated: loopResult.contentAnswerResult.contentTruncated ?? false,
+              // Cited snippet evidence for inline citation display (6x.6)
+              citedSnippets: loopResult.contentAnswerResult.citedSnippets,
+            }
+            ctx.addMessage(assistantMessage)
+            ctx.setIsLoading(false)
+
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'content_intent_answered',
+              metadata: {
+                noteItemId: contentResult.noteAnchor!.itemId,
+                intentType: contentResult.intentType,
+                citedCount: loopResult.contentAnswerResult.citedSnippetIds?.length ?? 0,
+                citationsAutofilled: loopResult.telemetry.s6_citations_autofilled ?? false,
+                contentTruncated: loopResult.contentAnswerResult.contentTruncated ?? false,
+              },
+            })
+
+            return {
+              handled: true,
+              handledByTier: 6,
+              tierLabel: 'content_intent_answered',
+              clarificationCleared: false,
+              isNewQuestionOrCommandDetected: false,
+              classifierCalled: false,
+              classifierTimeout: false,
+              classifierError: false,
+              isFollowUp: false,
+              _devProvenanceHint: 'content_answered',
+            }
           }
         }
       } catch (err) {
         console.warn('[routing-dispatcher] Content-intent loop failed:', (err as Error).message)
       }
 
-      // Loop didn't produce an answer — fall back to shadow + normal routing
-      void runS6ShadowLoop(s6Params)
+      // Loop didn't produce an answer (abort/timeout/error) — durable row already written above.
+      // Fall through to normal routing. Do NOT rerun via runS6ShadowLoop.
       contentIntentMatchedThisTurn = true
     }
   }

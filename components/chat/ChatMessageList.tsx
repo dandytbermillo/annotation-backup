@@ -16,6 +16,7 @@ import { MessageResultPreview } from './message-result-preview'
 import { SelectionPills } from './SelectionPills'
 import { SuggestionPills } from './SuggestionPills'
 import { ShowMoreButton } from './ShowMoreButton'
+import { CitationSnippets } from './CitationSnippets'
 import { DateHeader } from './DateHeader'
 import { SessionDivider } from './SessionDivider'
 
@@ -265,10 +266,20 @@ export function ChatMessageList({
                   />
                 )}
 
+                {/* Citation Snippets (6x.6): collapsible evidence display for content answers */}
+                {message.citedSnippets && message.citedSnippets.length > 0 && (
+                  <CitationSnippets
+                    snippets={message.citedSnippets}
+                    contentTruncated={message.contentTruncated}
+                  />
+                )}
+
                 {/* Show More Button (doc/note responses, per show-more-button-spec.md) */}
+                {/* For content answers (corpus='notes' + itemId): only show when contentTruncated */}
+                {/* For doc retrieval (docSlug): always show */}
                 {message.role === 'assistant' &&
                   !message.isError &&
-                  (message.docSlug || message.itemId) &&
+                  (message.docSlug || (message.itemId && (message.corpus !== 'notes' || message.contentTruncated))) &&
                   !message.options?.length && // Don't show during disambiguation
                   // Hide if ViewPanel shows THIS resource
                   !(message.docSlug && viewPanelDocSlug === message.docSlug) &&

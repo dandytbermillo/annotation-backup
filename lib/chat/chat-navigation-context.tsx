@@ -419,6 +419,10 @@ export interface ChatMessage {
   itemId?: string
   itemName?: string
   corpus?: 'docs' | 'notes'
+  // Content-answer truncation flag (6x.5): gates ShowMoreButton for content answers
+  contentTruncated?: boolean
+  // Cited snippet evidence for inline citation display (6x.6)
+  citedSnippets?: import('@/lib/chat/stage6-content-tool-contracts').CitedSnippet[]
 }
 
 // Re-export SessionState for convenience
@@ -564,6 +568,12 @@ interface DbMessage {
     intent?: string
     entryContext?: { id: string; name: string }
     workspaceContext?: { id: string; name: string }
+    // Surfaced-answer display metadata (6x.6)
+    citedSnippets?: import('@/lib/chat/stage6-content-tool-contracts').CitedSnippet[]
+    itemId?: string
+    itemName?: string
+    corpus?: 'docs' | 'notes'
+    contentTruncated?: boolean
   } | null
   createdAt: string
 }
@@ -713,6 +723,12 @@ function dbMessageToChatMessage(dbMsg: DbMessage): ChatMessage {
     timestamp: new Date(dbMsg.createdAt),
     options: dbMsg.metadata?.options,
     isError: dbMsg.metadata?.isError,
+    // Hydrate surfaced-answer display metadata (6x.6)
+    citedSnippets: dbMsg.metadata?.citedSnippets,
+    itemId: dbMsg.metadata?.itemId,
+    itemName: dbMsg.metadata?.itemName,
+    corpus: dbMsg.metadata?.corpus,
+    contentTruncated: dbMsg.metadata?.contentTruncated,
   }
 }
 
@@ -917,6 +933,12 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         const metadata: Record<string, unknown> = {}
         if (message.options) metadata.options = message.options
         if (message.isError) metadata.isError = message.isError
+        // Persist surfaced-answer display metadata (6x.6)
+        if (message.citedSnippets) metadata.citedSnippets = message.citedSnippets
+        if (message.itemId) metadata.itemId = message.itemId
+        if (message.itemName) metadata.itemName = message.itemName
+        if (message.corpus) metadata.corpus = message.corpus
+        if (message.contentTruncated) metadata.contentTruncated = message.contentTruncated
 
         const persisted = await persistMessage(
           conversationId,

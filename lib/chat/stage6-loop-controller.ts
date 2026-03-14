@@ -260,6 +260,9 @@ async function writeDurableShadowLog(
       s6_answer_grounded: result.telemetry.s6_answer_grounded,
       s6_answer_cited_count: result.telemetry.s6_answer_cited_count,
       s6_answer_reason: result.telemetry.s6_answer_reason,
+      // Auto-fill transparency (6x.5)
+      s6_citations_autofilled: result.telemetry.s6_citations_autofilled,
+      s6_grounded_autofilled: result.telemetry.s6_grounded_autofilled,
     }
 
     await recordRoutingLog(payload)
@@ -281,9 +284,12 @@ export async function writeDurableEnforcementLog(
   try {
     const actionType = result.telemetry.s6_action_type
     const isExecuted = result.outcome === 'action_executed'
-    const provenance = isExecuted
-      ? `s6_enforced:${actionType ?? 'unknown'}`
-      : `s6_enforced:fallback`
+    const isContentAnswered = result.outcome === 'content_answered'
+    const provenance = isContentAnswered
+      ? 's6_enforced:content_answered'
+      : isExecuted
+        ? `s6_enforced:${actionType ?? 'unknown'}`
+        : 's6_enforced:fallback'
 
     const payload: RoutingLogPayload = {
       raw_query_text: params.userInput,
@@ -303,7 +309,7 @@ export async function writeDurableEnforcementLog(
       decision_source: 'llm',
       risk_tier: 'low',
       provenance,
-      result_status: isExecuted ? 'executed' : 'failed',
+      result_status: (isExecuted || isContentAnswered) ? 'executed' : 'failed',
       tier_label: 's6_enforce',
       handled_by_tier: 6,
       log_phase: 'execution_outcome',
@@ -332,6 +338,9 @@ export async function writeDurableEnforcementLog(
       s6_answer_grounded: result.telemetry.s6_answer_grounded,
       s6_answer_cited_count: result.telemetry.s6_answer_cited_count,
       s6_answer_reason: result.telemetry.s6_answer_reason,
+      // Auto-fill transparency (6x.5)
+      s6_citations_autofilled: result.telemetry.s6_citations_autofilled,
+      s6_grounded_autofilled: result.telemetry.s6_grounded_autofilled,
     }
 
     await recordRoutingLog(payload)

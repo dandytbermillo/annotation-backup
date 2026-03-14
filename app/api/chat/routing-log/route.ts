@@ -153,6 +153,9 @@ export async function POST(request: NextRequest) {
           s6_answer_grounded: payload.s6_answer_grounded,
           s6_answer_cited_count: payload.s6_answer_cited_count,
           s6_answer_reason: payload.s6_answer_reason,
+          // Auto-fill transparency (6x.5)
+          s6_citations_autofilled: payload.s6_citations_autofilled,
+          s6_grounded_autofilled: payload.s6_grounded_autofilled,
         })
       : null
 

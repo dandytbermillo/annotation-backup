@@ -392,15 +392,35 @@ Implement the content tool handlers:
 - bounded
 - deterministic
 
-### 6x.3 Shadow loop integration
+### 6x.3 Shadow loop integration — IMPLEMENTED
 Allow the Stage 6 loop to use content tools in shadow mode.
 No user-visible answer changes yet.
 
-### 6x.4 Grounded answer policy
+### 6x.4 Grounded answer policy — IMPLEMENTED
 Refine prompt and response validation so explanations/summaries are evidence-grounded.
+- `answer` terminal type with server-enforced citation validation
+- Session snippet registry with session-scoped IDs (`c{call}_{id}`)
+- Anchored-note enforcement, cross-note rejection, single retry budget
+- Report: `reports/2026-03-13-stage6x4-grounded-answer-policy-implementation.md`
 
-### 6x.5 User-visible answer mode
-Allow Stage 6 content answers to surface to users behind a flag once shadow metrics are acceptable.
+### 6x.5 User-visible answer mode — IMPLEMENTED
+Content answers are surfaced directly in the chat UI as a product path (not shadow-only).
+- **Single-execution rule**: loop runs once per content-intent turn; result used for both display and durable logging
+- **Surfaced-answer contract**: `content_answered` → display + durable log; `abort`/`timeout` → durable log + fallback to normal routing; `throw` → fallback only
+- **Provenance**: `_devProvenanceHint: 'content_answered'`, durable `provenance: 's6_enforced:content_answered'`, `result_status: 'executed'`, `decision_source: 'llm'`
+- **Auto-fill transparency**: `s6_citations_autofilled` and `s6_grounded_autofilled` telemetry markers when server repairs Gemini structured output gaps
+- **Answer presentation**: citation markers stripped from display text; truncation warning appended when `contentTruncated`; "Content Answer" provenance badge (teal)
+- **ShowMoreButton**: gated on `contentTruncated === true` — opens full note in View Panel
+- Report: `reports/2026-03-14-stage6x5-surfaced-answer-mode-implementation.md`
+
+### 6x.6 Citation & snippet surfacing — IMPLEMENTED
+Inline citation evidence display so users can verify the grounding behind surfaced content answers.
+- **Collapsible "Sources" section**: collapsed by default below each content answer, expandable to show cited snippet texts
+- **Snippet registry extended**: stores text, truncation, and section heading alongside source item ID
+- **Selective citation**: only model-cited snippets shown (uncited evidence excluded)
+- **Persistence/hydration**: cited snippets and surfaced-answer metadata survive chat history reload
+- **Cross-note safety preserved**: single-note validation updated for richer registry shape
+- Report: `reports/2026-03-14-stage6x6-citation-snippet-surfacing-implementation.md`
 
 ## 13. Recommended First Slice
 

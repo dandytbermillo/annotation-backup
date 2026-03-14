@@ -142,4 +142,7 @@ export interface RoutingLogPayload {
   s6_answer_grounded?: boolean            // whether answer was grounded in evidence
   s6_answer_cited_count?: number          // number of unique cited snippet IDs
   s6_answer_reason?: string               // reason for clarify or abort outcome
+  // Auto-fill transparency markers (6x.5)
+  s6_citations_autofilled?: boolean       // whether citedSnippetIds was server-filled
+  s6_grounded_autofilled?: boolean        // whether grounded was server-filled
 }
