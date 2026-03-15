@@ -91,7 +91,8 @@ import { evaluateStage5Replay } from '@/lib/chat/routing-log/stage5-evaluator'
 
 // Stage 6: shadow loop (fire-and-forget) + enforcement loop (awaitable)
 import { runS6ShadowLoop, runS6EnforcementLoop, executeS6Loop, writeDurableEnforcementLog } from '@/lib/chat/stage6-loop-controller'
-import { classifyContentIntent, type NoteAnchorContext } from '@/lib/chat/content-intent-classifier'
+import { classifyContentIntent, isAnchoredNoteResolverHardExcluded, type NoteAnchorContext } from '@/lib/chat/content-intent-classifier'
+import { callAnchoredNoteResolver } from '@/lib/chat/anchored-note-intent-resolver'
 import { executeS6OpenPanel, isDuplicateAction } from '@/lib/chat/stage6-execution-bridge'
 import type { S6ParsedAction, S6ActionSignature } from '@/lib/chat/stage6-execution-bridge'
 
@@ -1443,6 +1444,8 @@ export async function dispatchRouting(
   // and routing behaves identically to pre-Step-4 code.
   // ---------------------------------------------------------------------------
   let contentIntentMatchedThisTurn = false
+  // 6x.7 Phase A: resolver telemetry hoisted to outer scope so common log path can merge it
+  let resolverTelemetryForLog: Record<string, unknown> | null = null
 
   if (process.env.NEXT_PUBLIC_STAGE6_SHADOW_ENABLED === 'true') {
     const activeNoteId = ctx.uiContext?.workspace?.activeNoteId ?? null
@@ -1543,6 +1546,172 @@ export async function dispatchRouting(
       // Loop didn't produce an answer (abort/timeout/error) — durable row already written above.
       // Fall through to normal routing. Do NOT rerun via runS6ShadowLoop.
       contentIntentMatchedThisTurn = true
+    } else if (activeNoteId && !contentResult.isContentIntent && !isAnchoredNoteResolverHardExcluded(ctx.trimmedInput, noteAnchor)) {
+      // ── 6x.7 Phase A: Bounded LLM resolver for classifier-miss + anchor-present ──
+      const resolverResult = await callAnchoredNoteResolver({
+        userInput: ctx.trimmedInput,
+        noteAnchor: { itemId: activeNoteId, title: activeNote?.title ?? null },
+      })
+
+      // Telemetry: compute effective result (low-confidence normalized to ambiguous)
+      const rawDecision = resolverResult.response?.decision
+      const confidence = resolverResult.response?.confidence ?? 0
+      let effectiveResult: 'content' | 'navigation' | 'ambiguous' | 'timeout' | 'error'
+      if (!resolverResult.success) {
+        effectiveResult = resolverResult.error?.includes('timeout') ? 'timeout' : 'error'
+      } else if (confidence < 0.75) {
+        effectiveResult = 'ambiguous'
+      } else if (rawDecision === 'anchored_note_content') {
+        effectiveResult = 'content'
+      } else if (rawDecision === 'anchored_note_navigation') {
+        effectiveResult = 'navigation'
+      } else {
+        effectiveResult = 'ambiguous'
+      }
+
+      // Build resolver telemetry object for all log paths
+      const resolverTelemetry = {
+        note_intent_resolver_called: true as const,
+        note_intent_resolver_decision: rawDecision,
+        note_intent_resolver_confidence: confidence,
+        note_intent_resolver_reason: resolverResult.response?.reason,
+        note_intent_resolver_result: effectiveResult,
+      }
+      // Hoist to outer scope for Path 2 (navigation fallthrough → common log)
+      resolverTelemetryForLog = resolverTelemetry
+
+      const isResolverContent = effectiveResult === 'content'
+      const isResolverNavigation = effectiveResult === 'navigation'
+
+      // ── Path 1: content above threshold → enter Stage 6 ──
+      if (isResolverContent && resolverResult.response?.decision === 'anchored_note_content') {
+        contentIntentMatchedThisTurn = true
+
+        const s6SessionId = getRoutingLogSessionId()
+        const s6TurnIndex = ctx.messages.filter(m => m.role === 'user').length
+        const s6LastMsg = [...ctx.messages].reverse().find(m => m.role === 'user')
+        const s6InteractionId = s6LastMsg?.id ?? deriveFallbackInteractionId(s6SessionId, s6TurnIndex, ctx.trimmedInput)
+        const s6Params = {
+          userInput: ctx.trimmedInput,
+          groundingCandidates: [] as import('./stage6-tool-contracts').S6GroundingCandidate[],
+          escalationReason: 'content_intent' as const,
+          interactionId: s6InteractionId,
+          sessionId: s6SessionId,
+          turnIndex: s6TurnIndex,
+          contentContext: {
+            noteItemId: activeNoteId,
+            noteTitle: activeNote?.title ?? 'Untitled',
+            anchorSource: 'active_widget' as const,
+            intentType: resolverResult.response.intentType,
+          },
+        }
+
+        try {
+          const loopResult = await executeS6Loop(s6Params)
+          if (loopResult) {
+            void writeDurableEnforcementLog(s6Params, loopResult, resolverTelemetry)
+
+            if (loopResult.outcome === 'content_answered' && loopResult.contentAnswerResult?.answerText) {
+              let displayText = loopResult.contentAnswerResult.answerText
+                .replace(/\s*\((?:based on\s+)?c\d+_s\d+(?:,\s*c\d+_s\d+)*\)\.?/gi, '')
+                .trim()
+
+              if (loopResult.contentAnswerResult.contentTruncated) {
+                displayText += '\n\n_This answer is based on partial note content._'
+              }
+
+              const assistantMessage: ChatMessage = {
+                id: `assistant-${Date.now()}`,
+                role: 'assistant',
+                content: displayText,
+                timestamp: new Date(),
+                isError: false,
+                itemId: s6Params.contentContext?.noteItemId,
+                itemName: s6Params.contentContext?.noteTitle ?? undefined,
+                corpus: 'notes',
+                contentTruncated: loopResult.contentAnswerResult.contentTruncated ?? false,
+                citedSnippets: loopResult.contentAnswerResult.citedSnippets,
+              }
+              ctx.addMessage(assistantMessage)
+              ctx.setIsLoading(false)
+
+              void debugLog({
+                component: 'ChatNavigation',
+                action: 'resolver_content_answered',
+                metadata: {
+                  noteItemId: activeNoteId,
+                  intentType: resolverResult.response.intentType,
+                  resolverConfidence: confidence,
+                },
+              })
+
+              return {
+                handled: true,
+                handledByTier: 6,
+                tierLabel: 'resolver_content_answered',
+                clarificationCleared: false,
+                isNewQuestionOrCommandDetected: false,
+                classifierCalled: false,
+                classifierTimeout: false,
+                classifierError: false,
+                isFollowUp: false,
+                _devProvenanceHint: 'content_answered',
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('[routing-dispatcher] Resolver content loop failed:', (err as Error).message)
+        }
+
+      // ── Path 2: navigation above threshold → fall through to normal routing ──
+      } else if (isResolverNavigation) {
+        // No action — Stage 5 + tiers remain active. Resolver telemetry will
+        // reach common recordRoutingLog via the accumulated local variable.
+
+      // ── Path 3: ambiguous / timeout / error / low-confidence → immediate clarifier ──
+      } else {
+        contentIntentMatchedThisTurn = true
+        const clarifierMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: 'Do you want me to explain the current note, or navigate somewhere else?',
+          timestamp: new Date(),
+          isError: false,
+        }
+        ctx.addMessage(clarifierMessage)
+        ctx.setIsLoading(false)
+
+        // Explicit routing log for early-return ambiguous path (full payload, not partial)
+        const ambiguousResult: RoutingDispatcherResult = {
+          handled: true,
+          handledByTier: 6,
+          tierLabel: 'anchored_note_resolver_ambiguous',
+          clarificationCleared: false,
+          isNewQuestionOrCommandDetected: false,
+          classifierCalled: false,
+          classifierTimeout: false,
+          classifierError: false,
+          isFollowUp: false,
+          _devProvenanceHint: 'safe_clarifier',
+        }
+        const ambiguousLogPayload = buildRoutingLogPayload(ctx, ambiguousResult, turnSnapshotForLog)
+        // Merge resolver telemetry
+        Object.assign(ambiguousLogPayload, resolverTelemetry)
+        void recordRoutingLog(ambiguousLogPayload)
+
+        return {
+          handled: true,
+          handledByTier: 6,
+          tierLabel: 'anchored_note_resolver_ambiguous',
+          clarificationCleared: false,
+          isNewQuestionOrCommandDetected: false,
+          classifierCalled: false,
+          classifierTimeout: false,
+          classifierError: false,
+          isFollowUp: false,
+          _devProvenanceHint: 'safe_clarifier',
+        }
+      }
     }
   }
 
@@ -1746,6 +1915,11 @@ export async function dispatchRouting(
         logPayload.s5_replayed_intent_id = s5Telemetry.replayedIntentId
         logPayload.s5_replayed_target_id = s5Telemetry.replayedTargetId
         logPayload.s5_fallback_reason = s5Telemetry.fallbackReason
+      }
+
+      // 6x.7 Phase A: merge resolver telemetry if the resolver ran (Path 2 navigation fallthrough)
+      if (resolverTelemetryForLog) {
+        Object.assign(logPayload, resolverTelemetryForLog)
       }
 
       await recordRoutingLog(logPayload)

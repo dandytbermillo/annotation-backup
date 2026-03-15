@@ -156,6 +156,12 @@ export async function POST(request: NextRequest) {
           // Auto-fill transparency (6x.5)
           s6_citations_autofilled: payload.s6_citations_autofilled,
           s6_grounded_autofilled: payload.s6_grounded_autofilled,
+          // Anchored-note intent resolver (6x.7)
+          note_intent_resolver_called: payload.note_intent_resolver_called,
+          note_intent_resolver_decision: payload.note_intent_resolver_decision,
+          note_intent_resolver_confidence: payload.note_intent_resolver_confidence,
+          note_intent_resolver_reason: payload.note_intent_resolver_reason,
+          note_intent_resolver_result: payload.note_intent_resolver_result,
         })
       : null
 

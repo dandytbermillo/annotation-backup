@@ -59,6 +59,37 @@ const DASHBOARD_META_PATTERN =
 const NON_NOTE_SCOPE_PATTERN =
   /\b(the\s+dashboard|this\s+panel|the\s+panel|links\s+panel|the\s+workspace|this\s+workspace|the\s+sidebar)\b/i
 
+/**
+ * Non-read capability verbs (6x.7 Phase A).
+ * These must not enter the read-intent resolver even when a note anchor is present.
+ * They fall through to existing routing or future capability slices (6x.8+).
+ */
+const NOTE_NON_READ_PATTERN = /^(create|rename|delete|remove|edit|add|annotate|highlight|mark|tag|move|copy)\b/i
+
+// ============================================================================
+// Shared hard-guard helper (6x.7)
+// ============================================================================
+
+/**
+ * Check whether an input is hard-excluded from the anchored-note intent resolver.
+ * Returns true when the input should NOT reach the resolver (selection, meta, non-note scope, non-read verbs).
+ *
+ * Note: isExplicitCommand is NOT included — note-referential read imperatives
+ * like "show the text of that note" must remain resolver-eligible.
+ */
+export function isAnchoredNoteResolverHardExcluded(input: string, anchor: NoteAnchorContext): boolean {
+  if (!anchor.activeNoteItemId) return true
+  const trimmed = input.trim()
+  if (!trimmed) return true
+  const lower = trimmed.toLowerCase()
+  if (SELECTION_PATTERN.test(lower)) return true
+  if (DASHBOARD_META_PATTERN.test(lower)) return true
+  if (SEMANTIC_SESSION_PATTERN.test(lower)) return true
+  if (NON_NOTE_SCOPE_PATTERN.test(lower)) return true
+  if (NOTE_NON_READ_PATTERN.test(lower)) return true
+  return false
+}
+
 // --- Intent detection patterns (ordered by specificity) ---
 
 // find_text: most specific
@@ -125,38 +156,17 @@ export function classifyContentIntent(
   input: string,
   anchor: NoteAnchorContext,
 ): ContentIntentResult {
-  // 1. Anchor guard: no note anchor = no content intent
-  if (!anchor.activeNoteItemId) {
+  // 1-6. Shared hard guards (reused by resolver eligibility check)
+  if (isAnchoredNoteResolverHardExcluded(input, anchor)) {
     return FALSE_RESULT
   }
 
   const trimmed = input.trim()
-  if (!trimmed) return FALSE_RESULT
-
   const lower = trimmed.toLowerCase()
 
-  // 2. Navigation-command guard
+  // Classifier-only guard: explicit navigation commands (open, show, go to).
+  // The resolver keeps these eligible — they may be note-referential read imperatives.
   if (isExplicitCommand(trimmed)) {
-    return FALSE_RESULT
-  }
-
-  // 3. Selection guard
-  if (SELECTION_PATTERN.test(lower)) {
-    return FALSE_RESULT
-  }
-
-  // 4. Dashboard/meta guard
-  if (DASHBOARD_META_PATTERN.test(lower)) {
-    return FALSE_RESULT
-  }
-
-  // 5. Semantic-session guard
-  if (SEMANTIC_SESSION_PATTERN.test(lower)) {
-    return FALSE_RESULT
-  }
-
-  // 6. Non-note scope guard
-  if (NON_NOTE_SCOPE_PATTERN.test(lower)) {
     return FALSE_RESULT
   }
 

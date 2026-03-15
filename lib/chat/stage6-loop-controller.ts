@@ -280,6 +280,7 @@ async function writeDurableShadowLog(
 export async function writeDurableEnforcementLog(
   params: S6ShadowLoopParams,
   result: S6LoopResult,
+  resolverTelemetry?: Record<string, unknown>,
 ): Promise<void> {
   try {
     const actionType = result.telemetry.s6_action_type
@@ -341,6 +342,8 @@ export async function writeDurableEnforcementLog(
       // Auto-fill transparency (6x.5)
       s6_citations_autofilled: result.telemetry.s6_citations_autofilled,
       s6_grounded_autofilled: result.telemetry.s6_grounded_autofilled,
+      // Anchored-note resolver telemetry (6x.7 Phase A)
+      ...(resolverTelemetry ?? {}),
     }
 
     await recordRoutingLog(payload)

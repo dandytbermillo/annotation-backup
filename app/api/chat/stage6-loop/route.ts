@@ -766,7 +766,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       model: process.env.STAGE6_LLM_MODEL || 'gemini-2.0-flash',
       generationConfig: {
         temperature: 0.1,
-        maxOutputTokens: 1024,
+        maxOutputTokens: 2048,
         responseMimeType: 'application/json',
         responseSchema: S6_RESPONSE_SCHEMA,
       },

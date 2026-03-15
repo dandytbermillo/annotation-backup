@@ -145,4 +145,10 @@ export interface RoutingLogPayload {
   // Auto-fill transparency markers (6x.5)
   s6_citations_autofilled?: boolean       // whether citedSnippetIds was server-filled
   s6_grounded_autofilled?: boolean        // whether grounded was server-filled
+  // Stage 6x.7: Anchored-note intent resolver (Phase A)
+  note_intent_resolver_called?: boolean
+  note_intent_resolver_decision?: string
+  note_intent_resolver_confidence?: number
+  note_intent_resolver_reason?: string
+  note_intent_resolver_result?: string    // effective result after low-confidence normalization
 }
