@@ -31,11 +31,11 @@ The result is a routing disconnect:
 - execute-intent style paths can use recent conversational context
 - note-family semantic arbitration cannot
 
-This plan fixes that disconnect by introducing one bounded, structured, universal recent-turn context object for semantic routing.
+This plan fixes that disconnect by introducing one bounded, structured, shared recent-turn context object for semantic routing.
 
 ## Goal
 
-Create a shared, bounded `recentRoutingContext` object that can be passed into semantic routing layers across intent families, so referential follow-up queries resolve consistently without turning any arbiter into a freeform chat agent.
+Create a shared, bounded `recentRoutingContext` object that can be passed into semantic routing layers across intent families, starting with the cross-surface arbiter, so referential follow-up queries resolve consistently without turning any arbiter into a freeform chat agent.
 
 ## Non-goals
 
@@ -48,9 +48,9 @@ This plan does **not**:
 
 ## Core Principle
 
-The fix must be **universal**, not note-only.
+The fix must be **shared**, not note-only.
 
-Because all requests live in the same chat stream, bounded recent-turn context should be available to semantic routing regardless of intent family:
+Because all requests live in the same chat stream, the same bounded recent-turn context contract should be reusable across semantic routing regardless of intent family:
 
 - note
 - panel_widget
@@ -76,6 +76,25 @@ type RecentRoutingContext = {
 }
 ```
 
+## Field bounds and sanitization
+
+To keep this object bounded and low-risk:
+
+- `lastUserMessage`: sanitize and cap at 160 chars
+- `lastAssistantMessage`: sanitize and cap at 200 chars
+- `lastResolvedSurface`: enum only
+- `lastResolvedIntentFamily`: enum only
+- `lastTurnOutcome`: enum only
+
+Rules:
+
+- preserve only plain text needed for routing
+- strip citations/formatting noise if present
+- prefer structured fields over raw assistant text when both are available
+- if truncation would remove the entire signal, omit the field instead of sending low-value fragments
+
+These caps should be enforced before prompt composition, not left to the model.
+
 ## Design constraints
 
 1. **Bounded**
@@ -87,8 +106,10 @@ type RecentRoutingContext = {
 - no raw reasoning state
 - only fields useful for routing disambiguation
 
-3. **Universal**
-- same object shape used by semantic routing layers across families
+3. **Shared**
+- same object shape is defined once and reused by semantic routing layers across families
+- Phase 3b adopts it in the cross-surface arbiter first
+- broader convergence is a later follow-on, not part of this patch
 
 4. **Optional**
 - absence of context must not break routing
@@ -125,7 +146,8 @@ That is enough to resolve most follow-up language without needing full history.
 | `lib/chat/routing-dispatcher.ts` | Build and pass `recentRoutingContext` into semantic routing calls |
 | `lib/chat/cross-surface-arbiter.ts` | Extend request type to include `recentRoutingContext` |
 | `app/api/chat/cross-surface-arbiter/route.ts` | Accept `recentRoutingContext` and include it in prompt |
-| `components/chat/chat-navigation-panel.tsx` | Optional: expose same bounded context to future semantic callers if needed |
+| `components/chat/chat-navigation-panel.tsx` | Pass previous-turn structured routing metadata into dispatcher input |
+| `lib/chat/chat-navigation-context.tsx` | Persist bounded previous-turn routing metadata alongside chat state |
 | `docs/proposal/chat-navigation/plan/panels/chat/meta/multi_layer/stage6x8-phase2-semantic-contract.md` | Add `recentRoutingContext` to arbiter request contract |
 | `__tests__/unit/chat/content-intent-dispatcher-integration.test.ts` | Add follow-up context regression tests |
 | `__tests__/unit/chat/cross-surface-arbiter.test.ts` | Add request/contract tests if this suite exists or is introduced |
@@ -147,22 +169,127 @@ type CrossSurfaceArbiterRequest = {
 
 This should be documented in the Phase 2 semantic contract as an approved extension to the request payload.
 
+## Step 1a: Define the source of prior routing metadata
+
+The dispatcher must not infer prior routing metadata from freeform assistant text.
+
+Phase 3b requires one explicit bounded source:
+
+```typescript
+type PreviousRoutingMetadata = {
+  assistantMessageId?: string
+  surface?: 'note' | 'panel_widget' | 'dashboard' | 'workspace' | 'unknown'
+  intentFamily?: 'read_content' | 'state_info' | 'navigate' | 'mutate' | 'ambiguous'
+  turnOutcome?:
+    | 'content_answered'
+    | 'state_info_answered'
+    | 'navigate_executed'
+    | 'clarifier'
+    | 'not_supported'
+    | 'unresolved'
+}
+```
+
+Implementation seam:
+
+- `chat-navigation-panel.tsx` stores the immediately previous handled routing metadata after each assistant turn
+- `chat-navigation-context.tsx` keeps only the latest bounded value in chat state
+- dispatcher input receives that structured metadata on the next turn
+
+Turn-alignment rule:
+
+- `assistantMessageId` must be the exact message ID of the assistant message produced by the handled routing result
+- `assistantMessageId` must track the final persisted assistant message ID if the temporary local message ID is rewritten after persistence
+- `lastAssistantMessage` may only be included in `recentRoutingContext` when it matches `previousRoutingMetadata.assistantMessageId`
+- if the latest assistant message and stored metadata do not match, omit both the structured metadata and `lastAssistantMessage` for safety rather than mixing turns
+
+This is required for Phase 3b. If that metadata is not wired into dispatcher input, the structured fields in `recentRoutingContext` must remain omitted.
+
+Initial Phase 3b source rules:
+
+- `lastUserMessage`:
+  - source: latest prior `ctx.messages` entry where `role === 'user'`
+  - must exclude the current turn input being routed now
+  - never duplicate `ctx.trimmedInput` back into `recentRoutingContext.lastUserMessage`
+
+- `lastAssistantMessage`:
+  - source: latest prior `ctx.messages` entry where `role === 'assistant'`
+  - sanitized and capped per the bounds above
+
+- `lastResolvedSurface`:
+  - source: `previousRoutingMetadata.surface`
+  - Phase 3 initial mapping:
+    - `tierLabel === 'arbiter_content_answered'` -> `note`
+    - `tierLabel === 'arbiter_note_state_info'` -> `note`
+    - `tierLabel === 'content_intent_answered'` -> `note`
+    - otherwise omit unless a later phase adds an explicit persisted source
+
+- `lastResolvedIntentFamily`:
+  - source: `previousRoutingMetadata.intentFamily`
+  - Phase 3 initial mapping:
+    - `arbiter_content_answered` / `content_intent_answered` -> `read_content`
+    - `arbiter_note_state_info` -> `state_info`
+    - otherwise omit unless explicitly known
+
+- `lastTurnOutcome`:
+  - source: `previousRoutingMetadata.turnOutcome`
+  - Phase 3 initial mapping:
+    - `tierLabel === 'arbiter_content_answered'` or `tierLabel === 'content_intent_answered'` -> `content_answered`
+    - `tierLabel === 'arbiter_note_state_info'` -> `state_info_answered`
+    - `tierLabel === 'arbiter_mutate_not_supported'` -> `not_supported`
+    - `tierLabel === 'arbiter_ambiguous'` -> `clarifier`
+    - otherwise omit
+
+`safe_clarifier` by itself is too broad and must not be used as a standalone derivation source for `lastTurnOutcome`.
+
+If the dispatcher does not have a trustworthy structured source for one of these fields, it must omit the field rather than guess.
+
+## Step 1b: Define lifecycle and reset rules
+
+`previousRoutingMetadata` is bounded state and must be replaced or cleared explicitly.
+
+Required rules:
+
+- **new conversation / clear chat**
+  - clear `previousRoutingMetadata`
+
+- **history hydration / loading older messages**
+  - do not reconstruct or backfill `previousRoutingMetadata` from historical messages
+  - Phase 3b only uses metadata captured during the live current session
+
+- **handled assistant turn**
+  - replace `previousRoutingMetadata` only when the turn produced a handled assistant outcome with a concrete assistant message ID
+
+- **error turn without a trustworthy handled result**
+  - clear `previousRoutingMetadata` or leave it unchanged only if the prior value is still definitely tied to the latest assistant message
+  - never synthesize new metadata from generic error UI
+
+- **workspace/session switch**
+  - if the switch invalidates the prior surface context, clear `previousRoutingMetadata`
+  - at minimum, note-scoped metadata must not survive a workspace change that invalidates the referenced note context
+
+- **message/metadata mismatch**
+  - if `assistantMessageId` no longer points to the latest assistant message in scope, clear the stored metadata before building `recentRoutingContext`
+
+Phase 3b should prefer omission over stale carry-forward.
+
 ## Step 2: Build recent context in the dispatcher
 
 The dispatcher already has access to:
 
 - current messages
 - current UI state
-- the last routing result metadata for the immediately previous assistant turn
+- previous-turn structured routing metadata once the client/context seam above is added
 
 Build `recentRoutingContext` from those values.
 
 Priority order:
 
 1. last user message from `ctx.messages`
-2. last assistant message from `ctx.messages`
-3. last resolved surface / family from the prior routing result if available
-4. last turn outcome from prior routing provenance / tier result if available
+   - must be the most recent user turn before the current input
+2. last assistant message from `ctx.messages` only if it matches `previousRoutingMetadata.assistantMessageId`
+3. last resolved surface / family from trustworthy structured metadata only
+4. last turn outcome from trustworthy structured metadata only
 
 If a field is unavailable, omit it.
 
@@ -196,12 +323,18 @@ Prompt rule:
 - use recent context only to resolve referential language like `that`, `it`, `again`, `that note`, `that panel`
 - do not override explicit current-turn language when it clearly points elsewhere
 - if recent context does not make the current request clearer, ignore it and classify from the current request alone
+- explicit current-turn nouns and verbs always outrank prior-turn context
+- structured prior metadata outranks raw `lastAssistantMessage`
 
-## Step 5: Keep this universal for future semantic routing callers
+## Step 5: Adopt in the arbiter first, keep the contract reusable
 
-The same `recentRoutingContext` object should become the standard input for future semantic routing layers, not a note-only custom field.
+The same `recentRoutingContext` object should become the standard reusable input for future semantic routing layers, not a note-only custom field.
 
-That means later phases can reuse it for:
+Phase 3b scope:
+
+- implement the contract in the cross-surface arbiter only
+
+Later convergence can reuse it for:
 
 - cross-surface arbiter
 - `/api/chat/navigate` semantic classification if convergence work happens later
@@ -233,6 +366,23 @@ Examples:
 - user: `show links panel`
 - expect: navigation path, not note read
 
+5. message/metadata mismatch
+- stored `assistantMessageId` does not match the latest assistant message in scope
+- expect: omit structured recent-turn metadata and `lastAssistantMessage`
+
+6. clear chat / new conversation
+- prior metadata existed in the previous conversation
+- expect: no `recentRoutingContext` structured metadata passed into the arbiter
+
+7. workspace switch invalidates prior note context
+- prior metadata is note-scoped
+- workspace changes before the next turn
+- expect: note-scoped prior metadata cleared or omitted
+
+8. history hydration / older-message load
+- historical messages load into chat state
+- expect: no synthetic backfilled `previousRoutingMetadata` from hydrated history
+
 ## Step 7: Maintain strict safety boundaries
 
 Recent-turn context must **not** bypass:
@@ -258,16 +408,20 @@ After this plan:
 
 1. `npm run type-check`
 2. `npx jest --testPathPattern content-intent-dispatcher-integration`
-3. `npx jest --testPathPattern cross-surface-arbiter`
+3. `npx jest --testPathPattern cross-surface-arbiter` if a dedicated arbiter suite is added; otherwise cover request-shape assertions in existing integration tests
 4. manual follow-up tests:
    - `which note is open?` -> answer
    - then `show me the content of that note` -> content answer
    - note summary shown -> `summarize that again` -> content answer
    - prior note context present -> `show links panel` -> still navigation
+5. lifecycle safety checks:
+   - clear chat -> next turn sends no stale recent-turn metadata
+   - workspace switch -> next note follow-up does not inherit invalid prior note metadata
 
 ## Success criteria
 
-- semantic routing receives one shared bounded recent-turn context object
+- semantic routing receives one shared bounded recent-turn context object in the cross-surface arbiter
 - referential follow-up phrasing resolves correctly across note-family turns
 - explicit current-turn commands still override prior context
 - no full-history coupling is introduced
+- stale or mismatched prior-turn metadata is omitted rather than reused
