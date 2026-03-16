@@ -422,6 +422,19 @@ Inline citation evidence display so users can verify the grounding behind surfac
 - **Cross-note safety preserved**: single-note validation updated for richer registry shape
 - Report: `reports/2026-03-14-stage6x6-citation-snippet-surfacing-implementation.md`
 
+### 6x.7 Anchored-note intent resolver — SUPERSEDED by 6x.8
+Interim narrow fix for classifier-miss note-read turns. Replaced by the cross-surface arbiter in 6x.8 Phase 3.
+
+### 6x.8 Cross-surface semantic routing (Phase 3) — IMPLEMENTED
+Shared semantic arbiter for uncertain turns across surfaces. Phase 3 migrates note families.
+- **Cross-surface arbiter**: bounded LLM classifier returning `surface × intentFamily × confidence`
+- **Greeting-prefix fix**: `DASHBOARD_META_PATTERN` split so greetings no longer block content requests
+- **note.read_content**: arbiter classifies → Stage 6 handoff (unchanged execution)
+- **note.state_info**: arbiter classifies → deterministic resolver from live UI state
+- **Mutate policy**: classified but not executed, immediate bounded response
+- **Migrated-family gate**: only `note:read_content` and `note:state_info` in Phase 3
+- Report: `reports/2026-03-15-stage6x8-phase3-cross-surface-arbiter-implementation.md`
+
 ## 13. Recommended First Slice
 
 Start with:

@@ -47,9 +47,13 @@ const SELECTION_PATTERN = /^([1-9]|[a-e]|first|second|third|fourth|fifth|last)$/
 const SEMANTIC_SESSION_PATTERN =
   /\b(my\s+session|my\s+activity|my\s+history|what\s+have\s+i\s+been\s+doing|what\s+did\s+we\s+do|why\s+did\s+i)\b/i
 
-/** Dashboard/meta/greeting phrases — not content queries. */
-const DASHBOARD_META_PATTERN =
-  /^(help|hello|hi|hey|what\s+can\s+you\s+do|what\s+panels?\s+(are|is)\s+open|how\s+do\s+i)\b/i
+/** Standalone greetings — excluded from deterministic classifier but NOT from arbiter.
+ *  Arbiter handles these correctly (returns ambiguous for standalone, content for prefixed). */
+const GREETING_PATTERN = /^(hello|hi|hey)\s*[.!?]?$/i
+
+/** True meta/help phrases — excluded from both classifier AND arbiter. */
+const META_ONLY_PATTERN =
+  /^(help|what\s+can\s+you\s+do|what\s+panels?\s+(are|is)\s+open|how\s+do\s+i)\b/i
 
 /**
  * Non-note surface references — if the input explicitly targets
@@ -63,19 +67,17 @@ const NON_NOTE_SCOPE_PATTERN =
  * Non-read capability verbs (6x.7 Phase A).
  * These must not enter the read-intent resolver even when a note anchor is present.
  * They fall through to existing routing or future capability slices (6x.8+).
+ * NOTE: NOT included in isArbiterHardExcluded — the arbiter can classify mutate verbs.
  */
 const NOTE_NON_READ_PATTERN = /^(create|rename|delete|remove|edit|add|annotate|highlight|mark|tag|move|copy)\b/i
 
 // ============================================================================
-// Shared hard-guard helper (6x.7)
+// Shared hard-guard helpers
 // ============================================================================
 
 /**
- * Check whether an input is hard-excluded from the anchored-note intent resolver.
- * Returns true when the input should NOT reach the resolver (selection, meta, non-note scope, non-read verbs).
- *
- * Note: isExplicitCommand is NOT included — note-referential read imperatives
- * like "show the text of that note" must remain resolver-eligible.
+ * 6x.7 legacy: Check whether an input is hard-excluded from the anchored-note intent resolver.
+ * Requires activeNoteItemId. Used by the deterministic classifier path.
  */
 export function isAnchoredNoteResolverHardExcluded(input: string, anchor: NoteAnchorContext): boolean {
   if (!anchor.activeNoteItemId) return true
@@ -83,10 +85,26 @@ export function isAnchoredNoteResolverHardExcluded(input: string, anchor: NoteAn
   if (!trimmed) return true
   const lower = trimmed.toLowerCase()
   if (SELECTION_PATTERN.test(lower)) return true
-  if (DASHBOARD_META_PATTERN.test(lower)) return true
+  if (META_ONLY_PATTERN.test(lower)) return true
   if (SEMANTIC_SESSION_PATTERN.test(lower)) return true
   if (NON_NOTE_SCOPE_PATTERN.test(lower)) return true
   if (NOTE_NON_READ_PATTERN.test(lower)) return true
+  return false
+}
+
+/**
+ * 6x.8 Phase 3: Check whether an input is hard-excluded from the cross-surface arbiter.
+ * Does NOT require activeNoteItemId — supports note-reference-detected turns.
+ * Does NOT include NOTE_NON_READ_PATTERN — arbiter can classify mutate verbs.
+ */
+export function isArbiterHardExcluded(input: string): boolean {
+  const trimmed = input.trim()
+  if (!trimmed) return true
+  const lower = trimmed.toLowerCase()
+  if (SELECTION_PATTERN.test(lower)) return true
+  if (META_ONLY_PATTERN.test(lower)) return true
+  if (SEMANTIC_SESSION_PATTERN.test(lower)) return true
+  if (NON_NOTE_SCOPE_PATTERN.test(lower)) return true
   return false
 }
 
@@ -165,8 +183,14 @@ export function classifyContentIntent(
   const lower = trimmed.toLowerCase()
 
   // Classifier-only guard: explicit navigation commands (open, show, go to).
-  // The resolver keeps these eligible — they may be note-referential read imperatives.
+  // The resolver/arbiter keeps these eligible — they may be note-referential read imperatives.
   if (isExplicitCommand(trimmed)) {
+    return FALSE_RESULT
+  }
+
+  // Classifier-only guard: standalone greetings (hello, hi, hey without content request).
+  // Not excluded from arbiter — arbiter correctly returns ambiguous for these.
+  if (GREETING_PATTERN.test(lower)) {
     return FALSE_RESULT
   }
 

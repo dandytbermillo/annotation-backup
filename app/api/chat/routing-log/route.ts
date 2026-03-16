@@ -162,6 +162,12 @@ export async function POST(request: NextRequest) {
           note_intent_resolver_confidence: payload.note_intent_resolver_confidence,
           note_intent_resolver_reason: payload.note_intent_resolver_reason,
           note_intent_resolver_result: payload.note_intent_resolver_result,
+          // Cross-surface arbiter (6x.8)
+          cross_surface_arbiter_called: payload.cross_surface_arbiter_called,
+          cross_surface_arbiter_surface: payload.cross_surface_arbiter_surface,
+          cross_surface_arbiter_intent: payload.cross_surface_arbiter_intent,
+          cross_surface_arbiter_confidence: payload.cross_surface_arbiter_confidence,
+          cross_surface_arbiter_result: payload.cross_surface_arbiter_result,
         })
       : null
 

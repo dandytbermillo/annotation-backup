@@ -91,8 +91,10 @@ import { evaluateStage5Replay } from '@/lib/chat/routing-log/stage5-evaluator'
 
 // Stage 6: shadow loop (fire-and-forget) + enforcement loop (awaitable)
 import { runS6ShadowLoop, runS6EnforcementLoop, executeS6Loop, writeDurableEnforcementLog } from '@/lib/chat/stage6-loop-controller'
-import { classifyContentIntent, isAnchoredNoteResolverHardExcluded, type NoteAnchorContext } from '@/lib/chat/content-intent-classifier'
+import { classifyContentIntent, isAnchoredNoteResolverHardExcluded, isArbiterHardExcluded, type NoteAnchorContext } from '@/lib/chat/content-intent-classifier'
 import { callAnchoredNoteResolver } from '@/lib/chat/anchored-note-intent-resolver'
+import { callCrossSurfaceArbiter } from '@/lib/chat/cross-surface-arbiter'
+import { resolveNoteStateInfo } from '@/lib/chat/state-info-resolvers'
 import { executeS6OpenPanel, isDuplicateAction } from '@/lib/chat/stage6-execution-bridge'
 import type { S6ParsedAction, S6ActionSignature } from '@/lib/chat/stage6-execution-bridge'
 
@@ -1546,47 +1548,79 @@ export async function dispatchRouting(
       // Loop didn't produce an answer (abort/timeout/error) — durable row already written above.
       // Fall through to normal routing. Do NOT rerun via runS6ShadowLoop.
       contentIntentMatchedThisTurn = true
-    } else if (activeNoteId && !contentResult.isContentIntent && !isAnchoredNoteResolverHardExcluded(ctx.trimmedInput, noteAnchor)) {
-      // ── 6x.7 Phase A: Bounded LLM resolver for classifier-miss + anchor-present ──
-      const resolverResult = await callAnchoredNoteResolver({
+    } else if ((() => {
+      // 6x.8 Phase 3: note-reference detection for arbiter eligibility
+      const NOTE_REFERENCE_PATTERN = /\b(this|that|the|my|which|what|any|a)\s+(note|document|page)\b/i
+      const noteRefDetected = NOTE_REFERENCE_PATTERN.test(ctx.trimmedInput.toLowerCase())
+      const noteRelated = !!activeNoteId || noteRefDetected
+      return noteRelated && !contentResult.isContentIntent && !isArbiterHardExcluded(ctx.trimmedInput)
+    })()) {
+      // ── 6x.8 Phase 3: Cross-surface arbiter for note-family uncertain turns ──
+      const NOTE_REFERENCE_PATTERN = /\b(this|that|the|my|which|what|any|a)\s+(note|document|page)\b/i
+      const noteRefDetected = NOTE_REFERENCE_PATTERN.test(ctx.trimmedInput.toLowerCase())
+
+      const arbiterResult = await callCrossSurfaceArbiter({
         userInput: ctx.trimmedInput,
-        noteAnchor: { itemId: activeNoteId, title: activeNote?.title ?? null },
+        activeNote: activeNoteId
+          ? { itemId: activeNoteId, title: activeNote?.title ?? null }
+          : undefined,
+        noteReferenceDetected: noteRefDetected,
       })
 
-      // Telemetry: compute effective result (low-confidence normalized to ambiguous)
-      const rawDecision = resolverResult.response?.decision
-      const confidence = resolverResult.response?.confidence ?? 0
-      let effectiveResult: 'content' | 'navigation' | 'ambiguous' | 'timeout' | 'error'
-      if (!resolverResult.success) {
-        effectiveResult = resolverResult.error?.includes('timeout') ? 'timeout' : 'error'
+      // Telemetry: compute effective result
+      const rawDecision = arbiterResult.response
+      const confidence = rawDecision?.confidence ?? 0
+      let effectiveResult: string
+      if (!arbiterResult.success) {
+        effectiveResult = arbiterResult.error?.includes('timeout') ? 'timeout' : 'error'
       } else if (confidence < 0.75) {
         effectiveResult = 'ambiguous'
-      } else if (rawDecision === 'anchored_note_content') {
-        effectiveResult = 'content'
-      } else if (rawDecision === 'anchored_note_navigation') {
-        effectiveResult = 'navigation'
       } else {
-        effectiveResult = 'ambiguous'
+        effectiveResult = `${rawDecision!.surface}:${rawDecision!.intentFamily}`
       }
 
-      // Build resolver telemetry object for all log paths
-      const resolverTelemetry = {
-        note_intent_resolver_called: true as const,
-        note_intent_resolver_decision: rawDecision,
-        note_intent_resolver_confidence: confidence,
-        note_intent_resolver_reason: resolverResult.response?.reason,
-        note_intent_resolver_result: effectiveResult,
+      const arbiterTelemetry = {
+        cross_surface_arbiter_called: true as const,
+        cross_surface_arbiter_surface: rawDecision?.surface,
+        cross_surface_arbiter_intent: rawDecision?.intentFamily,
+        cross_surface_arbiter_confidence: confidence,
+        cross_surface_arbiter_result: effectiveResult,
       }
-      // Hoist to outer scope for Path 2 (navigation fallthrough → common log)
-      resolverTelemetryForLog = resolverTelemetry
+      resolverTelemetryForLog = arbiterTelemetry
 
-      const isResolverContent = effectiveResult === 'content'
-      const isResolverNavigation = effectiveResult === 'navigation'
+      // Migrated-family gate
+      const MIGRATED_PAIRS = new Set(['note:read_content', 'note:state_info'])
+      const pairKey = `${rawDecision?.surface}:${rawDecision?.intentFamily}`
+      const isMigrated = arbiterResult.success && confidence >= 0.75 && MIGRATED_PAIRS.has(pairKey)
+      const isMigratedLowConfidence = arbiterResult.success && confidence < 0.75 && MIGRATED_PAIRS.has(pairKey)
 
-      // ── Path 1: content above threshold → enter Stage 6 ──
-      if (isResolverContent && resolverResult.response?.decision === 'anchored_note_content') {
+      // ── Path 1: note.read_content (migrated, above threshold) ──
+      if (isMigrated && rawDecision!.intentFamily === 'read_content') {
+        if (!activeNoteId) {
+          // Note-reference detected but no active note — cannot enter Stage 6
+          contentIntentMatchedThisTurn = true
+          const noNoteMsg: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: 'No note is currently open. Open a note first to read its content.',
+            timestamp: new Date(),
+            isError: false,
+          }
+          ctx.addMessage(noNoteMsg)
+          ctx.setIsLoading(false)
+          const noNoteResult: RoutingDispatcherResult = {
+            handled: true, handledByTier: 6, tierLabel: 'arbiter_note_read_no_anchor',
+            clarificationCleared: false, isNewQuestionOrCommandDetected: false,
+            classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
+            _devProvenanceHint: 'safe_clarifier',
+          }
+          const noNotePayload = buildRoutingLogPayload(ctx, noNoteResult, turnSnapshotForLog)
+          Object.assign(noNotePayload, arbiterTelemetry)
+          void recordRoutingLog(noNotePayload)
+          return noNoteResult
+        }
+
         contentIntentMatchedThisTurn = true
-
         const s6SessionId = getRoutingLogSessionId()
         const s6TurnIndex = ctx.messages.filter(m => m.role === 'user').length
         const s6LastMsg = [...ctx.messages].reverse().find(m => m.role === 'user')
@@ -1602,24 +1636,21 @@ export async function dispatchRouting(
             noteItemId: activeNoteId,
             noteTitle: activeNote?.title ?? 'Untitled',
             anchorSource: 'active_widget' as const,
-            intentType: resolverResult.response.intentType,
+            intentType: rawDecision!.intentSubtype ?? 'question',
           },
         }
 
         try {
           const loopResult = await executeS6Loop(s6Params)
           if (loopResult) {
-            void writeDurableEnforcementLog(s6Params, loopResult, resolverTelemetry)
-
+            void writeDurableEnforcementLog(s6Params, loopResult, arbiterTelemetry)
             if (loopResult.outcome === 'content_answered' && loopResult.contentAnswerResult?.answerText) {
               let displayText = loopResult.contentAnswerResult.answerText
                 .replace(/\s*\((?:based on\s+)?c\d+_s\d+(?:,\s*c\d+_s\d+)*\)\.?/gi, '')
                 .trim()
-
               if (loopResult.contentAnswerResult.contentTruncated) {
                 displayText += '\n\n_This answer is based on partial note content._'
               }
-
               const assistantMessage: ChatMessage = {
                 id: `assistant-${Date.now()}`,
                 role: 'assistant',
@@ -1634,83 +1665,95 @@ export async function dispatchRouting(
               }
               ctx.addMessage(assistantMessage)
               ctx.setIsLoading(false)
-
-              void debugLog({
-                component: 'ChatNavigation',
-                action: 'resolver_content_answered',
-                metadata: {
-                  noteItemId: activeNoteId,
-                  intentType: resolverResult.response.intentType,
-                  resolverConfidence: confidence,
-                },
-              })
-
               return {
-                handled: true,
-                handledByTier: 6,
-                tierLabel: 'resolver_content_answered',
-                clarificationCleared: false,
-                isNewQuestionOrCommandDetected: false,
-                classifierCalled: false,
-                classifierTimeout: false,
-                classifierError: false,
-                isFollowUp: false,
+                handled: true, handledByTier: 6, tierLabel: 'arbiter_content_answered',
+                clarificationCleared: false, isNewQuestionOrCommandDetected: false,
+                classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
                 _devProvenanceHint: 'content_answered',
               }
             }
           }
         } catch (err) {
-          console.warn('[routing-dispatcher] Resolver content loop failed:', (err as Error).message)
+          console.warn('[routing-dispatcher] Arbiter content loop failed:', (err as Error).message)
         }
 
-      // ── Path 2: navigation above threshold → fall through to normal routing ──
-      } else if (isResolverNavigation) {
-        // No action — Stage 5 + tiers remain active. Resolver telemetry will
-        // reach common recordRoutingLog via the accumulated local variable.
-
-      // ── Path 3: ambiguous / timeout / error / low-confidence → immediate clarifier ──
-      } else {
+      // ── Path 2: note.state_info (migrated, above threshold) ──
+      } else if (isMigrated && rawDecision!.intentFamily === 'state_info') {
         contentIntentMatchedThisTurn = true
-        const clarifierMessage: ChatMessage = {
+        const stateAnswer = resolveNoteStateInfo(ctx.uiContext ?? {})
+        const stateMsg: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: stateAnswer,
+          timestamp: new Date(),
+          isError: false,
+        }
+        ctx.addMessage(stateMsg)
+        ctx.setIsLoading(false)
+        const stateResult: RoutingDispatcherResult = {
+          handled: true, handledByTier: 6, tierLabel: 'arbiter_note_state_info',
+          clarificationCleared: false, isNewQuestionOrCommandDetected: false,
+          classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
+          _devProvenanceHint: 'content_answered',
+        }
+        const statePayload = buildRoutingLogPayload(ctx, stateResult, turnSnapshotForLog)
+        Object.assign(statePayload, arbiterTelemetry)
+        void recordRoutingLog(statePayload)
+        return stateResult
+
+      // ── Mutate: immediate not-supported (per Phase 2 contract) ──
+      } else if (arbiterResult.success && rawDecision?.intentFamily === 'mutate') {
+        contentIntentMatchedThisTurn = true
+        const mutateMsg: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: 'I can help with reading and navigating, but I can\'t modify content yet.',
+          timestamp: new Date(),
+          isError: false,
+        }
+        ctx.addMessage(mutateMsg)
+        ctx.setIsLoading(false)
+        const mutateResult: RoutingDispatcherResult = {
+          handled: true, handledByTier: 6, tierLabel: 'arbiter_mutate_not_supported',
+          clarificationCleared: false, isNewQuestionOrCommandDetected: false,
+          classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
+          _devProvenanceHint: 'safe_clarifier',
+        }
+        const mutatePayload = buildRoutingLogPayload(ctx, mutateResult, turnSnapshotForLog)
+        Object.assign(mutatePayload, arbiterTelemetry)
+        void recordRoutingLog(mutatePayload)
+        return mutateResult
+
+      // ── Path 3: Non-migrated pair above threshold → fall through ──
+      } else if (arbiterResult.success && confidence >= 0.75 && !isMigrated) {
+        // Arbiter telemetry reaches common log via resolverTelemetryForLog
+
+      // ── Path 4a: Migrated pair below threshold / ambiguous intent / unknown surface / error → clarifier ──
+      } else if (isMigratedLowConfidence || (!arbiterResult.success) || rawDecision?.surface === 'unknown' || rawDecision?.intentFamily === 'ambiguous') {
+        contentIntentMatchedThisTurn = true
+        const clarifierMsg: ChatMessage = {
           id: `assistant-${Date.now()}`,
           role: 'assistant',
           content: 'Do you want me to explain the current note, or navigate somewhere else?',
           timestamp: new Date(),
           isError: false,
         }
-        ctx.addMessage(clarifierMessage)
+        ctx.addMessage(clarifierMsg)
         ctx.setIsLoading(false)
-
-        // Explicit routing log for early-return ambiguous path (full payload, not partial)
-        const ambiguousResult: RoutingDispatcherResult = {
-          handled: true,
-          handledByTier: 6,
-          tierLabel: 'anchored_note_resolver_ambiguous',
-          clarificationCleared: false,
-          isNewQuestionOrCommandDetected: false,
-          classifierCalled: false,
-          classifierTimeout: false,
-          classifierError: false,
-          isFollowUp: false,
+        const clarifierResult: RoutingDispatcherResult = {
+          handled: true, handledByTier: 6, tierLabel: 'arbiter_ambiguous',
+          clarificationCleared: false, isNewQuestionOrCommandDetected: false,
+          classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
           _devProvenanceHint: 'safe_clarifier',
         }
-        const ambiguousLogPayload = buildRoutingLogPayload(ctx, ambiguousResult, turnSnapshotForLog)
-        // Merge resolver telemetry
-        Object.assign(ambiguousLogPayload, resolverTelemetry)
-        void recordRoutingLog(ambiguousLogPayload)
+        const clarifierPayload = buildRoutingLogPayload(ctx, clarifierResult, turnSnapshotForLog)
+        Object.assign(clarifierPayload, arbiterTelemetry)
+        void recordRoutingLog(clarifierPayload)
+        return clarifierResult
 
-        return {
-          handled: true,
-          handledByTier: 6,
-          tierLabel: 'anchored_note_resolver_ambiguous',
-          clarificationCleared: false,
-          isNewQuestionOrCommandDetected: false,
-          classifierCalled: false,
-          classifierTimeout: false,
-          classifierError: false,
-          isFollowUp: false,
-          _devProvenanceHint: 'safe_clarifier',
-        }
+      // ── Path 4b: Non-migrated pair below threshold → fall through ──
+      } else {
+        // Fall through to existing routing. Arbiter telemetry via resolverTelemetryForLog.
       }
     }
   }
