@@ -1677,6 +1677,28 @@ export async function dispatchRouting(
           console.warn('[routing-dispatcher] Arbiter content loop failed:', (err as Error).message)
         }
 
+        // Bounded fallback: arbiter classified note.read_content but Stage 6 did not produce content_answered.
+        // Do NOT fall through to legacy routing — the arbiter already knew the intent.
+        const readFallbackMsg: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: "I couldn't read enough of the current note to answer that. Try asking a more specific question about the note.",
+          timestamp: new Date(),
+          isError: false,
+        }
+        ctx.addMessage(readFallbackMsg)
+        ctx.setIsLoading(false)
+        const readFallbackResult: RoutingDispatcherResult = {
+          handled: true, handledByTier: 6, tierLabel: 'arbiter_read_content_fallback',
+          clarificationCleared: false, isNewQuestionOrCommandDetected: false,
+          classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
+          _devProvenanceHint: 'safe_clarifier',
+        }
+        const readFallbackPayload = buildRoutingLogPayload(ctx, readFallbackResult, turnSnapshotForLog)
+        Object.assign(readFallbackPayload, arbiterTelemetry)
+        void recordRoutingLog(readFallbackPayload)
+        return readFallbackResult
+
       // ── Path 2: note.state_info (migrated, above threshold) ──
       } else if (isMigrated && rawDecision!.intentFamily === 'state_info') {
         contentIntentMatchedThisTurn = true

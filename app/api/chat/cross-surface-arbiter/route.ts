@@ -89,6 +89,15 @@ Classify the user's request into:
    - "question" — answer a question about content
    - "find_text" — search or find specific text
 
+IMPORTANT: Imperative verbs like "show", "read", "display", "tell me" do NOT imply navigation
+when the object is clearly note content. These are read_content requests:
+- "show me the content of that note" → read_content (summary)
+- "show the text of this note" → read_content (summary)
+- "read that note" → read_content (summary)
+- "display the contents of my note" → read_content (summary)
+
+Use "navigate" ONLY when the user is asking to open, go to, switch to, or move somewhere in the UI.
+
 Set confidence between 0 and 1. Only use >= 0.75 when intent is clearly one category.
 If unclear, return "ambiguous" — do NOT guess.
 
