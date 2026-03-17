@@ -450,7 +450,7 @@ const ACTION_HISTORY_MAX_SIZE = 50
 
 interface ChatNavigationContextValue {
   messages: ChatMessage[]
-  addMessage: (message: ChatMessage) => void
+  addMessage: (message: ChatMessage, routingMeta?: { tierLabel?: string }) => void
   clearMessages: () => void
   input: string
   setInput: (input: string) => void
@@ -547,6 +547,9 @@ interface ChatNavigationContextValue {
   recordAcceptedChoice: (choiceId: string, action: SelectionActionTrace) => void
   recordRejectedChoice: (choiceId: string) => void
   resetSelectionContinuity: () => void
+  // Previous routing metadata for cross-surface arbiter follow-up (6x.8 Phase 3b)
+  previousRoutingMetadata: import('@/lib/chat/cross-surface-arbiter').PreviousRoutingMetadata | null
+  setPreviousRoutingMetadata: (meta: import('@/lib/chat/cross-surface-arbiter').PreviousRoutingMetadata | null) => void
   // Dev-only provenance debug overlay (per provenance-debug-overlay plan)
   provenanceMap: Map<string, ChatProvenance>
   setProvenance: (messageId: string, provenance: ChatProvenance) => void
@@ -733,6 +736,35 @@ function dbMessageToChatMessage(dbMsg: DbMessage): ChatMessage {
 }
 
 // =============================================================================
+// Routing metadata helper (6x.8 Phase 3c — exported for testing)
+// =============================================================================
+
+/**
+ * Build PreviousRoutingMetadata from a tierLabel.
+ * Returns null for unrecognized tierLabels — those turns should not seed recent-turn context.
+ */
+export function buildPreviousRoutingMetadataFromTierLabel(
+  assistantMessageId: string,
+  routingMeta?: { tierLabel?: string },
+): import('@/lib/chat/cross-surface-arbiter').PreviousRoutingMetadata | null {
+  if (!routingMeta?.tierLabel) return null
+  const tl = routingMeta.tierLabel
+  const meta: import('@/lib/chat/cross-surface-arbiter').PreviousRoutingMetadata = { assistantMessageId }
+  if (tl === 'arbiter_content_answered' || tl === 'content_intent_answered') {
+    meta.surface = 'note'; meta.intentFamily = 'read_content'; meta.turnOutcome = 'content_answered'
+  } else if (tl === 'arbiter_note_state_info') {
+    meta.surface = 'note'; meta.intentFamily = 'state_info'; meta.turnOutcome = 'state_info_answered'
+  } else if (tl === 'arbiter_mutate_not_supported') {
+    meta.turnOutcome = 'not_supported'
+  } else if (tl === 'arbiter_ambiguous' || tl === 'arbiter_read_content_fallback') {
+    meta.turnOutcome = 'clarifier'
+  } else {
+    return null
+  }
+  return meta
+}
+
+// =============================================================================
 // Context
 // =============================================================================
 
@@ -785,6 +817,9 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
 
   // Stop suppression counter (per stop-scope-plan §40-48)
   const [stopSuppressionCount, setStopSuppressionCountInternal] = useState<number>(0)
+
+  // Previous routing metadata for cross-surface arbiter follow-up context (6x.8 Phase 3b)
+  const [previousRoutingMetadata, setPreviousRoutingMetadata] = useState<import('@/lib/chat/cross-surface-arbiter').PreviousRoutingMetadata | null>(null)
 
   // Debounce refs for session state persistence
   const DEBOUNCE_MS = 1000
@@ -920,13 +955,22 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
 
   // Add message with persistence
   const addMessage = useCallback(
-    async (message: ChatMessage) => {
+    async (message: ChatMessage, routingMeta?: { tierLabel?: string }) => {
       // Dev provenance: track last assistant message ID for post-hoc tagging
       if (isProvenanceDebugEnabled() && message.role === 'assistant') {
         lastAddedAssistantIdRef.current = message.id
       }
       // Add to local state immediately for responsiveness
       setMessages((prev) => [...prev, message])
+
+      // 6x.8 Phase 3c: Write routing metadata immediately with local ID
+      // so the next turn can use it before persistence completes
+      if (routingMeta && message.role === 'assistant') {
+        const immediateMeta = buildPreviousRoutingMetadataFromTierLabel(message.id, routingMeta)
+        if (immediateMeta) {
+          setPreviousRoutingMetadata(immediateMeta)
+        }
+      }
 
       // Persist to database
       if (conversationId) {
@@ -971,6 +1015,17 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
             }
           }
 
+          // 6x.8 Phase 3c: Reconcile routing metadata ID after persistence
+          // Update local assistant ID to persisted ID if it still matches
+          if (routingMeta && message.role === 'assistant' && message.id !== persisted.id) {
+            setPreviousRoutingMetadata(current => {
+              if (current?.assistantMessageId === message.id) {
+                return { ...current, assistantMessageId: persisted.id }
+              }
+              return current
+            })
+          }
+
           // Trigger async summarization after assistant responses (non-blocking)
           if (message.role === 'assistant') {
             triggerSummarization(conversationId).then((newSummary) => {
@@ -993,6 +1048,7 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     setHasMoreMessages(false)
     setConversationSummary(null)
     setInitialMessageCount(0) // Reset session divider
+    setPreviousRoutingMetadata(null) // Clear routing context on chat reset (6x.8 Phase 3b)
 
     // Clear from database (create fresh conversation)
     if (conversationId) {
@@ -1416,7 +1472,18 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const setUiContext = useCallback((context: UIContext | null) => {
-    setUiContextState(context)
+    setUiContextState(prev => {
+      // 6x.8 Phase 3b: Clear note-scoped routing metadata when workspace/note context changes
+      const prevNoteId = prev?.workspace?.activeNoteId
+      const nextNoteId = context?.workspace?.activeNoteId
+      if (prevNoteId && prevNoteId !== nextNoteId) {
+        setPreviousRoutingMetadata(current => {
+          if (current?.surface === 'note') return null
+          return current
+        })
+      }
+      return context
+    })
   }, [])
 
   // Register/unregister individual panels (for use in panel mount/unmount effects)
@@ -1795,6 +1862,9 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         recordAcceptedChoice,
         recordRejectedChoice,
         resetSelectionContinuity,
+        // Previous routing metadata for cross-surface arbiter follow-up (6x.8 Phase 3b)
+        previousRoutingMetadata,
+        setPreviousRoutingMetadata,
         // Dev-only provenance debug overlay
         provenanceMap,
         setProvenance,

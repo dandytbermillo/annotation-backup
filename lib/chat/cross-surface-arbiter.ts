@@ -11,10 +11,26 @@ import { debugLog } from '@/lib/utils/debug-logger'
 // Types
 // =============================================================================
 
+export type RecentRoutingContext = {
+  lastUserMessage?: string
+  lastAssistantMessage?: string
+  lastResolvedSurface?: 'note' | 'panel_widget' | 'dashboard' | 'workspace' | 'unknown'
+  lastResolvedIntentFamily?: 'read_content' | 'state_info' | 'navigate' | 'mutate' | 'ambiguous'
+  lastTurnOutcome?: 'content_answered' | 'state_info_answered' | 'navigate_executed' | 'clarifier' | 'not_supported' | 'unresolved'
+}
+
+export type PreviousRoutingMetadata = {
+  assistantMessageId?: string
+  surface?: RecentRoutingContext['lastResolvedSurface']
+  intentFamily?: RecentRoutingContext['lastResolvedIntentFamily']
+  turnOutcome?: RecentRoutingContext['lastTurnOutcome']
+}
+
 export type CrossSurfaceArbiterRequest = {
   userInput: string
   activeNote?: { itemId: string; title: string | null }
   noteReferenceDetected?: boolean
+  recentRoutingContext?: RecentRoutingContext
 }
 
 export type CrossSurfaceSemanticDecision = {

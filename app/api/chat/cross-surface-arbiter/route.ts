@@ -19,6 +19,13 @@ interface ArbiterRequest {
   userInput: string
   activeNote?: { itemId: string; title: string | null }
   noteReferenceDetected?: boolean
+  recentRoutingContext?: {
+    lastUserMessage?: string
+    lastAssistantMessage?: string
+    lastResolvedSurface?: string
+    lastResolvedIntentFamily?: string
+    lastTurnOutcome?: string
+  }
 }
 
 interface ArbiterResponse {
@@ -102,8 +109,22 @@ Set confidence between 0 and 1. Only use >= 0.75 when intent is clearly one cate
 If unclear, return "ambiguous" — do NOT guess.
 
 Respond with JSON only: { "surface": "...", "intentFamily": "...", "confidence": 0.0-1.0, "reason": "...", "intentSubtype": "..." }
-
+${buildRecentContextSection(req)}
 User said: "${req.userInput}"`
+}
+
+function buildRecentContextSection(req: ArbiterRequest): string {
+  const rc = req.recentRoutingContext
+  if (!rc) return ''
+  const parts: string[] = ['\nPrevious turn context (use only to resolve referential language like "that", "it", "again"):']
+  if (rc.lastUserMessage) parts.push(`- Previous user: "${rc.lastUserMessage}"`)
+  if (rc.lastAssistantMessage) parts.push(`- Previous assistant: "${rc.lastAssistantMessage}"`)
+  if (rc.lastResolvedSurface) parts.push(`- Previous surface: ${rc.lastResolvedSurface}`)
+  if (rc.lastResolvedIntentFamily) parts.push(`- Previous intent: ${rc.lastResolvedIntentFamily}`)
+  if (rc.lastTurnOutcome) parts.push(`- Previous outcome: ${rc.lastTurnOutcome}`)
+  parts.push('- Explicit current-turn nouns and verbs always outrank prior context.')
+  parts.push('- If prior context does not clarify the current request, ignore it.')
+  return parts.join('\n')
 }
 
 // =============================================================================

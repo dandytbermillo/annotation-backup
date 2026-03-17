@@ -393,7 +393,8 @@ export interface RoutingDispatcherContext {
   setActiveOptionSetId: (id: string | null) => void
   uiContext?: UIContext | null
   currentEntryId?: string
-  addMessage: (message: ChatMessage) => void
+  previousRoutingMetadata?: import('./cross-surface-arbiter').PreviousRoutingMetadata | null
+  addMessage: (message: ChatMessage, routingMeta?: { tierLabel?: string }) => void
   setLastClarification: (state: LastClarificationState | null) => void
   setIsLoading: (loading: boolean) => void
   setPendingOptions: (options: PendingOptionState[]) => void
@@ -1512,7 +1513,7 @@ export async function dispatchRouting(
               // Cited snippet evidence for inline citation display (6x.6)
               citedSnippets: loopResult.contentAnswerResult.citedSnippets,
             }
-            ctx.addMessage(assistantMessage)
+            ctx.addMessage(assistantMessage, { tierLabel: 'content_intent_answered' })
             ctx.setIsLoading(false)
 
             void debugLog({
@@ -1559,12 +1560,35 @@ export async function dispatchRouting(
       const NOTE_REFERENCE_PATTERN = /\b(this|that|the|my|which|what|any|a)\s+(note|document|page)\b/i
       const noteRefDetected = NOTE_REFERENCE_PATTERN.test(ctx.trimmedInput.toLowerCase())
 
+      // Build bounded recent-turn context (6x.8 Phase 3b)
+      let recentRoutingContext: import('./cross-surface-arbiter').RecentRoutingContext | undefined
+      const prevMeta = ctx.previousRoutingMetadata
+      if (prevMeta) {
+        const userMsgs = ctx.messages.filter(m => m.role === 'user')
+        const prevUserMsg = userMsgs.length >= 2 ? userMsgs[userMsgs.length - 2] : undefined
+        const assistantMsgs = ctx.messages.filter(m => m.role === 'assistant')
+        const latestAssistant = assistantMsgs[assistantMsgs.length - 1]
+        const isAligned = prevMeta.assistantMessageId && latestAssistant?.id === prevMeta.assistantMessageId
+        if (isAligned) {
+          recentRoutingContext = {
+            lastUserMessage: prevUserMsg?.content.slice(0, 160),
+            lastAssistantMessage: latestAssistant.content
+              .replace(/\s*_This answer is based on partial note content\._\s*/g, '')
+              .slice(0, 200),
+            lastResolvedSurface: prevMeta.surface,
+            lastResolvedIntentFamily: prevMeta.intentFamily,
+            lastTurnOutcome: prevMeta.turnOutcome,
+          }
+        }
+      }
+
       const arbiterResult = await callCrossSurfaceArbiter({
         userInput: ctx.trimmedInput,
         activeNote: activeNoteId
           ? { itemId: activeNoteId, title: activeNote?.title ?? null }
           : undefined,
         noteReferenceDetected: noteRefDetected,
+        recentRoutingContext,
       })
 
       // Telemetry: compute effective result
@@ -1606,7 +1630,7 @@ export async function dispatchRouting(
             timestamp: new Date(),
             isError: false,
           }
-          ctx.addMessage(noNoteMsg)
+          ctx.addMessage(noNoteMsg, { tierLabel: 'arbiter_note_read_no_anchor' })
           ctx.setIsLoading(false)
           const noNoteResult: RoutingDispatcherResult = {
             handled: true, handledByTier: 6, tierLabel: 'arbiter_note_read_no_anchor',
@@ -1663,7 +1687,7 @@ export async function dispatchRouting(
                 contentTruncated: loopResult.contentAnswerResult.contentTruncated ?? false,
                 citedSnippets: loopResult.contentAnswerResult.citedSnippets,
               }
-              ctx.addMessage(assistantMessage)
+              ctx.addMessage(assistantMessage, { tierLabel: 'arbiter_content_answered' })
               ctx.setIsLoading(false)
               return {
                 handled: true, handledByTier: 6, tierLabel: 'arbiter_content_answered',
@@ -1686,7 +1710,7 @@ export async function dispatchRouting(
           timestamp: new Date(),
           isError: false,
         }
-        ctx.addMessage(readFallbackMsg)
+        ctx.addMessage(readFallbackMsg, { tierLabel: 'arbiter_read_content_fallback' })
         ctx.setIsLoading(false)
         const readFallbackResult: RoutingDispatcherResult = {
           handled: true, handledByTier: 6, tierLabel: 'arbiter_read_content_fallback',
@@ -1710,7 +1734,7 @@ export async function dispatchRouting(
           timestamp: new Date(),
           isError: false,
         }
-        ctx.addMessage(stateMsg)
+        ctx.addMessage(stateMsg, { tierLabel: 'arbiter_note_state_info' })
         ctx.setIsLoading(false)
         const stateResult: RoutingDispatcherResult = {
           handled: true, handledByTier: 6, tierLabel: 'arbiter_note_state_info',
@@ -1733,7 +1757,7 @@ export async function dispatchRouting(
           timestamp: new Date(),
           isError: false,
         }
-        ctx.addMessage(mutateMsg)
+        ctx.addMessage(mutateMsg, { tierLabel: 'arbiter_mutate_not_supported' })
         ctx.setIsLoading(false)
         const mutateResult: RoutingDispatcherResult = {
           handled: true, handledByTier: 6, tierLabel: 'arbiter_mutate_not_supported',
@@ -1760,7 +1784,7 @@ export async function dispatchRouting(
           timestamp: new Date(),
           isError: false,
         }
-        ctx.addMessage(clarifierMsg)
+        ctx.addMessage(clarifierMsg, { tierLabel: 'arbiter_ambiguous' })
         ctx.setIsLoading(false)
         const clarifierResult: RoutingDispatcherResult = {
           handled: true, handledByTier: 6, tierLabel: 'arbiter_ambiguous',

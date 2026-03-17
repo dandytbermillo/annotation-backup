@@ -542,6 +542,9 @@ function ChatNavigationPanelContent({
     recordAcceptedChoice,
     recordRejectedChoice,
     resetSelectionContinuity,
+    // Previous routing metadata for cross-surface arbiter follow-up (6x.8 Phase 3b)
+    previousRoutingMetadata,
+    setPreviousRoutingMetadata,
     // Dev-only provenance debug overlay
     provenanceMap,
     setProvenance,
@@ -1480,6 +1483,7 @@ function ChatNavigationPanelContent({
         setActiveOptionSetId,
         uiContext,
         currentEntryId,
+        previousRoutingMetadata,
         addMessage,
         setLastClarification,
         setIsLoading,
@@ -1557,6 +1561,9 @@ function ChatNavigationPanelContent({
         classifierError,
       } = routingResult
       const isFollowUp = routingResult.isFollowUp
+
+      // 6x.8 Phase 3b: routing metadata is now stored inside addMessage() after persistence/ID migration.
+      // The dispatcher passes { tierLabel } as the second arg to addMessage() for arbiter-handled turns.
 
       // ---------------------------------------------------------------------------
       // Tier S: Suggestion Affirm (single candidate) — execute API call
