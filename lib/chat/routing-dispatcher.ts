@@ -88,6 +88,11 @@ import { validateMemoryCandidate } from '@/lib/chat/routing-log/memory-validator
 import { buildResultFromMemory } from '@/lib/chat/routing-log/memory-action-builder'
 import { computeClarifierReorderTelemetry, reorderClarifierCandidates, type ReorderableCandidate } from '@/lib/chat/routing-log/clarifier-reorder'
 import { evaluateStage5Replay } from '@/lib/chat/routing-log/stage5-evaluator'
+import { lookupSemanticHints } from '@/lib/chat/routing-log/memory-semantic-reader'
+import type { SemanticHintLookupResult } from '@/lib/chat/routing-log/memory-semantic-reader'
+import { buildInfoIntentMemoryWritePayload } from '@/lib/chat/routing-log/memory-write-payload'
+import { isCorrectionPhrase } from '@/lib/chat/query-patterns'
+import { recordMemoryEntry } from '@/lib/chat/routing-log/memory-writer'
 
 // Stage 6: shadow loop (fire-and-forget) + enforcement loop (awaitable)
 import { runS6ShadowLoop, runS6EnforcementLoop, executeS6Loop, writeDurableEnforcementLog } from '@/lib/chat/stage6-loop-controller'
@@ -394,6 +399,9 @@ export interface RoutingDispatcherContext {
   uiContext?: UIContext | null
   currentEntryId?: string
   previousRoutingMetadata?: import('./cross-surface-arbiter').PreviousRoutingMetadata | null
+  // Phase 5: pending exemplar write for one-turn delayed promotion
+  pendingPhase5Write?: import('@/lib/chat/routing-log/pending-phase5-write').PendingPhase5Write | null
+  setPendingPhase5Write: (write: import('@/lib/chat/routing-log/pending-phase5-write').PendingPhase5Write | null) => void
   addMessage: (message: ChatMessage, routingMeta?: { tierLabel?: string }) => void
   setLastClarification: (state: LastClarificationState | null) => void
   setIsLoading: (loading: boolean) => void
@@ -597,10 +605,41 @@ export interface RoutingDispatcherResult {
 
   /** Phase 3c: B2 lookup status for server-side clarifier telemetry (set in dispatchRouting) */
   _b2LookupStatus?: 'ok' | 'empty' | 'timeout' | 'error' | 'disabled'
+
+  /** Phase 5: pending info-intent exemplar write for one-turn delayed promotion */
+  phase5PendingWrite?: import('@/lib/chat/routing-log/pending-phase5-write').PendingPhase5Write
+
+  /** Phase 5: hint metadata from retrieval — consumed by navigate API to bias intent classification */
+  _phase5HintIntent?: string
+  _phase5HintScope?: 'history_info' | 'navigation'
+  _phase5HintFromSeed?: boolean
 }
 
 /** Type alias for grounding actions (extracted from RoutingDispatcherResult for reuse) */
 export type GroundingAction = NonNullable<RoutingDispatcherResult['groundingAction']>
+
+// =============================================================================
+// Phase 5: Hint scope detection
+// =============================================================================
+
+/** Local semantic intent patterns — matches queries about recent actions / history */
+const HISTORY_INFO_PATTERN = /\b(what\s+did\s+i|what\s+was\s+my\s+last|remind\s+me\s+what|did\s+i\s+(open|close|do|navigate|click))\b/i
+
+/**
+ * Detect which Phase 5 hint scope applies to the input, if any.
+ * Returns null when no hint scope applies (input should not trigger hint retrieval).
+ */
+function detectHintScope(input: string): 'history_info' | 'navigation' | null {
+  if (HISTORY_INFO_PATTERN.test(input)) return 'history_info'
+  // Navigation scope: handled by the absence of other matches —
+  // if the input wasn't handled by deterministic tiers and isn't history_info,
+  // navigation hinting may apply when there's no other resolution.
+  // For v1 safety, only return 'navigation' for inputs that contain navigation verbs
+  // but weren't caught by isLikelyNavigateCommand (which blocks arbiter entry, not hint retrieval).
+  const NAV_HINT_PATTERN = /\b(go\s+(to\s+)?home|take\s+me\s+home|return\s+home|back\s+home)\b/i
+  if (NAV_HINT_PATTERN.test(input)) return 'navigation'
+  return null
+}
 
 // =============================================================================
 // Explicit Command Detection (extracted to shared utility for import safety)
@@ -1293,6 +1332,24 @@ export async function dispatchRouting(
   }
 
   const turnSnapshotForLog = buildTurnSnapshot({})
+
+  // ---------------------------------------------------------------------------
+  // Phase 5: Pending write promotion / correction suppression
+  // On each new user turn, check if a pending Phase 5 exemplar write exists.
+  // Promote (write) if input is NOT a correction; drop if it IS a correction.
+  // ---------------------------------------------------------------------------
+  const hintReadEnabled = process.env.NEXT_PUBLIC_CHAT_ROUTING_MEMORY_HINT_READ === 'true'
+  if (ctx.pendingPhase5Write) {
+    if (isCorrectionPhrase(ctx.trimmedInput)) {
+      // User corrected previous turn — drop the pending exemplar
+      ctx.setPendingPhase5Write(null)
+    } else {
+      // Non-correction follow-up — promote the pending exemplar
+      const pending = ctx.pendingPhase5Write
+      ctx.setPendingPhase5Write(null)
+      void recordMemoryEntry(pending.payload).catch(() => {})
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Phase 2b: Exact memory lookup (Lane B1) — before tier chain
@@ -1997,6 +2054,36 @@ export async function dispatchRouting(
   }
 
   // ---------------------------------------------------------------------------
+  // Phase 5: Retrieval-backed semantic hinting
+  // Runs AFTER Stage 5 replay did not resolve (if it did, we returned early above).
+  // Passes hint candidates to bounded LLM via the normal tier chain.
+  // ---------------------------------------------------------------------------
+  let phase5HintResult: SemanticHintLookupResult | null = null
+  if (hintReadEnabled) {
+    const hintScope = detectHintScope(ctx.trimmedInput)
+    if (hintScope) {
+      try {
+        const lookupSnapshot = buildContextSnapshot({
+          openWidgetCount: turnSnapshotForLog.openWidgets?.length ?? 0,
+          pendingOptionsCount: ctx.pendingOptions?.length ?? 0,
+          activeOptionSetId: ctx.activeOptionSetId,
+          hasLastClarification: ctx.lastClarification !== null,
+          hasLastSuggestion: ctx.lastSuggestion !== null,
+          latchEnabled: process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1 === 'true',
+          messageCount: ctx.messages.length,
+        })
+        phase5HintResult = await lookupSemanticHints({
+          raw_query_text: ctx.trimmedInput,
+          context_snapshot: lookupSnapshot,
+          intent_scope: hintScope,
+        })
+      } catch {
+        // Fail-open: hint retrieval failed, continue without hints
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Normal tier chain
   // ---------------------------------------------------------------------------
   let result: RoutingDispatcherResult | undefined
@@ -2006,6 +2093,15 @@ export async function dispatchRouting(
     result = await dispatchRoutingInner(ctx, semanticCandidatesForLaneD, b2LookupStatus, contentIntentMatchedThisTurn)
   } catch (err) {
     routingError = err
+  }
+
+  // Phase 5: attach hint metadata to result for downstream consumption
+  // The navigate API uses this to bias intent classification toward the hinted intent.
+  if (!routingError && result && phase5HintResult && phase5HintResult.candidates.length > 0) {
+    const topHint = phase5HintResult.candidates[0]
+    result._phase5HintIntent = topHint.intent_id
+    result._phase5HintScope = detectHintScope(ctx.trimmedInput) ?? undefined
+    result._phase5HintFromSeed = topHint.from_curated_seed
   }
 
   // Attach semantic candidates to result (only if tier chain didn't handle it)
@@ -2114,6 +2210,24 @@ export async function dispatchRouting(
         logPayload.s5_replayed_intent_id = s5Telemetry.replayedIntentId
         logPayload.s5_replayed_target_id = s5Telemetry.replayedTargetId
         logPayload.s5_fallback_reason = s5Telemetry.fallbackReason
+      }
+
+      // Phase 5: hint retrieval telemetry
+      if (phase5HintResult) {
+        const hintScope = detectHintScope(ctx.trimmedInput)
+        logPayload.h1_lookup_attempted = true
+        logPayload.h1_lookup_status = phase5HintResult.status
+        logPayload.h1_candidate_count = phase5HintResult.candidates.length
+        logPayload.h1_latency_ms = phase5HintResult.latencyMs
+        logPayload.h1_scope = hintScope ?? undefined
+        if (phase5HintResult.candidates.length > 0) {
+          logPayload.h1_top_similarity = phase5HintResult.candidates[0].similarity_score
+          logPayload.h1_retrieved_intent_id = phase5HintResult.candidates[0].intent_id
+          logPayload.h1_from_curated_seed = phase5HintResult.candidates[0].from_curated_seed
+          // h1_hint_accepted_by_llm: set post-hoc in chat-navigation-panel.tsx after the
+          // navigate API response returns. Cannot be determined here because the navigate
+          // response hasn't arrived yet at dispatcher log time.
+        }
       }
 
       // 6x.7 Phase A: merge resolver telemetry if the resolver ran (Path 2 navigation fallthrough)

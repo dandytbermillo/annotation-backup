@@ -18,6 +18,8 @@ import { resolveNoteWorkspaceUserId } from '@/app/api/note-workspaces/user-id'
 import { extractLinkNotesBadge } from '@/lib/chat/ui-helpers'
 import { detectLocalSemanticIntent, isVerifyOpenQuestion } from '@/lib/chat/input-classifiers'
 import { trySemanticRescue } from '@/lib/chat/semantic-rescue'
+import { buildInfoIntentMemoryWritePayload } from '@/lib/chat/routing-log/memory-write-payload'
+import { buildContextSnapshot } from '@/lib/chat/routing-log/context-snapshot'
 
 // =============================================================================
 // OpenAI Client
@@ -599,7 +601,7 @@ export async function POST(request: NextRequest) {
 
     // Parse request body
     const body = await request.json()
-    const { message, currentEntryId, currentWorkspaceId, context, clarificationMode, clarificationQuestion } = body
+    const { message, currentEntryId, currentWorkspaceId, context, clarificationMode, clarificationQuestion, phase5_hint_intent, phase5_hint_scope } = body
 
     if (!message || typeof message !== 'string' || message.trim().length === 0) {
       return NextResponse.json(
@@ -675,6 +677,21 @@ export async function POST(request: NextRequest) {
         actionType: topHint.action_type,
         score: topHint.similarity_score,
         totalHints: actionableHints.length,
+      })
+    }
+
+    // Phase 5: inject retrieval-backed semantic hint into LLM prompt context
+    if (phase5_hint_intent && typeof phase5_hint_intent === 'string') {
+      const phase5HintLine = phase5_hint_scope === 'history_info'
+        ? `Context: A similar query was previously resolved as intent "${phase5_hint_intent}". This is likely a history/info question — consider classifying as "${phase5_hint_intent}" if it matches.`
+        : `Context: A similar query was previously resolved as intent "${phase5_hint_intent}". Consider this as a navigation hint if it matches the current context.`
+      // Append to existing hint context or create new
+      semanticHintContext = semanticHintContext
+        ? `${semanticHintContext}\n${phase5HintLine}`
+        : phase5HintLine
+      console.log('[navigate-phase5-hint] injecting Phase 5 hint into prompt:', {
+        hintIntent: phase5_hint_intent,
+        hintScope: phase5_hint_scope,
       })
     }
 
@@ -1226,6 +1243,30 @@ export async function POST(request: NextRequest) {
       fellBackToOpenAI: !!llmResult.fellBackToOpenAI,
     }))
 
+    // Phase 5: build pending info-intent exemplar write for successful v1 history/info resolutions
+    const V1_INFO_INTENTS = new Set(['last_action', 'explain_last_action', 'verify_action'])
+    let phase5PendingWrite = undefined
+    if (resolution.success && V1_INFO_INTENTS.has(intent.intent)) {
+      try {
+        const answerSource = intent.intent === 'verify_action' ? 'action_history' as const : 'session_state' as const
+        const contextSnapshot = buildContextSnapshot({
+          openWidgetCount: 0,
+          pendingOptionsCount: context?.pendingOptions?.length ?? 0,
+          activeOptionSetId: null,
+          hasLastClarification: !!context?.lastClarification,
+          hasLastSuggestion: false,
+          latchEnabled: false,
+          messageCount: 0,
+        })
+        phase5PendingWrite = buildInfoIntentMemoryWritePayload(
+          userMessage,
+          intent.intent as 'last_action' | 'explain_last_action' | 'verify_action',
+          answerSource,
+          contextSnapshot,
+        )
+      } catch { /* fail-open: don't block response for write metadata */ }
+    }
+
     return NextResponse.json({
       intent,
       resolution,
@@ -1241,6 +1282,8 @@ export async function POST(request: NextRequest) {
       } : undefined,
       // Phase 2a.3: Clarification metadata for deterministic handling
       clarification,
+      // Phase 5: pending info-intent exemplar write (one-turn delayed promotion)
+      phase5_pending_write: phase5PendingWrite ?? undefined,
     })
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)

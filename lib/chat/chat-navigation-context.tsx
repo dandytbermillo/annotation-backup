@@ -550,6 +550,9 @@ interface ChatNavigationContextValue {
   // Previous routing metadata for cross-surface arbiter follow-up (6x.8 Phase 3b)
   previousRoutingMetadata: import('@/lib/chat/cross-surface-arbiter').PreviousRoutingMetadata | null
   setPreviousRoutingMetadata: (meta: import('@/lib/chat/cross-surface-arbiter').PreviousRoutingMetadata | null) => void
+  // Phase 5: pending exemplar write
+  pendingPhase5Write: import('@/lib/chat/routing-log/pending-phase5-write').PendingPhase5Write | null
+  setPendingPhase5Write: (write: import('@/lib/chat/routing-log/pending-phase5-write').PendingPhase5Write | null) => void
   // Dev-only provenance debug overlay (per provenance-debug-overlay plan)
   provenanceMap: Map<string, ChatProvenance>
   setProvenance: (messageId: string, provenance: ChatProvenance) => void
@@ -830,6 +833,9 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
   // Previous routing metadata for cross-surface arbiter follow-up context (6x.8 Phase 3b)
   const [previousRoutingMetadata, setPreviousRoutingMetadata] = useState<import('@/lib/chat/cross-surface-arbiter').PreviousRoutingMetadata | null>(null)
 
+  // Phase 5: pending exemplar write (one-turn delayed promotion)
+  const [pendingPhase5Write, setPendingPhase5Write] = useState<import('@/lib/chat/routing-log/pending-phase5-write').PendingPhase5Write | null>(null)
+
   // Debounce refs for session state persistence
   const DEBOUNCE_MS = 1000
   const persistDebounceRef = useRef<NodeJS.Timeout | null>(null)
@@ -1058,6 +1064,7 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
     setConversationSummary(null)
     setInitialMessageCount(0) // Reset session divider
     setPreviousRoutingMetadata(null) // Clear routing context on chat reset (6x.8 Phase 3b)
+    setPendingPhase5Write(null) // Drop pending Phase 5 exemplar write on chat reset
 
     // Clear from database (create fresh conversation)
     if (conversationId) {
@@ -1895,6 +1902,9 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         // Previous routing metadata for cross-surface arbiter follow-up (6x.8 Phase 3b)
         previousRoutingMetadata,
         setPreviousRoutingMetadata,
+        // Phase 5: pending exemplar write
+        pendingPhase5Write,
+        setPendingPhase5Write,
         // Dev-only provenance debug overlay
         provenanceMap,
         setProvenance,

@@ -44,6 +44,90 @@ const TIMEOUT_SENTINEL = Symbol('timeout')
  *
  * Returns structured SemanticLookupResult with status, candidates, and latencyMs.
  */
+// ── Phase 5: Hint-oriented semantic lookup ──
+
+export interface SemanticHintCandidate extends SemanticCandidate {
+  from_curated_seed: boolean
+}
+
+export interface SemanticHintLookupResult {
+  status: 'ok' | 'empty' | 'timeout' | 'error' | 'disabled'
+  candidates: SemanticHintCandidate[]
+  latencyMs: number
+  currentContextFingerprint?: string
+}
+
+/**
+ * Phase 5 semantic hint lookup — separate from Stage 5/B2 replay.
+ * Gated by NEXT_PUBLIC_CHAT_ROUTING_MEMORY_HINT_READ (build-time).
+ * Server gated by CHAT_ROUTING_MEMORY_HINT_READ_ENABLED (runtime).
+ * Posts to the same shared endpoint with intent_scope in the body.
+ */
+export async function lookupSemanticHints(payload: {
+  raw_query_text: string
+  context_snapshot: ContextSnapshotV1
+  intent_scope: 'history_info' | 'navigation'
+  max_candidates?: number
+}): Promise<SemanticHintLookupResult> {
+  if (process.env.NEXT_PUBLIC_CHAT_ROUTING_MEMORY_HINT_READ !== 'true') {
+    return { status: 'disabled', candidates: [], latencyMs: 0 }
+  }
+
+  const start = performance.now()
+  let timer: ReturnType<typeof setTimeout> | undefined
+
+  const fetchPromise = fetch(SEMANTIC_LOOKUP_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+
+  try {
+    const raceResult = await Promise.race([
+      fetchPromise.then(async (res) => {
+        clearTimeout(timer)
+        if (!res.ok) return { status: 'error' as const, candidates: [] as SemanticHintCandidate[] }
+        const data = await res.json()
+        const candidates = (data.candidates ?? []) as SemanticHintCandidate[]
+        const lookupStatus = data.lookup_status as string | undefined
+        const currentContextFingerprint = data.current_context_fingerprint as string | undefined
+
+        if (lookupStatus === 'embedding_failure' || lookupStatus === 'server_error') {
+          return { status: 'error' as const, candidates: [] as SemanticHintCandidate[], currentContextFingerprint }
+        }
+        if (candidates.length > 0) {
+          for (const c of candidates) {
+            const raw = c as unknown as Record<string, unknown>
+            if (raw.matched_row_id && !c.matchedRowId) {
+              c.matchedRowId = raw.matched_row_id as string
+            }
+          }
+          return { status: 'ok' as const, candidates, currentContextFingerprint }
+        }
+        return { status: 'empty' as const, candidates: [] as SemanticHintCandidate[], currentContextFingerprint }
+      }),
+      new Promise<typeof TIMEOUT_SENTINEL>((resolve) => {
+        timer = setTimeout(() => resolve(TIMEOUT_SENTINEL), MEMORY_SEMANTIC_READ_TIMEOUT_MS)
+      }),
+    ])
+
+    const latencyMs = Math.round(performance.now() - start)
+
+    if (raceResult === TIMEOUT_SENTINEL) {
+      return { status: 'timeout', candidates: [], latencyMs }
+    }
+
+    return { ...raceResult, latencyMs }
+  } catch (err: unknown) {
+    clearTimeout(timer)
+    const latencyMs = Math.round(performance.now() - start)
+    console.warn('[routing-memory] Phase 5 hint lookup failed (non-fatal):', (err as Error).message)
+    return { status: 'error', candidates: [], latencyMs }
+  }
+}
+
+// ── Legacy Stage 5/B2 semantic lookup ──
+
 export async function lookupSemanticMemory(payload: {
   raw_query_text: string
   context_snapshot: ContextSnapshotV1

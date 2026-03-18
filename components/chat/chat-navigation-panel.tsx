@@ -545,6 +545,9 @@ function ChatNavigationPanelContent({
     // Previous routing metadata for cross-surface arbiter follow-up (6x.8 Phase 3b)
     previousRoutingMetadata,
     setPreviousRoutingMetadata,
+    // Phase 5: pending exemplar write
+    pendingPhase5Write,
+    setPendingPhase5Write,
     // Dev-only provenance debug overlay
     provenanceMap,
     setProvenance,
@@ -1484,6 +1487,8 @@ function ChatNavigationPanelContent({
         uiContext,
         currentEntryId,
         previousRoutingMetadata,
+        pendingPhase5Write,
+        setPendingPhase5Write,
         addMessage,
         setLastClarification,
         setIsLoading,
@@ -2113,6 +2118,9 @@ function ChatNavigationPanelContent({
           currentWorkspaceId: workspaceId,
           // Phase 3 B2: semantic hint candidates for LLM selection
           semantic_hints: semanticHints,
+          // Phase 5: hint intent from retrieval-backed semantic memory
+          phase5_hint_intent: routingResult?._phase5HintIntent,
+          phase5_hint_scope: routingResult?._phase5HintScope,
           context: {
             ...contextPayload,
             sessionState,
@@ -2169,7 +2177,7 @@ function ChatNavigationPanelContent({
         throw new Error(`Failed to process request (HTTP ${response.status})`)
       }
 
-      const { intent: apiIntent, resolution, suggestions: rawSuggestions, clarification: apiClarification } = (await response.json()) as {
+      const { intent: apiIntent, resolution, suggestions: rawSuggestions, clarification: apiClarification, phase5_pending_write: phase5WriteFromServer } = (await response.json()) as {
         intent?: { intent: string; args?: Record<string, unknown> }
         resolution: IntentResolutionResult
         suggestions?: ChatSuggestions
@@ -2179,6 +2187,25 @@ function ChatNavigationPanelContent({
           nextAction: 'show_workspace_picker'
           originalIntent: string
         }
+        // Phase 5: pending info-intent exemplar write from server
+        phase5_pending_write?: import('@/lib/chat/routing-log/memory-write-payload').MemoryWritePayload
+      }
+
+      // Phase 5: set pending write from server response (one-turn delayed promotion)
+      if (phase5WriteFromServer) {
+        setPendingPhase5Write({
+          payload: phase5WriteFromServer,
+          turnTimestamp: Date.now(),
+          fromClarifiedSuccess: false,
+          fromCuratedSeedAssisted: false,
+        })
+      }
+
+      // Phase 5: enrich h1_hint_accepted_by_llm from actual server response
+      // Must happen before outcome log fires. The dispatcher can't know this at log time
+      // because the navigate response hasn't returned yet — so we thread it here.
+      if (routingResult?._routingLogPayload && routingResult._phase5HintIntent) {
+        routingResult._routingLogPayload.h1_hint_accepted_by_llm = !!phase5WriteFromServer
       }
 
       // Phase 3 B2: Enrich routing log payload with semantic hint telemetry
