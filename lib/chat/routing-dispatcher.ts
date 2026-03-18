@@ -91,10 +91,10 @@ import { evaluateStage5Replay } from '@/lib/chat/routing-log/stage5-evaluator'
 
 // Stage 6: shadow loop (fire-and-forget) + enforcement loop (awaitable)
 import { runS6ShadowLoop, runS6EnforcementLoop, executeS6Loop, writeDurableEnforcementLog } from '@/lib/chat/stage6-loop-controller'
-import { classifyContentIntent, isAnchoredNoteResolverHardExcluded, isArbiterHardExcluded, type NoteAnchorContext } from '@/lib/chat/content-intent-classifier'
+import { classifyContentIntent, isAnchoredNoteResolverHardExcluded, isArbiterHardExcluded, isLikelyNavigateCommand, type NoteAnchorContext } from '@/lib/chat/content-intent-classifier'
 import { callAnchoredNoteResolver } from '@/lib/chat/anchored-note-intent-resolver'
 import { callCrossSurfaceArbiter } from '@/lib/chat/cross-surface-arbiter'
-import { resolveNoteStateInfo } from '@/lib/chat/state-info-resolvers'
+import { resolveNoteStateInfo, isPanelOpenQuery, resolvePanelOpenStateInfo, resolvePanelWidgetStateInfo, resolveWorkspaceStateInfo, resolveDashboardStateInfo } from '@/lib/chat/state-info-resolvers'
 import { executeS6OpenPanel, isDuplicateAction } from '@/lib/chat/stage6-execution-bridge'
 import type { S6ParsedAction, S6ActionSignature } from '@/lib/chat/stage6-execution-bridge'
 
@@ -1550,13 +1550,17 @@ export async function dispatchRouting(
       // Fall through to normal routing. Do NOT rerun via runS6ShadowLoop.
       contentIntentMatchedThisTurn = true
     } else if ((() => {
-      // 6x.8 Phase 3: note-reference detection for arbiter eligibility
+      // 6x.8 Phase 4: cross-surface arbiter eligibility — note + panel + workspace + dashboard
       const NOTE_REFERENCE_PATTERN = /\b(this|that|the|my|which|what|any|a)\s+(note|document|page)\b/i
       const noteRefDetected = NOTE_REFERENCE_PATTERN.test(ctx.trimmedInput.toLowerCase())
-      const noteRelated = !!activeNoteId || noteRefDetected
-      return noteRelated && !contentResult.isContentIntent && !isArbiterHardExcluded(ctx.trimmedInput)
+      const isNoteRelated = !!activeNoteId || noteRefDetected
+      const hasVisiblePanels = (ctx.uiContext?.dashboard?.visibleWidgets?.length ?? 0) > 0
+      const hasActiveWorkspace = !!ctx.uiContext?.workspace?.workspaceName
+      const isDashboardActive = ctx.uiContext?.mode === 'dashboard'
+      const hasSurfaceContext = isNoteRelated || hasVisiblePanels || hasActiveWorkspace || isDashboardActive
+      return hasSurfaceContext && !contentResult.isContentIntent && !isArbiterHardExcluded(ctx.trimmedInput) && !isLikelyNavigateCommand(ctx.trimmedInput)
     })()) {
-      // ── 6x.8 Phase 3: Cross-surface arbiter for note-family uncertain turns ──
+      // ── 6x.8 Phase 4: Cross-surface arbiter for uncertain turns across surfaces ──
       const NOTE_REFERENCE_PATTERN = /\b(this|that|the|my|which|what|any|a)\s+(note|document|page)\b/i
       const noteRefDetected = NOTE_REFERENCE_PATTERN.test(ctx.trimmedInput.toLowerCase())
 
@@ -1582,6 +1586,9 @@ export async function dispatchRouting(
         }
       }
 
+      // Phase 4: pass cross-surface context
+      const visiblePanelTitles = (ctx.uiContext?.dashboard?.visibleWidgets ?? []).map((w: any) => w.title)
+
       const arbiterResult = await callCrossSurfaceArbiter({
         userInput: ctx.trimmedInput,
         activeNote: activeNoteId
@@ -1589,6 +1596,9 @@ export async function dispatchRouting(
           : undefined,
         noteReferenceDetected: noteRefDetected,
         recentRoutingContext,
+        visiblePanels: visiblePanelTitles.length > 0 ? visiblePanelTitles : undefined,
+        workspaceName: ctx.uiContext?.workspace?.workspaceName ?? undefined,
+        entryName: (ctx.uiContext?.dashboard as any)?.entryName ?? undefined,
       })
 
       // Telemetry: compute effective result
@@ -1612,8 +1622,25 @@ export async function dispatchRouting(
       }
       resolverTelemetryForLog = arbiterTelemetry
 
+      // Post-arbiter signal correction: when the user explicitly named "note/document/page"
+      // (noteRefDetected=true) but the arbiter classified a different surface for state_info,
+      // override to note — the user's explicit surface reference takes precedence.
+      if (noteRefDetected && rawDecision && rawDecision.intentFamily === 'state_info' && rawDecision.surface !== 'note') {
+        rawDecision.surface = 'note'
+      }
+
+      // Post-arbiter correction: when input references "panel/drawer" + "open/opened"
+      // but arbiter returned non-panel_widget state_info (typically dashboard), override
+      // to panel_widget so the open/visible discriminator fires.
+      if (isPanelOpenQuery(ctx.trimmedInput) && rawDecision && rawDecision.intentFamily === 'state_info' && rawDecision.surface !== 'panel_widget') {
+        rawDecision.surface = 'panel_widget'
+      }
+
       // Migrated-family gate
-      const MIGRATED_PAIRS = new Set(['note:read_content', 'note:state_info'])
+      const MIGRATED_PAIRS = new Set([
+        'note:read_content', 'note:state_info',
+        'panel_widget:state_info', 'workspace:state_info', 'dashboard:state_info',
+      ])
       const pairKey = `${rawDecision?.surface}:${rawDecision?.intentFamily}`
       const isMigrated = arbiterResult.success && confidence >= 0.75 && MIGRATED_PAIRS.has(pairKey)
       const isMigratedLowConfidence = arbiterResult.success && confidence < 0.75 && MIGRATED_PAIRS.has(pairKey)
@@ -1724,7 +1751,7 @@ export async function dispatchRouting(
         return readFallbackResult
 
       // ── Path 2: note.state_info (migrated, above threshold) ──
-      } else if (isMigrated && rawDecision!.intentFamily === 'state_info') {
+      } else if (isMigrated && rawDecision!.intentFamily === 'state_info' && rawDecision!.surface === 'note') {
         contentIntentMatchedThisTurn = true
         const stateAnswer = resolveNoteStateInfo(ctx.uiContext ?? {})
         const stateMsg: ChatMessage = {
@@ -1746,6 +1773,89 @@ export async function dispatchRouting(
         Object.assign(statePayload, arbiterTelemetry)
         void recordRoutingLog(statePayload)
         return stateResult
+
+      // ── Phase 4: panel_widget.state_info (migrated) ──
+      } else if (isMigrated && rawDecision!.intentFamily === 'state_info' && rawDecision!.surface === 'panel_widget') {
+        contentIntentMatchedThisTurn = true
+        const answer = isPanelOpenQuery(ctx.trimmedInput)
+          ? resolvePanelOpenStateInfo(ctx.uiContext ?? {})
+          : resolvePanelWidgetStateInfo(ctx.uiContext ?? {})
+        const panelStateMsg: ChatMessage = {
+          id: `assistant-${Date.now()}`, role: 'assistant', content: answer, timestamp: new Date(), isError: false,
+        }
+        ctx.addMessage(panelStateMsg, { tierLabel: 'arbiter_panel_widget_state_info' })
+        ctx.setIsLoading(false)
+        const panelStateResult: RoutingDispatcherResult = {
+          handled: true, handledByTier: 6, tierLabel: 'arbiter_panel_widget_state_info',
+          clarificationCleared: false, isNewQuestionOrCommandDetected: false,
+          classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
+          _devProvenanceHint: 'content_answered',
+        }
+        const panelStatePayload = buildRoutingLogPayload(ctx, panelStateResult, turnSnapshotForLog)
+        Object.assign(panelStatePayload, arbiterTelemetry)
+        void recordRoutingLog(panelStatePayload)
+        return panelStateResult
+
+      // ── Phase 4: workspace.state_info (migrated) ──
+      } else if (isMigrated && rawDecision!.intentFamily === 'state_info' && rawDecision!.surface === 'workspace') {
+        contentIntentMatchedThisTurn = true
+        const answer = resolveWorkspaceStateInfo(ctx.uiContext ?? {})
+        const wsStateMsg: ChatMessage = {
+          id: `assistant-${Date.now()}`, role: 'assistant', content: answer, timestamp: new Date(), isError: false,
+        }
+        ctx.addMessage(wsStateMsg, { tierLabel: 'arbiter_workspace_state_info' })
+        ctx.setIsLoading(false)
+        const wsStateResult: RoutingDispatcherResult = {
+          handled: true, handledByTier: 6, tierLabel: 'arbiter_workspace_state_info',
+          clarificationCleared: false, isNewQuestionOrCommandDetected: false,
+          classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
+          _devProvenanceHint: 'content_answered',
+        }
+        const wsStatePayload = buildRoutingLogPayload(ctx, wsStateResult, turnSnapshotForLog)
+        Object.assign(wsStatePayload, arbiterTelemetry)
+        void recordRoutingLog(wsStatePayload)
+        return wsStateResult
+
+      // ── Phase 4: dashboard.state_info (migrated) ──
+      } else if (isMigrated && rawDecision!.intentFamily === 'state_info' && rawDecision!.surface === 'dashboard') {
+        contentIntentMatchedThisTurn = true
+        const answer = resolveDashboardStateInfo(ctx.uiContext ?? {})
+        const dashStateMsg: ChatMessage = {
+          id: `assistant-${Date.now()}`, role: 'assistant', content: answer, timestamp: new Date(), isError: false,
+        }
+        ctx.addMessage(dashStateMsg, { tierLabel: 'arbiter_dashboard_state_info' })
+        ctx.setIsLoading(false)
+        const dashStateResult: RoutingDispatcherResult = {
+          handled: true, handledByTier: 6, tierLabel: 'arbiter_dashboard_state_info',
+          clarificationCleared: false, isNewQuestionOrCommandDetected: false,
+          classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
+          _devProvenanceHint: 'content_answered',
+        }
+        const dashStatePayload = buildRoutingLogPayload(ctx, dashStateResult, turnSnapshotForLog)
+        Object.assign(dashStatePayload, arbiterTelemetry)
+        void recordRoutingLog(dashStatePayload)
+        return dashStateResult
+
+      // ── Phase 4: non-note read_content → bounded not-supported ──
+      } else if (arbiterResult.success && rawDecision?.intentFamily === 'read_content' && rawDecision?.surface !== 'note') {
+        contentIntentMatchedThisTurn = true
+        const nonNoteReadMsg: ChatMessage = {
+          id: `assistant-${Date.now()}`, role: 'assistant',
+          content: 'Reading content is currently available for notes only.',
+          timestamp: new Date(), isError: false,
+        }
+        ctx.addMessage(nonNoteReadMsg, { tierLabel: 'arbiter_non_note_read_not_supported' })
+        ctx.setIsLoading(false)
+        const nonNoteReadResult: RoutingDispatcherResult = {
+          handled: true, handledByTier: 6, tierLabel: 'arbiter_non_note_read_not_supported',
+          clarificationCleared: false, isNewQuestionOrCommandDetected: false,
+          classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
+          _devProvenanceHint: 'safe_clarifier',
+        }
+        const nonNoteReadPayload = buildRoutingLogPayload(ctx, nonNoteReadResult, turnSnapshotForLog)
+        Object.assign(nonNoteReadPayload, arbiterTelemetry)
+        void recordRoutingLog(nonNoteReadPayload)
+        return nonNoteReadResult
 
       // ── Mutate: immediate not-supported (per Phase 2 contract) ──
       } else if (arbiterResult.success && rawDecision?.intentFamily === 'mutate') {
@@ -1780,7 +1890,7 @@ export async function dispatchRouting(
         const clarifierMsg: ChatMessage = {
           id: `assistant-${Date.now()}`,
           role: 'assistant',
-          content: 'Do you want me to explain the current note, or navigate somewhere else?',
+          content: "I'm not sure what you're referring to. Could you be more specific?",
           timestamp: new Date(),
           isError: false,
         }

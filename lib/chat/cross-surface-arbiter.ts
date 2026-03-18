@@ -31,6 +31,10 @@ export type CrossSurfaceArbiterRequest = {
   activeNote?: { itemId: string; title: string | null }
   noteReferenceDetected?: boolean
   recentRoutingContext?: RecentRoutingContext
+  // Phase 4: cross-surface context
+  visiblePanels?: string[]     // widget titles
+  workspaceName?: string
+  entryName?: string           // dashboard-only; undefined in workspace mode
 }
 
 export type CrossSurfaceSemanticDecision = {

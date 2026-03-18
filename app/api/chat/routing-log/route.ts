@@ -73,7 +73,7 @@ export async function POST(request: NextRequest) {
     const contextFingerprint = sha256Hex(canonicalJsonSerialize(stripVolatileFields(contextSnapshot)))
 
     // Phase 3 B2/3c + Stage 4: build semantic_hint_metadata JSON when any telemetry present
-    const hasSemanticMeta = payload.semantic_hint_count != null || payload.b2_status != null || payload.b2_clarifier_status != null || payload.llm_decision != null || payload.llm_g4_total_in != null || payload.s5_lookup_attempted != null || payload.s6_loop_entered != null
+    const hasSemanticMeta = payload.semantic_hint_count != null || payload.b2_status != null || payload.b2_clarifier_status != null || payload.llm_decision != null || payload.llm_g4_total_in != null || payload.s5_lookup_attempted != null || payload.s6_loop_entered != null || payload.h1_lookup_attempted != null
     const semanticHintMeta = hasSemanticMeta
       ? JSON.stringify({
           count: payload.semantic_hint_count,
@@ -168,6 +168,16 @@ export async function POST(request: NextRequest) {
           cross_surface_arbiter_intent: payload.cross_surface_arbiter_intent,
           cross_surface_arbiter_confidence: payload.cross_surface_arbiter_confidence,
           cross_surface_arbiter_result: payload.cross_surface_arbiter_result,
+          // Phase 5: Retrieval-backed semantic hint telemetry
+          h1_lookup_attempted: payload.h1_lookup_attempted,
+          h1_lookup_status: payload.h1_lookup_status,
+          h1_candidate_count: payload.h1_candidate_count,
+          h1_top_similarity: payload.h1_top_similarity,
+          h1_scope: payload.h1_scope,
+          h1_hint_accepted_by_llm: payload.h1_hint_accepted_by_llm,
+          h1_retrieved_intent_id: payload.h1_retrieved_intent_id,
+          h1_latency_ms: payload.h1_latency_ms,
+          h1_from_curated_seed: payload.h1_from_curated_seed,
         })
       : null
 

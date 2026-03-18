@@ -34,6 +34,10 @@ export const EMBEDDING_MODEL_VERSION_NONE = 'none'
 export const THRESHOLDS_VERSION_NONE = 'none'
 export const MARGIN_VERSION_NONE = 'none'
 
+// --- Phase 5 curated seed constants ---
+
+export const ROUTING_MEMORY_CURATED_SEED_USER_ID = '__curated_seed__'
+
 // --- Phase 2 memory index constants ---
 
 export const MEMORY_SCHEMA_VERSION = 'v1'

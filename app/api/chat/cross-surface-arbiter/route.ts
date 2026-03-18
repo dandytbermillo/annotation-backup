@@ -26,6 +26,10 @@ interface ArbiterRequest {
     lastResolvedIntentFamily?: string
     lastTurnOutcome?: string
   }
+  // Phase 4: cross-surface context
+  visiblePanels?: string[]
+  workspaceName?: string
+  entryName?: string
 }
 
 interface ArbiterResponse {
@@ -70,10 +74,17 @@ function buildPrompt(req: ArbiterRequest): string {
   const noteTitle = req.activeNote?.title || 'none'
   const noteStatus = req.activeNote ? `"${noteTitle}" (open)` : req.noteReferenceDetected ? 'referenced but not open' : 'none'
 
+  const panelList = req.visiblePanels?.length ? req.visiblePanels.join(', ') : 'none'
+  const workspaceName = req.workspaceName || 'none'
+  const entryName = req.entryName || 'none'
+
   return `You are a UI intent classifier for an annotation application.
 
 The user has the following active context:
 - Active note: ${noteStatus}
+- Visible panels: ${panelList}
+- Current workspace: ${workspaceName}
+- Current entry: ${entryName}
 
 Classify the user's request into:
 
@@ -104,6 +115,16 @@ when the object is clearly note content. These are read_content requests:
 - "display the contents of my note" → read_content (summary)
 
 Use "navigate" ONLY when the user is asking to open, go to, switch to, or move somewhere in the UI.
+
+IMPORTANT: Distinguish panel/widget questions from dashboard questions:
+- "what panel is open?" → panel_widget, state_info (asking about the specific open panel/drawer)
+- "which panel is open?" → panel_widget, state_info
+- "which panels are open?" → panel_widget, state_info
+- "what panels are visible?" → panel_widget, state_info (asking about visible widgets)
+- "what's on the dashboard?" → dashboard, state_info (asking about the overall dashboard)
+- "how many widgets are there?" → dashboard, state_info (asking about the dashboard container)
+
+When the user mentions "panel", "panels", or "drawer", classify as panel_widget, NOT dashboard.
 
 Set confidence between 0 and 1. Only use >= 0.75 when intent is clearly one category.
 If unclear, return "ambiguous" — do NOT guess.

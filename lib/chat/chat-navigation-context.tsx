@@ -754,8 +754,17 @@ export function buildPreviousRoutingMetadataFromTierLabel(
     meta.surface = 'note'; meta.intentFamily = 'read_content'; meta.turnOutcome = 'content_answered'
   } else if (tl === 'arbiter_note_state_info') {
     meta.surface = 'note'; meta.intentFamily = 'state_info'; meta.turnOutcome = 'state_info_answered'
+  } else if (tl === 'arbiter_panel_widget_state_info') {
+    meta.surface = 'panel_widget'; meta.intentFamily = 'state_info'; meta.turnOutcome = 'state_info_answered'
+  } else if (tl === 'arbiter_workspace_state_info') {
+    meta.surface = 'workspace'; meta.intentFamily = 'state_info'; meta.turnOutcome = 'state_info_answered'
+  } else if (tl === 'arbiter_dashboard_state_info') {
+    meta.surface = 'dashboard'; meta.intentFamily = 'state_info'; meta.turnOutcome = 'state_info_answered'
   } else if (tl === 'arbiter_mutate_not_supported') {
     meta.turnOutcome = 'not_supported'
+  } else if (tl === 'arbiter_non_note_read_not_supported') {
+    meta.turnOutcome = 'not_supported'
+    return meta
   } else if (tl === 'arbiter_ambiguous' || tl === 'arbiter_read_content_fallback') {
     meta.turnOutcome = 'clarifier'
   } else {
@@ -1473,7 +1482,7 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
 
   const setUiContext = useCallback((context: UIContext | null) => {
     setUiContextState(prev => {
-      // 6x.8 Phase 3b: Clear note-scoped routing metadata when workspace/note context changes
+      // 6x.8 Phase 3b: Clear note-scoped routing metadata when note context changes
       const prevNoteId = prev?.workspace?.activeNoteId
       const nextNoteId = context?.workspace?.activeNoteId
       if (prevNoteId && prevNoteId !== nextNoteId) {
@@ -1482,6 +1491,27 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
           return current
         })
       }
+
+      // 6x.8 Phase 4: Clear workspace-scoped metadata when workspaceId changes
+      const prevWorkspaceId = prev?.workspace?.workspaceId
+      const nextWorkspaceId = context?.workspace?.workspaceId
+      if (prevWorkspaceId && prevWorkspaceId !== nextWorkspaceId) {
+        setPreviousRoutingMetadata(current => {
+          if (current?.surface === 'workspace') return null
+          return current
+        })
+      }
+
+      // 6x.8 Phase 4: Clear panel/dashboard metadata when dashboard entry changes
+      const prevEntryId = prev?.dashboard?.entryId
+      const nextEntryId = context?.dashboard?.entryId
+      if (prevEntryId && prevEntryId !== nextEntryId) {
+        setPreviousRoutingMetadata(current => {
+          if (current?.surface === 'panel_widget' || current?.surface === 'dashboard') return null
+          return current
+        })
+      }
+
       return context
     })
   }, [])

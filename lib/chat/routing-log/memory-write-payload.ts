@@ -148,3 +148,37 @@ export function buildMemoryWritePayload(
     tool_version: MEMORY_TOOL_VERSION,
   }
 }
+
+// --- Phase 5: Info-intent write builder ---
+
+/**
+ * Build a MemoryWritePayload for successful history/info intent resolutions.
+ *
+ * Eligible intents: last_action, explain_last_action, verify_action.
+ * These produce info_intent rows with no groundingAction.
+ * answerSource must be the real truth source ('session_state' or 'action_history'),
+ * not the routing mechanism.
+ */
+export function buildInfoIntentMemoryWritePayload(
+  userInput: string,
+  resolvedIntent: 'last_action' | 'explain_last_action' | 'verify_action',
+  answerSource: 'session_state' | 'action_history',
+  contextSnapshot: ContextSnapshotV1,
+  options?: { resolutionRequiredClarification?: boolean },
+): MemoryWritePayload {
+  return {
+    raw_query_text: userInput,
+    context_snapshot: contextSnapshot,
+    intent_id: resolvedIntent,
+    intent_class: 'info_intent',
+    slots_json: {
+      resolved_intent: resolvedIntent,
+      answer_source: answerSource,
+      ...(options?.resolutionRequiredClarification ? { resolution_required_clarification: true } : {}),
+    },
+    target_ids: [],
+    risk_tier: 'low',
+    schema_version: MEMORY_SCHEMA_VERSION,
+    tool_version: MEMORY_TOOL_VERSION,
+  }
+}

@@ -51,9 +51,10 @@ const SEMANTIC_SESSION_PATTERN =
  *  Arbiter handles these correctly (returns ambiguous for standalone, content for prefixed). */
 const GREETING_PATTERN = /^(hello|hi|hey)\s*[.!?]?$/i
 
-/** True meta/help phrases — excluded from both classifier AND arbiter. */
+/** True meta/help phrases — excluded from both classifier AND arbiter.
+ * Note: "what panel(s) is/are open" removed — Phase 4 handles this as panel_widget:state_info. */
 const META_ONLY_PATTERN =
-  /^(help|what\s+can\s+you\s+do|what\s+panels?\s+(are|is)\s+open|how\s+do\s+i)\b/i
+  /^(help|what\s+can\s+you\s+do|how\s+do\s+i)\b/i
 
 /**
  * Non-note surface references — if the input explicitly targets
@@ -93,9 +94,10 @@ export function isAnchoredNoteResolverHardExcluded(input: string, anchor: NoteAn
 }
 
 /**
- * 6x.8 Phase 3: Check whether an input is hard-excluded from the cross-surface arbiter.
+ * 6x.8 Phase 4: Check whether an input is hard-excluded from the cross-surface arbiter.
  * Does NOT require activeNoteItemId — supports note-reference-detected turns.
  * Does NOT include NOTE_NON_READ_PATTERN — arbiter can classify mutate verbs.
+ * Does NOT include NON_NOTE_SCOPE_PATTERN — Phase 4 allows non-note surface queries to reach arbiter.
  */
 export function isArbiterHardExcluded(input: string): boolean {
   const trimmed = input.trim()
@@ -104,8 +106,18 @@ export function isArbiterHardExcluded(input: string): boolean {
   if (SELECTION_PATTERN.test(lower)) return true
   if (META_ONLY_PATTERN.test(lower)) return true
   if (SEMANTIC_SESSION_PATTERN.test(lower)) return true
-  if (NON_NOTE_SCOPE_PATTERN.test(lower)) return true
   return false
+}
+
+/** Navigate command pattern — deferred to existing /api/chat/navigate, must not enter arbiter. */
+const NAVIGATE_COMMAND_PATTERN = /^(?:(?:please|pls)\s+)?(?:open|go\s+to|switch\s+to|navigate\s+to)\s+/i
+
+/**
+ * 6x.8 Phase 4: Check whether an input is a likely navigate command targeting a non-note surface.
+ * These are deferred to existing routing and must not enter the cross-surface arbiter.
+ */
+export function isLikelyNavigateCommand(input: string): boolean {
+  return NAVIGATE_COMMAND_PATTERN.test(input.trim())
 }
 
 // --- Intent detection patterns (ordered by specificity) ---

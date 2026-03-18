@@ -157,4 +157,15 @@ export interface RoutingLogPayload {
   cross_surface_arbiter_intent?: string
   cross_surface_arbiter_confidence?: number
   cross_surface_arbiter_result?: string
+
+  // Phase 5: Retrieval-backed semantic hint telemetry
+  h1_lookup_attempted?: boolean
+  h1_lookup_status?: string              // 'ok' | 'empty' | 'timeout' | 'error' | 'disabled'
+  h1_candidate_count?: number
+  h1_top_similarity?: number
+  h1_scope?: string                      // 'history_info' | 'navigation'
+  h1_hint_accepted_by_llm?: boolean
+  h1_retrieved_intent_id?: string
+  h1_latency_ms?: number
+  h1_from_curated_seed?: boolean
 }
