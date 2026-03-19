@@ -1860,7 +1860,7 @@ export async function dispatchRouting(
           handled: true, handledByTier: 6, tierLabel: 'arbiter_note_state_info',
           clarificationCleared: false, isNewQuestionOrCommandDetected: false,
           classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
-          _devProvenanceHint: 'content_answered',
+          _devProvenanceHint: 'deterministic',
         }
         const statePayload = buildRoutingLogPayload(ctx, stateResult, turnSnapshotForLog)
         Object.assign(statePayload, arbiterTelemetry)
@@ -1882,7 +1882,7 @@ export async function dispatchRouting(
           handled: true, handledByTier: 6, tierLabel: 'arbiter_panel_widget_state_info',
           clarificationCleared: false, isNewQuestionOrCommandDetected: false,
           classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
-          _devProvenanceHint: 'content_answered',
+          _devProvenanceHint: 'deterministic',
         }
         const panelStatePayload = buildRoutingLogPayload(ctx, panelStateResult, turnSnapshotForLog)
         Object.assign(panelStatePayload, arbiterTelemetry)
@@ -1902,7 +1902,7 @@ export async function dispatchRouting(
           handled: true, handledByTier: 6, tierLabel: 'arbiter_workspace_state_info',
           clarificationCleared: false, isNewQuestionOrCommandDetected: false,
           classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
-          _devProvenanceHint: 'content_answered',
+          _devProvenanceHint: 'deterministic',
         }
         const wsStatePayload = buildRoutingLogPayload(ctx, wsStateResult, turnSnapshotForLog)
         Object.assign(wsStatePayload, arbiterTelemetry)
@@ -1922,7 +1922,7 @@ export async function dispatchRouting(
           handled: true, handledByTier: 6, tierLabel: 'arbiter_dashboard_state_info',
           clarificationCleared: false, isNewQuestionOrCommandDetected: false,
           classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
-          _devProvenanceHint: 'content_answered',
+          _devProvenanceHint: 'deterministic',
         }
         const dashStatePayload = buildRoutingLogPayload(ctx, dashStateResult, turnSnapshotForLog)
         Object.assign(dashStatePayload, arbiterTelemetry)
