@@ -102,11 +102,97 @@ const PHASE5_SEED_LOOKUP_SQL = `
 `
 
 // Scope-dependent similarity thresholds (applied in application code)
-const NAVIGATION_SIMILARITY_FLOOR = 0.92
+// Navigation lowered from 0.92 to 0.85 — measured data shows wrapper variants
+// score 0.85-0.90 against seeded exemplars (e.g., "pls take me home" = 0.90)
+const NAVIGATION_SIMILARITY_FLOOR = 0.85
 const HISTORY_INFO_SIMILARITY_FLOOR = 0.80
 
 // Clarified-exemplar down-rank factor
 const CLARIFIED_EXEMPLAR_PENALTY = 0.85
+
+// Near-tie threshold for merge — if top-2 candidates are within this gap, clarify
+const NEAR_TIE_THRESHOLD = 0.03
+
+// ---------------------------------------------------------------------------
+// Phase 5 addendum: retrieval-only normalization
+// ---------------------------------------------------------------------------
+
+/**
+ * Strip harmless conversational wrappers for Phase 5 hint retrieval.
+ * Mirrors detectLocalSemanticIntent (input-classifiers.ts:1129-1130).
+ * Anchored prefix/suffix only — never strips internal words.
+ */
+function normalizeForRetrieval(text: string): string {
+  let cleaned = text.trim().toLowerCase()
+  // Leading wrappers (anchored prefix only)
+  cleaned = cleaned.replace(/^(?:hey|hi|hello|assistant|please|pls|ok|okay|um|uh)\b[,]?\s*/i, '')
+  // Trailing fillers (anchored suffix only)
+  // "now pls" / "now please" are removable bundles; bare "now" is NOT removable
+  cleaned = cleaned.replace(/[,]?\s*(?:thank you|thanks|thx|now\s+(?:pls|please)|pls|please)\s*[.!?]*$/i, '')
+  // Punctuation cleanup — collapse repeated punctuation, preserve type (don't convert ! to ?)
+  cleaned = cleaned.replace(/([?])[?]+$/g, '$1').replace(/([!])[!]+$/g, '$1').replace(/\s+/g, ' ').trim()
+  return cleaned
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5 addendum: exact-hit shortcut SQL
+// ---------------------------------------------------------------------------
+
+/**
+ * Exact-hit: learned rows (history_info — no context fingerprint filter)
+ */
+const PHASE5_EXACT_HIT_LEARNED_HISTORY_SQL = `
+  SELECT id AS matched_row_id,
+         intent_id, intent_class, slots_json, target_ids, risk_tier,
+         success_count, context_fingerprint, scope_source
+  FROM chat_routing_memory_index
+  WHERE tenant_id = $1 AND user_id = $2
+    AND query_fingerprint = $3
+    AND intent_class = $4
+    AND schema_version = $5 AND tool_version = $6
+    AND risk_tier IN ('low', 'medium')
+    AND is_deleted = false
+    AND (ttl_expires_at IS NULL OR ttl_expires_at > now())
+  LIMIT 3
+`
+
+/**
+ * Exact-hit: learned rows (navigation — strict context fingerprint)
+ */
+const PHASE5_EXACT_HIT_LEARNED_NAVIGATION_SQL = `
+  SELECT id AS matched_row_id,
+         intent_id, intent_class, slots_json, target_ids, risk_tier,
+         success_count, context_fingerprint, scope_source
+  FROM chat_routing_memory_index
+  WHERE tenant_id = $1 AND user_id = $2
+    AND query_fingerprint = $3
+    AND intent_class = $4
+    AND context_fingerprint = $7
+    AND schema_version = $5 AND tool_version = $6
+    AND risk_tier IN ('low', 'medium')
+    AND is_deleted = false
+    AND (ttl_expires_at IS NULL OR ttl_expires_at > now())
+  LIMIT 3
+`
+
+/**
+ * Exact-hit: curated seeds (no context fingerprint — hint-only)
+ */
+const PHASE5_EXACT_HIT_SEED_SQL = `
+  SELECT id AS matched_row_id,
+         intent_id, intent_class, slots_json, target_ids, risk_tier,
+         success_count, context_fingerprint, scope_source
+  FROM chat_routing_memory_index
+  WHERE tenant_id = $1 AND user_id = $2
+    AND query_fingerprint = $3
+    AND scope_source = 'curated_seed'
+    AND intent_class = $4
+    AND schema_version = $5 AND tool_version = $6
+    AND risk_tier IN ('low', 'medium')
+    AND is_deleted = false
+    AND (ttl_expires_at IS NULL OR ttl_expires_at > now())
+  LIMIT 3
+`
 
 /**
  * POST /api/chat/routing-memory/semantic-lookup
@@ -149,117 +235,239 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Normalize query text and compute fingerprint (for embedding cache key)
+    // Normalize query text and compute fingerprint
     const normalizedText = normalizeForStorage(payload.raw_query_text)
-    const queryFingerprint = computeQueryFingerprint(normalizedText)
-
-    // Compute query embedding (fail-open — null on failure)
-    const queryEmbedding = await computeEmbedding(normalizedText, queryFingerprint)
-    if (!queryEmbedding) {
-      return NextResponse.json({ candidates: [], lookup_status: 'embedding_failure' }, { status: 200 })
-    }
-
-    const embeddingParam = `[${queryEmbedding.join(',')}]`
 
     // Compute current context fingerprint
     const currentContextFingerprint = sha256Hex(
       canonicalJsonSerialize(stripVolatileFields(payload.context_snapshot))
     )
 
-    // ── Legacy path: no intent_scope ──
-    if (!payload.intent_scope) {
-      const { rows } = await serverPool.query(SEMANTIC_LOOKUP_SQL, [
-        OPTION_A_TENANT_ID,
-        OPTION_A_USER_ID,
-        embeddingParam,
-        MEMORY_SCHEMA_VERSION,
-        MEMORY_TOOL_VERSION,
-      ])
+    // Phase 5 addendum: retrieval normalization + exact-hit shortcut
+    // Only for Phase 5 hint lookups with intent_scope
+    if (payload.intent_scope) {
+      const retrievalText = normalizeForRetrieval(normalizedText)
+      const retrievalFingerprint = computeQueryFingerprint(retrievalText)
+      const retrievalNormalizationApplied = retrievalText !== normalizedText
+      const intentClass = payload.intent_scope === 'history_info' ? 'info_intent' : 'action_intent'
+      const maxCandidates = payload.max_candidates ?? 3
 
-      const candidates = rows.map((row: Record<string, unknown>) => ({
-        matched_row_id: row.matched_row_id as string,
-        intent_id: row.intent_id as string,
-        intent_class: row.intent_class as string,
-        slots_json: row.slots_json as Record<string, unknown>,
-        target_ids: row.target_ids as string[],
-        risk_tier: row.risk_tier as string,
-        success_count: row.success_count as number,
-        context_fingerprint: row.context_fingerprint as string,
-        similarity_score: Number(row.similarity_score),
-      }))
+      // ── Exact-hit shortcut: check learned rows first, then curated seeds ──
+      const exactHitSql = payload.intent_scope === 'navigation'
+        ? PHASE5_EXACT_HIT_LEARNED_NAVIGATION_SQL
+        : PHASE5_EXACT_HIT_LEARNED_HISTORY_SQL
+      const exactHitParams = payload.intent_scope === 'navigation'
+        ? [OPTION_A_TENANT_ID, OPTION_A_USER_ID, retrievalFingerprint, intentClass, MEMORY_SCHEMA_VERSION, MEMORY_TOOL_VERSION, currentContextFingerprint]
+        : [OPTION_A_TENANT_ID, OPTION_A_USER_ID, retrievalFingerprint, intentClass, MEMORY_SCHEMA_VERSION, MEMORY_TOOL_VERSION]
+
+      const { rows: learnedExactRows } = await serverPool.query(exactHitSql, exactHitParams)
+
+      // Learned wins over curated — only check seeds if no learned exact hit
+      let exactRows = learnedExactRows
+      let exactSource: 'learned' | 'curated_seed' = 'learned'
+      if (exactRows.length === 0) {
+        const { rows: seedExactRows } = await serverPool.query(PHASE5_EXACT_HIT_SEED_SQL, [
+          OPTION_A_TENANT_ID, ROUTING_MEMORY_CURATED_SEED_USER_ID,
+          retrievalFingerprint, intentClass,
+          MEMORY_SCHEMA_VERSION, MEMORY_TOOL_VERSION,
+        ])
+        exactRows = seedExactRows
+        exactSource = 'curated_seed'
+      }
+
+      if (exactRows.length > 0) {
+        // Exact hit found — return immediately, skip embedding
+        const candidates = exactRows.map((row: Record<string, unknown>) => {
+          let score = 1.0
+          const slotsJson = row.slots_json as Record<string, unknown>
+          if (slotsJson?.resolution_required_clarification === true) {
+            score *= CLARIFIED_EXEMPLAR_PENALTY
+          }
+          return {
+            matched_row_id: row.matched_row_id as string,
+            intent_id: row.intent_id as string,
+            intent_class: row.intent_class as string,
+            slots_json: slotsJson,
+            target_ids: row.target_ids as string[],
+            risk_tier: row.risk_tier as string,
+            success_count: row.success_count as number,
+            context_fingerprint: row.context_fingerprint as string,
+            similarity_score: score,
+            from_curated_seed: exactSource === 'curated_seed',
+          }
+        }).slice(0, maxCandidates)
+
+        return NextResponse.json({
+          candidates,
+          lookup_status: 'ok',
+          current_context_fingerprint: currentContextFingerprint,
+          raw_query_text: payload.raw_query_text,
+          retrieval_query_text: retrievalText,
+          retrieval_normalization_applied: retrievalNormalizationApplied,
+          phase5_exact_hit_used: true,
+          phase5_exact_hit_source: exactSource,
+        }, { status: 200 })
+      }
+
+      // No exact hit — multi-pass embedding retrieval
+
+      const similarityFloor = payload.intent_scope === 'navigation'
+        ? NAVIGATION_SIMILARITY_FLOOR
+        : HISTORY_INFO_SIMILARITY_FLOOR
+
+      const mapRow = (row: Record<string, unknown>, fromSeed: boolean) => {
+        let score = Number(row.similarity_score)
+        const slotsJson = row.slots_json as Record<string, unknown>
+        if (slotsJson?.resolution_required_clarification === true) {
+          score *= CLARIFIED_EXEMPLAR_PENALTY
+        }
+        return {
+          matched_row_id: row.matched_row_id as string,
+          intent_id: row.intent_id as string,
+          intent_class: row.intent_class as string,
+          slots_json: slotsJson,
+          target_ids: row.target_ids as string[],
+          risk_tier: row.risk_tier as string,
+          success_count: row.success_count as number,
+          context_fingerprint: row.context_fingerprint as string,
+          similarity_score: score,
+          from_curated_seed: fromSeed,
+        }
+      }
+
+      const learnedSql = payload.intent_scope === 'navigation'
+        ? PHASE5_LEARNED_NAVIGATION_SQL
+        : PHASE5_LEARNED_HISTORY_SQL
+
+      // ── Pass 1: raw-query embedding ──
+      let rawPassUsed = false
+      let rawPassCandidates: ReturnType<typeof mapRow>[] = []
+      const rawFingerprint = computeQueryFingerprint(normalizedText)
+      const rawEmbedding = await computeEmbedding(normalizedText, rawFingerprint)
+      if (rawEmbedding) {
+        rawPassUsed = true
+        const rawEmbeddingParam = `[${rawEmbedding.join(',')}]`
+        const rawLearnedParams = payload.intent_scope === 'navigation'
+          ? [OPTION_A_TENANT_ID, OPTION_A_USER_ID, intentClass, rawEmbeddingParam, maxCandidates, MEMORY_SCHEMA_VERSION, MEMORY_TOOL_VERSION, currentContextFingerprint]
+          : [OPTION_A_TENANT_ID, OPTION_A_USER_ID, intentClass, rawEmbeddingParam, maxCandidates, MEMORY_SCHEMA_VERSION, MEMORY_TOOL_VERSION]
+        const { rows: rawLearned } = await serverPool.query(learnedSql, rawLearnedParams)
+        const { rows: rawSeeds } = await serverPool.query(PHASE5_SEED_LOOKUP_SQL, [
+          OPTION_A_TENANT_ID, ROUTING_MEMORY_CURATED_SEED_USER_ID,
+          intentClass, rawEmbeddingParam, maxCandidates,
+          MEMORY_SCHEMA_VERSION, MEMORY_TOOL_VERSION,
+        ])
+        rawPassCandidates = [
+          ...rawLearned.map((r: Record<string, unknown>) => mapRow(r, false)),
+          ...rawSeeds.map((r: Record<string, unknown>) => mapRow(r, true)),
+        ]
+      }
+
+      // ── Pass 2: normalized-query embedding (only when normalization changed the text) ──
+      let normalizedPassUsed = false
+      let normPassCandidates: ReturnType<typeof mapRow>[] = []
+      if (retrievalNormalizationApplied) {
+        const normEmbedding = await computeEmbedding(retrievalText, retrievalFingerprint)
+        if (normEmbedding) {
+          normalizedPassUsed = true
+          const normEmbeddingParam = `[${normEmbedding.join(',')}]`
+          const normLearnedParams = payload.intent_scope === 'navigation'
+            ? [OPTION_A_TENANT_ID, OPTION_A_USER_ID, intentClass, normEmbeddingParam, maxCandidates, MEMORY_SCHEMA_VERSION, MEMORY_TOOL_VERSION, currentContextFingerprint]
+            : [OPTION_A_TENANT_ID, OPTION_A_USER_ID, intentClass, normEmbeddingParam, maxCandidates, MEMORY_SCHEMA_VERSION, MEMORY_TOOL_VERSION]
+          const { rows: normLearned } = await serverPool.query(learnedSql, normLearnedParams)
+          const { rows: normSeeds } = await serverPool.query(PHASE5_SEED_LOOKUP_SQL, [
+            OPTION_A_TENANT_ID, ROUTING_MEMORY_CURATED_SEED_USER_ID,
+            intentClass, normEmbeddingParam, maxCandidates,
+            MEMORY_SCHEMA_VERSION, MEMORY_TOOL_VERSION,
+          ])
+          normPassCandidates = [
+            ...normLearned.map((r: Record<string, unknown>) => mapRow(r, false)),
+            ...normSeeds.map((r: Record<string, unknown>) => mapRow(r, true)),
+          ]
+        }
+      }
+
+      // ── Merge + dedupe + rerank ──
+      const allRaw = [...rawPassCandidates, ...normPassCandidates]
+      const deduped = new Map<string, ReturnType<typeof mapRow>>()
+      for (const c of allRaw) {
+        // Dedupe key: matched_row_id for learned, (intent_id, target_ids, scope_source) for curated
+        const key = c.from_curated_seed
+          ? `curated:${c.intent_id}:${JSON.stringify(c.target_ids)}`
+          : c.matched_row_id
+        const existing = deduped.get(key)
+        if (!existing || c.similarity_score > existing.similarity_score) {
+          deduped.set(key, c)
+        }
+      }
+
+      const merged = Array.from(deduped.values())
+        .filter(c => c.similarity_score >= similarityFloor)
+        .sort((a, b) => b.similarity_score - a.similarity_score)
+        .slice(0, maxCandidates)
+
+      // Near-tie detection
+      let phase5NearTie = false
+      if (merged.length >= 2) {
+        const gap = merged[0].similarity_score - merged[1].similarity_score
+        if (gap < NEAR_TIE_THRESHOLD) {
+          phase5NearTie = true
+        }
+      }
+
+      // Fail-open: if both passes failed to embed, return embedding_failure
+      if (!rawPassUsed && !normalizedPassUsed) {
+        return NextResponse.json({
+          candidates: [], lookup_status: 'embedding_failure',
+          retrieval_normalization_applied: retrievalNormalizationApplied,
+        }, { status: 200 })
+      }
 
       return NextResponse.json({
-        candidates,
-        lookup_status: candidates.length > 0 ? 'ok' : 'empty_results',
+        candidates: merged,
+        lookup_status: merged.length > 0 ? 'ok' : 'empty_results',
         current_context_fingerprint: currentContextFingerprint,
+        raw_query_text: payload.raw_query_text,
+        retrieval_query_text: retrievalText,
+        retrieval_normalization_applied: retrievalNormalizationApplied,
+        phase5_exact_hit_used: false,
+        raw_pass_used: rawPassUsed,
+        normalized_pass_used: normalizedPassUsed,
+        phase5_near_tie: phase5NearTie,
       }, { status: 200 })
     }
 
-    // ── Phase 5 hint path: with intent_scope ──
+    // ── Legacy path: no intent_scope ──
+    // No retrieval normalization, no exact-hit shortcut
+    const queryFingerprint = computeQueryFingerprint(normalizedText)
+    const queryEmbedding = await computeEmbedding(normalizedText, queryFingerprint)
+    if (!queryEmbedding) {
+      return NextResponse.json({ candidates: [], lookup_status: 'embedding_failure' }, { status: 200 })
+    }
+    const embeddingParam = `[${queryEmbedding.join(',')}]`
 
-    const intentClass = payload.intent_scope === 'history_info' ? 'info_intent' : 'action_intent'
-    const maxCandidates = payload.max_candidates ?? 3
-    const similarityFloor = payload.intent_scope === 'navigation'
-      ? NAVIGATION_SIMILARITY_FLOOR
-      : HISTORY_INFO_SIMILARITY_FLOOR
-
-    // Query 1: learned exemplars (current user)
-    // Navigation: strict context_fingerprint filter. History_info: no fingerprint filter.
-    const learnedSql = payload.intent_scope === 'navigation'
-      ? PHASE5_LEARNED_NAVIGATION_SQL
-      : PHASE5_LEARNED_HISTORY_SQL
-    const learnedParams = payload.intent_scope === 'navigation'
-      ? [OPTION_A_TENANT_ID, OPTION_A_USER_ID, intentClass, embeddingParam, maxCandidates, MEMORY_SCHEMA_VERSION, MEMORY_TOOL_VERSION, currentContextFingerprint]
-      : [OPTION_A_TENANT_ID, OPTION_A_USER_ID, intentClass, embeddingParam, maxCandidates, MEMORY_SCHEMA_VERSION, MEMORY_TOOL_VERSION]
-    const { rows: learnedRows } = await serverPool.query(learnedSql, learnedParams)
-
-    // Query 2: curated seeds (sentinel user_id)
-    const { rows: seedRows } = await serverPool.query(PHASE5_SEED_LOOKUP_SQL, [
+    const { rows } = await serverPool.query(SEMANTIC_LOOKUP_SQL, [
       OPTION_A_TENANT_ID,
-      ROUTING_MEMORY_CURATED_SEED_USER_ID,
-      intentClass,
+      OPTION_A_USER_ID,
       embeddingParam,
-      maxCandidates,
       MEMORY_SCHEMA_VERSION,
       MEMORY_TOOL_VERSION,
     ])
 
-    // Map rows to candidates
-    const mapRow = (row: Record<string, unknown>, fromSeed: boolean) => {
-      let score = Number(row.similarity_score)
-      const slotsJson = row.slots_json as Record<string, unknown>
-
-      // Clarified-exemplar down-ranking
-      if (slotsJson?.resolution_required_clarification === true) {
-        score *= CLARIFIED_EXEMPLAR_PENALTY
-      }
-
-      return {
-        matched_row_id: row.matched_row_id as string,
-        intent_id: row.intent_id as string,
-        intent_class: row.intent_class as string,
-        slots_json: slotsJson,
-        target_ids: row.target_ids as string[],
-        risk_tier: row.risk_tier as string,
-        success_count: row.success_count as number,
-        context_fingerprint: row.context_fingerprint as string,
-        similarity_score: score,
-        from_curated_seed: fromSeed,
-      }
-    }
-
-    // Merge: learned first, then seeds. Apply similarity floor.
-    const allCandidates = [
-      ...learnedRows.map((r: Record<string, unknown>) => mapRow(r, false)),
-      ...seedRows.map((r: Record<string, unknown>) => mapRow(r, true)),
-    ]
-      .filter(c => c.similarity_score >= similarityFloor)
-      .sort((a, b) => b.similarity_score - a.similarity_score)
-      .slice(0, maxCandidates)
+    const candidates = rows.map((row: Record<string, unknown>) => ({
+      matched_row_id: row.matched_row_id as string,
+      intent_id: row.intent_id as string,
+      intent_class: row.intent_class as string,
+      slots_json: row.slots_json as Record<string, unknown>,
+      target_ids: row.target_ids as string[],
+      risk_tier: row.risk_tier as string,
+      success_count: row.success_count as number,
+      context_fingerprint: row.context_fingerprint as string,
+      similarity_score: Number(row.similarity_score),
+    }))
 
     return NextResponse.json({
-      candidates: allCandidates,
-      lookup_status: allCandidates.length > 0 ? 'ok' : 'empty_results',
+      candidates,
+      lookup_status: candidates.length > 0 ? 'ok' : 'empty_results',
       current_context_fingerprint: currentContextFingerprint,
     }, { status: 200 })
   } catch (err: unknown) {

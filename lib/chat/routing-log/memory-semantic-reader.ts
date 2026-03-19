@@ -55,6 +55,16 @@ export interface SemanticHintLookupResult {
   candidates: SemanticHintCandidate[]
   latencyMs: number
   currentContextFingerprint?: string
+  // Phase 5 addendum: retrieval normalization + exact-hit telemetry
+  retrievalNormalizationApplied?: boolean
+  phase5ExactHitUsed?: boolean
+  phase5ExactHitSource?: 'learned' | 'curated_seed'
+  rawQueryText?: string
+  retrievalQueryText?: string
+  // Phase 5 addendum: multi-pass retrieval telemetry
+  phase5NearTie?: boolean
+  rawPassUsed?: boolean
+  normalizedPassUsed?: boolean
 }
 
 /**
@@ -92,8 +102,21 @@ export async function lookupSemanticHints(payload: {
         const lookupStatus = data.lookup_status as string | undefined
         const currentContextFingerprint = data.current_context_fingerprint as string | undefined
 
+        // Phase 5 addendum: extract normalization + exact-hit telemetry
+        const addendumTelemetry = {
+          retrievalNormalizationApplied: data.retrieval_normalization_applied as boolean | undefined,
+          phase5ExactHitUsed: data.phase5_exact_hit_used as boolean | undefined,
+          phase5ExactHitSource: data.phase5_exact_hit_source as 'learned' | 'curated_seed' | undefined,
+          rawQueryText: data.raw_query_text as string | undefined,
+          retrievalQueryText: data.retrieval_query_text as string | undefined,
+          // Multi-pass retrieval telemetry
+          phase5NearTie: data.phase5_near_tie as boolean | undefined,
+          rawPassUsed: data.raw_pass_used as boolean | undefined,
+          normalizedPassUsed: data.normalized_pass_used as boolean | undefined,
+        }
+
         if (lookupStatus === 'embedding_failure' || lookupStatus === 'server_error') {
-          return { status: 'error' as const, candidates: [] as SemanticHintCandidate[], currentContextFingerprint }
+          return { status: 'error' as const, candidates: [] as SemanticHintCandidate[], currentContextFingerprint, ...addendumTelemetry }
         }
         if (candidates.length > 0) {
           for (const c of candidates) {
@@ -102,9 +125,9 @@ export async function lookupSemanticHints(payload: {
               c.matchedRowId = raw.matched_row_id as string
             }
           }
-          return { status: 'ok' as const, candidates, currentContextFingerprint }
+          return { status: 'ok' as const, candidates, currentContextFingerprint, ...addendumTelemetry }
         }
-        return { status: 'empty' as const, candidates: [] as SemanticHintCandidate[], currentContextFingerprint }
+        return { status: 'empty' as const, candidates: [] as SemanticHintCandidate[], currentContextFingerprint, ...addendumTelemetry }
       }),
       new Promise<typeof TIMEOUT_SENTINEL>((resolve) => {
         timer = setTimeout(() => resolve(TIMEOUT_SENTINEL), MEMORY_SEMANTIC_READ_TIMEOUT_MS)

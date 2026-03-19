@@ -2096,24 +2096,47 @@ export async function dispatchRouting(
   // ---------------------------------------------------------------------------
   const PHASE5_V1_OVERRIDE_INTENTS = new Set(['go_home', 'last_action', 'explain_last_action', 'verify_action'])
   let phase5SkippedTierChain = false
+  let result: RoutingDispatcherResult | undefined
+  let routingError: unknown
 
   if (phase5HintResult && phase5HintResult.candidates.length > 0) {
     const topHint = phase5HintResult.candidates[0]
     const hintScope = detectHintScope(ctx.trimmedInput)
-    const similarityFloor = hintScope === 'navigation' ? 0.92 : 0.80
+    const similarityFloor = hintScope === 'navigation' ? 0.85 : 0.80
 
     if (PHASE5_V1_OVERRIDE_INTENTS.has(topHint.intent_id) && topHint.similarity_score >= similarityFloor) {
-      phase5SkippedTierChain = true
+      // Near-tie check: if server detected a near-tie, force clarification instead of override
+      if (phase5HintResult.phase5NearTie) {
+        // Return synthetic clarifier — do not fire override, do not run tier chain
+        const nearTieMsg: ChatMessage = {
+          id: `assistant-${Date.now()}`, role: 'assistant',
+          content: 'I found multiple possible matches. Could you be more specific?',
+          timestamp: new Date(), isError: false,
+        }
+        ctx.addMessage(nearTieMsg)
+        ctx.setIsLoading(false)
+        result = {
+          handled: true,
+          clarificationCleared: false,
+          isNewQuestionOrCommandDetected: false,
+          classifierCalled: false,
+          classifierTimeout: false,
+          classifierError: false,
+          isFollowUp: false,
+          _devProvenanceHint: 'safe_clarifier',
+        }
+      } else {
+        phase5SkippedTierChain = true
+      }
     }
   }
 
   // ---------------------------------------------------------------------------
-  // Normal tier chain (skipped when Phase 5 override is active)
+  // Normal tier chain (skipped when Phase 5 override or near-tie clarifier is active)
   // ---------------------------------------------------------------------------
-  let result: RoutingDispatcherResult | undefined
-  let routingError: unknown
-
-  if (phase5SkippedTierChain) {
+  if (result) {
+    // Near-tie clarifier already set result — skip tier chain
+  } else if (phase5SkippedTierChain) {
     // Phase 5 override: return handled=false with hint attached.
     // No tier chain runs → no addMessage side effects → no clarifier leakage.
     const topHint = phase5HintResult!.candidates[0]
@@ -2269,6 +2292,16 @@ export async function dispatchRouting(
           // navigate API response returns. Cannot be determined here because the navigate
           // response hasn't arrived yet at dispatcher log time.
         }
+        // Phase 5 addendum: retrieval normalization + exact-hit telemetry
+        logPayload.h1_exact_hit_used = phase5HintResult.phase5ExactHitUsed
+        logPayload.h1_exact_hit_source = phase5HintResult.phase5ExactHitSource
+        logPayload.h1_retrieval_normalization_applied = phase5HintResult.retrievalNormalizationApplied
+        logPayload.h1_raw_query_text = phase5HintResult.rawQueryText
+        logPayload.h1_retrieval_query_text = phase5HintResult.retrievalQueryText
+        // Multi-pass retrieval telemetry
+        logPayload.h1_raw_pass_used = phase5HintResult.rawPassUsed
+        logPayload.h1_normalized_pass_used = phase5HintResult.normalizedPassUsed
+        logPayload.h1_near_tie = phase5HintResult.phase5NearTie
       }
 
       // 6x.7 Phase A: merge resolver telemetry if the resolver ran (Path 2 navigation fallthrough)

@@ -178,6 +178,16 @@ export async function POST(request: NextRequest) {
           h1_retrieved_intent_id: payload.h1_retrieved_intent_id,
           h1_latency_ms: payload.h1_latency_ms,
           h1_from_curated_seed: payload.h1_from_curated_seed,
+          // Phase 5 addendum: retrieval normalization + exact-hit
+          h1_exact_hit_used: payload.h1_exact_hit_used,
+          h1_exact_hit_source: payload.h1_exact_hit_source,
+          h1_retrieval_normalization_applied: payload.h1_retrieval_normalization_applied,
+          h1_raw_query_text: payload.h1_raw_query_text,
+          h1_retrieval_query_text: payload.h1_retrieval_query_text,
+          // Phase 5 addendum: multi-pass retrieval
+          h1_raw_pass_used: payload.h1_raw_pass_used,
+          h1_normalized_pass_used: payload.h1_normalized_pass_used,
+          h1_near_tie: payload.h1_near_tie,
         })
       : null
 

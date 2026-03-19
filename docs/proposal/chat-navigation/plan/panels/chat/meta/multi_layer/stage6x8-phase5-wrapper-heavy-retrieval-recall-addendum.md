@@ -80,6 +80,11 @@ Fingerprint/cache ownership rule:
 - Phase 5 hint-lookup fingerprinting and embedding-cache reuse should key off `retrieval_query_text`, because that is the text actually embedded for retrieval
 - raw-query logging and writeback exemplar storage must continue to preserve the original user query separately
 - this addendum must not change the legacy Stage 5/B2 no-`intent_scope` fingerprint behavior
+- if a raw-query embedding retrieval pass is used in addition to the normalized pass, the raw pass must use its own raw-query fingerprint/cache key derived from the standard storage-normalized query text before wrapper stripping
+- telemetry must distinguish:
+  - raw-query embedding pass
+  - normalized-query embedding pass
+  - exact-hit shortcut
 
 ### 2. Scope of allowed normalization
 
@@ -166,16 +171,24 @@ This addendum does not change:
 
 ## Preferred Implementation Shape
 
-### Option A — Retrieval normalization before embedding
+### Option A — Exact-hit, then raw-query retrieval, then normalized-query retrieval
 Preferred first step.
 
 Phase 5 lookup should:
 1. keep `raw_query_text`
 2. derive `retrieval_query_text`
 3. attempt an exact Phase 5 hint lookup using `retrieval_query_text` first
-4. only if no exact Phase 5 hit is found, embed `retrieval_query_text`
-5. retrieve candidates using that embedding
-6. return normal candidates and telemetry
+4. if no exact Phase 5 hit is found, run a **raw-query embedding retrieval** using the standard storage-normalized query text before wrapper stripping
+5. if `retrieval_query_text` differs from the standard storage-normalized query text before wrapper stripping, run a **second embedding retrieval** using `retrieval_query_text`
+6. merge and rerank candidates from:
+   - raw-query embedding retrieval
+   - normalized-query embedding retrieval
+7. return the merged candidates and telemetry
+
+Rationale:
+- raw-query embedding retrieval is the primary semantic recovery path for short noisy variants such as `pls take me home`
+- normalized-query retrieval is a secondary assist, not the sole mechanism that must rescue wrapper-heavy phrasing
+- this avoids requiring endless wrapper expansion while still preserving the narrow normalization contract above
 
 ### Option A2 — Exact-hit shortcut before embedding
 For Phase 5 requests with `intent_scope`, add a cheap exact-hit shortcut before calling the embedding service.
@@ -212,6 +225,57 @@ Guardrails:
   - `phase5_exact_hit_source: learned | curated_seed`
   - exact-hit usage must be distinguishable from embedding/vector retrieval in Phase 5 telemetry
 
+### Option A3 — Raw-query and normalized-query embedding merge
+If the exact-hit shortcut misses, retrieval should not depend on a single vector pass.
+
+Expected behavior:
+1. compute an embedding for the raw semantic query text
+2. retrieve Phase 5 hint candidates from learned + curated pools using that raw-query embedding
+3. if `retrieval_query_text` differs, compute a second embedding for `retrieval_query_text`
+4. retrieve candidates again using the normalized-query embedding
+5. merge and rerank both result sets
+
+Flow rule:
+- exact-hit short-circuits and returns immediately
+- merge/rerank applies only after the exact-hit shortcut misses
+
+Merge / rerank order:
+- learned candidates outrank curated seeds when the semantic evidence is otherwise comparable
+- context-compatible learned navigation rows remain required
+- non-clarification-required rows outrank clarification-required rows
+- when scores are near-tied, prefer the raw-query pass over the normalized-query pass
+
+Dedupe rule:
+- if the same learned row appears in both passes, collapse it to one candidate keyed by `matched_row_id`
+- for curated rows without a stable learned-row identity, dedupe by `(intent_id, target_ids, scope_source)`
+- after dedupe, keep the strongest surviving candidate record and preserve telemetry about which pass(es) produced it
+
+This keeps the semantic path centered on embeddings instead of forcing wrapper enumeration to do all the work.
+
+### Option A4 — Lower the Phase 5 navigation hint floor
+The current navigation hint floor is too strict for short wrapper-heavy variants that are semantically close to seeded home-navigation intents.
+
+Update the Phase 5 hint policy to:
+- keep `history_info` at `0.80`
+- lower the **navigation hint candidate floor** to approximately `0.85`
+- use the same merged-candidate pipeline above before applying that floor
+
+For the v1-safe Phase 5 override intents:
+- `go_home`
+- `last_action`
+- `explain_last_action`
+- `verify_action`
+
+allow Phase 5 to proceed to the navigate/history resolver when:
+- top hint score meets the scope-specific floor
+- there is no near-tie ambiguity requiring clarification
+
+Near-tie rule:
+- treat candidates as a near tie when the top-two merged candidates are within `0.03` similarity of each other
+- when a near tie exists, do not use the lower-floor Phase 5 override; clarify instead
+
+This change is only for Phase 5 hinting and resolver reachability. It does not authorize direct execution.
+
 ### Option B — Additional wrapper-heavy curated seeds
 Acceptable only as a secondary reinforcement.
 
@@ -221,7 +285,7 @@ Examples:
 - `take me home now pls`
 - `please what did I just do? thanks`
 
-This should not be the primary strategy because it does not scale as well as retrieval normalization.
+This should not be the primary strategy because it does not scale as well as stronger retrieval over the existing semantic seed set.
 
 If Option B is used, the added variants must still go through the existing curated-seed contract:
 - same curated-seed ingest script or privileged seeding path
@@ -233,6 +297,9 @@ If Option B is used, the added variants must still go through the existing curat
 
 ### Unit / API
 - Phase 5 exact hint lookup returns a candidate without embedding when `retrieval_query_text` exactly matches a stored Phase 5 row
+- Phase 5 raw-query embedding retrieval returns `go_home` candidate for:
+  - `pls take me home`
+  - `pls take me home now pls`
 - Phase 5 semantic lookup returns `go_home` candidate for:
   - `hey take me home`
   - `hi take me home`
@@ -241,6 +308,11 @@ If Option B is used, the added variants must still go through the existing curat
   - `please what did I just do? thanks`
   - `assistant what was my last action?`
 - Phase 5 exact-hit shortcut checks the retrieval-normalized query before calling the embedding service
+- Phase 5 merged retrieval prefers:
+  - learned over curated when semantic evidence is otherwise comparable
+  - raw-query pass over normalized-query pass when scores are near-tied
+- Phase 5 merged retrieval dedupes repeated hits across raw-pass, normalized-pass, and exact-hit sources before final reranking
+- Phase 5 navigation hints in the `0.85–0.92` range can still reach the navigate resolver for v1-safe intents when there is no near-tie ambiguity
 - legacy Stage 5/B2 no-`intent_scope` path remains unchanged
 
 ### Negative tests
@@ -251,8 +323,13 @@ If Option B is used, the added variants must still go through the existing curat
   - `take me home now` -> `take me home`
 - learned navigation exact-hit + context mismatch does not reuse the row as an exact Phase 5 hit
 - exact normalized hit on a clarification-required exemplar does not behave like a direct unrestricted exact hit
+- lowering the navigation hint floor does not admit unrelated navigation candidates with materially weaker semantic evidence
+- near-tie merged candidates still clarify instead of auto-routing
+- duplicate raw-pass + normalized-pass hits collapse to one merged candidate instead of double-weighting the same row
 
 ### Smoke tests
+- `pls take me home`
+- `pls take me home now pls`
 - `hey take me home`
 - `hi take me home`
 - `take me home now pls`
@@ -268,6 +345,10 @@ If Option B is used, the added variants must still go through the existing curat
 This addendum is successful when:
 - wrapper-heavy variants retrieve the same canonical Phase 5 hints as the seeded base phrasing
 - exact Phase 5 hint matches do not call the embedding service unnecessarily
+- short noisy variants such as `pls take me home` are recovered by semantic retrieval without requiring a dedicated wrapper seed
+- raw-query embedding retrieval remains the primary semantic recall mechanism; normalization is a secondary assist
+- merged retrieval makes valid seeded neighbors available to the bounded LLM before unrelated fallback routing can win
+- merged retrieval does not double-count the same candidate across exact-hit, raw-pass, and normalized-pass sources
 - no new direct execution path is introduced
 - exact current working cases remain unchanged
 - multi-intent and target-changing queries are not over-normalized into incorrect single-intent actions
@@ -279,3 +360,4 @@ Use this addendum to extend Phase 5.
 Do not create a separate routing lane.
 Do not solve this with new execution regex.
 Do not treat wrapper normalization as an execution authority.
+Do not rely on wrapper enumeration alone when the seeded semantic exemplars should already be reachable through embedding retrieval.

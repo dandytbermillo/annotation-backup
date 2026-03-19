@@ -168,4 +168,14 @@ export interface RoutingLogPayload {
   h1_retrieved_intent_id?: string
   h1_latency_ms?: number
   h1_from_curated_seed?: boolean
+  // Phase 5 addendum: retrieval normalization + exact-hit shortcut
+  h1_exact_hit_used?: boolean
+  h1_exact_hit_source?: string               // 'learned' | 'curated_seed'
+  h1_retrieval_normalization_applied?: boolean
+  h1_raw_query_text?: string
+  h1_retrieval_query_text?: string
+  // Phase 5 addendum: multi-pass retrieval telemetry
+  h1_raw_pass_used?: boolean
+  h1_normalized_pass_used?: boolean
+  h1_near_tie?: boolean
 }
