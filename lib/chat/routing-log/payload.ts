@@ -178,4 +178,7 @@ export interface RoutingLogPayload {
   h1_raw_pass_used?: boolean
   h1_normalized_pass_used?: boolean
   h1_near_tie?: boolean
+  // Phase 5 addendum: retrieval-as-hinting + LLM fallback
+  h1_hints_available_to_llm?: boolean
+  h1_llm_used_raw_query_fallback?: boolean
 }

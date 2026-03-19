@@ -2099,35 +2099,40 @@ export async function dispatchRouting(
   let result: RoutingDispatcherResult | undefined
   let routingError: unknown
 
-  if (phase5HintResult && phase5HintResult.candidates.length > 0) {
+  const hintScope = detectHintScope(ctx.trimmedInput)
+  const hasConfidentHint = phase5HintResult && phase5HintResult.candidates.length > 0 && (() => {
     const topHint = phase5HintResult.candidates[0]
-    const hintScope = detectHintScope(ctx.trimmedInput)
     const similarityFloor = hintScope === 'navigation' ? 0.85 : 0.80
+    return PHASE5_V1_OVERRIDE_INTENTS.has(topHint.intent_id) && topHint.similarity_score >= similarityFloor
+  })()
 
-    if (PHASE5_V1_OVERRIDE_INTENTS.has(topHint.intent_id) && topHint.similarity_score >= similarityFloor) {
-      // Near-tie check: if server detected a near-tie, force clarification instead of override
-      if (phase5HintResult.phase5NearTie) {
-        // Return synthetic clarifier — do not fire override, do not run tier chain
-        const nearTieMsg: ChatMessage = {
-          id: `assistant-${Date.now()}`, role: 'assistant',
-          content: 'I found multiple possible matches. Could you be more specific?',
-          timestamp: new Date(), isError: false,
-        }
-        ctx.addMessage(nearTieMsg)
-        ctx.setIsLoading(false)
-        result = {
-          handled: true,
-          clarificationCleared: false,
-          isNewQuestionOrCommandDetected: false,
-          classifierCalled: false,
-          classifierTimeout: false,
-          classifierError: false,
-          isFollowUp: false,
-          _devProvenanceHint: 'safe_clarifier',
-        }
-      } else {
-        phase5SkippedTierChain = true
+  if (hintScope) {
+    // Phase 5 scope detected — decide how to proceed based on retrieval confidence
+    if (hasConfidentHint && phase5HintResult!.phase5NearTie) {
+      // Near-tie across conflicting actions/targets → clarify directly (no LLM fallback)
+      const nearTieMsg: ChatMessage = {
+        id: `assistant-${Date.now()}`, role: 'assistant',
+        content: 'I found multiple possible matches. Could you be more specific?',
+        timestamp: new Date(), isError: false,
       }
+      ctx.addMessage(nearTieMsg)
+      ctx.setIsLoading(false)
+      result = {
+        handled: true,
+        clarificationCleared: false,
+        isNewQuestionOrCommandDetected: false,
+        classifierCalled: false,
+        classifierTimeout: false,
+        classifierError: false,
+        isFollowUp: false,
+        _devProvenanceHint: 'safe_clarifier',
+      }
+    } else {
+      // Either confident retrieval or weak/empty retrieval — skip tier chain,
+      // let the navigate API's LLM handle the raw query (with hints if available).
+      // This is the key change: the override fires on scope detection, not only on
+      // retrieval confidence. Retrieval hints are optional evidence, not a gate.
+      phase5SkippedTierChain = true
     }
   }
 
@@ -2137,9 +2142,10 @@ export async function dispatchRouting(
   if (result) {
     // Near-tie clarifier already set result — skip tier chain
   } else if (phase5SkippedTierChain) {
-    // Phase 5 override: return handled=false with hint attached.
+    // Phase 5 override: return handled=false so raw query reaches navigate API.
     // No tier chain runs → no addMessage side effects → no clarifier leakage.
-    const topHint = phase5HintResult!.candidates[0]
+    // Attach hints when available; scope always attached for LLM fallback telemetry.
+    const topHint = phase5HintResult?.candidates?.[0]
     result = {
       handled: false,
       clarificationCleared: false,
@@ -2148,9 +2154,9 @@ export async function dispatchRouting(
       classifierTimeout: false,
       classifierError: false,
       isFollowUp: false,
-      _phase5HintIntent: topHint.intent_id,
-      _phase5HintScope: detectHintScope(ctx.trimmedInput) ?? undefined,
-      _phase5HintFromSeed: topHint.from_curated_seed,
+      _phase5HintIntent: topHint?.intent_id,
+      _phase5HintScope: hintScope ?? undefined,
+      _phase5HintFromSeed: topHint?.from_curated_seed,
     }
   } else {
     try {
@@ -2302,6 +2308,15 @@ export async function dispatchRouting(
         logPayload.h1_raw_pass_used = phase5HintResult.rawPassUsed
         logPayload.h1_normalized_pass_used = phase5HintResult.normalizedPassUsed
         logPayload.h1_near_tie = phase5HintResult.phase5NearTie
+        // Retrieval-as-hinting + LLM fallback telemetry
+        logPayload.h1_hints_available_to_llm = phase5HintResult.candidates.length > 0
+        logPayload.h1_llm_used_raw_query_fallback = phase5SkippedTierChain && !hasConfidentHint
+      } else if (phase5SkippedTierChain && hintScope) {
+        // Scope detected but no retrieval ran or retrieval returned nothing — pure LLM fallback
+        logPayload.h1_lookup_attempted = !!phase5HintResult
+        logPayload.h1_scope = hintScope
+        logPayload.h1_hints_available_to_llm = false
+        logPayload.h1_llm_used_raw_query_fallback = true
       }
 
       // 6x.7 Phase A: merge resolver telemetry if the resolver ran (Path 2 navigation fallthrough)

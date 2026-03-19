@@ -2,7 +2,7 @@
 
 ## Summary
 
-Refine Phase 5 retrieval-backed semantic memory so harmless wrapper-heavy variants can retrieve already-seeded exemplars without adding new execution regex or bypassing current validation.
+Refine Phase 5 so retrieval-backed semantic memory remains a hinting layer, but the bounded LLM handles the panel-normalized user query whenever deterministic and semantic retrieval do not confidently resolve. The system should stop trying to predict every wrapper-heavy phrasing variant as the primary strategy.
 
 This addendum applies to the existing Phase 5 path in [stage6x8-phase5-retrieval-backed-semantic-memory-plan.md](/Users/dandy/Downloads/annotation_project/annotation-backup/docs/proposal/chat-navigation/plan/panels/chat/meta/multi_layer/stage6x8-phase5-retrieval-backed-semantic-memory-plan.md).
 
@@ -21,10 +21,10 @@ But wrapper-heavy variants can miss retrieval entirely, for example:
 - `take me home now pls`
 - `please what did I just do? thanks`
 
-When retrieval returns no candidate:
-- Phase 5 hinting does not activate
-- the bounded LLM falls back to normal routing
-- the user can receive unrelated disambiguation or clarifier output
+When retrieval returns no candidate or only weak candidates:
+- Phase 5 hinting provides little or no useful evidence
+- the system becomes too dependent on retrieval heuristics and wrapper handling
+- the user can receive unrelated disambiguation or clarifier output unless the panel-normalized query reaches the bounded LLM
 
 This is a **retrieval recall** problem, not a missing-seed problem.
 
@@ -39,19 +39,31 @@ The canonical intents are already seeded for the v1 cases discussed here:
 - `remind me what I just did`
 
 So the required improvement is:
-- better retrieval of already-seeded semantic exemplars for harmless wrapper-heavy variants
+- keep retrieval available as semantic evidence
+- but stop requiring retrieval to understand every harmless user phrasing variant before the bounded LLM can help
 
 ## Goal
 
-Improve retrieval recall for wrapper-heavy but semantically unchanged queries while keeping the current Phase 5 safety model intact:
-- retrieval remains hint-only
-- bounded LLM still interprets the query
+Improve Phase 5 robustness for wrapper-heavy and conversationally varied queries while keeping the current Phase 5 safety model intact:
+- retrieval remains hint-only evidence
+- bounded LLM interprets the panel-normalized user query only as a bounded fallback when retrieval did not resolve sufficiently
 - live validation still controls execution
 - committed state still controls history/info answers
 
 ## Proposed Change
 
-### 1. Add retrieval-only normalization before Phase 5 embedding lookup
+### 1. Retrieval stays hint-only, not the primary recovery mechanism
+
+Phase 5 should continue to:
+- check deterministic / local rescue first
+- consult semantic retrieval for:
+  - exact hits
+  - semantically similar seeded or learned exemplars
+- pass any retrieved hints forward as optional evidence
+
+But retrieval must no longer be treated as the gate that has to understand every harmless phrasing variant before the bounded LLM can act.
+
+### 2. Keep retrieval-only normalization narrow and secondary
 
 Before embedding the query for Phase 5 hint retrieval, derive a **retrieval-normalized query** that strips harmless conversational wrappers and suffix fillers that do not change intent.
 
@@ -86,7 +98,7 @@ Fingerprint/cache ownership rule:
   - normalized-query embedding pass
   - exact-hit shortcut
 
-### 2. Scope of allowed normalization
+### 3. Scope of allowed normalization
 
 Allowed normalization should be intentionally narrow.
 
@@ -121,7 +133,7 @@ Safe examples:
 
 This should mirror the same wrapper-removal principle already used in local semantic detection, but only for retrieval input.
 
-### 3. Example retrieval-normalization behavior
+### 4. Example retrieval-normalization behavior
 
 #### Positive examples
 - `hey take me home` -> `take me home`
@@ -169,29 +181,107 @@ This addendum does not change:
 - current entity/workspace/panel validation
 - committed session-state answer sources for `history_info`
 
+### 4. Raw-query bounded LLM is the intended fallback
+If deterministic and semantic retrieval do not confidently resolve the query, Phase 5 should send the **panel-normalized user query** to the bounded LLM along with:
+- current live context
+- any retrieved semantic hints that do exist
+- current validation boundaries
+
+This is the intended recovery path for conversational phrasing that retrieval does not capture cleanly.
+
+Terminology note:
+- `raw user query` still refers to the original user text preserved for logging, UI display, telemetry, and writeback exemplars
+- `panel-normalized user query` refers to the message actually forwarded from the panel to the navigate API after UI-level conversational-prefix cleanup
+- this addendum treats the panel-normalized user query, not the literal raw query string, as the bounded-LLM fallback input contract
+
+### 5. Semantic retrieval remains the default cost-saving path
+The intended cost-saving order remains:
+1. deterministic / local rescue
+2. exact-hit shortcut
+3. semantic retrieval
+4. bounded LLM fallback only when the earlier steps did not resolve sufficiently
+5. live validation
+
+This addendum does not convert the bounded LLM into the default path for all Phase 5 requests.
+
+### 6. True no-LLM completion path
+Phase 5 should preserve a real no-LLM path for cases where semantic retrieval is already sufficient.
+
+Examples:
+- exact-hit or strong unambiguous retrieval for a v1-safe intent where the existing validated resolver can already produce the outcome
+- structured history/info answers that can already be produced from committed state
+- validated navigation outcomes that do not need extra language interpretation
+
+In those cases:
+- do not call the bounded LLM
+- use the existing resolver / validator path directly
+- keep routing and telemetry explicit that no LLM fallback was needed
+
+### 7. No further wrapper-expansion as the primary strategy
+Do not keep extending retrieval with more wrapper-specific rules as the main solution.
+
+Further improvements should prefer:
+- raw-query bounded LLM interpretation
+- current-context validation
+- clarification on genuine ambiguity
+
+over:
+- predicting more prefix/suffix variants
+- relying on normalization to rewrite every harmless phrasing pattern
+
 ## Preferred Implementation Shape
 
-### Option A — Exact-hit, then raw-query retrieval, then normalized-query retrieval
-Preferred first step.
+### Option A — Deterministic, then retrieval hints, then panel-normalized-query bounded LLM
+Preferred end-state.
 
-Phase 5 lookup should:
-1. keep `raw_query_text`
-2. derive `retrieval_query_text`
-3. attempt an exact Phase 5 hint lookup using `retrieval_query_text` first
-4. if no exact Phase 5 hit is found, run a **raw-query embedding retrieval** using the standard storage-normalized query text before wrapper stripping
-5. if `retrieval_query_text` differs from the standard storage-normalized query text before wrapper stripping, run a **second embedding retrieval** using `retrieval_query_text`
-6. merge and rerank candidates from:
-   - raw-query embedding retrieval
-   - normalized-query embedding retrieval
-7. return the merged candidates and telemetry
+Phase 5 handling should be:
+1. deterministic / local rescue
+2. exact-hit shortcut when available
+3. semantic retrieval for hint candidates
+4. if exact-hit or strong unambiguous retrieval is already sufficient for an existing validated resolver, complete without the bounded LLM
+5. if retrieval is strong but still benefits from bounded interpretation, pass the panel-normalized query plus hint(s) into the bounded LLM
+6. if retrieval is weak or empty, pass the **panel-normalized user query** into the bounded LLM with any available hints
+7. if retrieval is near-tied across conflicting actions or targets, clarify directly unless policy explicitly allows bounded-LLM comparison for that tie class
+8. validate the resulting intent against current truth
+9. answer, execute, or clarify
 
 Rationale:
-- raw-query embedding retrieval is the primary semantic recovery path for short noisy variants such as `pls take me home`
-- normalized-query retrieval is a secondary assist, not the sole mechanism that must rescue wrapper-heavy phrasing
-- this avoids requiring endless wrapper expansion while still preserving the narrow normalization contract above
+- retrieval helps when it works
+- exact and strong retrieval can still save LLM calls
+- bounded LLM sees the panel-normalized sentence from the UI layer instead of a retrieval-normalized guess
+- validation remains the execution authority
+
+### Option A1 — Confidence handoff from retrieval to bounded LLM
+Retrieval should not block the LLM from helping.
+
+Expected behavior:
+1. deterministic/local rescue runs first
+2. exact-hit and semantic retrieval run next
+3. retrieval returns:
+   - candidate list
+   - confidence / near-tie metadata
+4. if retrieval is already sufficient for a validated structured outcome:
+   - do not call the bounded LLM
+   - resolve through the existing structured path
+5. if retrieval is not confidently decisive:
+   - call the bounded LLM on the panel-normalized user query
+   - include retrieval hints as optional evidence, not as a requirement
+
+### Option A1a — Concrete handoff thresholds
+Unless a future slice explicitly changes them, this addendum inherits the current Phase 5 retrieval thresholds:
+- `navigation` hint floor: `0.85`
+- `history_info` hint floor: `0.80`
+- near-tie threshold: `0.03`
+
+Interpretation:
+- exact hit -> no embedding, and no bounded LLM unless the downstream resolver still requires bounded interpretation
+- top candidate above the applicable floor with no near-tie -> eligible for direct validated resolution or bounded-LLM-assisted resolution, depending on the existing resolver path
+- top candidate below the applicable floor -> retrieval is weak; bounded LLM fallback may run on the panel-normalized user query
+- near-tie within `0.03` -> do not treat retrieval as decisive
+- until a separate policy explicitly defines allowed near-tie comparison classes, the allowed set is empty and direct clarification is required
 
 ### Option A2 — Exact-hit shortcut before embedding
-For Phase 5 requests with `intent_scope`, add a cheap exact-hit shortcut before calling the embedding service.
+For Phase 5 requests with `intent_scope`, keep a cheap exact-hit shortcut before calling the embedding service.
 
 Expected behavior:
 1. derive `retrieval_query_text`
@@ -225,56 +315,17 @@ Guardrails:
   - `phase5_exact_hit_source: learned | curated_seed`
   - exact-hit usage must be distinguishable from embedding/vector retrieval in Phase 5 telemetry
 
-### Option A3 — Raw-query and normalized-query embedding merge
-If the exact-hit shortcut misses, retrieval should not depend on a single vector pass.
+### Option A3 — Retrieval confidence only influences hint strength
+Whether retrieval uses:
+- exact-hit
+- raw-query embedding retrieval
+- normalized-query embedding retrieval
 
-Expected behavior:
-1. compute an embedding for the raw semantic query text
-2. retrieve Phase 5 hint candidates from learned + curated pools using that raw-query embedding
-3. if `retrieval_query_text` differs, compute a second embedding for `retrieval_query_text`
-4. retrieve candidates again using the normalized-query embedding
-5. merge and rerank both result sets
+the result should only influence:
+- which hints are sent to the bounded LLM
+- how strongly the system trusts retrieval before asking the LLM to interpret the raw query
 
-Flow rule:
-- exact-hit short-circuits and returns immediately
-- merge/rerank applies only after the exact-hit shortcut misses
-
-Merge / rerank order:
-- learned candidates outrank curated seeds when the semantic evidence is otherwise comparable
-- context-compatible learned navigation rows remain required
-- non-clarification-required rows outrank clarification-required rows
-- when scores are near-tied, prefer the raw-query pass over the normalized-query pass
-
-Dedupe rule:
-- if the same learned row appears in both passes, collapse it to one candidate keyed by `matched_row_id`
-- for curated rows without a stable learned-row identity, dedupe by `(intent_id, target_ids, scope_source)`
-- after dedupe, keep the strongest surviving candidate record and preserve telemetry about which pass(es) produced it
-
-This keeps the semantic path centered on embeddings instead of forcing wrapper enumeration to do all the work.
-
-### Option A4 — Lower the Phase 5 navigation hint floor
-The current navigation hint floor is too strict for short wrapper-heavy variants that are semantically close to seeded home-navigation intents.
-
-Update the Phase 5 hint policy to:
-- keep `history_info` at `0.80`
-- lower the **navigation hint candidate floor** to approximately `0.85`
-- use the same merged-candidate pipeline above before applying that floor
-
-For the v1-safe Phase 5 override intents:
-- `go_home`
-- `last_action`
-- `explain_last_action`
-- `verify_action`
-
-allow Phase 5 to proceed to the navigate/history resolver when:
-- top hint score meets the scope-specific floor
-- there is no near-tie ambiguity requiring clarification
-
-Near-tie rule:
-- treat candidates as a near tie when the top-two merged candidates are within `0.03` similarity of each other
-- when a near tie exists, do not use the lower-floor Phase 5 override; clarify instead
-
-This change is only for Phase 5 hinting and resolver reachability. It does not authorize direct execution.
+It should not become the main place where wrapper-heavy language is forced into intent meaning.
 
 ### Option B — Additional wrapper-heavy curated seeds
 Acceptable only as a secondary reinforcement.
@@ -285,7 +336,7 @@ Examples:
 - `take me home now pls`
 - `please what did I just do? thanks`
 
-This should not be the primary strategy because it does not scale as well as stronger retrieval over the existing semantic seed set.
+This should not be the primary strategy because it does not scale as well as letting the bounded LLM read the raw query when retrieval is weak.
 
 If Option B is used, the added variants must still go through the existing curated-seed contract:
 - same curated-seed ingest script or privileged seeding path
@@ -297,22 +348,13 @@ If Option B is used, the added variants must still go through the existing curat
 
 ### Unit / API
 - Phase 5 exact hint lookup returns a candidate without embedding when `retrieval_query_text` exactly matches a stored Phase 5 row
-- Phase 5 raw-query embedding retrieval returns `go_home` candidate for:
-  - `pls take me home`
-  - `pls take me home now pls`
-- Phase 5 semantic lookup returns `go_home` candidate for:
-  - `hey take me home`
-  - `hi take me home`
-  - `take me home now pls`
-- Phase 5 semantic lookup returns `last_action` candidate for:
-  - `please what did I just do? thanks`
-  - `assistant what was my last action?`
-- Phase 5 exact-hit shortcut checks the retrieval-normalized query before calling the embedding service
-- Phase 5 merged retrieval prefers:
-  - learned over curated when semantic evidence is otherwise comparable
-  - raw-query pass over normalized-query pass when scores are near-tied
-- Phase 5 merged retrieval dedupes repeated hits across raw-pass, normalized-pass, and exact-hit sources before final reranking
-- Phase 5 navigation hints in the `0.85–0.92` range can still reach the navigate resolver for v1-safe intents when there is no near-tie ambiguity
+- exact-hit or strong unambiguous retrieval can resolve through the existing validated path without bounded LLM fallback
+- bounded LLM receives the **panel-normalized user query** when retrieval is:
+  - empty
+  - weak
+- near-tied only when policy allows bounded comparison instead of direct clarification
+- until such a policy exists, near-tied retrieval must clarify directly
+- retrieved hints, when present, are passed to the bounded LLM as optional evidence
 - legacy Stage 5/B2 no-`intent_scope` path remains unchanged
 
 ### Negative tests
@@ -323,9 +365,11 @@ If Option B is used, the added variants must still go through the existing curat
   - `take me home now` -> `take me home`
 - learned navigation exact-hit + context mismatch does not reuse the row as an exact Phase 5 hit
 - exact normalized hit on a clarification-required exemplar does not behave like a direct unrestricted exact hit
-- lowering the navigation hint floor does not admit unrelated navigation candidates with materially weaker semantic evidence
-- near-tie merged candidates still clarify instead of auto-routing
-- duplicate raw-pass + normalized-pass hits collapse to one merged candidate instead of double-weighting the same row
+- retrieval misses do not block the bounded LLM from seeing the panel-normalized user query
+- strong retrieval does not automatically force bounded LLM fallback when an existing validated resolver can already finish safely
+- near-tie across conflicting actions or conflicting targets clarifies directly instead of silently escalating to bounded LLM by default
+- bounded LLM fallback still cannot bypass current validation
+- wrapper-heavy phrasing is not handled by adding new execution regex
 
 ### Smoke tests
 - `pls take me home`
@@ -334,6 +378,8 @@ If Option B is used, the added variants must still go through the existing curat
 - `hi take me home`
 - `take me home now pls`
 - `please what did I just do? thanks`
+- `hello can you take me home?`
+- `can you pls return home`
 - regression checks:
   - `take me home`
   - `return home`
@@ -343,12 +389,12 @@ If Option B is used, the added variants must still go through the existing curat
 ## Acceptance
 
 This addendum is successful when:
-- wrapper-heavy variants retrieve the same canonical Phase 5 hints as the seeded base phrasing
+- retrieval continues to provide helpful seeded or learned hints when available
 - exact Phase 5 hint matches do not call the embedding service unnecessarily
-- short noisy variants such as `pls take me home` are recovered by semantic retrieval without requiring a dedicated wrapper seed
-- raw-query embedding retrieval remains the primary semantic recall mechanism; normalization is a secondary assist
-- merged retrieval makes valid seeded neighbors available to the bounded LLM before unrelated fallback routing can win
-- merged retrieval does not double-count the same candidate across exact-hit, raw-pass, and normalized-pass sources
+- exact-hit and strong unambiguous retrieval still preserve a real no-LLM cost-saving path when the existing validated resolver already suffices
+- when retrieval is not confidently decisive, the bounded LLM receives the panel-normalized user query and current context instead of the system trying to predict more wrapper variants first
+- bounded LLM remains the fallback rather than the default path for all Phase 5 requests
+- wrapper-heavy conversational phrasing can still resolve without requiring dedicated retrieval rules for each variant
 - no new direct execution path is introduced
 - exact current working cases remain unchanged
 - multi-intent and target-changing queries are not over-normalized into incorrect single-intent actions
@@ -360,4 +406,4 @@ Use this addendum to extend Phase 5.
 Do not create a separate routing lane.
 Do not solve this with new execution regex.
 Do not treat wrapper normalization as an execution authority.
-Do not rely on wrapper enumeration alone when the seeded semantic exemplars should already be reachable through embedding retrieval.
+Do not rely on wrapper enumeration alone when the seeded semantic exemplars should already be reachable through retrieval hints plus panel-normalized-query bounded LLM fallback.

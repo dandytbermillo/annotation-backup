@@ -188,6 +188,9 @@ export async function POST(request: NextRequest) {
           h1_raw_pass_used: payload.h1_raw_pass_used,
           h1_normalized_pass_used: payload.h1_normalized_pass_used,
           h1_near_tie: payload.h1_near_tie,
+          // Phase 5 addendum: retrieval-as-hinting + LLM fallback
+          h1_hints_available_to_llm: payload.h1_hints_available_to_llm,
+          h1_llm_used_raw_query_fallback: payload.h1_llm_used_raw_query_fallback,
         })
       : null
 
