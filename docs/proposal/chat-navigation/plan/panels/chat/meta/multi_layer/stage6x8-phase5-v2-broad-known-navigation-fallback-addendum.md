@@ -135,13 +135,31 @@ This is the same contract already established for the current Phase 5 fallback b
 
 Add curated seeds and learned exemplar coverage for the included navigation families.
 
-Examples:
+Seed policy:
+- curated seeds should cover stable built-in command families and canonical phrasing
+- curated seeds should not attempt to enumerate user-specific targets such as `budget100`, `budget200`, project names, or other tenant-specific labels
+- user-specific targets are expected to resolve through:
+  - broad known-navigation scope detection
+  - bounded-LLM fallback when retrieval is weak or empty
+  - normal resolver target resolution and ambiguity handling
+
+Examples of appropriate curated seeds:
+- `open links panel b`
+- `open navigator`
+- `open workspace budget100` only when `workspace` is the stable family cue rather than a tenant-specific alias
+
+Non-goal:
+- do not seed every user-specific navigation target variant in advance
+
+Navigation/fallback examples:
 - `open budget100`
 - `open links panel b`
 - `open recent` only if `show_recent` is included under the optional gate above
 - `open workspace budget100`
 
 This improves retrieval quality, but retrieval remains hint-only evidence. It does not become direct execution authority.
+
+Successful user-specific navigation should be written back to memory after validated execution so future similar queries can benefit from semantic matching without requiring curated seeds.
 
 ### 5. Keep the current fallback transport contract
 
@@ -226,6 +244,10 @@ Use the same dispatcher-level fallback contract already proven for the current P
 
 Add curated seeds and writeback coverage for broader known-navigation families so retrieval can assist more often and reduce unnecessary LLM calls.
 
+Clarification:
+- curated seeds are for stable built-in command families, not per-user target inventories
+- user-specific targets should be learned from successful real usage via writeback rather than pre-seeded exhaustively
+
 ### Slice 5 — Validation/Resolver Proof
 
 Add regression coverage proving that V2 expansion does not weaken:
@@ -241,6 +263,8 @@ Add regression coverage proving that V2 expansion does not weaken:
 - `hey there i want you to open the links panel b` -> resolves through broad-navigation fallback
 - `can you open recent` -> resolves through broad-navigation fallback only if `show_recent` is included
 - `please open workspace budget100` -> resolves through broad-navigation fallback
+- `hey can please open the budget100` -> resolves without requiring a curated `budget100` seed
+- `hey can please open the budget` -> bounded LLM fallback identifies the navigation family and the resolver clarifies among matching targets
 - strong exact/semantic retrieval can still complete without bounded LLM when the validated resolver already suffices
 - weak/empty retrieval still reaches the bounded LLM fallback
 - near-tie across conflicting entries clarifies directly
@@ -255,6 +279,7 @@ Add regression coverage proving that V2 expansion does not weaken:
 - entry/workspace label collision clarifies instead of guessing the family
 - unconstrained `open X` phrasing without known-target-family evidence does not enter broad known-navigation fallback
 - broader navigation fallback does not accidentally absorb content-answer or cross-surface state-info queries
+- absence of a curated seed for a user-specific target does not force direct safe clarification when bounded-LLM fallback plus resolver validation can still resolve or clarify correctly
 
 ### Smoke Tests
 

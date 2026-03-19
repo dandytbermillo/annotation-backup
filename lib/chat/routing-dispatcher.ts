@@ -631,13 +631,14 @@ const HISTORY_INFO_PATTERN = /\b(what\s+did\s+i|what\s+was\s+my\s+last|remind\s+
  */
 function detectHintScope(input: string): 'history_info' | 'navigation' | null {
   if (HISTORY_INFO_PATTERN.test(input)) return 'history_info'
-  // Navigation scope: handled by the absence of other matches —
-  // if the input wasn't handled by deterministic tiers and isn't history_info,
-  // navigation hinting may apply when there's no other resolution.
-  // For v1 safety, only return 'navigation' for inputs that contain navigation verbs
-  // but weren't caught by isLikelyNavigateCommand (which blocks arbiter entry, not hint retrieval).
-  const NAV_HINT_PATTERN = /\b(go\s+(to\s+)?home|take\s+me\s+home|return\s+home|back\s+home)\b/i
-  if (NAV_HINT_PATTERN.test(input)) return 'navigation'
+  // Home-specific navigation (v1)
+  const HOME_NAV_PATTERN = /\b(go\s+(to\s+)?home|take\s+me\s+home|return\s+home|back\s+home)\b/i
+  if (HOME_NAV_PATTERN.test(input)) return 'navigation'
+  // V2: Broad known navigation — requires BOTH an action cue AND known target-family evidence.
+  // "open something for me" fails (no target-family). "open budget100" passes (budget\w* matches).
+  const BROAD_NAV_ACTION = /\b(open|show|go\s+to|switch\s+to)\b/i
+  const TARGET_FAMILY = /\b(panel|workspace|entry|budget\w*|links\s+panel|navigator|quick\s+capture)\b/i
+  if (BROAD_NAV_ACTION.test(input) && TARGET_FAMILY.test(input)) return 'navigation'
   return null
 }
 
@@ -1615,11 +1616,17 @@ export async function dispatchRouting(
       const hasActiveWorkspace = !!ctx.uiContext?.workspace?.workspaceName
       const isDashboardActive = ctx.uiContext?.mode === 'dashboard'
       const hasSurfaceContext = isNoteRelated || hasVisiblePanels || hasActiveWorkspace || isDashboardActive
-      // Phase 5: skip arbiter for history_info queries — they belong to the history/info lane,
-      // not the cross-surface state-info lane. Without this, the arbiter classifies them as
-      // ambiguous and clarifies before Phase 5 hint retrieval can run.
-      const phase5HistoryExcluded = detectHintScope(ctx.trimmedInput) === 'history_info'
-      return hasSurfaceContext && !contentResult.isContentIntent && !isArbiterHardExcluded(ctx.trimmedInput) && !isLikelyNavigateCommand(ctx.trimmedInput) && !phase5HistoryExcluded
+      // Phase 5: skip arbiter for history_info AND for navigation queries that start with
+      // an explicit action verb. This ensures:
+      // - "what did I just do?" bypasses arbiter (history_info)
+      // - "hey can please open the budget100" bypasses arbiter (explicit action verb)
+      // - "which panel is open?" DOES NOT bypass arbiter (no leading action verb — state question)
+      // Note: this is an arbiter-bypass heuristic for action commands, NOT a replacement for
+      // the Phase 5 dual-match scope detector. The scope detector controls hint retrieval/override.
+      const ACTION_VERB_PREFIX = /^(?:(?:hey|hi|hello|please|pls|ok|okay|um|uh|can\s+you|could\s+you|would\s+you|i\s+want\s+(?:you\s+)?to)\s+)*(?:open|show|go\s+to|switch\s+to)\s+/i
+      const phase5ScopeExcluded = detectHintScope(ctx.trimmedInput) === 'history_info'
+        || ACTION_VERB_PREFIX.test(ctx.trimmedInput.trim())
+      return hasSurfaceContext && !contentResult.isContentIntent && !isArbiterHardExcluded(ctx.trimmedInput) && !isLikelyNavigateCommand(ctx.trimmedInput) && !phase5ScopeExcluded
     })()) {
       // ── 6x.8 Phase 4: Cross-surface arbiter for uncertain turns across surfaces ──
       const NOTE_REFERENCE_PATTERN = /\b(this|that|the|my|which|what|any|a)\s+(note|document|page)\b/i
@@ -2094,7 +2101,11 @@ export async function dispatchRouting(
   // The remaining tiers would only produce clarifiers for these unrecognized inputs,
   // and those clarifiers call addMessage() as a side effect that can't be undone.
   // ---------------------------------------------------------------------------
-  const PHASE5_V1_OVERRIDE_INTENTS = new Set(['go_home', 'last_action', 'explain_last_action', 'verify_action'])
+  // V2: expanded to cover all known validated navigation families
+  const PHASE5_OVERRIDE_INTENTS = new Set([
+    'go_home', 'open_entry', 'open_panel', 'open_workspace',
+    'last_action', 'explain_last_action', 'verify_action',
+  ])
   let phase5SkippedTierChain = false
   let result: RoutingDispatcherResult | undefined
   let routingError: unknown
@@ -2103,7 +2114,7 @@ export async function dispatchRouting(
   const hasConfidentHint = phase5HintResult && phase5HintResult.candidates.length > 0 && (() => {
     const topHint = phase5HintResult.candidates[0]
     const similarityFloor = hintScope === 'navigation' ? 0.85 : 0.80
-    return PHASE5_V1_OVERRIDE_INTENTS.has(topHint.intent_id) && topHint.similarity_score >= similarityFloor
+    return PHASE5_OVERRIDE_INTENTS.has(topHint.intent_id) && topHint.similarity_score >= similarityFloor
   })()
 
   if (hintScope) {

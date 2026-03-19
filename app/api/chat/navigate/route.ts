@@ -945,14 +945,18 @@ export async function POST(request: NextRequest) {
     // If a Phase 5 hint told us the likely intent but the LLM ignored it, rescue to
     // the structured resolver instead of clarifying.
     if (intent.intent === 'unsupported' && phase5_hint_intent && typeof phase5_hint_intent === 'string') {
-      // v1-safe: only home navigation + history/info intents
-      const PHASE5_V1_RESCUE_INTENTS: Record<string, string> = {
+      // V2: known validated navigation families + history/info intents
+      // Rescue only remaps intent classification — resolver still handles target resolution + ambiguity
+      const PHASE5_RESCUE_INTENTS: Record<string, string> = {
         'go_home': 'go_home',
+        'open_entry': 'open_entry',
+        'open_panel': 'open_panel',
+        'open_workspace': 'open_workspace',
         'last_action': 'last_action',
         'explain_last_action': 'explain_last_action',
         'verify_action': 'verify_action',
       }
-      const rescuedIntent = PHASE5_V1_RESCUE_INTENTS[phase5_hint_intent]
+      const rescuedIntent = PHASE5_RESCUE_INTENTS[phase5_hint_intent]
       if (rescuedIntent) {
         console.log('[navigate-phase5-rescue] overriding unsupported → hinted intent:', {
           from: 'unsupported',

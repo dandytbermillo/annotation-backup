@@ -51,8 +51,9 @@ const CURATED_SEEDS: CuratedSeed[] = [
   { query: 'go home', intent_id: 'go_home', intent_class: 'action_intent', slots_json: { action_type: 'go_home' } },
   { query: 'take me home', intent_id: 'go_home', intent_class: 'action_intent', slots_json: { action_type: 'go_home' } },
   { query: 'return home', intent_id: 'go_home', intent_class: 'action_intent', slots_json: { action_type: 'go_home' } },
-  { query: 'open budget100', intent_id: 'open_entry', intent_class: 'action_intent', slots_json: { action_type: 'open_entry', target_name: 'budget100' } },
+  // Stable panel command families only — no user-specific targets
   { query: 'open links panel b', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel b' } },
+  { query: 'open navigator', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'navigator' } },
 ]
 
 // ---------------------------------------------------------------------------
