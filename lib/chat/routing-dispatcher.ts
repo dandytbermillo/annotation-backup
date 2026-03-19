@@ -642,6 +642,37 @@ function detectHintScope(input: string): 'history_info' | 'navigation' | null {
   return null
 }
 
+/**
+ * Decide whether the cross-surface arbiter should be SKIPPED for this input.
+ * True for action/imperative navigation commands. False for everything else.
+ *
+ * Navigate handles: "open budget100", "hey can please open the budget", "take me home"
+ * Arbiter handles: everything else (state-info, read_content, ambiguous queries)
+ *
+ * Uses unanchored action-verb detection — catches noisy wrappers like "hey can please open..."
+ * without maintaining a wrapper-word list. The key insight: action verbs (open/show/go to/switch to)
+ * appearing anywhere in the input signal an imperative command, not a state question.
+ * State-info queries like "which panel is open?" also contain "open" but as an adjective,
+ * not an imperative verb. The guard below distinguishes them.
+ */
+function isActionNavigationCommand(input: string): boolean {
+  const lower = input.trim().toLowerCase()
+
+  // Guard: state-info queries must NOT be treated as action commands even though they contain "open"
+  // "which panel is open?" / "is any panel open?" / "what note is opened?" — "open" is a state adjective here
+  const STATE_INFO_GUARD = /\b(which|what|what's)\s+(note|document|page|panel|panels|widget|widgets|workspace|dashboard)\s+(is|are)\s+(open|active|visible|current|opened|showing)\b/i
+  const YN_STATE_GUARD = /\b(is|are)\s+(any|the|a)?\s*(note|document|page|panel|panels|widget|widgets|workspace|dashboard)\s*(drawer)?\s+(open|active|visible|current|opened|showing)\b/i
+  const WORKSPACE_STATE_GUARD = /\b(which|what)\s+workspace\s+(am\s+i\s+in|is\s+this|is\s+active)\b/i
+  const DASHBOARD_STATE_GUARD = /\b(what'?s\s+on\s+the\s+dashboard|how\s+many\s+(widget|panel)s?)\b/i
+  if (STATE_INFO_GUARD.test(lower) || YN_STATE_GUARD.test(lower) || WORKSPACE_STATE_GUARD.test(lower) || DASHBOARD_STATE_GUARD.test(lower)) {
+    return false // state-info query, not an action command
+  }
+
+  // Action verb detection: "open", "show", "go to", "switch to" as imperative
+  const ACTION_VERB = /\b(open|show|go\s+to|switch\s+to)\b/i
+  return ACTION_VERB.test(lower)
+}
+
 // =============================================================================
 // Explicit Command Detection (extracted to shared utility for import safety)
 // =============================================================================
@@ -1616,17 +1647,11 @@ export async function dispatchRouting(
       const hasActiveWorkspace = !!ctx.uiContext?.workspace?.workspaceName
       const isDashboardActive = ctx.uiContext?.mode === 'dashboard'
       const hasSurfaceContext = isNoteRelated || hasVisiblePanels || hasActiveWorkspace || isDashboardActive
-      // Phase 5: skip arbiter for history_info AND for navigation queries that start with
-      // an explicit action verb. This ensures:
-      // - "what did I just do?" bypasses arbiter (history_info)
-      // - "hey can please open the budget100" bypasses arbiter (explicit action verb)
-      // - "which panel is open?" DOES NOT bypass arbiter (no leading action verb — state question)
-      // Note: this is an arbiter-bypass heuristic for action commands, NOT a replacement for
-      // the Phase 5 dual-match scope detector. The scope detector controls hint retrieval/override.
-      const ACTION_VERB_PREFIX = /^(?:(?:hey|hi|hello|please|pls|ok|okay|um|uh|can\s+you|could\s+you|would\s+you|i\s+want\s+(?:you\s+)?to)\s+)*(?:open|show|go\s+to|switch\s+to)\s+/i
-      const phase5ScopeExcluded = detectHintScope(ctx.trimmedInput) === 'history_info'
-        || ACTION_VERB_PREFIX.test(ctx.trimmedInput.trim())
-      return hasSurfaceContext && !contentResult.isContentIntent && !isArbiterHardExcluded(ctx.trimmedInput) && !isLikelyNavigateCommand(ctx.trimmedInput) && !phase5ScopeExcluded
+      // Arbiter runs for everything except action/imperative navigation commands and history_info queries.
+      // This replaces the previous patchwork of isLikelyNavigateCommand + ACTION_VERB_PREFIX + phase5ScopeExcluded.
+      const isActionNav = isActionNavigationCommand(ctx.trimmedInput)
+      const isHistoryInfo = detectHintScope(ctx.trimmedInput) === 'history_info'
+      return hasSurfaceContext && !contentResult.isContentIntent && !isArbiterHardExcluded(ctx.trimmedInput) && !isActionNav && !isHistoryInfo
     })()) {
       // ── 6x.8 Phase 4: Cross-surface arbiter for uncertain turns across surfaces ──
       const NOTE_REFERENCE_PATTERN = /\b(this|that|the|my|which|what|any|a)\s+(note|document|page)\b/i
