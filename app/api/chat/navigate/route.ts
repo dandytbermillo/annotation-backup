@@ -941,6 +941,48 @@ export async function POST(request: NextRequest) {
       intent.intent = intent.intent === 'explain_last_action' ? 'last_action' : 'unsupported'
     }
 
+    // Phase 5: post-LLM rescue for hinted v1 intents when model returns unsupported
+    // If a Phase 5 hint told us the likely intent but the LLM ignored it, rescue to
+    // the structured resolver instead of clarifying.
+    if (intent.intent === 'unsupported' && phase5_hint_intent && typeof phase5_hint_intent === 'string') {
+      // v1-safe: only home navigation + history/info intents
+      const PHASE5_V1_RESCUE_INTENTS: Record<string, string> = {
+        'go_home': 'go_home',
+        'last_action': 'last_action',
+        'explain_last_action': 'explain_last_action',
+        'verify_action': 'verify_action',
+      }
+      const rescuedIntent = PHASE5_V1_RESCUE_INTENTS[phase5_hint_intent]
+      if (rescuedIntent) {
+        console.log('[navigate-phase5-rescue] overriding unsupported → hinted intent:', {
+          from: 'unsupported',
+          to: rescuedIntent,
+          hintScope: phase5_hint_scope,
+          userMessage,
+        })
+        void debugLog({
+          component: 'ChatNavigateAPI',
+          action: 'phase5_hint_rescue',
+          metadata: { from: 'unsupported', to: rescuedIntent, hintScope: phase5_hint_scope, userMessage },
+        })
+        intent = { intent: rescuedIntent as typeof intent.intent, args: {} }
+      }
+    }
+
+    // Phase 5: also rescue 'what did I just do?' via detectLocalSemanticIntent when unsupported
+    // This phrase has a known deterministic resolver but the LLM may miss it
+    if (intent.intent === 'unsupported') {
+      const localDetected = detectLocalSemanticIntent(userMessage)
+      if (localDetected) {
+        console.log('[navigate-phase5-rescue] local semantic rescue for unsupported:', {
+          from: 'unsupported',
+          to: localDetected,
+          userMessage,
+        })
+        intent = { intent: localDetected, args: {} }
+      }
+    }
+
     // Step 2: Resolve intent to actionable data
     // Conditional context fetch optimization: only fetch what the intent needs
     // - go_home: needs homeEntryId (for "already on Home" detection)
@@ -1167,9 +1209,10 @@ export async function POST(request: NextRequest) {
         // Replace generic unsupported message with friendly suggestion
         resolution.message = suggestions.message
       }
-    } else if (!resolution.success && !hasVerb && !isVerifyQuery && !isQuestionLike && !context?.pendingOptions?.length && !context?.lastClarification) {
+    } else if (!resolution.success && intent.intent === 'unsupported' && !hasVerb && !isVerifyQuery && !isQuestionLike && !context?.pendingOptions?.length && !context?.lastClarification) {
       // If the input has no verb and is not a verify query, don't let the LLM guess.
-      // Only override when the input is not an exact match to a known command.
+      // Only override when the intent was genuinely unsupported — not when a recognized
+      // resolver (go_home, last_action, etc.) returned a structured error like "already on Home".
       // Phase 2a.2: Skip typo fallback when pendingOptions or lastClarification exist - let LLM handle with context
       // Guard: only apply when resolution failed — never overwrite a successful resolver result
       // (e.g., explain_last_action resolves to action:'inform' successfully)

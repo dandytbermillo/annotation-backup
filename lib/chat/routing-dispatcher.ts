@@ -1615,7 +1615,11 @@ export async function dispatchRouting(
       const hasActiveWorkspace = !!ctx.uiContext?.workspace?.workspaceName
       const isDashboardActive = ctx.uiContext?.mode === 'dashboard'
       const hasSurfaceContext = isNoteRelated || hasVisiblePanels || hasActiveWorkspace || isDashboardActive
-      return hasSurfaceContext && !contentResult.isContentIntent && !isArbiterHardExcluded(ctx.trimmedInput) && !isLikelyNavigateCommand(ctx.trimmedInput)
+      // Phase 5: skip arbiter for history_info queries — they belong to the history/info lane,
+      // not the cross-surface state-info lane. Without this, the arbiter classifies them as
+      // ambiguous and clarifies before Phase 5 hint retrieval can run.
+      const phase5HistoryExcluded = detectHintScope(ctx.trimmedInput) === 'history_info'
+      return hasSurfaceContext && !contentResult.isContentIntent && !isArbiterHardExcluded(ctx.trimmedInput) && !isLikelyNavigateCommand(ctx.trimmedInput) && !phase5HistoryExcluded
     })()) {
       // ── 6x.8 Phase 4: Cross-surface arbiter for uncertain turns across surfaces ──
       const NOTE_REFERENCE_PATTERN = /\b(this|that|the|my|which|what|any|a)\s+(note|document|page)\b/i
@@ -2084,24 +2088,61 @@ export async function dispatchRouting(
   }
 
   // ---------------------------------------------------------------------------
-  // Normal tier chain
+  // Phase 5: pre-tier-chain override for confident v1 hints
+  // When Phase 5 has a high-confidence hint for an allowlisted v1 intent,
+  // skip the tier chain entirely. B1/B2/Stage 5 already ran and didn't match.
+  // The remaining tiers would only produce clarifiers for these unrecognized inputs,
+  // and those clarifiers call addMessage() as a side effect that can't be undone.
+  // ---------------------------------------------------------------------------
+  const PHASE5_V1_OVERRIDE_INTENTS = new Set(['go_home', 'last_action', 'explain_last_action', 'verify_action'])
+  let phase5SkippedTierChain = false
+
+  if (phase5HintResult && phase5HintResult.candidates.length > 0) {
+    const topHint = phase5HintResult.candidates[0]
+    const hintScope = detectHintScope(ctx.trimmedInput)
+    const similarityFloor = hintScope === 'navigation' ? 0.92 : 0.80
+
+    if (PHASE5_V1_OVERRIDE_INTENTS.has(topHint.intent_id) && topHint.similarity_score >= similarityFloor) {
+      phase5SkippedTierChain = true
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Normal tier chain (skipped when Phase 5 override is active)
   // ---------------------------------------------------------------------------
   let result: RoutingDispatcherResult | undefined
   let routingError: unknown
 
-  try {
-    result = await dispatchRoutingInner(ctx, semanticCandidatesForLaneD, b2LookupStatus, contentIntentMatchedThisTurn)
-  } catch (err) {
-    routingError = err
-  }
+  if (phase5SkippedTierChain) {
+    // Phase 5 override: return handled=false with hint attached.
+    // No tier chain runs → no addMessage side effects → no clarifier leakage.
+    const topHint = phase5HintResult!.candidates[0]
+    result = {
+      handled: false,
+      clarificationCleared: false,
+      isNewQuestionOrCommandDetected: false,
+      classifierCalled: false,
+      classifierTimeout: false,
+      classifierError: false,
+      isFollowUp: false,
+      _phase5HintIntent: topHint.intent_id,
+      _phase5HintScope: detectHintScope(ctx.trimmedInput) ?? undefined,
+      _phase5HintFromSeed: topHint.from_curated_seed,
+    }
+  } else {
+    try {
+      result = await dispatchRoutingInner(ctx, semanticCandidatesForLaneD, b2LookupStatus, contentIntentMatchedThisTurn)
+    } catch (err) {
+      routingError = err
+    }
 
-  // Phase 5: attach hint metadata to result for downstream consumption
-  // The navigate API uses this to bias intent classification toward the hinted intent.
-  if (!routingError && result && phase5HintResult && phase5HintResult.candidates.length > 0) {
-    const topHint = phase5HintResult.candidates[0]
-    result._phase5HintIntent = topHint.intent_id
-    result._phase5HintScope = detectHintScope(ctx.trimmedInput) ?? undefined
-    result._phase5HintFromSeed = topHint.from_curated_seed
+    // Phase 5: attach hint metadata to result for downstream consumption (non-override path)
+    if (!routingError && result && phase5HintResult && phase5HintResult.candidates.length > 0) {
+      const topHint = phase5HintResult.candidates[0]
+      result._phase5HintIntent = topHint.intent_id
+      result._phase5HintScope = detectHintScope(ctx.trimmedInput) ?? undefined
+      result._phase5HintFromSeed = topHint.from_curated_seed
+    }
   }
 
   // Attach semantic candidates to result (only if tier chain didn't handle it)

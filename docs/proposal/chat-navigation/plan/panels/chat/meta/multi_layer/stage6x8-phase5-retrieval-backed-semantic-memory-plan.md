@@ -97,6 +97,36 @@ Anti-pattern applicability: **not applicable**. This is routing/memory design, n
   - navigation resolves against current live entities and existing validators
 - If confidence is low or top retrieved exemplars conflict materially, ask a targeted clarifier instead of guessing.
 
+### 4a. Boundary: `history_info` Must Bypass the Cross-Surface Arbiter
+- The cross-surface arbiter is only for interpreting current UI surface questions across:
+  - `note`
+  - `panel_widget`
+  - `workspace`
+  - `dashboard`
+- `history_info` queries are not cross-surface queries.
+- They resolve from committed history sources:
+  - `sessionState.lastAction`
+  - `sessionState.actionHistory`
+- Required invariant:
+  - if `detectHintScope(...) === 'history_info'`, the dispatcher must skip the cross-surface arbiter
+  - these turns must continue through the history/info lane:
+    - Phase 5 hint retrieval
+    - navigate-route intent resolution
+    - structured resolver answer from committed session state or action history
+- Examples:
+  - `what did I just do?` -> `history_info`
+  - `what was my last action?` -> `history_info`
+  - `did I open links panel b?` -> `history_info`
+- Non-examples:
+  - `which note is open?`
+  - `what panel is open?`
+  - `which workspace am I in?`
+  - `what's on the dashboard?`
+- Rationale:
+  - the arbiter answers questions about the current visible UI state
+  - `history_info` answers come from committed prior actions, which is a different source of truth
+  - allowing `history_info` turns into the cross-surface arbiter causes avoidable ambiguous clarifiers before the history/info lane can run
+
 ### 5. Exact write seams
 - Keep the existing `buildMemoryWritePayload()` path unchanged for current `groundingAction`-backed `action_intent` writes.
 - Add a second builder for semantic answer intents, e.g. `buildInfoIntentMemoryWritePayload()`:

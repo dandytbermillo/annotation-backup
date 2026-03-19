@@ -2946,19 +2946,25 @@ function ChatNavigationPanelContent({
       //   safe_clarifier (grey)   — error/fallback, no useful output
       if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current) {
         const act = resolution.action ?? ''
+        const intentName = apiIntent?.intent ?? ''
         const CLARIFIER_ACTIONS = new Set(['error', 'need_context'])
         const INFORMATIVE_ACTIONS = new Set(['answer_from_context', 'general_answer', 'inform'])
         const OPTION_PROMPT_ACTIONS = new Set([
           'select', 'list_workspaces', 'clarify_type',
           'confirm_delete', 'confirm_panel_write', 'reshow_options', 'select_option',
         ])
-        const prov = CLARIFIER_ACTIONS.has(act)
-          ? 'safe_clarifier'
-          : INFORMATIVE_ACTIONS.has(act)
-            ? 'llm_influenced'
-            : OPTION_PROMPT_ACTIONS.has(act)
-              ? 'llm_clarifier'
-              : 'llm_executed'
+        // Recognized-intent errors (go_home → "already on Home", etc.) are structured
+        // responses, not generic clarifiers. Tag them as llm_influenced.
+        const isRecognizedIntentError = act === 'error' && intentName !== 'unsupported'
+        const prov = isRecognizedIntentError
+          ? 'llm_influenced'
+          : CLARIFIER_ACTIONS.has(act)
+            ? 'safe_clarifier'
+            : INFORMATIVE_ACTIONS.has(act)
+              ? 'llm_influenced'
+              : OPTION_PROMPT_ACTIONS.has(act)
+                ? 'llm_clarifier'
+                : 'llm_executed'
         setProvenance(lastAddedAssistantIdRef.current, prov)
       }
 

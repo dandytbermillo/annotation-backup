@@ -170,18 +170,58 @@ Phase 5 flags are independent of existing Stage 5 flags. No `intent_scope` = leg
 | `__tests__/unit/chat/phase5-info-intent-write.test.ts` | **NEW** |
 | `__tests__/unit/chat/phase5-pending-promotion.test.ts` | **NEW** |
 
+## Post-Implementation Fixes
+
+### Fix 1: Typo fallback overwriting structured resolver errors (`navigate/route.ts`)
+
+**Problem:** When `go_home` resolved with a structured error ("You're already on the Home dashboard"), the typo-fallback branch at line 1212 overwrote it with "Try: `recent`, `links panel a`..." because it didn't require `intent.intent === 'unsupported'`.
+
+**Fix:** Added `intent.intent === 'unsupported'` to the second typo-fallback branch, so recognized-intent errors are preserved.
+
+### Fix 2: History_info queries swallowed by cross-surface arbiter (`routing-dispatcher.ts`)
+
+**Problem:** "what did I just do?" was caught by the cross-surface arbiter (line ~1618) before Phase 5 hint retrieval could run (line ~2057). The arbiter classified it as ambiguous and clarified.
+
+**Fix:** Added `!phase5HistoryExcluded` to the arbiter entry condition. When `detectHintScope` returns `'history_info'`, the arbiter is skipped — these queries belong to the history/info lane, not the cross-surface state-info lane.
+
+### Fix 3: Phase 5 pre-tier override prevents clarifier leakage (`routing-dispatcher.ts`)
+
+**Problem:** The original Phase 5 override flipped `result.handled = false` AFTER `dispatchRoutingInner` returned, but clarifier paths already called `ctx.addMessage()` as a side effect. This left stale clarifier messages in the chat.
+
+**Fix:** Moved the override to BEFORE `dispatchRoutingInner`. When Phase 5 has a confident v1 hint (gated by allowlist + similarity floor), the tier chain is skipped entirely — no `addMessage` side effects.
+
+### Fix 4: Navigate post-LLM rescue for hinted intents (`navigate/route.ts`)
+
+**Problem:** When Phase 5 injected a hint into the navigate prompt but the LLM still returned `unsupported`, there was no recovery path.
+
+**Fix:** Added a post-LLM rescue for v1 intents (`go_home`, `last_action`, `explain_last_action`, `verify_action`). When the LLM returns `unsupported` and `phase5_hint_intent` is a v1 intent, the intent is remapped to the structured resolver. Additionally, `detectLocalSemanticIntent` rescue catches "what did I just do?" on `unsupported`.
+
+## Runtime Verification (Smoke Test — 2026-03-18)
+
+**Setup:** Curated seeds ingested (9/9), feature flags enabled, dev server restarted.
+
+| Input | Context | Expected | Actual | Status |
+|-------|---------|----------|--------|--------|
+| "take me home" | already home | "You're already on the Home dashboard." | Match | ✅ |
+| "take me home" | not at home | "Going home..." Auto-Executed | Match | ✅ |
+| "return home" | not at home | "Going home..." Auto-Executed | Match | ✅ |
+| "go home" | not at home | "Going home..." Auto-Executed | Match | ✅ |
+| "what did I just do?" | after opening entry | Session state answer | "You opened entry 'Home' 8m ago..." | ✅ |
+| "what did I just do?" | after more actions | Session state answer | "You opened entry 'budget100 B'..." | ✅ |
+| "what was my last action?" | after actions | Session state answer | "You opened entry 'budget100 B'..." | ✅ |
+
+All 7 smoke test queries pass. Phase 5 is runtime-verified.
+
 ## Known Limitations
 
-1. **Not runtime-verified yet:** Curated seeds not yet ingested. Manual smoke test pending.
-2. **Unit tests only:** No integration tests covering the full dispatcher→panel→navigate→writeback chain.
-3. **Navigation hint consumption is prompt-level only:** Phase 5 navigation hints bias the LLM but don't alter deterministic routing. The LLM must still classify correctly.
-4. **detectHintScope is v1-narrow:** Only covers "what did I / did I" for history and "go/take/return/back home" for navigation. Broader paraphrase coverage comes from curated seeds + learned exemplars over time.
-5. **No v1 navigation writeback yet:** Only info-intent writeback is implemented. Navigation exemplar writeback from successful `go_home` / `open_entry` executions is deferred.
+1. **Unit tests only:** No integration tests covering the full dispatcher→panel→navigate→writeback chain. The new override/rescue seams are not directly test-backed.
+2. **detectHintScope is v1-narrow:** Only covers "what did I / did I" for history and "go/take/return/back home" for navigation. Broader paraphrase coverage comes from curated seeds + learned exemplars over time.
+3. **No v1 navigation writeback yet:** Only info-intent writeback is implemented. Navigation exemplar writeback from successful `go_home` / `open_entry` executions is deferred.
+4. **Navigation hint is prompt-level + rescue:** Phase 5 navigation hints bias the LLM prompt and rescue `unsupported` to the structured resolver. The LLM may still classify correctly without the rescue.
 
 ## Next Steps
 
-1. Run `npx tsx scripts/seed-phase5-curated-exemplars.ts` to ingest curated seeds
-2. Enable feature flags: `CHAT_ROUTING_MEMORY_HINT_READ_ENABLED=true`, `NEXT_PUBLIC_CHAT_ROUTING_MEMORY_HINT_READ=true`
-3. Manual smoke test: "take me home" → should resolve via hint; "what did I just do?" → should produce pending write
-4. Monitor `h1_*` telemetry in routing logs
-5. Add integration tests for runtime seams (deferred)
+1. Add targeted regression tests for the new override/rescue seams
+2. Monitor `h1_*` telemetry in routing logs for hint acceptance rates
+3. Add integration tests for runtime seams (deferred)
+4. Consider v1 navigation writeback for `go_home` executions
