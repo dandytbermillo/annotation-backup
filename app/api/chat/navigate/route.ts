@@ -1351,7 +1351,14 @@ export async function POST(request: NextRequest) {
         phase5PendingWrite = buildPhase5NavigationWritePayload({
           rawQueryText: replayQueryText,
           intentId: writebackIntentId,
-          resolution: resolution as { success: boolean; action: string; entry?: { id: string; name: string }; workspace?: { id: string; name: string }; panel?: { id?: string; title?: string } },
+          resolution: {
+            ...resolution,
+            // Map top-level panelId/panelTitle to nested panel object for writeback builder
+            panel: (resolution as unknown as Record<string, unknown>).panelId ? {
+              id: (resolution as unknown as Record<string, unknown>).panelId as string,
+              title: (resolution as unknown as Record<string, unknown>).panelTitle as string,
+            } : undefined,
+          } as { success: boolean; action: string; entry?: { id: string; name: string; dashboardWorkspaceId?: string }; workspace?: { id: string; name: string; entryId?: string; entryName?: string; isDefault?: boolean }; panel?: { id?: string; title?: string } },
           contextSnapshot: navContextSnapshot,
         })
       } catch { /* fail-open */ }
