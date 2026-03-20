@@ -2160,33 +2160,11 @@ export async function dispatchRouting(
   })()
 
   if (hintScope) {
-    // Phase 5 scope detected — decide how to proceed based on retrieval confidence
-    if (hasConfidentHint && phase5HintResult!.phase5NearTie) {
-      // Near-tie across conflicting actions/targets → clarify directly (no LLM fallback)
-      const nearTieMsg: ChatMessage = {
-        id: `assistant-${Date.now()}`, role: 'assistant',
-        content: 'I found multiple possible matches. Could you be more specific?',
-        timestamp: new Date(), isError: false,
-      }
-      ctx.addMessage(nearTieMsg)
-      ctx.setIsLoading(false)
-      result = {
-        handled: true,
-        clarificationCleared: false,
-        isNewQuestionOrCommandDetected: false,
-        classifierCalled: false,
-        classifierTimeout: false,
-        classifierError: false,
-        isFollowUp: false,
-        _devProvenanceHint: 'safe_clarifier',
-      }
-    } else {
-      // Either confident retrieval or weak/empty retrieval — skip tier chain,
-      // let the navigate API's LLM handle the raw query (with hints if available).
-      // This is the key change: the override fires on scope detection, not only on
-      // retrieval confidence. Retrieval hints are optional evidence, not a gate.
-      phase5SkippedTierChain = true
-    }
+    // Phase 5 scope detected — skip tier chain, let the navigate API's LLM handle it.
+    // Near-tie metadata is preserved in telemetry but does NOT block the LLM fallback.
+    // Genuine execution ambiguity (e.g., "budget100" vs "budget100 B") is handled by
+    // the resolver/clarifier downstream, not by retrieval-level similarity score proximity.
+    phase5SkippedTierChain = true
   }
 
   // ---------------------------------------------------------------------------
