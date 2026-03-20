@@ -1350,7 +1350,7 @@ export async function POST(request: NextRequest) {
           : userMessage
         phase5PendingWrite = buildPhase5NavigationWritePayload({
           rawQueryText: replayQueryText,
-          intentId: intent.intent as 'open_entry' | 'open_workspace' | 'open_panel' | 'go_home',
+          intentId: writebackIntentId,
           resolution: resolution as { success: boolean; action: string; entry?: { id: string; name: string }; workspace?: { id: string; name: string }; panel?: { id?: string; title?: string } },
           contextSnapshot: navContextSnapshot,
         })

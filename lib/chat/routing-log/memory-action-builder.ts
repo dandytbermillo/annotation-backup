@@ -36,6 +36,11 @@ interface MinimalRoutingResult {
     itemLabel: string
     action: string
   }
+  navigationReplayAction?:
+    | { type: 'open_entry'; entryId: string; entryName: string; dashboardWorkspaceId: string }
+    | { type: 'open_workspace'; workspaceId: string; workspaceName: string; entryId: string; entryName: string; isDefault: boolean }
+    | { type: 'open_panel'; panelId: string; panelTitle: string }
+    | { type: 'go_home' }
 }
 
 /**
@@ -70,6 +75,63 @@ export function buildResultFromMemory(
       candidateId: candidate.slots_json.candidateId as string,
       candidateLabel: candidate.slots_json.candidateLabel as string,
       actionHint: (candidate.slots_json.actionHint as string | null) ?? undefined,
+    }
+  } else if (actionType === 'open_entry') {
+    // Phase 5 navigation replay — first-class, no text re-resolution
+    return {
+      ...defaultResult,
+      handled: true,
+      handledByTier: undefined,
+      tierLabel: `memory_exact:${candidate.intent_id}`,
+      _devProvenanceHint: 'memory_exact',
+      _memoryCandidate: candidate,
+      navigationReplayAction: {
+        type: 'open_entry' as const,
+        entryId: candidate.slots_json.entryId as string,
+        entryName: candidate.slots_json.entryName as string,
+        dashboardWorkspaceId: candidate.slots_json.dashboardWorkspaceId as string,
+      },
+    }
+  } else if (actionType === 'open_workspace') {
+    return {
+      ...defaultResult,
+      handled: true,
+      handledByTier: undefined,
+      tierLabel: `memory_exact:${candidate.intent_id}`,
+      _devProvenanceHint: 'memory_exact',
+      _memoryCandidate: candidate,
+      navigationReplayAction: {
+        type: 'open_workspace' as const,
+        workspaceId: candidate.slots_json.workspaceId as string,
+        workspaceName: candidate.slots_json.workspaceName as string,
+        entryId: candidate.slots_json.entryId as string,
+        entryName: candidate.slots_json.entryName as string,
+        isDefault: (candidate.slots_json.isDefault as boolean) ?? false,
+      },
+    }
+  } else if (actionType === 'go_home') {
+    return {
+      ...defaultResult,
+      handled: true,
+      handledByTier: undefined,
+      tierLabel: `memory_exact:${candidate.intent_id}`,
+      _devProvenanceHint: 'memory_exact',
+      _memoryCandidate: candidate,
+      navigationReplayAction: { type: 'go_home' as const },
+    }
+  } else if (actionType === 'open_panel') {
+    return {
+      ...defaultResult,
+      handled: true,
+      handledByTier: undefined,
+      tierLabel: `memory_exact:${candidate.intent_id}`,
+      _devProvenanceHint: 'memory_exact',
+      _memoryCandidate: candidate,
+      navigationReplayAction: {
+        type: 'open_panel' as const,
+        panelId: candidate.slots_json.panelId as string,
+        panelTitle: candidate.slots_json.panelTitle as string,
+      },
     }
   } else {
     // Unknown action type — cannot reconstruct, fall through

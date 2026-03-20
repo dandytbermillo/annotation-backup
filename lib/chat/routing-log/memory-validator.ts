@@ -82,6 +82,14 @@ export function validateMemoryCandidate(
     return { valid: true }
   }
 
+  // Phase 5 navigation action types — lighter validation because final target
+  // validation happens in the execution path (executeAction → navigate handlers).
+  // Risk tier is already checked above. Context fingerprint match is guaranteed by SQL.
+  const PHASE5_NAV_ACTIONS = new Set(['open_entry', 'open_workspace', 'go_home', 'open_panel'])
+  if (PHASE5_NAV_ACTIONS.has(actionType!)) {
+    return { valid: true }
+  }
+
   // Unknown action type
   return { valid: false, reason: 'unknown_action_type' }
 }

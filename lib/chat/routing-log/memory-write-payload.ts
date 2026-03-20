@@ -201,8 +201,8 @@ export function buildPhase5NavigationWritePayload(params: {
   resolution: {
     success: boolean
     action: string
-    entry?: { id: string; name: string }
-    workspace?: { id: string; name: string }
+    entry?: { id: string; name: string; dashboardWorkspaceId?: string }
+    workspace?: { id: string; name: string; entryId?: string; entryName?: string; isDefault?: boolean }
     panel?: { id?: string; title?: string }
   }
   contextSnapshot: ContextSnapshotV1
@@ -217,10 +217,14 @@ export function buildPhase5NavigationWritePayload(params: {
   if (intentId === 'open_entry' && resolution.entry) {
     slotsJson.entryId = resolution.entry.id
     slotsJson.entryName = resolution.entry.name
+    slotsJson.dashboardWorkspaceId = resolution.entry.dashboardWorkspaceId ?? ''
     targetIds = [resolution.entry.id]
   } else if (intentId === 'open_workspace' && resolution.workspace) {
     slotsJson.workspaceId = resolution.workspace.id
     slotsJson.workspaceName = resolution.workspace.name
+    slotsJson.entryId = resolution.workspace.entryId ?? ''
+    slotsJson.entryName = resolution.workspace.entryName ?? ''
+    slotsJson.isDefault = resolution.workspace.isDefault ?? false
     targetIds = [resolution.workspace.id]
   } else if (intentId === 'open_panel' && resolution.panel?.id) {
     slotsJson.panelId = resolution.panel.id

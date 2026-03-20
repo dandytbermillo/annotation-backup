@@ -616,6 +616,13 @@ export interface RoutingDispatcherResult {
 
   /** Phase 5: shared replay snapshot from live UI state — used for B1 lookup AND navigation writeback */
   _phase5ReplaySnapshot?: import('./routing-log/context-snapshot').ContextSnapshotV1
+
+  /** Phase 5: first-class navigation replay action from memory — uses stored target IDs, no re-resolution */
+  navigationReplayAction?:
+    | { type: 'open_entry'; entryId: string; entryName: string; dashboardWorkspaceId: string }
+    | { type: 'open_workspace'; workspaceId: string; workspaceName: string; entryId: string; entryName: string; isDefault: boolean }
+    | { type: 'open_panel'; panelId: string; panelTitle: string }
+    | { type: 'go_home' }
 }
 
 /** Type alias for grounding actions (extracted from RoutingDispatcherResult for reuse) */

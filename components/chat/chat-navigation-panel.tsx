@@ -1819,6 +1819,97 @@ function ChatNavigationPanelContent({
       }
 
       // ---------------------------------------------------------------------------
+      // Phase 5: Navigation Replay Execution (Memory-Exact for Phase 5 nav rows)
+      // Uses stored target IDs — no text re-resolution via LLM.
+      // Routes through executeAction(resolution) with reconstructed IntentResolutionResult.
+      // ---------------------------------------------------------------------------
+      if (routingResult.handled && routingResult.navigationReplayAction) {
+        const navAction = routingResult.navigationReplayAction
+        try {
+          let replayResolution: import('@/lib/chat/intent-resolver').IntentResolutionResult
+
+          if (navAction.type === 'open_entry') {
+            replayResolution = {
+              success: true,
+              action: 'navigate_entry',
+              message: `Opening entry "${navAction.entryName}"...`,
+              entry: {
+                id: navAction.entryId,
+                name: navAction.entryName,
+                isSystem: false,
+                dashboardWorkspaceId: navAction.dashboardWorkspaceId,
+              },
+            }
+          } else if (navAction.type === 'open_workspace') {
+            replayResolution = {
+              success: true,
+              action: 'navigate_workspace',
+              message: `Opening workspace "${navAction.workspaceName}"...`,
+              workspace: {
+                id: navAction.workspaceId,
+                name: navAction.workspaceName,
+                entryId: navAction.entryId,
+                entryName: navAction.entryName,
+                isDefault: navAction.isDefault,
+              },
+            }
+          } else if (navAction.type === 'go_home') {
+            replayResolution = {
+              success: true,
+              action: 'navigate_home',
+              message: 'Going home...',
+            }
+          } else if (navAction.type === 'open_panel') {
+            replayResolution = {
+              success: true,
+              action: 'open_panel_drawer',
+              message: `Opening ${navAction.panelTitle}...`,
+              panelId: navAction.panelId,
+            }
+          } else {
+            throw new Error('Unknown navigation replay action type')
+          }
+
+          // Add response message
+          const replayMsg: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: replayResolution.message ?? 'Navigating...',
+            timestamp: new Date(),
+            isError: false,
+            provenance: 'memory_exact',
+          }
+          addMessage(replayMsg, { tierLabel: routingResult.tierLabel, provenance: 'memory_exact' })
+
+          // Execute through existing path
+          const result = await executeAction(replayResolution)
+
+          // Fire pending memory log (same contract as existing memory-served execution)
+          if (routingResult._pendingMemoryLog) {
+            recordRoutingLog(routingResult._pendingMemoryLog).catch(() => {})
+          }
+          if (routingResult._pendingMemoryWrite) {
+            recordMemoryEntry(routingResult._pendingMemoryWrite).catch(() => {})
+          }
+        } catch (error) {
+          const errorMsg: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: 'Navigation replay failed. Please try again.',
+            timestamp: new Date(),
+            isError: true,
+          }
+          addMessage(errorMsg)
+        }
+
+        if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current) {
+          setProvenance(lastAddedAssistantIdRef.current, 'memory_exact')
+        }
+        setIsLoading(false)
+        return
+      }
+
+      // ---------------------------------------------------------------------------
       // Tier 4.5: Widget Registry Item Execution
       // Per widget-registry-implementation-plan.md §4d.
       // ---------------------------------------------------------------------------
@@ -3026,7 +3117,7 @@ function ChatNavigationPanelContent({
     } finally {
       setIsLoading(false)
     }
-  }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction, messages, addMessage, setInput, sessionState, setLastAction, setLastQuickLinksBadge, appendRequestHistory, openPanelWithTracking, openPanelDrawer, conversationSummary, pendingOptions, pendingOptionsGraceCount, handleSelectOption, lastPreview, lastSuggestion, setLastSuggestion, addRejectedSuggestions, clearRejectedSuggestions, isRejectedSuggestion, uiContext, visiblePanels, focusedPanelId, lastClarification, setLastClarification, setNotesScopeFollowUpActive, clarificationSnapshot, saveClarificationSnapshot, incrementSnapshotTurn, clearClarificationSnapshot, repairMemory, setRepairMemory, incrementRepairMemoryTurn, clearRepairMemory, docRetrievalState, updateDocRetrievalState, incrementOpenCount, lastOptionsShown, saveLastOptionsShown, incrementLastOptionsShownTurn, clearLastOptionsShown])
+  }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction, messages, addMessage, setInput, sessionState, setLastAction, setLastQuickLinksBadge, appendRequestHistory, openPanelWithTracking, openPanelDrawer, conversationSummary, pendingOptions, pendingOptionsGraceCount, handleSelectOption, lastPreview, lastSuggestion, setLastSuggestion, addRejectedSuggestions, clearRejectedSuggestions, isRejectedSuggestion, uiContext, visiblePanels, focusedPanelId, lastClarification, setLastClarification, setNotesScopeFollowUpActive, clarificationSnapshot, saveClarificationSnapshot, incrementSnapshotTurn, clearClarificationSnapshot, repairMemory, setRepairMemory, incrementRepairMemoryTurn, clearRepairMemory, docRetrievalState, updateDocRetrievalState, incrementOpenCount, lastOptionsShown, saveLastOptionsShown, incrementLastOptionsShownTurn, clearLastOptionsShown, pendingPhase5Write, setPendingPhase5Write])
 
   // ---------------------------------------------------------------------------
   // Clear Chat
