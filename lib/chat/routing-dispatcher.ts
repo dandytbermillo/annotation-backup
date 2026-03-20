@@ -402,7 +402,7 @@ export interface RoutingDispatcherContext {
   // Phase 5: pending exemplar write for one-turn delayed promotion
   pendingPhase5Write?: import('@/lib/chat/routing-log/pending-phase5-write').PendingPhase5Write | null
   setPendingPhase5Write: (write: import('@/lib/chat/routing-log/pending-phase5-write').PendingPhase5Write | null) => void
-  addMessage: (message: ChatMessage, routingMeta?: { tierLabel?: string }) => void
+  addMessage: (message: ChatMessage, routingMeta?: { tierLabel?: string; provenance?: import('./chat-navigation-context').ChatProvenance }) => void
   setLastClarification: (state: LastClarificationState | null) => void
   setIsLoading: (loading: boolean) => void
   setPendingOptions: (options: PendingOptionState[]) => void
@@ -1602,7 +1602,7 @@ export async function dispatchRouting(
               // Cited snippet evidence for inline citation display (6x.6)
               citedSnippets: loopResult.contentAnswerResult.citedSnippets,
             }
-            ctx.addMessage(assistantMessage, { tierLabel: 'content_intent_answered' })
+            ctx.addMessage(assistantMessage, { tierLabel: 'content_intent_answered', provenance: 'content_answered' })
             ctx.setIsLoading(false)
 
             void debugLog({
@@ -1750,7 +1750,7 @@ export async function dispatchRouting(
             timestamp: new Date(),
             isError: false,
           }
-          ctx.addMessage(noNoteMsg, { tierLabel: 'arbiter_note_read_no_anchor' })
+          ctx.addMessage(noNoteMsg, { tierLabel: 'arbiter_note_read_no_anchor', provenance: 'safe_clarifier' })
           ctx.setIsLoading(false)
           const noNoteResult: RoutingDispatcherResult = {
             handled: true, handledByTier: 6, tierLabel: 'arbiter_note_read_no_anchor',
@@ -1807,7 +1807,7 @@ export async function dispatchRouting(
                 contentTruncated: loopResult.contentAnswerResult.contentTruncated ?? false,
                 citedSnippets: loopResult.contentAnswerResult.citedSnippets,
               }
-              ctx.addMessage(assistantMessage, { tierLabel: 'arbiter_content_answered' })
+              ctx.addMessage(assistantMessage, { tierLabel: 'arbiter_content_answered', provenance: 'content_answered' })
               ctx.setIsLoading(false)
               return {
                 handled: true, handledByTier: 6, tierLabel: 'arbiter_content_answered',
@@ -1830,7 +1830,7 @@ export async function dispatchRouting(
           timestamp: new Date(),
           isError: false,
         }
-        ctx.addMessage(readFallbackMsg, { tierLabel: 'arbiter_read_content_fallback' })
+        ctx.addMessage(readFallbackMsg, { tierLabel: 'arbiter_read_content_fallback', provenance: 'safe_clarifier' })
         ctx.setIsLoading(false)
         const readFallbackResult: RoutingDispatcherResult = {
           handled: true, handledByTier: 6, tierLabel: 'arbiter_read_content_fallback',
@@ -1854,7 +1854,7 @@ export async function dispatchRouting(
           timestamp: new Date(),
           isError: false,
         }
-        ctx.addMessage(stateMsg, { tierLabel: 'arbiter_note_state_info' })
+        ctx.addMessage(stateMsg, { tierLabel: 'arbiter_note_state_info', provenance: 'deterministic' })
         ctx.setIsLoading(false)
         const stateResult: RoutingDispatcherResult = {
           handled: true, handledByTier: 6, tierLabel: 'arbiter_note_state_info',
@@ -1876,7 +1876,7 @@ export async function dispatchRouting(
         const panelStateMsg: ChatMessage = {
           id: `assistant-${Date.now()}`, role: 'assistant', content: answer, timestamp: new Date(), isError: false,
         }
-        ctx.addMessage(panelStateMsg, { tierLabel: 'arbiter_panel_widget_state_info' })
+        ctx.addMessage(panelStateMsg, { tierLabel: 'arbiter_panel_widget_state_info', provenance: 'deterministic' })
         ctx.setIsLoading(false)
         const panelStateResult: RoutingDispatcherResult = {
           handled: true, handledByTier: 6, tierLabel: 'arbiter_panel_widget_state_info',
@@ -1896,7 +1896,7 @@ export async function dispatchRouting(
         const wsStateMsg: ChatMessage = {
           id: `assistant-${Date.now()}`, role: 'assistant', content: answer, timestamp: new Date(), isError: false,
         }
-        ctx.addMessage(wsStateMsg, { tierLabel: 'arbiter_workspace_state_info' })
+        ctx.addMessage(wsStateMsg, { tierLabel: 'arbiter_workspace_state_info', provenance: 'deterministic' })
         ctx.setIsLoading(false)
         const wsStateResult: RoutingDispatcherResult = {
           handled: true, handledByTier: 6, tierLabel: 'arbiter_workspace_state_info',
@@ -1916,7 +1916,7 @@ export async function dispatchRouting(
         const dashStateMsg: ChatMessage = {
           id: `assistant-${Date.now()}`, role: 'assistant', content: answer, timestamp: new Date(), isError: false,
         }
-        ctx.addMessage(dashStateMsg, { tierLabel: 'arbiter_dashboard_state_info' })
+        ctx.addMessage(dashStateMsg, { tierLabel: 'arbiter_dashboard_state_info', provenance: 'deterministic' })
         ctx.setIsLoading(false)
         const dashStateResult: RoutingDispatcherResult = {
           handled: true, handledByTier: 6, tierLabel: 'arbiter_dashboard_state_info',
@@ -1937,7 +1937,7 @@ export async function dispatchRouting(
           content: 'Reading content is currently available for notes only.',
           timestamp: new Date(), isError: false,
         }
-        ctx.addMessage(nonNoteReadMsg, { tierLabel: 'arbiter_non_note_read_not_supported' })
+        ctx.addMessage(nonNoteReadMsg, { tierLabel: 'arbiter_non_note_read_not_supported', provenance: 'safe_clarifier' })
         ctx.setIsLoading(false)
         const nonNoteReadResult: RoutingDispatcherResult = {
           handled: true, handledByTier: 6, tierLabel: 'arbiter_non_note_read_not_supported',
@@ -1960,7 +1960,7 @@ export async function dispatchRouting(
           timestamp: new Date(),
           isError: false,
         }
-        ctx.addMessage(mutateMsg, { tierLabel: 'arbiter_mutate_not_supported' })
+        ctx.addMessage(mutateMsg, { tierLabel: 'arbiter_mutate_not_supported', provenance: 'safe_clarifier' })
         ctx.setIsLoading(false)
         const mutateResult: RoutingDispatcherResult = {
           handled: true, handledByTier: 6, tierLabel: 'arbiter_mutate_not_supported',
@@ -1987,7 +1987,7 @@ export async function dispatchRouting(
           timestamp: new Date(),
           isError: false,
         }
-        ctx.addMessage(clarifierMsg, { tierLabel: 'arbiter_ambiguous' })
+        ctx.addMessage(clarifierMsg, { tierLabel: 'arbiter_ambiguous', provenance: 'safe_clarifier' })
         ctx.setIsLoading(false)
         const clarifierResult: RoutingDispatcherResult = {
           handled: true, handledByTier: 6, tierLabel: 'arbiter_ambiguous',

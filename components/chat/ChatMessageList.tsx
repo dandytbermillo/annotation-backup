@@ -228,9 +228,9 @@ export function ChatMessageList({
                   {formatTime(message.timestamp)}
                 </span>
 
-                {/* Dev-only: Provenance debug badge */}
-                {provenanceMap && message.role === 'assistant' && provenanceMap.has(message.id) && (
-                  <ProvenanceBadge provenance={provenanceMap.get(message.id)!} />
+                {/* Dev-only: Provenance debug badge — in-memory map first, persisted fallback */}
+                {message.role === 'assistant' && (provenanceMap?.get(message.id) ?? message.provenance) && (
+                  <ProvenanceBadge provenance={(provenanceMap?.get(message.id) ?? message.provenance)!} />
                 )}
 
                 {/* Message Result Preview (for "Show all" view panel content) */}

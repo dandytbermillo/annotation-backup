@@ -176,13 +176,18 @@ Anti-pattern applicability: **not applicable**. This is routing/memory design, n
     - `go home`
     - `take me home`
     - `return home`
-    - `open budget100`
     - `open links panel b`
 - Seed rows must be inserted through the same normalization + embedding pipeline as runtime rows, not raw SQL with hand-built vectors.
 - Runtime positive writeback contract:
   - write on successful v1 history/info answers and successful v1 navigation executions
   - do not write ambiguous, blocked, failed, or clarifier-only turns
   - do not write turns followed by explicit immediate correction signals (`no`, `wrong`, `not that`, equivalent correction flow)
+  - use one shared runtime writeback contract for the full approved Phase 5 scope:
+    - `history_info`
+    - `navigation`
+  - runtime navigation writes must reuse the existing `phase5_pending_write` -> one-turn delayed promotion pipeline rather than introducing a separate immediate client write path
+  - runtime navigation writes must preserve the successful original user query text as the writeback source so repeated identical noisy phrasing can later qualify for B1 `memory_exact`
+  - preserving the successful original user query text does not bypass the existing server-side storage-normalization and fingerprint pipeline; it only fixes the source text used to build the write payload before normal storage processing
 - Concrete write timing policy for v1:
   - all Phase 5 positive exemplar writes, including direct-success and clarified-then-successful turns, enter a one-turn pending state first
   - if the immediate next user turn is not a correction/rejection, promote the exemplar write
@@ -222,6 +227,7 @@ Anti-pattern applicability: **not applicable**. This is routing/memory design, n
   - implement Phase 5 through a separate client reader function or a clearly separated wrapper that always sends `intent_scope` and uses the Phase 5 hint flag
   - do not silently broaden the existing Stage 5 reader default payload shape for legacy callers
 - Add `buildInfoIntentMemoryWritePayload()` (or equivalent) for `info_intent` writes.
+- Add `buildPhase5NavigationWritePayload()` (or equivalent) for approved Phase 5 navigation writes.
 - Extend memory write payload types to support `info_intent` without `groundingAction`.
 - Add a routing-stage type for retrieved semantic exemplars, distinct from Stage 5 replay candidates.
 - Extend stored `slots_json` for clarified exemplars with a clarification-required marker.
@@ -245,6 +251,12 @@ Anti-pattern applicability: **not applicable**. This is routing/memory design, n
 - writeback builders:
   - `buildMemoryWritePayload()` unchanged for `action_intent`
   - `buildInfoIntentMemoryWritePayload()` writes `info_intent` rows correctly
+  - `buildPhase5NavigationWritePayload()` (or equivalent) writes approved Phase 5 navigation rows correctly:
+    - `open_entry`
+    - `open_workspace`
+    - approved `open_panel`
+    - approved `go_home`
+  - navigation write builders must use the actual successful action vocabulary above, not invented `navigate_*` aliases
   - clarified exemplars set the clarification-required marker
   - no write payload for failed / blocked / clarified-only turns
   - corrected turns do not produce positive write payloads
@@ -267,6 +279,9 @@ Anti-pattern applicability: **not applicable**. This is routing/memory design, n
   - `take me home` retrieves `go_home` exemplars and resolves to `go_home`
   - `return home` same
   - `open budget100` resolves to the correct live workspace/entry target using current validators
+  - first successful `hi there open that budget100` creates a pending navigation write rather than an immediate write
+  - next non-correction turn promotes that pending write
+  - later identical `hi there open that budget100` is eligible for B1 exact replay
 - ambiguity:
   - conflicting retrieved examples -> clarifier, not execution
   - clarified exemplar influences clarifier/ranking but does not behave like a direct high-confidence precedent

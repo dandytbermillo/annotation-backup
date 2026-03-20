@@ -161,6 +161,13 @@ This improves retrieval quality, but retrieval remains hint-only evidence. It do
 
 Successful user-specific navigation should be written back to memory after validated execution so future similar queries can benefit from semantic matching without requiring curated seeds.
 
+Writeback contract for V2 broad known-navigation:
+- use the same existing Phase 5 delayed-promotion model already approved for `history_info`
+- successful approved navigation turns create `phase5_pending_write`, not an immediate client-side memory write
+- immediate next correction drops the pending write
+- immediate next non-correction promotes it
+- the original successful user query text remains the writeback source so repeated identical noisy phrasing can later qualify for B1 `Memory-Exact`
+
 ### 5. Keep the current fallback transport contract
 
 The bounded LLM fallback continues to receive the **panel-normalized user query**.
@@ -247,6 +254,8 @@ Add curated seeds and writeback coverage for broader known-navigation families s
 Clarification:
 - curated seeds are for stable built-in command families, not per-user target inventories
 - user-specific targets should be learned from successful real usage via writeback rather than pre-seeded exhaustively
+- successful broad-navigation writeback must reuse the existing `phase5_pending_write` -> delayed promotion pipeline rather than a new immediate write path in the panel
+- repeated identical successful noisy navigation queries should become eligible for B1 `Memory-Exact` replay after promotion
 
 ### Slice 5 — Validation/Resolver Proof
 
@@ -265,6 +274,9 @@ Add regression coverage proving that V2 expansion does not weaken:
 - `please open workspace budget100` -> resolves through broad-navigation fallback
 - `hey can please open the budget100` -> resolves without requiring a curated `budget100` seed
 - `hey can please open the budget` -> bounded LLM fallback identifies the navigation family and the resolver clarifies among matching targets
+- first `hi there open that budget100` -> validated success + pending write
+- next non-correction turn -> pending navigation write promoted
+- later `hi there open that budget100` -> eligible for B1 `Memory-Exact`
 - strong exact/semantic retrieval can still complete without bounded LLM when the validated resolver already suffices
 - weak/empty retrieval still reaches the bounded LLM fallback
 - near-tie across conflicting entries clarifies directly

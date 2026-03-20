@@ -423,6 +423,8 @@ export interface ChatMessage {
   contentTruncated?: boolean
   // Cited snippet evidence for inline citation display (6x.6)
   citedSnippets?: import('@/lib/chat/stage6-content-tool-contracts').CitedSnippet[]
+  // Provenance badge — persisted in metadata so it survives entry/workspace navigation remounts
+  provenance?: ChatProvenance
 }
 
 // Re-export SessionState for convenience
@@ -450,7 +452,7 @@ const ACTION_HISTORY_MAX_SIZE = 50
 
 interface ChatNavigationContextValue {
   messages: ChatMessage[]
-  addMessage: (message: ChatMessage, routingMeta?: { tierLabel?: string }) => void
+  addMessage: (message: ChatMessage, routingMeta?: { tierLabel?: string; provenance?: ChatProvenance }) => void
   clearMessages: () => void
   input: string
   setInput: (input: string) => void
@@ -580,6 +582,8 @@ interface DbMessage {
     itemName?: string
     corpus?: 'docs' | 'notes'
     contentTruncated?: boolean
+    // Provenance badge (persisted for remount survival)
+    provenance?: ChatProvenance
   } | null
   createdAt: string
 }
@@ -735,6 +739,8 @@ function dbMessageToChatMessage(dbMsg: DbMessage): ChatMessage {
     itemName: dbMsg.metadata?.itemName,
     corpus: dbMsg.metadata?.corpus,
     contentTruncated: dbMsg.metadata?.contentTruncated,
+    // Hydrate provenance badge (persisted so it survives remounts)
+    provenance: dbMsg.metadata?.provenance as ChatProvenance | undefined,
   }
 }
 
@@ -970,10 +976,14 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
 
   // Add message with persistence
   const addMessage = useCallback(
-    async (message: ChatMessage, routingMeta?: { tierLabel?: string }) => {
+    async (message: ChatMessage, routingMeta?: { tierLabel?: string; provenance?: ChatProvenance }) => {
       // Dev provenance: track last assistant message ID for post-hoc tagging
       if (isProvenanceDebugEnabled() && message.role === 'assistant') {
         lastAddedAssistantIdRef.current = message.id
+      }
+      // Set provenance on message if supplied via routingMeta (single-write persistence)
+      if (routingMeta?.provenance && message.role === 'assistant') {
+        message.provenance = routingMeta.provenance
       }
       // Add to local state immediately for responsiveness
       setMessages((prev) => [...prev, message])
@@ -998,6 +1008,7 @@ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
         if (message.itemName) metadata.itemName = message.itemName
         if (message.corpus) metadata.corpus = message.corpus
         if (message.contentTruncated) metadata.contentTruncated = message.contentTruncated
+        if (message.provenance) metadata.provenance = message.provenance
 
         const persisted = await persistMessage(
           conversationId,

@@ -81,7 +81,7 @@ export interface RoutingHandlerContext {
   usedCoreAppTermsFallback: boolean
 
   // Callbacks
-  addMessage: (message: ChatMessage, routingMeta?: { tierLabel?: string }) => void
+  addMessage: (message: ChatMessage, routingMeta?: { tierLabel?: string; provenance?: import('./chat-navigation-context').ChatProvenance }) => void
   updateDocRetrievalState: (update: Partial<DocRetrievalState>) => void
   setIsLoading: (loading: boolean) => void
 }
@@ -175,7 +175,7 @@ export interface ClarificationInterceptContext {
   currentEntryId?: string
 
   // Callbacks
-  addMessage: (message: ChatMessage, routingMeta?: { tierLabel?: string }) => void
+  addMessage: (message: ChatMessage, routingMeta?: { tierLabel?: string; provenance?: import('./chat-navigation-context').ChatProvenance }) => void
   setLastClarification: (state: LastClarificationState | null) => void
   setIsLoading: (loading: boolean) => void
   setPendingOptions: (options: PendingOptionState[]) => void
@@ -252,7 +252,7 @@ export interface ClarificationInterceptContext {
 export interface PanelDisambiguationHandlerContext {
   trimmedInput: string
   visibleWidgets?: VisibleWidget[]
-  addMessage: (message: ChatMessage, routingMeta?: { tierLabel?: string }) => void
+  addMessage: (message: ChatMessage, routingMeta?: { tierLabel?: string; provenance?: import('./chat-navigation-context').ChatProvenance }) => void
   setIsLoading: (loading: boolean) => void
   setPendingOptions: (options: PendingOptionState[]) => void
   setPendingOptionsMessageId: (messageId: string | null) => void
