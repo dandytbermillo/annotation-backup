@@ -32,6 +32,7 @@ Examples of the current inconsistency:
 - `hi there open the budget100` -> may fall into a clarifier
 - `hey there i want you to open the links panel b` -> may fall into unrelated disambiguation
 
+
 From the user’s perspective, these are all navigation requests. The product should not make only the Home subset robust against noisy conversational phrasing.
 
 ## Goal
