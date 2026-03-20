@@ -182,3 +182,67 @@ export function buildInfoIntentMemoryWritePayload(
     tool_version: MEMORY_TOOL_VERSION,
   }
 }
+
+// --- Phase 5: Navigation write builder ---
+
+/**
+ * Build a MemoryWritePayload for successful Phase 5 navigation executions.
+ *
+ * Eligible intents: open_entry, open_workspace, open_panel, go_home.
+ * These produce action_intent rows with target IDs from the resolved navigation.
+ * The raw user query text is the writeback source — normal server-side storage
+ * normalization and fingerprinting still applies before storage.
+ *
+ * Returns null for unresolved, failed, or ambiguous resolutions.
+ */
+export function buildPhase5NavigationWritePayload(params: {
+  rawQueryText: string
+  intentId: 'open_entry' | 'open_workspace' | 'open_panel' | 'go_home'
+  resolution: {
+    success: boolean
+    action: string
+    entry?: { id: string; name: string }
+    workspace?: { id: string; name: string }
+    panel?: { id?: string; title?: string }
+  }
+  contextSnapshot: ContextSnapshotV1
+}): MemoryWritePayload | null {
+  const { rawQueryText, intentId, resolution, contextSnapshot } = params
+
+  if (!resolution.success) return null
+
+  let slotsJson: Record<string, unknown> = { action_type: intentId }
+  let targetIds: string[] = []
+
+  if (intentId === 'open_entry' && resolution.entry) {
+    slotsJson.entryId = resolution.entry.id
+    slotsJson.entryName = resolution.entry.name
+    targetIds = [resolution.entry.id]
+  } else if (intentId === 'open_workspace' && resolution.workspace) {
+    slotsJson.workspaceId = resolution.workspace.id
+    slotsJson.workspaceName = resolution.workspace.name
+    targetIds = [resolution.workspace.id]
+  } else if (intentId === 'open_panel' && resolution.panel?.id) {
+    slotsJson.panelId = resolution.panel.id
+    slotsJson.panelTitle = resolution.panel.title ?? null
+    targetIds = [resolution.panel.id]
+  } else if (intentId === 'go_home') {
+    // go_home has no specific target ID — home entry resolved by client
+    slotsJson.action_type = 'go_home'
+  } else {
+    // Missing required target data for this intent — don't write
+    return null
+  }
+
+  return {
+    raw_query_text: rawQueryText,
+    context_snapshot: contextSnapshot,
+    intent_id: intentId,
+    intent_class: 'action_intent',
+    slots_json: slotsJson,
+    target_ids: targetIds,
+    risk_tier: 'medium', // LLM-mediated fallback writes
+    schema_version: MEMORY_SCHEMA_VERSION,
+    tool_version: MEMORY_TOOL_VERSION,
+  }
+}

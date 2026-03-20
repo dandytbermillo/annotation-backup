@@ -18,7 +18,7 @@ import { resolveNoteWorkspaceUserId } from '@/app/api/note-workspaces/user-id'
 import { extractLinkNotesBadge } from '@/lib/chat/ui-helpers'
 import { detectLocalSemanticIntent, isVerifyOpenQuestion } from '@/lib/chat/input-classifiers'
 import { trySemanticRescue } from '@/lib/chat/semantic-rescue'
-import { buildInfoIntentMemoryWritePayload } from '@/lib/chat/routing-log/memory-write-payload'
+import { buildInfoIntentMemoryWritePayload, buildPhase5NavigationWritePayload } from '@/lib/chat/routing-log/memory-write-payload'
 import { buildContextSnapshot } from '@/lib/chat/routing-log/context-snapshot'
 
 // =============================================================================
@@ -1312,6 +1312,28 @@ export async function POST(request: NextRequest) {
           contextSnapshot,
         )
       } catch { /* fail-open: don't block response for write metadata */ }
+    }
+
+    // Phase 5: build pending navigation-intent exemplar write for successful v1 navigation resolutions
+    const PHASE5_WRITEBACK_NAV_INTENTS = new Set(['open_entry', 'open_workspace', 'go_home', 'open_panel'])
+    if (!phase5PendingWrite && resolution.success && PHASE5_WRITEBACK_NAV_INTENTS.has(intent.intent)) {
+      try {
+        const navContextSnapshot = buildContextSnapshot({
+          openWidgetCount: 0,
+          pendingOptionsCount: context?.pendingOptions?.length ?? 0,
+          activeOptionSetId: null,
+          hasLastClarification: !!context?.lastClarification,
+          hasLastSuggestion: false,
+          latchEnabled: false,
+          messageCount: 0,
+        })
+        phase5PendingWrite = buildPhase5NavigationWritePayload({
+          rawQueryText: userMessage,
+          intentId: intent.intent as 'open_entry' | 'open_workspace' | 'open_panel' | 'go_home',
+          resolution: resolution as { success: boolean; action: string; entry?: { id: string; name: string }; workspace?: { id: string; name: string }; panel?: { id?: string; title?: string } },
+          contextSnapshot: navContextSnapshot,
+        })
+      } catch { /* fail-open */ }
     }
 
     return NextResponse.json({
