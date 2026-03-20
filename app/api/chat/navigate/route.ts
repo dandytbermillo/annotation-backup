@@ -601,7 +601,7 @@ export async function POST(request: NextRequest) {
 
     // Parse request body
     const body = await request.json()
-    const { message, currentEntryId, currentWorkspaceId, context, clarificationMode, clarificationQuestion, phase5_hint_intent, phase5_hint_scope } = body
+    const { message, currentEntryId, currentWorkspaceId, context, clarificationMode, clarificationQuestion, phase5_hint_intent, phase5_hint_scope, phase5_context_snapshot, phase5_replay_query_text } = body
 
     if (!message || typeof message !== 'string' || message.trim().length === 0) {
       return NextResponse.json(
@@ -1305,8 +1305,12 @@ export async function POST(request: NextRequest) {
           latchEnabled: false,
           messageCount: 0,
         })
+        // Use raw trimmed input for writeback keying (B1 matches on this, not panel-normalized text)
+        const infoReplayText = (typeof phase5_replay_query_text === 'string' && phase5_replay_query_text.trim())
+          ? phase5_replay_query_text.trim()
+          : userMessage
         phase5PendingWrite = buildInfoIntentMemoryWritePayload(
-          userMessage,
+          infoReplayText,
           intent.intent as 'last_action' | 'explain_last_action' | 'verify_action',
           answerSource,
           contextSnapshot,
@@ -1315,20 +1319,37 @@ export async function POST(request: NextRequest) {
     }
 
     // Phase 5: build pending navigation-intent exemplar write for successful v1 navigation resolutions
-    const PHASE5_WRITEBACK_NAV_INTENTS = new Set(['open_entry', 'open_workspace', 'go_home', 'open_panel'])
-    if (!phase5PendingWrite && resolution.success && PHASE5_WRITEBACK_NAV_INTENTS.has(intent.intent)) {
+    // Gate on resolution.action (executed action), not intent.intent (LLM classification).
+    // Noisy queries like "hi there open that budget100" are classified as resolve_name by the LLM,
+    // then resolved to navigate_entry by the resolver. The writeback must fire on the executed action.
+    const RESOLUTION_ACTION_TO_WRITEBACK = {
+      'navigate_entry': 'open_entry',
+      'navigate_workspace': 'open_workspace',
+      'navigate_home': 'go_home',
+      'open_panel_drawer': 'open_panel',
+    } as const
+    const writebackIntentId = RESOLUTION_ACTION_TO_WRITEBACK[resolution.action as keyof typeof RESOLUTION_ACTION_TO_WRITEBACK]
+    if (!phase5PendingWrite && resolution.success && writebackIntentId) {
       try {
-        const navContextSnapshot = buildContextSnapshot({
-          openWidgetCount: 0,
-          pendingOptionsCount: context?.pendingOptions?.length ?? 0,
-          activeOptionSetId: null,
-          hasLastClarification: !!context?.lastClarification,
-          hasLastSuggestion: false,
-          latchEnabled: false,
-          messageCount: 0,
-        })
+        // Use forwarded replay snapshot from client (same source as B1 lookup).
+        // Fall back to synthetic defaults only if forwarded snapshot is missing or malformed.
+        const navContextSnapshot = (phase5_context_snapshot && typeof phase5_context_snapshot === 'object' && phase5_context_snapshot.version)
+          ? phase5_context_snapshot
+          : buildContextSnapshot({
+              openWidgetCount: 0,
+              pendingOptionsCount: context?.pendingOptions?.length ?? 0,
+              activeOptionSetId: null,
+              hasLastClarification: !!context?.lastClarification,
+              hasLastSuggestion: false,
+              latchEnabled: false,
+              messageCount: 0,
+            })
+        // Use raw trimmed input for writeback keying (B1 matches on this, not panel-normalized text)
+        const replayQueryText = (typeof phase5_replay_query_text === 'string' && phase5_replay_query_text.trim())
+          ? phase5_replay_query_text.trim()
+          : userMessage
         phase5PendingWrite = buildPhase5NavigationWritePayload({
-          rawQueryText: userMessage,
+          rawQueryText: replayQueryText,
           intentId: intent.intent as 'open_entry' | 'open_workspace' | 'open_panel' | 'go_home',
           resolution: resolution as { success: boolean; action: string; entry?: { id: string; name: string }; workspace?: { id: string; name: string }; panel?: { id?: string; title?: string } },
           contextSnapshot: navContextSnapshot,

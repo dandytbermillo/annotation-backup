@@ -613,6 +613,9 @@ export interface RoutingDispatcherResult {
   _phase5HintIntent?: string
   _phase5HintScope?: 'history_info' | 'navigation'
   _phase5HintFromSeed?: boolean
+
+  /** Phase 5: shared replay snapshot from live UI state — used for B1 lookup AND navigation writeback */
+  _phase5ReplaySnapshot?: import('./routing-log/context-snapshot').ContextSnapshotV1
 }
 
 /** Type alias for grounding actions (extracted from RoutingDispatcherResult for reuse) */
@@ -1402,18 +1405,25 @@ export async function dispatchRouting(
   const b1InputLooksLikeNewCommand = ACTION_VERB_PATTERN.test(ctx.trimmedInput)
     && !isSelectionOnly(ctx.trimmedInput, 10, [], 'embedded').isSelection
   const shouldSkipB1ForSelection = hasActiveSelectionContext && inputIsSelectionLike && !b1InputLooksLikeNewCommand
+
+  // Phase 5: compute shared replay snapshot from live UI state.
+  // Used by BOTH B1 exact lookup AND Phase 5 navigation writeback.
+  // Computed unconditionally — not gated by memoryReadEnabled or B1 execution.
+  const isLatchEnabledForSnapshot = process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1 === 'true'
+  const phase5ReplaySnapshot = buildContextSnapshot({
+    openWidgetCount: turnSnapshotForLog.openWidgets.length,
+    pendingOptionsCount: ctx.pendingOptions.length,
+    activeOptionSetId: ctx.activeOptionSetId,
+    hasLastClarification: ctx.lastClarification !== null,
+    hasLastSuggestion: ctx.lastSuggestion !== null,
+    latchEnabled: isLatchEnabledForSnapshot,
+    messageCount: ctx.messages.length,
+  })
+
   if (memoryReadEnabled && !shouldSkipB1ForSelection) {
     try {
-      const isLatchEnabled = process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1 === 'true'
-      const lookupSnapshot = buildContextSnapshot({
-        openWidgetCount: turnSnapshotForLog.openWidgets.length,
-        pendingOptionsCount: ctx.pendingOptions.length,
-        activeOptionSetId: ctx.activeOptionSetId,
-        hasLastClarification: ctx.lastClarification !== null,
-        hasLastSuggestion: ctx.lastSuggestion !== null,
-        latchEnabled: isLatchEnabled,
-        messageCount: ctx.messages.length,
-      })
+      // B1 uses the shared replay snapshot directly — no recomputation
+      const lookupSnapshot = phase5ReplaySnapshot
 
       const memoryResult = await lookupExactMemory({
         raw_query_text: ctx.trimmedInput,
@@ -2365,6 +2375,7 @@ export async function dispatchRouting(
       // Only for non-error paths (error paths throw at line 1243, result not returned).
       if (!routingError && result) {
         result._routingLogPayload = logPayload
+        result._phase5ReplaySnapshot = phase5ReplaySnapshot
       }
     } catch {
       // Double-fault: even log builder failed. Silently ignore.

@@ -2121,6 +2121,10 @@ function ChatNavigationPanelContent({
           // Phase 5: hint intent from retrieval-backed semantic memory
           phase5_hint_intent: routingResult?._phase5HintIntent,
           phase5_hint_scope: routingResult?._phase5HintScope,
+          // Phase 5: shared replay snapshot for navigation writeback (same source as B1 lookup)
+          phase5_context_snapshot: routingResult?._phase5ReplaySnapshot,
+          // Phase 5: raw trimmed input for writeback keying (B1 matches on this, not normalizedMessage)
+          phase5_replay_query_text: trimmedInput,
           context: {
             ...contextPayload,
             sessionState,
