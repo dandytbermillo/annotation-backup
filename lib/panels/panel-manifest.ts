@@ -113,6 +113,9 @@ export interface PanelIntentArgs {
 
   /** Parameters for the intent */
   params: Record<string, unknown>
+
+  /** Instance label for duplicate panel targeting (e.g., "B") */
+  instanceLabel?: string
 }
 
 /**

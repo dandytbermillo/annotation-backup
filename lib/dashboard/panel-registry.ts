@@ -78,7 +78,9 @@ export interface WorkspacePanel {
   height: number
   zIndex: number
   config: PanelConfig
-  badge: string | null // Single-letter badge (A-Z) for links_note panels
+  badge: string | null // Single-letter badge (A-Z) for links_note panels (legacy, kept for Links compatibility)
+  instanceLabel: string | null // Generic instance label (A-Z) for duplicable families
+  duplicateFamily: string | null // Family ID for duplicate-scoped uniqueness
   isVisible: boolean // Whether the panel is visible on dashboard (false = hidden by user)
   deletedAt: Date | null // Timestamp when moved to trash (null = not deleted)
   createdAt: Date
@@ -307,6 +309,8 @@ export function createDefaultPanel(
     zIndex: 0,
     config: { ...typeDef.defaultConfig },
     badge: null, // Badge is auto-assigned by the API for links_note panels
+    instanceLabel: null, // Instance label is auto-assigned by the allocator for duplicable families
+    duplicateFamily: null, // Family ID is set by the allocator for duplicable families
     isVisible: true, // New panels are always visible
     deletedAt: null, // New panels are not in trash
   }

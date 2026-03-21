@@ -84,3 +84,50 @@ export function extractLinkNotesBadge(input?: string): string | null {
 
 // Backward-compatible alias (deprecated)
 export const extractQuickLinksBadge = extractLinkNotesBadge
+
+/**
+ * Generic instance-label extractor for any panel family.
+ * Builds a regex from the family title and extracts a trailing single letter.
+ *
+ * Example: extractInstanceLabel("open navigator b", "navigator") → "B"
+ *          extractInstanceLabel("show quick capture a", "quick capture") → "A"
+ *          extractInstanceLabel("open navigator", "navigator") → null
+ */
+export function extractInstanceLabel(input: string, familyTitle: string): string | null {
+  if (!input || !familyTitle) return null
+  // Normalize slugs: "quick-capture" → "quick capture", "widget-manager" → "widget manager"
+  const normalized = familyTitle.replace(/-/g, ' ')
+  // Escape special regex chars, allow flexible whitespace between words
+  const escaped = normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')
+  const regex = new RegExp(`\\b${escaped}\\s+([a-z])\\b`, 'i')
+  const match = input.match(regex)
+  return match ? match[1].toUpperCase() : null
+}
+
+/**
+ * Apply deterministic instanceLabel override to an LLM intent response.
+ *
+ * If the LLM returned panel_intent without instanceLabel but user explicitly
+ * said a label in the raw text, inject it. Returns the intent unchanged if
+ * no override is needed.
+ */
+export function applyInstanceLabelOverride(
+  intent: { intent: string; args?: Record<string, unknown> },
+  userMessage: string,
+): { intent: string; args?: Record<string, unknown> } {
+  if (intent.intent !== 'panel_intent') return intent
+  if (!intent.args?.panelId) return intent
+  if (intent.args?.instanceLabel) return intent
+
+  const familyTitle = intent.args.panelId as string
+  const explicitLabel = extractInstanceLabel(userMessage, familyTitle)
+  if (!explicitLabel) return intent
+
+  return {
+    ...intent,
+    args: {
+      ...intent.args,
+      instanceLabel: explicitLabel,
+    },
+  }
+}

@@ -15,7 +15,7 @@ import { resolveIntent, type IntentResolutionResult } from '@/lib/chat/intent-re
 import { getSuggestions, type SuggestionResult, type DynamicSuggestionContext } from '@/lib/chat/typo-suggestions'
 import { panelRegistry } from '@/lib/panels/panel-registry'
 import { resolveNoteWorkspaceUserId } from '@/app/api/note-workspaces/user-id'
-import { extractLinkNotesBadge } from '@/lib/chat/ui-helpers'
+import { extractLinkNotesBadge, extractInstanceLabel, applyInstanceLabelOverride } from '@/lib/chat/ui-helpers'
 import { detectLocalSemanticIntent, isVerifyOpenQuestion } from '@/lib/chat/input-classifiers'
 import { trySemanticRescue } from '@/lib/chat/semantic-rescue'
 import { buildInfoIntentMemoryWritePayload, buildPhase5NavigationWritePayload } from '@/lib/chat/routing-log/memory-write-payload'
@@ -1038,6 +1038,9 @@ export async function POST(request: NextRequest) {
         },
       }
     }
+
+    // Generic duplicate-instance label extraction override
+    intent = applyInstanceLabelOverride(intent, userMessage)
 
     const resolutionContext = {
       userId,

@@ -370,6 +370,15 @@ For panel_intent with Quick Links:
 - ❌ quickLinksPanelBadge: "D" (when user didn't say a letter)
 - ❌ Guessing a badge from visible widgets or context
 
+## Duplicate Panel Instance Rule (Generic)
+
+Some panel families can have multiple instances (e.g., Navigator A, Navigator B).
+- If user explicitly says an instance letter (e.g., "navigator b"), include \`instanceLabel: "B"\` in panel_intent args
+- If user does NOT specify an instance letter, do NOT guess one
+- If multiple instances exist and user does not specify, the system will clarify
+
+This rule applies to any duplicable panel family. Quick Links has its own specific badge rule above; other families use this generic rule.
+
 ## Typo Tolerance
 
 If command keywords contain minor typos (1-2 character differences), infer the intended command when unambiguous:
@@ -489,6 +498,12 @@ Follow this decision tree to select the correct intent:
 \`\`\`
 Do NOT use resolve_name or open_workspace for visible widget names. The panelId should be the widget type (e.g., "navigator", "quick-capture", "links-overview", "continue", "widget-manager").
 
+**Duplicate instances:** If visible widgets show multiple instances of the same family (e.g., "Entry Navigator A" and "Entry Navigator B"), and the user specifies an instance letter (e.g., "open navigator b"), include \`instanceLabel\` in the args:
+\`\`\`json
+{ "intent": "panel_intent", "args": { "panelId": "navigator", "intentName": "open_drawer", "instanceLabel": "B" } }
+\`\`\`
+If the user does NOT specify a letter, omit instanceLabel — the system will clarify.
+
 ## Rules
 
 1. Return ONLY valid JSON, no other text
@@ -594,7 +609,7 @@ export interface UIContext {
   dashboard?: {
     entryId?: string
     entryName?: string
-    visibleWidgets?: Array<{ id: string; title: string; type: string }>
+    visibleWidgets?: Array<{ id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }>
     openDrawer?: { panelId: string; title: string; type?: string }
     focusedPanelId?: string | null
     /** Widget internal states reported via widget.reportState() - for LLM context */
@@ -808,7 +823,8 @@ export async function buildIntentMessages(
         if (uc.dashboard.visibleWidgets && uc.dashboard.visibleWidgets.length > 0) {
           contextBlock += `    visibleWidgets:\n`
           uc.dashboard.visibleWidgets.forEach((widget) => {
-            contextBlock += `      - "${sanitizeForPrompt(widget.title)}" (${sanitizeForPrompt(widget.type)})\n`
+            const instanceSuffix = (widget as any).instanceLabel ? `, instance: ${(widget as any).instanceLabel}` : ''
+            contextBlock += `      - "${sanitizeForPrompt(widget.title)}" (${sanitizeForPrompt(widget.type)}${instanceSuffix})\n`
           })
         }
         // Widget internal states (reported via widget.reportState)

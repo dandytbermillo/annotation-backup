@@ -17,6 +17,7 @@ import {
   PanelIntentResult,
   validateManifest,
 } from './panel-manifest'
+import { getDuplicateFamily } from '@/lib/dashboard/duplicate-family-map'
 
 // Import built-in manifests
 import { recentPanelManifest } from './manifests/recent-panel'
@@ -303,6 +304,14 @@ Available panel intents:
     const manifest = this.manifests.get(panelId)
     if (!manifest) return []
     return manifest.intents.map(i => i.name)
+  }
+
+  /**
+   * Check if a dashboard panel_type is duplicable (belongs to a duplicate family).
+   * Delegates to the authoritative family map.
+   */
+  isDuplicable(panelType: string): boolean {
+    return getDuplicateFamily(panelType) !== null
   }
 
   /**

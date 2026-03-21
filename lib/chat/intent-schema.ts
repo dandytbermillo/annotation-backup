@@ -105,6 +105,7 @@ export const IntentArgs = z.object({
   panelId: z.string().optional(),      // Target panel ID (e.g., "recent", "quick-links-a")
   intentName: z.string().optional(),   // Intent name within the panel (e.g., "list_recent")
   params: z.record(z.unknown()).optional(), // Parameters for the intent
+  instanceLabel: z.string().optional(), // Instance label for duplicate panels (e.g., "B")
 
   // For unsupported: brief reason why the request is not supported
   reason: z.string().optional(),

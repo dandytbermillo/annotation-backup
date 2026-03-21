@@ -30,6 +30,7 @@ import { executePanelIntent, panelRegistry } from '@/lib/panels/panel-registry'
 import { debugLog } from '@/lib/utils/debug-logger'
 import type { ActionTraceEntry, ReasonCode, SourceKind, ExecutionMeta } from './action-trace'
 import { classifyExecutionMeta } from '@/lib/chat/input-classifiers'
+import { getDuplicateFamily } from '@/lib/dashboard/duplicate-family-map'
 
 // =============================================================================
 // Centralized Panel Matching Helper
@@ -73,7 +74,7 @@ function normalizePanelName(s: string): string {
  */
 function matchVisiblePanel(
   input: string,
-  visibleWidgets?: Array<{ id: string; title: string; type: string }>
+  visibleWidgets?: Array<{ id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }>
 ): { id: string; title: string; type: string } | null {
   if (!visibleWidgets || visibleWidgets.length === 0) return null
 
@@ -97,7 +98,7 @@ function matchVisiblePanel(
  */
 function matchVisiblePanels(
   input: string,
-  visibleWidgets?: Array<{ id: string; title: string; type: string }>
+  visibleWidgets?: Array<{ id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }>
 ): Array<{ id: string; title: string; type: string }> {
   if (!visibleWidgets || visibleWidgets.length === 0) return []
 
@@ -2675,6 +2676,64 @@ async function resolvePanelIntent(
       }
     }
 
+    // Generic duplicate-family resolution (before dynamic fallback)
+    // Uses duplicate_family column for family-scoped instance targeting.
+    const normalizedPanelType = panelId.replace(/-/g, '_').toLowerCase()
+    const family = getDuplicateFamily(normalizedPanelType)
+    if (family) {
+      const instanceLabel = (intent.args?.instanceLabel as string | null) ?? null
+
+      if (instanceLabel) {
+        // Explicit token → query exact instance by (duplicate_family, instance_label)
+        const exactResult = await serverPool.query(
+          `SELECT id, title, instance_label FROM workspace_panels
+           WHERE workspace_id = $1 AND duplicate_family = $2
+             AND UPPER(instance_label) = UPPER($3) AND deleted_at IS NULL
+           LIMIT 1`,
+          [dashboardWorkspaceId, family, instanceLabel]
+        )
+        if (exactResult.rows.length === 1) {
+          const row = exactResult.rows[0]
+          return {
+            status: 'found' as const,
+            panelId: row.id,
+            panelTitle: row.title || panelId,
+            semanticPanelId: panelId,
+          }
+        }
+        return { status: 'not_found' as const }
+      }
+
+      // No token → check sibling count
+      const siblingsResult = await serverPool.query(
+        `SELECT id, title, instance_label FROM workspace_panels
+         WHERE workspace_id = $1 AND duplicate_family = $2 AND deleted_at IS NULL
+         ORDER BY instance_label ASC`,
+        [dashboardWorkspaceId, family]
+      )
+
+      if (siblingsResult.rows.length === 1) {
+        const row = siblingsResult.rows[0]
+        return {
+          status: 'found' as const,
+          panelId: row.id,
+          panelTitle: row.title || panelId,
+          semanticPanelId: panelId,
+        }
+      }
+      if (siblingsResult.rows.length > 1) {
+        return {
+          status: 'multiple' as const,
+          panels: siblingsResult.rows.map((r: { id: string; title: string; instance_label: string }) => ({
+            id: r.id,
+            title: r.title || panelId,
+            panel_type: normalizedPanelType,
+          })),
+        }
+      }
+      // No instances found — fall through to dynamic fallback
+    }
+
     // Dynamic fallback: Production-style prioritized matching (Ambiguity Guard)
     // Step 0: Exact visibleWidgets match wins (uses known panel ID from context)
     // Step 1: Exact panel_type match
@@ -2714,8 +2773,7 @@ async function resolvePanelIntent(
       // If multiple matches or no match, fall through to DB-based disambiguation
     }
 
-    // Step 1: Exact panel_type match
-    const normalizedPanelType = panelId.replace(/-/g, '_').toLowerCase()
+    // Step 1: Exact panel_type match (reuses normalizedPanelType from duplicate-family check above)
 
     // Helper: Format panel title - use database title, fallback to panelId
     const formatPanelTitle = (row: { title: string; badge?: string; panel_type: string }) => {

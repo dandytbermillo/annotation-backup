@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { serverPool } from '@/lib/db/pool'
 import { resolveNoteWorkspaceUserId } from '@/app/api/note-workspaces/user-id'
 import { panelTypeRegistry, type PanelTypeId } from '@/lib/dashboard/panel-registry'
+import { allocateInstanceLabel } from '@/lib/dashboard/instance-label-allocator'
 
 /**
  * POST /api/entries/[entryId]/seed-dashboard
@@ -95,24 +96,20 @@ export async function POST(
       [dashboardWorkspaceId]
     )
 
-    // Insert default panels
-    // Track badge assignment for links_note and links_note_tiptap panels (A, B, C...)
+    // Insert default panels with generic instance label allocation
     let panelCount = 0
-    let linksNoteBadgeIndex = 0
     for (const panel of DEFAULT_PANEL_LAYOUT) {
       const panelDef = panelTypeRegistry[panel.panelType]
 
-      // Assign badge for links_note and links_note_tiptap panels
-      let badge: string | null = null
-      if (panel.panelType === 'links_note' || panel.panelType === 'links_note_tiptap') {
-        badge = String.fromCharCode(65 + linksNoteBadgeIndex) // A=65, B=66, etc.
-        linksNoteBadgeIndex++
-      }
+      // Allocate instance label for duplicable panel families
+      const instanceResult = await allocateInstanceLabel(dashboardWorkspaceId, panel.panelType, client)
+      const badge = instanceResult?.label ?? null
+      const duplicateFamily = instanceResult?.family ?? null
 
       await client.query(
         `INSERT INTO workspace_panels (
-          workspace_id, panel_type, position_x, position_y, width, height, title, config, badge
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          workspace_id, panel_type, position_x, position_y, width, height, title, config, badge, instance_label, duplicate_family
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [
           dashboardWorkspaceId,
           panel.panelType,
@@ -123,6 +120,8 @@ export async function POST(
           panel.title,
           JSON.stringify(panelDef?.defaultConfig || {}),
           badge,
+          badge, // instance_label = same as badge
+          duplicateFamily,
         ]
       )
       panelCount++
@@ -138,6 +137,12 @@ export async function POST(
   } catch (error) {
     await client.query('ROLLBACK')
     console.error('[entries/seed-dashboard] Error:', error)
+    if (error instanceof Error && error.message.includes('Maximum')) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: 409 }
+      )
+    }
     return NextResponse.json(
       { error: 'Failed to seed dashboard' },
       { status: 500 }

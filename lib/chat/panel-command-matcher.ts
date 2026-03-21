@@ -26,6 +26,8 @@ export interface VisibleWidget {
   id: string
   title: string
   type: string
+  instanceLabel?: string
+  duplicateFamily?: string
 }
 
 export interface PanelMatchResult {

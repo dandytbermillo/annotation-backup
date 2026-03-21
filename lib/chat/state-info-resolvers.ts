@@ -58,7 +58,7 @@ export function resolvePanelOpenStateInfo(uiContext: {
  */
 export function resolvePanelWidgetStateInfo(uiContext: {
   dashboard?: {
-    visibleWidgets?: Array<{ id: string; title: string; type: string }>
+    visibleWidgets?: Array<{ id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }>
   }
 }): string {
   const widgets = uiContext?.dashboard?.visibleWidgets ?? []
@@ -89,7 +89,7 @@ export function resolveWorkspaceStateInfo(uiContext: {
 export function resolveDashboardStateInfo(uiContext: {
   dashboard?: {
     entryName?: string
-    visibleWidgets?: Array<{ id: string; title: string; type: string }>
+    visibleWidgets?: Array<{ id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }>
   }
 }): string {
   const widgets = uiContext?.dashboard?.visibleWidgets ?? []

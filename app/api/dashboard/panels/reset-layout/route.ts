@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { serverPool } from '@/lib/db/pool'
 import { resolveNoteWorkspaceUserId } from '@/app/api/note-workspaces/user-id'
 import { panelTypeRegistry, type PanelTypeId } from '@/lib/dashboard/panel-registry'
+import { allocateInstanceLabel } from '@/lib/dashboard/instance-label-allocator'
 
 /**
  * POST /api/dashboard/panels/reset-layout
@@ -64,14 +65,20 @@ export async function POST(request: NextRequest) {
         )
       }
 
-      // Insert default panels
+      // Insert default panels with generic instance label allocation
       const insertedPanels = []
       for (const panel of DEFAULT_PANEL_LAYOUT) {
         const panelDef = panelTypeRegistry[panel.panelType]
+
+        // Allocate instance label for duplicable panel families
+        const instanceResult = await allocateInstanceLabel(workspaceId, panel.panelType, client)
+        const badge = instanceResult?.label ?? null
+        const duplicateFamily = instanceResult?.family ?? null
+
         const result = await client.query(
           `INSERT INTO workspace_panels (
-            workspace_id, panel_type, position_x, position_y, width, height, title, config
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            workspace_id, panel_type, position_x, position_y, width, height, title, config, badge, instance_label, duplicate_family
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
           RETURNING id, workspace_id, panel_type, position_x, position_y, width, height, title, config, created_at`,
           [
             workspaceId,
@@ -82,6 +89,9 @@ export async function POST(request: NextRequest) {
             panel.height,
             panel.title,
             JSON.stringify(panelDef.defaultConfig || {}),
+            badge,
+            badge, // instance_label = same as badge
+            duplicateFamily,
           ]
         )
         insertedPanels.push(result.rows[0])
@@ -112,6 +122,12 @@ export async function POST(request: NextRequest) {
     }
   } catch (error) {
     console.error('[dashboard/panels/reset-layout] Error:', error)
+    if (error instanceof Error && error.message.includes('Maximum')) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: 409 }
+      )
+    }
     return NextResponse.json(
       { error: 'Failed to reset dashboard layout' },
       { status: 500 }

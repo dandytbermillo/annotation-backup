@@ -18,6 +18,22 @@ import type { LastClarificationState } from '@/lib/chat/chat-navigation-context'
 import { hasQuestionIntent } from '@/lib/chat/query-patterns'
 import { matchVisiblePanelCommand } from '@/lib/chat/panel-command-matcher'
 import { canonicalizeCommandInput, classifyExecutionMeta, isExplicitCommand, isStrictExactMatch } from '@/lib/chat/input-classifiers'
+import { getDuplicateFamily } from '@/lib/dashboard/duplicate-family-map'
+
+/**
+ * Map known-noun panelId to duplicate family ID.
+ * Known-noun panelIds use chat-level naming (e.g., 'navigator', 'quick-links')
+ * which may differ from DB panel_type (e.g., 'navigator', 'links_note').
+ * This helper bridges the two layers.
+ */
+function getKnownNounFamily(panelId: string): string | null {
+  // Direct panel_type match (e.g., 'navigator' → 'navigator')
+  const direct = getDuplicateFamily(panelId)
+  if (direct) return direct
+  // Dash-to-underscore conversion (e.g., 'quick-links' → 'quick_links' → no match, but quick-links-a → links_note)
+  const underscored = panelId.replace(/-/g, '_')
+  return getDuplicateFamily(underscored)
+}
 
 // =============================================================================
 // Known-Noun Allowlist
@@ -247,7 +263,7 @@ function isTrailingQuestionOnly(input: string): boolean {
 
 export interface KnownNounRoutingContext {
   trimmedInput: string
-  visibleWidgets?: Array<{ id: string; title: string; type: string }>
+  visibleWidgets?: Array<{ id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }>
   addMessage: (message: ChatMessage) => void
   setIsLoading: (loading: boolean) => void
   openPanelDrawer: (panelId: string, panelTitle?: string, executionMeta?: import('@/lib/chat/action-trace').ExecutionMeta) => void
@@ -299,7 +315,7 @@ export interface KnownNounRoutingResult {
  */
 function resolveToVisiblePanel(
   nounEntry: KnownNounEntry,
-  visibleWidgets?: Array<{ id: string; title: string; type: string }>
+  visibleWidgets?: Array<{ id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }>
 ): { id: string; title: string; type: string } | null {
   if (!visibleWidgets || visibleWidgets.length === 0) return null
 
@@ -496,6 +512,28 @@ export function handleKnownNounRouting(
       ctx.addMessage(assistantMessage)
       ctx.setIsLoading(false)
       return { handled: true }
+    }
+
+    // Duplicate-family check: if this family is duplicable and multiple visible siblings
+    // exist, defer to LLM/clarifier instead of deterministic execution.
+    const knownNounFamily = getKnownNounFamily(match.panelId)
+    if (knownNounFamily && ctx.visibleWidgets) {
+      const familySiblings = ctx.visibleWidgets.filter(
+        w => w.duplicateFamily === knownNounFamily
+      )
+      if (familySiblings.length > 1) {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'known_noun_duplicate_defer',
+          metadata: {
+            input: ctx.trimmedInput,
+            family: knownNounFamily,
+            siblingCount: familySiblings.length,
+            tier: 4,
+          },
+        })
+        return { handled: false }
+      }
     }
 
     void debugLog({

@@ -3,6 +3,7 @@ import { serverPool } from '@/lib/db/pool'
 import { resolveNoteWorkspaceUserId } from '@/app/api/note-workspaces/user-id'
 import { isValidPanelType, createDefaultPanel } from '@/lib/dashboard/panel-registry'
 import type { PanelTypeId } from '@/lib/dashboard/panel-registry'
+import { allocateInstanceLabel } from '@/lib/dashboard/instance-label-allocator'
 
 /**
  * GET /api/dashboard/panels
@@ -71,6 +72,8 @@ export async function GET(request: NextRequest) {
         z_index,
         config,
         badge,
+        instance_label,
+        duplicate_family,
         is_visible,
         deleted_at,
         created_at,
@@ -94,6 +97,8 @@ export async function GET(request: NextRequest) {
       zIndex: row.z_index,
       config: row.config || {},
       badge: row.badge || null,
+      instanceLabel: row.instance_label || null,
+      duplicateFamily: row.duplicate_family || null,
       isVisible: row.is_visible,
       deletedAt: row.deleted_at || null,
       createdAt: row.created_at,
@@ -157,36 +162,19 @@ export async function POST(request: NextRequest) {
     )
     const nextZIndex = zIndexResult.rows[0].next_z
 
-    // Auto-assign badge for links_note and links_note_tiptap panels
-    let badge: string | null = null
-    if (panelType === 'links_note' || panelType === 'links_note_tiptap') {
-      // Get existing badges for links_note/links_note_tiptap panels in this workspace
-      const badgeResult = await serverPool.query(
-        `SELECT badge FROM workspace_panels
-         WHERE workspace_id = $1 AND panel_type IN ('links_note', 'links_note_tiptap') AND badge IS NOT NULL
-         ORDER BY badge ASC`,
-        [workspaceId]
-      )
-      const usedBadges = new Set(badgeResult.rows.map(r => r.badge))
-
-      // Find the next available letter (A-Z)
-      for (let i = 0; i < 26; i++) {
-        const letter = String.fromCharCode(65 + i) // A=65, B=66, etc.
-        if (!usedBadges.has(letter)) {
-          badge = letter
-          break
-        }
-      }
-    }
+    // Auto-assign instance label for duplicable panel families (generic allocator)
+    const instanceResult = await allocateInstanceLabel(workspaceId, panelType)
+    const badge = instanceResult?.label ?? null
+    const duplicateFamily = instanceResult?.family ?? null
 
     // Create the panel
     const query = `
       INSERT INTO workspace_panels (
         workspace_id, panel_type, title,
         position_x, position_y, width, height,
-        z_index, config, badge, created_at, updated_at
+        z_index, config, badge, instance_label, duplicate_family, created_at, updated_at
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW()
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW()
       )
       RETURNING *
     `
@@ -202,6 +190,8 @@ export async function POST(request: NextRequest) {
       nextZIndex,
       JSON.stringify(config ?? defaultPanel.config),
       badge,
+      badge, // instance_label = same as badge
+      duplicateFamily,
     ])
 
     const row = result.rows[0]
@@ -224,6 +214,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ panel }, { status: 201 })
   } catch (error) {
     console.error('[dashboard/panels] POST Error:', error)
+    // Surface allocator overflow as a clear 409 (conflict) instead of generic 500
+    if (error instanceof Error && error.message.includes('Maximum')) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: 409 }
+      )
+    }
     return NextResponse.json(
       { error: 'Failed to create panel' },
       { status: 500 }
