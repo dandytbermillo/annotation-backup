@@ -617,6 +617,9 @@ export interface RoutingDispatcherResult {
   /** Phase 5: shared replay snapshot from live UI state — used for B1 lookup AND navigation writeback */
   _phase5ReplaySnapshot?: import('./routing-log/context-snapshot').ContextSnapshotV1
 
+  /** Phase 5: grounding panel-execute metadata — client builds writeback from this */
+  _groundingPanelOpen?: { panelId: string; panelTitle: string }
+
   /** Phase 5: first-class navigation replay action from memory — uses stored target IDs, no re-resolution */
   navigationReplayAction?:
     | { type: 'open_entry'; entryId: string; entryName: string; dashboardWorkspaceId: string }
@@ -5965,6 +5968,8 @@ async function dispatchRoutingInner(
                     classifierError,
                     isFollowUp,
                     _devProvenanceHint: 'llm_executed' as const,
+                    // Phase 5: pass panel identity for client-side navigation writeback
+                    _groundingPanelOpen: { panelId: selected.id, panelTitle: selected.label },
                   }
                 }
               }

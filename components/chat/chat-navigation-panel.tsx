@@ -65,6 +65,7 @@ import { maybeFormatSnippetWithHs3, stripMarkdownHeadersForUI, dedupeHeaderPath 
 // Prereq 4: Cross-corpus handlers (pill selection still used locally)
 import { handleCrossCorpusPillSelection } from '@/lib/chat/cross-corpus-handler'
 import { recordMemoryEntry, recordRoutingLog, revalidateMemoryHit, fireOutcomeLog, fireFailedOutcomeLog, type RoutingLogPayload } from '@/lib/chat/routing-log'
+import { buildPhase5NavigationWritePayload } from '@/lib/chat/routing-log/memory-write-payload'
 import { computeClarifierReorderTelemetry } from '@/lib/chat/routing-log/clarifier-reorder'
 import { buildTurnSnapshot } from '@/lib/chat/ui-snapshot-builder'
 
@@ -2056,6 +2057,35 @@ function ChatNavigationPanelContent({
         if (lastSuggestion && !routingResult.suggestionAction) {
           setLastSuggestion(null)
         }
+
+        // Phase 5: emit pending navigation writeback for grounding panel-execute.
+        // This path opens panels client-side (ctx.openPanelDrawer) and never calls
+        // the navigate API, so the server-side writeback at route.ts:1325 is unreachable.
+        // Build the writeback here using the shared replay snapshot from the dispatcher.
+        if (routingResult._groundingPanelOpen && routingResult._phase5ReplaySnapshot) {
+          try {
+            const gp = routingResult._groundingPanelOpen
+            const pendingWrite = buildPhase5NavigationWritePayload({
+              rawQueryText: trimmedInput,
+              intentId: 'open_panel',
+              resolution: {
+                success: true,
+                action: 'open_panel_drawer',
+                panel: { id: gp.panelId, title: gp.panelTitle },
+              },
+              contextSnapshot: routingResult._phase5ReplaySnapshot,
+            })
+            if (pendingWrite) {
+              setPendingPhase5Write({
+                payload: pendingWrite,
+                turnTimestamp: Date.now(),
+                fromClarifiedSuccess: false,
+                fromCuratedSeedAssisted: false,
+              })
+            }
+          } catch { /* fail-open: don't block panel open for writeback */ }
+        }
+
         return
       }
 

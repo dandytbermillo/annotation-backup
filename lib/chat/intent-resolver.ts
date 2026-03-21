@@ -2964,6 +2964,21 @@ async function resolvePanelIntent(
     }
   }
 
+  // Handle open_panel_drawer responses from panel handlers (e.g., open-drawer handler).
+  // Without this, panels that fall through resolveDrawerPanelTarget() and reach
+  // executePanelIntent → open-drawer handler would silently become action: 'inform'.
+  if ((result as any).action === 'open_panel_drawer' && (result as any).panelId) {
+    return {
+      success: true,
+      action: 'open_panel_drawer',
+      panelId: (result as any).panelId,
+      panelTitle: (result as any).panelTitle || panelId,
+      semanticPanelId: (result as any).semanticPanelId || panelId,
+      message: result.message || `Opening ${(result as any).panelTitle || panelId}...`,
+      executionMeta: classifyExecutionMeta({ matchKind: 'exact', candidateCount: 1, resolverPath: 'executeAction' }),
+    }
+  }
+
   // Handle different result types from panel handlers
   if (result.items && Array.isArray(result.items)) {
     const drawerResult = isListDrawerCandidate ? await resolveDrawerPanelTarget() : null
