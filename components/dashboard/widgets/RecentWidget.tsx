@@ -11,6 +11,7 @@
  */
 
 import React, { useEffect, useState } from 'react'
+import { FolderOpen, Layout } from 'lucide-react'
 import type { WorkspacePanel } from '@/lib/dashboard/panel-registry'
 import { usePanelChatVisibility } from '@/lib/hooks/use-panel-chat-visibility'
 import { upsertWidgetState, removeWidgetState } from '@/lib/widgets/widget-state-store'
@@ -91,9 +92,12 @@ export function RecentWidget({
     fetchRecent()
   }, [])
 
-  // Get first letter for workspace icon
-  const getInitial = (name: string): string => {
-    return name.charAt(0).toUpperCase()
+  // Get icon for recent item — entries (Dashboard) get folder, workspaces get layout
+  const getItemIcon = (workspace: RecentWorkspace): React.ReactNode => {
+    if (workspace.name === 'Dashboard') {
+      return <FolderOpen size={16} className="text-amber-400" />
+    }
+    return <Layout size={16} className="text-indigo-400" />
   }
 
   /**
@@ -200,7 +204,7 @@ export function RecentWidget({
               {workspaces.slice(0, WIDGET_ITEM_LIMIT).map((workspace) => (
                 <WidgetListItemGradient
                   key={workspace.id}
-                  letter={getInitial(getDisplayName(workspace))}
+                  icon={getItemIcon(workspace)}
                 >
                   {getDisplayName(workspace)}
                 </WidgetListItemGradient>

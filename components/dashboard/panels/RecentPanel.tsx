@@ -8,7 +8,7 @@
  */
 
 import React, { useEffect, useState } from 'react'
-import { Clock, RefreshCw } from 'lucide-react'
+import { Clock, RefreshCw, FolderOpen, Layout } from 'lucide-react'
 import { BaseDashboardPanel } from './BaseDashboardPanel'
 import { panelTypeRegistry } from '@/lib/dashboard/panel-registry'
 import type { BasePanelProps, PanelConfig } from '@/lib/dashboard/panel-registry'
@@ -258,14 +258,13 @@ export function RecentPanel({ panel, onClose, onTitleChange, onNavigate, onDelet
                   style={{
                     width: 32,
                     height: 32,
-                    borderRadius: 8,
-                    background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-                    color: '#fff',
-                    fontSize: 12,
-                    fontWeight: 600,
                   }}
                 >
-                  {workspace.entryName?.charAt(0).toUpperCase() || 'W'}
+                  {workspace.name === 'Dashboard' ? (
+                    <FolderOpen size={20} className="text-amber-400" />
+                  ) : (
+                    <Layout size={20} className="text-indigo-400" />
+                  )}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="truncate" style={{ fontSize: 13, fontWeight: 500, color: '#f0f0f0' }}>

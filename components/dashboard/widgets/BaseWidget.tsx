@@ -154,11 +154,13 @@ export function WidgetList({ children, className }: { children: React.ReactNode;
 export function WidgetListItem({
   icon,
   children,
-  className
+  className,
+  linkStyle
 }: {
   icon?: React.ReactNode
   children: React.ReactNode
   className?: string
+  linkStyle?: boolean
 }) {
   return (
     <li className={cn(
@@ -172,18 +174,25 @@ export function WidgetListItem({
           {icon}
         </div>
       )}
-      <span className="text-[13px] text-gray-300/90 truncate font-medium">{children}</span>
+      <span className={cn(
+        'text-[13px] truncate font-medium',
+        linkStyle
+          ? 'text-indigo-300/90 hover:text-indigo-200 hover:underline cursor-pointer'
+          : 'text-gray-300/90'
+      )}>{children}</span>
     </li>
   )
 }
 
-/** Widget list item with gradient icon (for workspaces) */
+/** Widget list item with icon (for entries/workspaces) */
 export function WidgetListItemGradient({
   letter,
+  icon,
   children,
   className
 }: {
-  letter: string
+  letter?: string
+  icon?: React.ReactNode
   children: React.ReactNode
   className?: string
 }) {
@@ -194,9 +203,15 @@ export function WidgetListItemGradient({
       'hover:bg-white/[0.03]',
       className
     )}>
-      <div className="w-6 h-6 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-md flex items-center justify-center text-[11px] font-bold flex-shrink-0 text-white shadow-sm shadow-indigo-500/25">
-        {letter}
-      </div>
+      {icon ? (
+        <div className="w-6 h-6 flex items-center justify-center flex-shrink-0 text-gray-400">
+          {icon}
+        </div>
+      ) : (
+        <div className="w-6 h-6 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-md flex items-center justify-center text-[11px] font-bold flex-shrink-0 text-white shadow-sm shadow-indigo-500/25">
+          {letter}
+        </div>
+      )}
       <span className="text-[13px] text-gray-300/90 truncate font-medium">{children}</span>
     </li>
   )

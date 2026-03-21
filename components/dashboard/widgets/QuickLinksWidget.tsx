@@ -11,7 +11,7 @@
  */
 
 import React, { useMemo, useEffect } from 'react'
-import { Link2 } from 'lucide-react'
+import { FolderOpen } from 'lucide-react'
 import type { WorkspacePanel, PanelConfig } from '@/lib/dashboard/panel-registry'
 import { usePanelChatVisibility } from '@/lib/hooks/use-panel-chat-visibility'
 import { upsertWidgetState, removeWidgetState } from '@/lib/widgets/widget-state-store'
@@ -202,7 +202,8 @@ export function QuickLinksWidget({
           {links.slice(0, WIDGET_LINK_LIMIT).map((link) => (
             <WidgetListItem
               key={link.workspaceId}
-              icon={<Link2 size={12} />}
+              icon={<FolderOpen size={12} className="text-amber-400" />}
+              linkStyle
             >
               {link.workspaceName}
             </WidgetListItem>
