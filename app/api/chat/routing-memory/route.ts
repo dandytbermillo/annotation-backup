@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { serverPool } from '@/lib/db/pool'
 import { normalizeForStorage, computeQueryFingerprint, sha256Hex } from '@/lib/chat/routing-log/normalization'
-import { canonicalJsonSerialize, stripVolatileFields } from '@/lib/chat/routing-log/context-snapshot'
+import { canonicalJsonSerialize, stripVolatileFields, stripVolatileFieldsForNavigation } from '@/lib/chat/routing-log/context-snapshot'
 import { redactQueryText } from '@/lib/chat/routing-log/redaction'
 import {
   OPTION_A_TENANT_ID,
@@ -95,7 +95,14 @@ export async function POST(request: NextRequest) {
     const queryFingerprint = computeQueryFingerprint(normalizedText)
     const redactedText = redactQueryText(normalizedText)
 
-    const contextFingerprint = sha256Hex(canonicalJsonSerialize(stripVolatileFields(payload.context_snapshot)))
+    // Phase 5 navigation rows use a minimal fingerprint (strips ephemeral UI state).
+    // Grounding rows keep the full fingerprint for strict replay matching.
+    const PHASE5_NAV_INTENTS = new Set(['open_entry', 'open_workspace', 'open_panel', 'go_home'])
+    const isNavRow = PHASE5_NAV_INTENTS.has(payload.intent_id)
+    const strippedSnapshot = isNavRow
+      ? stripVolatileFieldsForNavigation(payload.context_snapshot)
+      : stripVolatileFields(payload.context_snapshot)
+    const contextFingerprint = sha256Hex(canonicalJsonSerialize(strippedSnapshot))
 
     // Phase 3: compute embedding for semantic search (fail-open — null on failure)
     const embedding = await computeEmbedding(normalizedText, queryFingerprint)

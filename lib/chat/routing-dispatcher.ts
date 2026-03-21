@@ -1432,9 +1432,14 @@ export async function dispatchRouting(
       // B1 uses the shared replay snapshot directly — no recomputation
       const lookupSnapshot = phase5ReplaySnapshot
 
+      // Phase 5: use navigation-specific minimal fingerprint for action commands and home imperatives
+      const HOME_NAV_FOR_B1 = /\b(go\s+(to\s+)?home|take\s+me\s+home|return\s+home|back\s+home)\b/i
+      const isNavReplayMode = isActionNavigationCommand(ctx.trimmedInput) || HOME_NAV_FOR_B1.test(ctx.trimmedInput)
+
       const memoryResult = await lookupExactMemory({
         raw_query_text: ctx.trimmedInput,
         context_snapshot: lookupSnapshot,
+        navigation_replay_mode: isNavReplayMode || undefined,
       })
 
       if (memoryResult) {
@@ -1664,11 +1669,18 @@ export async function dispatchRouting(
       const hasActiveWorkspace = !!ctx.uiContext?.workspace?.workspaceName
       const isDashboardActive = ctx.uiContext?.mode === 'dashboard'
       const hasSurfaceContext = isNoteRelated || hasVisiblePanels || hasActiveWorkspace || isDashboardActive
-      // Arbiter runs for everything except action/imperative navigation commands and history_info queries.
-      // This replaces the previous patchwork of isLikelyNavigateCommand + ACTION_VERB_PREFIX + phase5ScopeExcluded.
+      // Arbiter runs for everything except:
+      // 1. Action/imperative navigation commands (open/show/go to/switch to)
+      // 2. History_info queries (from committed session state, not cross-surface UI)
+      // 3. Home-navigation imperatives (take me home, return home, back home)
+      //    These are safe to exclude because HOME_NAV_PATTERN is narrow and unambiguous.
+      //    We do NOT use the broad detectHintScope('navigation') here because it also matches
+      //    state-info queries like "which panel is open?" via BROAD_NAV_ACTION + TARGET_FAMILY.
       const isActionNav = isActionNavigationCommand(ctx.trimmedInput)
       const isHistoryInfo = detectHintScope(ctx.trimmedInput) === 'history_info'
-      return hasSurfaceContext && !contentResult.isContentIntent && !isArbiterHardExcluded(ctx.trimmedInput) && !isActionNav && !isHistoryInfo
+      const HOME_NAV_BYPASS = /\b(go\s+(to\s+)?home|take\s+me\s+home|return\s+home|back\s+home)\b/i
+      const isHomeNav = HOME_NAV_BYPASS.test(ctx.trimmedInput)
+      return hasSurfaceContext && !contentResult.isContentIntent && !isArbiterHardExcluded(ctx.trimmedInput) && !isActionNav && !isHistoryInfo && !isHomeNav
     })()) {
       // ── 6x.8 Phase 4: Cross-surface arbiter for uncertain turns across surfaces ──
       const NOTE_REFERENCE_PATTERN = /\b(this|that|the|my|which|what|any|a)\s+(note|document|page)\b/i

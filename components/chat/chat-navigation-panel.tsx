@@ -1824,6 +1824,7 @@ function ChatNavigationPanelContent({
       // Routes through executeAction(resolution) with reconstructed IntentResolutionResult.
       // ---------------------------------------------------------------------------
       if (routingResult.handled && routingResult.navigationReplayAction) {
+        let replaySucceeded = false
         const navAction = routingResult.navigationReplayAction
         try {
           let replayResolution: import('@/lib/chat/intent-resolver').IntentResolutionResult
@@ -1870,26 +1871,39 @@ function ChatNavigationPanelContent({
             throw new Error('Unknown navigation replay action type')
           }
 
-          // Add response message
-          const replayMsg: ChatMessage = {
-            id: `assistant-${Date.now()}`,
-            role: 'assistant',
-            content: replayResolution.message ?? 'Navigating...',
-            timestamp: new Date(),
-            isError: false,
-            provenance: 'memory_exact',
-          }
-          addMessage(replayMsg, { tierLabel: routingResult.tierLabel, provenance: 'memory_exact' })
-
-          // Execute through existing path
+          // Execute through existing path FIRST — only surface success after confirmed execution
           const result = await executeAction(replayResolution)
 
-          // Fire pending memory log (same contract as existing memory-served execution)
-          if (routingResult._pendingMemoryLog) {
-            recordRoutingLog(routingResult._pendingMemoryLog).catch(() => {})
-          }
-          if (routingResult._pendingMemoryWrite) {
-            recordMemoryEntry(routingResult._pendingMemoryWrite).catch(() => {})
+          if (result && (result as { success?: boolean }).success !== false) {
+            replaySucceeded = true
+            // Execution confirmed — add success message and fire memory logs
+            const replayMsg: ChatMessage = {
+              id: `assistant-${Date.now()}`,
+              role: 'assistant',
+              content: replayResolution.message ?? 'Navigating...',
+              timestamp: new Date(),
+              isError: false,
+              provenance: 'memory_exact',
+            }
+            addMessage(replayMsg, { tierLabel: routingResult.tierLabel, provenance: 'memory_exact' })
+
+            // Fire pending memory log (same contract as existing memory-served execution)
+            if (routingResult._pendingMemoryLog) {
+              recordRoutingLog(routingResult._pendingMemoryLog).catch(() => {})
+            }
+            if (routingResult._pendingMemoryWrite) {
+              recordMemoryEntry(routingResult._pendingMemoryWrite).catch(() => {})
+            }
+          } else {
+            // Execution failed — do NOT show Memory-Exact success or log as successful replay
+            const failMsg: ChatMessage = {
+              id: `assistant-${Date.now()}`,
+              role: 'assistant',
+              content: 'Navigation replay could not complete. The target may no longer be available.',
+              timestamp: new Date(),
+              isError: true,
+            }
+            addMessage(failMsg)
           }
         } catch (error) {
           const errorMsg: ChatMessage = {
@@ -1902,7 +1916,8 @@ function ChatNavigationPanelContent({
           addMessage(errorMsg)
         }
 
-        if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current) {
+        // Only tag memory_exact provenance on confirmed replay success
+        if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current && replaySucceeded) {
           setProvenance(lastAddedAssistantIdRef.current, 'memory_exact')
         }
         setIsLoading(false)

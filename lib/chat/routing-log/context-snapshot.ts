@@ -57,6 +57,21 @@ export function stripVolatileFields(snapshot: ContextSnapshotV1): Omit<ContextSn
   return stable
 }
 
+/**
+ * Strip volatile AND ephemeral fields for Phase 5 navigation replay keying.
+ * Navigation replay safety comes from stored target IDs + execution validation,
+ * not from matching ephemeral UI state like panel count or pending clarifiers.
+ *
+ * Retains only: version, latch_enabled (config-level, stable across turns).
+ * Full context_snapshot is still stored for diagnostics — only fingerprint changes.
+ */
+export function stripVolatileFieldsForNavigation(snapshot: ContextSnapshotV1): Pick<ContextSnapshotV1, 'version' | 'latch_enabled'> {
+  return {
+    version: snapshot.version,
+    latch_enabled: snapshot.latch_enabled,
+  }
+}
+
 // --- Canonical JSON serializer (client-safe, no crypto) ---
 
 /**

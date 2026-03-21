@@ -215,20 +215,26 @@ export function buildPhase5NavigationWritePayload(params: {
   let targetIds: string[] = []
 
   if (intentId === 'open_entry' && resolution.entry) {
+    // Reject incomplete: dashboardWorkspaceId is required for replay execution
+    if (!resolution.entry.dashboardWorkspaceId) return null
     slotsJson.entryId = resolution.entry.id
     slotsJson.entryName = resolution.entry.name
-    slotsJson.dashboardWorkspaceId = resolution.entry.dashboardWorkspaceId ?? ''
+    slotsJson.dashboardWorkspaceId = resolution.entry.dashboardWorkspaceId
     targetIds = [resolution.entry.id]
   } else if (intentId === 'open_workspace' && resolution.workspace) {
+    // Reject incomplete: entryId/entryName required for WorkspaceMatch reconstruction
+    if (!resolution.workspace.entryId || !resolution.workspace.entryName) return null
     slotsJson.workspaceId = resolution.workspace.id
     slotsJson.workspaceName = resolution.workspace.name
-    slotsJson.entryId = resolution.workspace.entryId ?? ''
-    slotsJson.entryName = resolution.workspace.entryName ?? ''
+    slotsJson.entryId = resolution.workspace.entryId
+    slotsJson.entryName = resolution.workspace.entryName
     slotsJson.isDefault = resolution.workspace.isDefault ?? false
     targetIds = [resolution.workspace.id]
   } else if (intentId === 'open_panel' && resolution.panel?.id) {
+    // Reject incomplete: panelTitle required for replay surfaced message
+    if (!resolution.panel.title) return null
     slotsJson.panelId = resolution.panel.id
-    slotsJson.panelTitle = resolution.panel.title ?? null
+    slotsJson.panelTitle = resolution.panel.title
     targetIds = [resolution.panel.id]
   } else if (intentId === 'go_home') {
     // go_home has no specific target ID — home entry resolved by client

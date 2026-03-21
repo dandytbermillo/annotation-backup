@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { serverPool } from '@/lib/db/pool'
 import { normalizeForStorage, computeQueryFingerprint, sha256Hex } from '@/lib/chat/routing-log/normalization'
-import { canonicalJsonSerialize, stripVolatileFields } from '@/lib/chat/routing-log/context-snapshot'
+import { canonicalJsonSerialize, stripVolatileFields, stripVolatileFieldsForNavigation } from '@/lib/chat/routing-log/context-snapshot'
 import {
   OPTION_A_TENANT_ID,
   OPTION_A_USER_ID,
@@ -45,12 +45,21 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const payload: { raw_query_text: string; context_snapshot: ContextSnapshotV1 } = await request.json()
+    const payload: {
+      raw_query_text: string
+      context_snapshot: ContextSnapshotV1
+      navigation_replay_mode?: boolean  // Phase 5: use navigation-specific minimal fingerprint
+    } = await request.json()
 
     // Normalize and fingerprint on server side (crypto available here)
     const normalizedText = normalizeForStorage(payload.raw_query_text)
     const queryFingerprint = computeQueryFingerprint(normalizedText)
-    const contextFingerprint = sha256Hex(canonicalJsonSerialize(stripVolatileFields(payload.context_snapshot)))
+
+    // Phase 5 navigation rows use a minimal fingerprint (strips ephemeral UI state)
+    const strippedSnapshot = payload.navigation_replay_mode
+      ? stripVolatileFieldsForNavigation(payload.context_snapshot)
+      : stripVolatileFields(payload.context_snapshot)
+    const contextFingerprint = sha256Hex(canonicalJsonSerialize(strippedSnapshot))
 
     const { rows } = await serverPool.query(LOOKUP_SQL, [
       OPTION_A_TENANT_ID, OPTION_A_USER_ID,

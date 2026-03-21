@@ -34,6 +34,7 @@ export interface MemoryLookupResult {
 export async function lookupExactMemory(payload: {
   raw_query_text: string
   context_snapshot: ContextSnapshotV1
+  navigation_replay_mode?: boolean  // Phase 5: use navigation-specific minimal fingerprint
 }): Promise<MemoryLookupResult | null> {
   // Client-side early bail-out
   if (process.env.NEXT_PUBLIC_CHAT_ROUTING_MEMORY_READ !== 'true') {
