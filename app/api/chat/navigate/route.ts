@@ -15,7 +15,8 @@ import { resolveIntent, type IntentResolutionResult } from '@/lib/chat/intent-re
 import { getSuggestions, type SuggestionResult, type DynamicSuggestionContext } from '@/lib/chat/typo-suggestions'
 import { panelRegistry } from '@/lib/panels/panel-registry'
 import { resolveNoteWorkspaceUserId } from '@/app/api/note-workspaces/user-id'
-import { extractLinkNotesBadge, extractInstanceLabel, applyInstanceLabelOverride } from '@/lib/chat/ui-helpers'
+import { extractLinkNotesBadge, extractInstanceLabel, extractQuickLinksInstanceLabel, applyInstanceLabelOverride } from '@/lib/chat/ui-helpers'
+import { getDuplicateFamily } from '@/lib/dashboard/duplicate-family-map'
 import { detectLocalSemanticIntent, isVerifyOpenQuestion } from '@/lib/chat/input-classifiers'
 import { trySemanticRescue } from '@/lib/chat/semantic-rescue'
 import { buildInfoIntentMemoryWritePayload, buildPhase5NavigationWritePayload } from '@/lib/chat/routing-log/memory-write-payload'
@@ -1357,11 +1358,26 @@ export async function POST(request: NextRequest) {
           resolution: {
             ...resolution,
             // Map top-level panelId/panelTitle to nested panel object for writeback builder
-            panel: (resolution as unknown as Record<string, unknown>).panelId ? {
-              id: (resolution as unknown as Record<string, unknown>).panelId as string,
-              title: (resolution as unknown as Record<string, unknown>).panelTitle as string,
-            } : undefined,
-          } as { success: boolean; action: string; entry?: { id: string; name: string; dashboardWorkspaceId?: string }; workspace?: { id: string; name: string; entryId?: string; entryName?: string; isDefault?: boolean }; panel?: { id?: string; title?: string } },
+            panel: (resolution as unknown as Record<string, unknown>).panelId ? (() => {
+              const panelId = (resolution as unknown as Record<string, unknown>).panelId as string
+              const panelTitle = (resolution as unknown as Record<string, unknown>).panelTitle as string
+              // Derive duplicate-selector metadata from request signals (not panel row)
+              const resolutionDupFamily = (resolution as unknown as Record<string, unknown>).duplicateFamily as string | undefined
+              const resolutionInstanceLabel = (resolution as unknown as Record<string, unknown>).instanceLabel as string | undefined
+              // selectorSpecific: did the user explicitly name an instance?
+              const isQuickLinks = intent.intent === 'show_quick_links' || (intent.args?.panelId as string)?.startsWith('quick-links')
+              const selectorSpecific = isQuickLinks
+                ? !!(intent.args?.quickLinksPanelBadge || extractQuickLinksInstanceLabel(userMessage))
+                : !!intent.args?.instanceLabel
+              return {
+                id: panelId,
+                title: panelTitle,
+                duplicateFamily: resolutionDupFamily,
+                instanceLabel: resolutionInstanceLabel,
+                selectorSpecific,
+              }
+            })() : undefined,
+          } as { success: boolean; action: string; entry?: { id: string; name: string; dashboardWorkspaceId?: string }; workspace?: { id: string; name: string; entryId?: string; entryName?: string; isDefault?: boolean }; panel?: { id?: string; title?: string; duplicateFamily?: string; instanceLabel?: string; selectorSpecific?: boolean } },
           contextSnapshot: navContextSnapshot,
         })
       } catch { /* fail-open */ }

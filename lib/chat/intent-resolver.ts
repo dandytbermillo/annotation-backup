@@ -207,6 +207,9 @@ export interface IntentResolutionResult {
   // Semantic panel ID for action tracking (e.g., "recent", "quick-links-d")
   // Used to match user queries like "did I open quick links D?"
   semanticPanelId?: string
+  // Duplicate-family selector metadata for Phase 5 replay
+  duplicateFamily?: string
+  instanceLabel?: string
 
   // Execution provenance metadata — threaded through API → events → commit points
   executionMeta?: ExecutionMeta
@@ -1913,6 +1916,9 @@ async function resolveShowQuickLinks(
     panelTitle,
     // Semantic ID for action tracking (e.g., "quick-links-d")
     semanticPanelId: `quick-links-${badge}`,
+    // Duplicate-family selector metadata for Phase 5 replay
+    duplicateFamily: 'quick-links',
+    instanceLabel: badge?.toUpperCase() || undefined,
     message: `Opening ${panelTitle}...`,
     executionMeta: classifyExecutionMeta({ matchKind: 'exact', candidateCount: 1, resolverPath: 'executeAction' }),
   }
@@ -2571,7 +2577,7 @@ async function resolvePanelIntent(
 
   // Resolve panel instance for drawer usage (current entry dashboard)
   type DrawerResolutionResult =
-    | { status: 'found'; panelId: string; panelTitle: string; semanticPanelId: string }
+    | { status: 'found'; panelId: string; panelTitle: string; semanticPanelId: string; duplicateFamily?: string; instanceLabel?: string }
     | { status: 'confirm'; panelId: string; panelTitle: string; panelType: string; semanticPanelId: string }
     | { status: 'multiple'; panels: Array<{ id: string; title: string; panel_type: string }> }
     | { status: 'not_found' }
@@ -2639,6 +2645,8 @@ async function resolvePanelIntent(
             panelId: row.id,
             panelTitle,
             semanticPanelId: `quick-links-${row.badge?.toLowerCase() || 'd'}`,
+            duplicateFamily: 'quick-links',
+            instanceLabel: row.badge?.toUpperCase() || undefined,
           }
         }
 
@@ -2677,6 +2685,8 @@ async function resolvePanelIntent(
         panelId: row.id,
         panelTitle,
         semanticPanelId: `quick-links-${row.badge?.toLowerCase() || 'd'}`,
+        duplicateFamily: 'quick-links',
+        instanceLabel: row.badge?.toUpperCase() || undefined,
       }
     }
 
@@ -2704,6 +2714,8 @@ async function resolvePanelIntent(
             panelId: row.id,
             panelTitle: row.title || panelId,
             semanticPanelId: panelId,
+            duplicateFamily: family,
+            instanceLabel: row.instance_label as string | undefined,
           }
         }
         return { status: 'not_found' as const }
@@ -2724,6 +2736,8 @@ async function resolvePanelIntent(
           panelId: row.id,
           panelTitle: row.title || panelId,
           semanticPanelId: panelId,
+          duplicateFamily: family,
+          instanceLabel: row.instance_label as string | undefined,
         }
       }
       if (siblingsResult.rows.length > 1) {
@@ -2904,6 +2918,8 @@ async function resolvePanelIntent(
         panelId: drawerResult.panelId,
         panelTitle: drawerResult.panelTitle,
         semanticPanelId: drawerResult.semanticPanelId,
+        duplicateFamily: drawerResult.duplicateFamily,
+        instanceLabel: drawerResult.instanceLabel,
         message: `Opening ${drawerResult.panelTitle}...`,
         executionMeta: classifyExecutionMeta({ matchKind: 'exact', candidateCount: 1, resolverPath: 'executeAction' }),
       }
@@ -3002,6 +3018,8 @@ async function resolvePanelIntent(
           panelId: drawerFallback.panelId,
           panelTitle: drawerFallback.panelTitle,
           semanticPanelId: drawerFallback.semanticPanelId,
+          duplicateFamily: drawerFallback.duplicateFamily,
+          instanceLabel: drawerFallback.instanceLabel,
           message: `Opening ${drawerFallback.panelTitle}...`,
           executionMeta: classifyExecutionMeta({ matchKind: 'exact', candidateCount: 1, resolverPath: 'executeAction' }),
         }

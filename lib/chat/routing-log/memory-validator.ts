@@ -28,7 +28,7 @@ interface VisibleWidgetForValidation {
 
 export interface ValidationResult {
   valid: boolean
-  reason?: 'target_widget_gone' | 'target_item_gone' | 'target_candidate_gone' | 'high_risk' | 'unknown_action_type' | 'duplicate_family_ambiguous' | 'target_panel_hidden'
+  reason?: 'target_widget_gone' | 'target_item_gone' | 'target_candidate_gone' | 'high_risk' | 'unknown_action_type' | 'duplicate_family_ambiguous' | 'target_panel_hidden' | 'target_panel_selector_mismatch'
 }
 
 /**
@@ -94,24 +94,43 @@ export function validateMemoryCandidate(
   // Risk tier is already checked above. Context fingerprint match is guaranteed by SQL.
   const PHASE5_NAV_ACTIONS = new Set(['open_entry', 'open_workspace', 'go_home', 'open_panel'])
   if (PHASE5_NAV_ACTIONS.has(actionType!)) {
-    // Duplicate-family guard for open_panel: if the stored panel belongs to a
-    // duplicable family with multiple visible siblings, reject the replay.
-    // The user should go through the duplicate-aware routing path instead.
+    // Selector-aware duplicate-family guard for open_panel.
     if (actionType === 'open_panel' && visibleWidgets && visibleWidgets.length > 0) {
       const storedPanelId = candidate.slots_json.panelId as string | undefined
       if (storedPanelId) {
-        // Check if stored panel is still visible (not hidden via Widget Manager)
+        // Rule 1: hidden panel → reject
         const storedWidget = visibleWidgets.find(w => w.id === storedPanelId)
         if (!storedWidget) {
           return { valid: false, reason: 'target_panel_hidden' }
         }
-        // Duplicate-family ambiguity check
-        const family = storedWidget.duplicateFamily
-        if (family) {
-          const siblingCount = visibleWidgets.filter(w => w.duplicateFamily === family).length
+
+        const rowFamily = candidate.slots_json.duplicateFamily as string | undefined
+        const rowSelectorSpecific = candidate.slots_json.selectorSpecific as boolean | undefined
+        const rowInstanceLabel = candidate.slots_json.instanceLabel as string | undefined
+
+        if (!rowFamily) {
+          // Rule 2: legacy row (no selector metadata) → fall back to current visibleWidgets-based check
+          const liveFamily = storedWidget.duplicateFamily
+          if (liveFamily) {
+            const siblingCount = visibleWidgets.filter(w => w.duplicateFamily === liveFamily).length
+            if (siblingCount > 1) {
+              return { valid: false, reason: 'duplicate_family_ambiguous' }
+            }
+          }
+        } else if (!rowSelectorSpecific) {
+          // Rule 3: generic query row (has family but not selector-specific) → reject if multiple siblings
+          const siblingCount = visibleWidgets.filter(w => w.duplicateFamily === rowFamily).length
           if (siblingCount > 1) {
             return { valid: false, reason: 'duplicate_family_ambiguous' }
           }
+        } else {
+          // Rule 4: explicit instance row (selectorSpecific === true) → allow if selector matches
+          const liveFamily = storedWidget.duplicateFamily
+          const liveLabel = (storedWidget as { instanceLabel?: string }).instanceLabel
+          if (liveFamily !== rowFamily || (rowInstanceLabel && liveLabel !== rowInstanceLabel)) {
+            return { valid: false, reason: 'target_panel_selector_mismatch' }
+          }
+          // Selector matches → allow replay
         }
       }
     }

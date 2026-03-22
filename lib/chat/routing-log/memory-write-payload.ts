@@ -203,7 +203,7 @@ export function buildPhase5NavigationWritePayload(params: {
     action: string
     entry?: { id: string; name: string; dashboardWorkspaceId?: string }
     workspace?: { id: string; name: string; entryId?: string; entryName?: string; isDefault?: boolean }
-    panel?: { id?: string; title?: string }
+    panel?: { id?: string; title?: string; duplicateFamily?: string; instanceLabel?: string; selectorSpecific?: boolean }
   }
   contextSnapshot: ContextSnapshotV1
 }): MemoryWritePayload | null {
@@ -235,6 +235,12 @@ export function buildPhase5NavigationWritePayload(params: {
     if (!resolution.panel.title) return null
     slotsJson.panelId = resolution.panel.id
     slotsJson.panelTitle = resolution.panel.title
+    // Selector metadata for duplicate-family panels only
+    if (resolution.panel.duplicateFamily) {
+      slotsJson.duplicateFamily = resolution.panel.duplicateFamily
+      slotsJson.instanceLabel = resolution.panel.instanceLabel ?? undefined
+      slotsJson.selectorSpecific = resolution.panel.selectorSpecific ?? false
+    }
     targetIds = [resolution.panel.id]
   } else if (intentId === 'go_home') {
     // go_home has no specific target ID — home entry resolved by client

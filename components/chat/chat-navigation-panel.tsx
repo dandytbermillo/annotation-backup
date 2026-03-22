@@ -59,7 +59,7 @@ import {
   isRejectionPhrase,
 } from '@/lib/chat/query-patterns'
 // Step 1 refactor: Pure UI helpers
-import { normalizeUserMessage, extractQuickLinksBadge } from '@/lib/chat/ui-helpers'
+import { normalizeUserMessage, extractQuickLinksBadge, extractInstanceLabel, extractQuickLinksInstanceLabel } from '@/lib/chat/ui-helpers'
 // Step 3 refactor: Doc routing helpers (format utilities still used locally)
 import { maybeFormatSnippetWithHs3, stripMarkdownHeadersForUI, dedupeHeaderPath } from '@/lib/chat/doc-routing'
 // Prereq 4: Cross-corpus handlers (pill selection still used locally)
@@ -2065,13 +2065,31 @@ function ChatNavigationPanelContent({
         if (routingResult._groundingPanelOpen && routingResult._phase5ReplaySnapshot) {
           try {
             const gp = routingResult._groundingPanelOpen
+            // Look up selector metadata from visible widgets
+            const matchedWidget = uiContext?.dashboard?.visibleWidgets?.find(
+              (w: { id: string }) => w.id === gp.panelId
+            ) as { id: string; duplicateFamily?: string; instanceLabel?: string } | undefined
+            // selectorSpecific: did the user explicitly name an instance?
+            const gwFamily = matchedWidget?.duplicateFamily
+            let gwUserNamedInstance = false
+            if (gwFamily === 'quick-links') {
+              gwUserNamedInstance = !!extractQuickLinksInstanceLabel(trimmedInput)
+            } else if (gwFamily) {
+              gwUserNamedInstance = !!extractInstanceLabel(trimmedInput, gwFamily)
+            }
             const pendingWrite = buildPhase5NavigationWritePayload({
               rawQueryText: trimmedInput,
               intentId: 'open_panel',
               resolution: {
                 success: true,
                 action: 'open_panel_drawer',
-                panel: { id: gp.panelId, title: gp.panelTitle },
+                panel: {
+                  id: gp.panelId,
+                  title: gp.panelTitle,
+                  duplicateFamily: gwFamily,
+                  instanceLabel: matchedWidget?.instanceLabel,
+                  selectorSpecific: gwUserNamedInstance,
+                },
               },
               contextSnapshot: routingResult._phase5ReplaySnapshot,
             })

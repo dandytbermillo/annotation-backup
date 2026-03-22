@@ -86,6 +86,18 @@ export function extractLinkNotesBadge(input?: string): string | null {
 export const extractQuickLinksBadge = extractLinkNotesBadge
 
 /**
+ * Shared Quick Links instance-label extractor covering all alias forms:
+ * - "links panel a" / "link notes a" (via extractLinkNotesBadge)
+ * - "quick links a" (plural)
+ * - "quick link a" (singular)
+ */
+export function extractQuickLinksInstanceLabel(input: string): string | null {
+  return extractLinkNotesBadge(input)
+    || extractInstanceLabel(input, 'quick links')
+    || extractInstanceLabel(input, 'quick link')
+}
+
+/**
  * Generic instance-label extractor for any panel family.
  * Builds a regex from the family title and extracts a trailing single letter.
  *
