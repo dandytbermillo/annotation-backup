@@ -17,6 +17,7 @@ import {
   type PanelTypeId,
 } from '@/lib/dashboard/panel-registry'
 import { cn } from '@/lib/utils'
+import { isSingletonPanelType } from '@/lib/dashboard/duplicate-family-map'
 
 interface PanelCatalogProps {
   workspaceId: string
@@ -28,6 +29,8 @@ interface PanelCatalogProps {
   defaultPosition?: { x: number; y: number }
   /** Mode: 'dropdown' (compact), 'modal' (full), 'inline' (embedded) */
   mode?: 'dropdown' | 'modal' | 'inline'
+  /** Active panel types in the workspace (for singleton detection) */
+  existingPanelTypes?: string[]
 }
 
 export function PanelCatalog({
@@ -37,6 +40,7 @@ export function PanelCatalog({
   showAllTypes = false,
   defaultPosition = { x: 100, y: 100 },
   mode = 'dropdown',
+  existingPanelTypes,
 }: PanelCatalogProps) {
   const [isAdding, setIsAdding] = useState<PanelTypeId | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -136,14 +140,17 @@ export function PanelCatalog({
 
       {/* Panel types list */}
       <div className="p-2 space-y-1">
-        {panelTypes.map(panelType => (
+        {panelTypes.map(panelType => {
+          const isSingletonExists = isSingletonPanelType(panelType.id) && existingPanelTypes?.includes(panelType.id)
+          return (
           <button
             key={panelType.id}
-            onClick={() => handleAddPanel(panelType)}
-            disabled={isAdding !== null}
+            onClick={() => !isSingletonExists && handleAddPanel(panelType)}
+            disabled={isAdding !== null || isSingletonExists}
             className={cn(
               'w-full flex items-start gap-3 p-3 rounded-lg text-left transition-all',
-              isAdding !== null && isAdding !== panelType.id && 'opacity-50'
+              isAdding !== null && isAdding !== panelType.id && 'opacity-50',
+              isSingletonExists && 'opacity-40 cursor-not-allowed'
             )}
             style={{
               background: isAdding === panelType.id ? 'rgba(255, 255, 255, 0.04)' : 'transparent',
@@ -170,15 +177,18 @@ export function PanelCatalog({
                   <Loader2 size={12} className="animate-spin" style={{ color: '#5c6070' }} />
                 )}
               </div>
-              <p className="text-xs mt-0.5 line-clamp-2" style={{ color: '#8b8fa3' }}>
-                {panelType.description}
+              <p className="text-xs mt-0.5 line-clamp-2" style={{ color: isSingletonExists ? '#5c6070' : '#8b8fa3' }}>
+                {isSingletonExists ? 'Already on dashboard' : panelType.description}
               </p>
             </div>
 
             {/* Add indicator */}
-            <Plus size={16} className="shrink-0 mt-0.5" style={{ color: '#5c6070' }} />
+            {!isSingletonExists && (
+              <Plus size={16} className="shrink-0 mt-0.5" style={{ color: '#5c6070' }} />
+            )}
           </button>
-        ))}
+          )
+        })}
       </div>
 
       {/* Size hints */}

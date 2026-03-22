@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { serverPool } from '@/lib/db/pool'
 import { resolveNoteWorkspaceUserId } from '@/app/api/note-workspaces/user-id'
-import { isValidPanelType, createDefaultPanel } from '@/lib/dashboard/panel-registry'
+import { isValidPanelType, createDefaultPanel, panelTypeRegistry } from '@/lib/dashboard/panel-registry'
 import type { PanelTypeId } from '@/lib/dashboard/panel-registry'
 import { allocateInstanceLabel } from '@/lib/dashboard/instance-label-allocator'
+import { isSingletonPanelType } from '@/lib/dashboard/duplicate-family-map'
 
 /**
  * GET /api/dashboard/panels
@@ -145,6 +146,23 @@ export async function POST(request: NextRequest) {
 
     if (workspaceCheck.rows.length === 0) {
       return NextResponse.json({ error: 'Workspace not found' }, { status: 404 })
+    }
+
+    // Singleton enforcement: reject if panel type is singleton and already exists
+    if (isSingletonPanelType(panelType)) {
+      const existing = await serverPool.query(
+        `SELECT id FROM workspace_panels
+         WHERE workspace_id = $1 AND panel_type = $2 AND deleted_at IS NULL
+         LIMIT 1`,
+        [workspaceId, panelType]
+      )
+      if (existing.rows.length > 0) {
+        const typeDef = panelTypeRegistry[panelType as PanelTypeId]
+        return NextResponse.json(
+          { error: `${typeDef?.name ?? panelType} already exists on this dashboard.` },
+          { status: 409 }
+        )
+      }
     }
 
     // Get default panel data

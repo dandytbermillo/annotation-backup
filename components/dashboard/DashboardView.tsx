@@ -2309,6 +2309,7 @@ export function DashboardView({
             >
               <PanelCatalog
                 workspaceId={workspaceId}
+                existingPanelTypes={panels.filter(p => !p.deletedAt).map(p => p.panelType)}
                 onPanelAdded={() => {
                   fetchPanels()
                   setIsPanelCatalogOpen(false)
