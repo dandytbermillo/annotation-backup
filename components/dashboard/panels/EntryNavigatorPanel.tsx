@@ -23,6 +23,7 @@ import { setActiveWorkspaceContext } from '@/lib/note-workspaces/state'
 import { getActiveEntryContext, setActiveEntryContext, subscribeToActiveEntryContext } from '@/lib/entry'
 import { debugLog } from '@/lib/utils/debug-logger'
 import { VirtualList } from '@/components/canvas/VirtualList'
+import { registerWidgetSnapshot, unregisterWidgetSnapshot } from '@/lib/widgets/ui-snapshot-registry'
 import { NavigatorPanelSkeleton } from './PanelSkeletons'
 
 // Constants
@@ -735,6 +736,47 @@ export function EntryNavigatorPanel({ panel, onClose, onConfigChange, onTitleCha
     </div>
   )
 
+  // Widget UI Snapshot: Register structured snapshot for routing (Layer 1)
+  const navWidgetId = panel.instanceLabel
+    ? `w_navigator_${panel.instanceLabel.toLowerCase()}`
+    : 'w_navigator'
+  const navSnapshotTitle = panel.instanceLabel
+    ? `Navigator ${panel.instanceLabel}`
+    : 'Navigator'
+
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useEffect(() => {
+    if (isLoading) return
+
+    const doRegister = () => {
+      registerWidgetSnapshot({
+        _version: 1,
+        widgetId: navWidgetId,
+        title: navSnapshotTitle,
+        panelId: panel.id,
+        isVisible: true,
+        segments: [
+          {
+            segmentId: `${navWidgetId}:context`,
+            segmentType: 'context' as const,
+            summary: `Entry navigator showing ${entries.length} items`,
+            currentView: 'tree',
+          },
+        ],
+        registeredAt: Date.now(),
+      })
+    }
+
+    doRegister()
+    const heartbeat = setInterval(doRegister, 30_000)
+
+    return () => {
+      clearInterval(heartbeat)
+      unregisterWidgetSnapshot(navWidgetId)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panel.id, panel.instanceLabel, isLoading, entries.length])
+
   return (
     <BaseDashboardPanel
       panel={panel}
@@ -743,6 +785,7 @@ export function EntryNavigatorPanel({ panel, onClose, onConfigChange, onTitleCha
       onDelete={onDelete}
       onTitleChange={onTitleChange}
       isActive={isActive}
+      badge={panel.instanceLabel}
       contentClassName="p-2"
       headerActions={headerActions}
     >

@@ -1447,7 +1447,7 @@ export async function dispatchRouting(
 
       if (memoryResult) {
         // First validation: reject obviously stale candidates early (concrete ID checks)
-        const validation = validateMemoryCandidate(memoryResult, turnSnapshotForLog)
+        const validation = validateMemoryCandidate(memoryResult, turnSnapshotForLog, ctx.uiContext?.dashboard?.visibleWidgets)
         if (validation.valid) {
           const defaultResult: RoutingDispatcherResult = {
             handled: false,
@@ -1526,7 +1526,7 @@ export async function dispatchRouting(
         const rawCount = lookupResult.candidates.length
         // Validate each candidate against live UI snapshot (Gate 3)
         const validatedCandidates = lookupResult.candidates.filter(c => {
-          const v = validateMemoryCandidate(c, turnSnapshotForLog)
+          const v = validateMemoryCandidate(c, turnSnapshotForLog, ctx.uiContext?.dashboard?.visibleWidgets)
           return v.valid
         })
         const validatedCount = validatedCandidates.length

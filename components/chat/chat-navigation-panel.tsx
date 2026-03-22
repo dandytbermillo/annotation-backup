@@ -1705,7 +1705,7 @@ function ChatNavigationPanelContent({
       // failed log (best-effort). Result falls through to LLM API below.
       // ---------------------------------------------------------------------------
       if (routingResult._memoryCandidate) {
-        routingResult = revalidateMemoryHit(routingResult, buildTurnSnapshot({}))
+        routingResult = revalidateMemoryHit(routingResult, buildTurnSnapshot({}), uiContext?.dashboard?.visibleWidgets)
       }
 
       // ---------------------------------------------------------------------------

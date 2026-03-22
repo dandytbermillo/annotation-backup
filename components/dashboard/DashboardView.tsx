@@ -168,11 +168,12 @@ export function DashboardView({
   const visibleWidgets = useMemo(() => {
     return panels
       .filter((panel) => panel.isVisible && !panel.deletedAt)
-      .slice(0, 10)
       .map((panel) => ({
         id: panel.id,
         title: panel.title ?? panel.panelType,
         type: panel.panelType,
+        instanceLabel: panel.instanceLabel ?? undefined,
+        duplicateFamily: panel.duplicateFamily ?? undefined,
       }))
   }, [panels])
 

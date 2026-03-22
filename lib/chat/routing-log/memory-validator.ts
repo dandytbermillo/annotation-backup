@@ -20,9 +20,15 @@ interface MinimalTurnSnapshot {
   }[]
 }
 
+/** Visible widget metadata for duplicate-family validation */
+interface VisibleWidgetForValidation {
+  id: string
+  duplicateFamily?: string
+}
+
 export interface ValidationResult {
   valid: boolean
-  reason?: 'target_widget_gone' | 'target_item_gone' | 'target_candidate_gone' | 'high_risk' | 'unknown_action_type'
+  reason?: 'target_widget_gone' | 'target_item_gone' | 'target_candidate_gone' | 'high_risk' | 'unknown_action_type' | 'duplicate_family_ambiguous'
 }
 
 /**
@@ -41,6 +47,7 @@ export interface ValidationResult {
 export function validateMemoryCandidate(
   candidate: MemoryLookupResult,
   turnSnapshot: MinimalTurnSnapshot,
+  visibleWidgets?: VisibleWidgetForValidation[],
 ): ValidationResult {
   // Safety guard: reject high-risk actions
   if (candidate.risk_tier === 'high') {
@@ -87,6 +94,23 @@ export function validateMemoryCandidate(
   // Risk tier is already checked above. Context fingerprint match is guaranteed by SQL.
   const PHASE5_NAV_ACTIONS = new Set(['open_entry', 'open_workspace', 'go_home', 'open_panel'])
   if (PHASE5_NAV_ACTIONS.has(actionType!)) {
+    // Duplicate-family guard for open_panel: if the stored panel belongs to a
+    // duplicable family with multiple visible siblings, reject the replay.
+    // The user should go through the duplicate-aware routing path instead.
+    if (actionType === 'open_panel' && visibleWidgets && visibleWidgets.length > 0) {
+      const storedPanelId = candidate.slots_json.panelId as string | undefined
+      if (storedPanelId) {
+        // Find the stored panel in visible widgets to get its family
+        const storedWidget = visibleWidgets.find(w => w.id === storedPanelId)
+        const family = storedWidget?.duplicateFamily
+        if (family) {
+          const siblingCount = visibleWidgets.filter(w => w.duplicateFamily === family).length
+          if (siblingCount > 1) {
+            return { valid: false, reason: 'duplicate_family_ambiguous' }
+          }
+        }
+      }
+    }
     return { valid: true }
   }
 
@@ -125,10 +149,11 @@ interface RevalidatableResult {
 export function revalidateMemoryHit<T extends RevalidatableResult>(
   result: T,
   freshSnapshot: MinimalTurnSnapshot,
+  visibleWidgets?: VisibleWidgetForValidation[],
 ): T {
   if (!result._memoryCandidate) return result
 
-  const check = validateMemoryCandidate(result._memoryCandidate, freshSnapshot)
+  const check = validateMemoryCandidate(result._memoryCandidate, freshSnapshot, visibleWidgets)
   if (check.valid) return result
 
   console.warn('[routing-memory] commit-point revalidation failed:', check.reason)
