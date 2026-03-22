@@ -9,10 +9,11 @@
  */
 
 import React, { useEffect, useState, useCallback } from 'react'
-import { ExternalLink, RefreshCw, Loader2, FolderOpen, Store } from 'lucide-react'
+import { ExternalLink, RefreshCw, Loader2, FolderOpen, Store, Eye, EyeOff } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
 import type { BasePanelProps } from '@/lib/dashboard/panel-registry'
+import { panelTypeRegistry, type PanelTypeId } from '@/lib/dashboard/panel-registry'
 
 // =============================================================================
 // Types
@@ -98,6 +99,17 @@ async function uninstallWidget(id: string): Promise<{ success: boolean; message?
     body: JSON.stringify({ id }),
   })
   return response.json()
+}
+
+// =============================================================================
+// Dashboard Panel Types (for hide/show section)
+// =============================================================================
+
+interface DashboardPanelInfo {
+  id: string
+  panelType: string
+  title: string | null
+  isVisible: boolean
 }
 
 // =============================================================================
@@ -198,7 +210,7 @@ function WidgetIcon({ widget }: { widget: InstalledWidget }) {
 // Component
 // =============================================================================
 
-export function WidgetManagerPanel(_props: BasePanelProps) {
+export function WidgetManagerPanel({ panel: wmPanel }: BasePanelProps) {
   const { toast } = useToast()
   const [widgets, setWidgets] = useState<InstalledWidget[]>([])
   const [loading, setLoading] = useState(true)
@@ -208,6 +220,55 @@ export function WidgetManagerPanel(_props: BasePanelProps) {
   const [installUrl, setInstallUrl] = useState('')
   const [installing, setInstalling] = useState(false)
   const [installError, setInstallError] = useState<string | null>(null)
+
+  // Dashboard panels state (for hide/show section)
+  const [dashboardPanels, setDashboardPanels] = useState<DashboardPanelInfo[]>([])
+
+  const fetchDashboardPanels = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/dashboard/panels?workspaceId=${wmPanel.workspaceId}&includeHidden=true`)
+      if (!res.ok) return
+      const { panels } = await res.json()
+      setDashboardPanels(panels.map((p: any) => ({
+        id: p.id,
+        panelType: p.panelType,
+        title: p.title || panelTypeRegistry[p.panelType as PanelTypeId]?.name || p.panelType,
+        isVisible: p.isVisible,
+      })))
+    } catch { /* fail-open */ }
+  }, [wmPanel.workspaceId])
+
+  useEffect(() => { fetchDashboardPanels() }, [fetchDashboardPanels])
+
+  const handleHidePanel = async (panelId: string) => {
+    try {
+      await fetch(`/api/dashboard/panels/${panelId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isVisible: false }),
+      })
+      fetchDashboardPanels()
+      window.dispatchEvent(new CustomEvent('refresh-dashboard-panels'))
+      toast({ title: 'Panel hidden', description: 'You can restore it from Widget Manager.' })
+    } catch {
+      toast({ title: 'Failed to hide panel', variant: 'destructive' })
+    }
+  }
+
+  const handleShowPanel = async (panelId: string) => {
+    try {
+      await fetch(`/api/dashboard/panels/${panelId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isVisible: true }),
+      })
+      fetchDashboardPanels()
+      window.dispatchEvent(new CustomEvent('refresh-dashboard-panels'))
+      toast({ title: 'Panel restored' })
+    } catch {
+      toast({ title: 'Failed to restore panel', variant: 'destructive' })
+    }
+  }
 
   // Load widgets
   const loadWidgets = useCallback(async () => {
@@ -370,6 +431,66 @@ export function WidgetManagerPanel(_props: BasePanelProps) {
           <div className="mt-2 text-xs text-red-400">{installError}</div>
         )}
       </div>
+
+      {/* DASHBOARD PANELS section - hide/show any panel */}
+      {dashboardPanels.length > 0 && (
+        <div className="mb-4 p-4 rounded-xl bg-zinc-900/50 border border-white/[0.06]">
+          <div className="text-xs uppercase text-gray-400 font-semibold tracking-wide mb-3">
+            Dashboard Panels
+          </div>
+          <div className="space-y-1">
+            {/* Active panels */}
+            {dashboardPanels.filter(p => p.isVisible).map(p => {
+              const typeDef = panelTypeRegistry[p.panelType as PanelTypeId]
+              const isSelf = p.id === wmPanel.id
+              return (
+                <div key={p.id} className="flex items-center justify-between py-2 px-2 rounded-lg hover:bg-white/[0.03]">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-base shrink-0">{typeDef?.icon || '📦'}</span>
+                    <span className="text-sm text-gray-200 truncate">{p.title}</span>
+                  </div>
+                  {!isSelf && (
+                    <button
+                      onClick={() => handleHidePanel(p.id)}
+                      className="flex items-center gap-1 px-2 py-1 text-xs text-gray-400 hover:text-gray-200 hover:bg-white/[0.06] rounded transition-colors"
+                      title="Hide from dashboard"
+                    >
+                      <EyeOff size={12} />
+                      <span>Hide</span>
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+            {/* Hidden panels */}
+            {dashboardPanels.some(p => !p.isVisible) && (
+              <>
+                <div className="border-t border-white/[0.06] my-2" />
+                <div className="text-[10px] uppercase text-gray-500 tracking-wide mb-1 px-2">Hidden</div>
+                {dashboardPanels.filter(p => !p.isVisible).map(p => {
+                  const typeDef = panelTypeRegistry[p.panelType as PanelTypeId]
+                  return (
+                    <div key={p.id} className="flex items-center justify-between py-2 px-2 rounded-lg hover:bg-white/[0.03] opacity-60">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-base shrink-0">{typeDef?.icon || '📦'}</span>
+                        <span className="text-sm text-gray-400 truncate">{p.title}</span>
+                      </div>
+                      <button
+                        onClick={() => handleShowPanel(p.id)}
+                        className="flex items-center gap-1 px-2 py-1 text-xs text-gray-400 hover:text-gray-200 hover:bg-white/[0.06] rounded transition-colors"
+                        title="Show on dashboard"
+                      >
+                        <Eye size={12} />
+                        <span>Show</span>
+                      </button>
+                    </div>
+                  )
+                })}
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Loading/Error states */}
       {loading && (

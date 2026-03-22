@@ -553,6 +553,26 @@ export function DashboardView({
     }
   }, [])
 
+  // Hidden singleton tracking for PanelCatalog consistency
+  const [hiddenSingletonTypes, setHiddenSingletonTypes] = useState<string[]>([])
+
+  const fetchHiddenSingletons = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/dashboard/panels?workspaceId=${workspaceId}&includeHidden=true`)
+      if (!res.ok) return
+      const { panels: allPanels } = await res.json()
+      const { isSingletonPanelType } = await import('@/lib/dashboard/duplicate-family-map')
+      const hidden = allPanels
+        .filter((p: { isVisible: boolean; deletedAt: string | null; panelType: string }) =>
+          !p.isVisible && !p.deletedAt && isSingletonPanelType(p.panelType)
+        )
+        .map((p: { panelType: string }) => p.panelType)
+      setHiddenSingletonTypes(hidden)
+    } catch { /* fail-open */ }
+  }, [workspaceId])
+
+  useEffect(() => { fetchHiddenSingletons() }, [fetchHiddenSingletons])
+
   // Listen for refresh-dashboard-panels events (when a hidden panel is made visible)
   useEffect(() => {
     const handleRefreshPanels = () => {
@@ -562,13 +582,14 @@ export function DashboardView({
         metadata: { workspaceId },
       })
       fetchPanels()
+      fetchHiddenSingletons()
     }
 
     window.addEventListener('refresh-dashboard-panels', handleRefreshPanels)
     return () => {
       window.removeEventListener('refresh-dashboard-panels', handleRefreshPanels)
     }
-  }, [fetchPanels, workspaceId])
+  }, [fetchPanels, fetchHiddenSingletons, workspaceId])
 
   // Fetch workspaces for the current entry (excluding Dashboard)
   useEffect(() => {
@@ -2309,7 +2330,7 @@ export function DashboardView({
             >
               <PanelCatalog
                 workspaceId={workspaceId}
-                existingPanelTypes={panels.filter(p => !p.deletedAt).map(p => p.panelType)}
+                existingPanelTypes={[...panels.filter(p => !p.deletedAt).map(p => p.panelType), ...hiddenSingletonTypes]}
                 onPanelAdded={() => {
                   fetchPanels()
                   setIsPanelCatalogOpen(false)
