@@ -28,7 +28,7 @@ interface VisibleWidgetForValidation {
 
 export interface ValidationResult {
   valid: boolean
-  reason?: 'target_widget_gone' | 'target_item_gone' | 'target_candidate_gone' | 'high_risk' | 'unknown_action_type' | 'duplicate_family_ambiguous'
+  reason?: 'target_widget_gone' | 'target_item_gone' | 'target_candidate_gone' | 'high_risk' | 'unknown_action_type' | 'duplicate_family_ambiguous' | 'target_panel_hidden'
 }
 
 /**
@@ -100,9 +100,13 @@ export function validateMemoryCandidate(
     if (actionType === 'open_panel' && visibleWidgets && visibleWidgets.length > 0) {
       const storedPanelId = candidate.slots_json.panelId as string | undefined
       if (storedPanelId) {
-        // Find the stored panel in visible widgets to get its family
+        // Check if stored panel is still visible (not hidden via Widget Manager)
         const storedWidget = visibleWidgets.find(w => w.id === storedPanelId)
-        const family = storedWidget?.duplicateFamily
+        if (!storedWidget) {
+          return { valid: false, reason: 'target_panel_hidden' }
+        }
+        // Duplicate-family ambiguity check
+        const family = storedWidget.duplicateFamily
         if (family) {
           const siblingCount = visibleWidgets.filter(w => w.duplicateFamily === family).length
           if (siblingCount > 1) {

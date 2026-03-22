@@ -1805,6 +1805,7 @@ async function resolveShowQuickLinks(
     WHERE workspace_id = $1
       AND panel_type IN ('links_note', 'links_note_tiptap')
       AND deleted_at IS NULL
+      AND is_visible = true
   `
   const params: (string | undefined)[] = [dashboardWorkspaceId]
 
@@ -2596,6 +2597,7 @@ async function resolvePanelIntent(
          WHERE workspace_id = $1
            AND panel_type = 'recent'
            AND deleted_at IS NULL
+           AND is_visible = true
          ORDER BY created_at ASC
          LIMIT 1`,
         [dashboardWorkspaceId]
@@ -2622,6 +2624,7 @@ async function resolvePanelIntent(
            WHERE workspace_id = $1
              AND panel_type IN ('links_note', 'links_note_tiptap')
              AND deleted_at IS NULL
+             AND is_visible = true
            ORDER BY badge ASC, created_at ASC`,
           [dashboardWorkspaceId]
         )
@@ -2658,6 +2661,7 @@ async function resolvePanelIntent(
            AND panel_type IN ('links_note', 'links_note_tiptap')
            AND UPPER(badge) = UPPER($2)
            AND deleted_at IS NULL
+           AND is_visible = true
          ORDER BY created_at ASC
          LIMIT 1`,
         [dashboardWorkspaceId, badge]
@@ -2689,6 +2693,7 @@ async function resolvePanelIntent(
           `SELECT id, title, instance_label FROM workspace_panels
            WHERE workspace_id = $1 AND duplicate_family = $2
              AND UPPER(instance_label) = UPPER($3) AND deleted_at IS NULL
+             AND is_visible = true
            LIMIT 1`,
           [dashboardWorkspaceId, family, instanceLabel]
         )
@@ -2707,7 +2712,7 @@ async function resolvePanelIntent(
       // No token → check sibling count
       const siblingsResult = await serverPool.query(
         `SELECT id, title, instance_label FROM workspace_panels
-         WHERE workspace_id = $1 AND duplicate_family = $2 AND deleted_at IS NULL
+         WHERE workspace_id = $1 AND duplicate_family = $2 AND deleted_at IS NULL AND is_visible = true
          ORDER BY instance_label ASC`,
         [dashboardWorkspaceId, family]
       )
@@ -2786,6 +2791,7 @@ async function resolvePanelIntent(
        FROM workspace_panels
        WHERE workspace_id = $1
          AND deleted_at IS NULL
+         AND is_visible = true
          AND panel_type = $2`,
       [dashboardWorkspaceId, normalizedPanelType]
     )
@@ -2817,6 +2823,7 @@ async function resolvePanelIntent(
        FROM workspace_panels
        WHERE workspace_id = $1
          AND deleted_at IS NULL
+         AND is_visible = true
          AND LOWER(title) = LOWER($2)`,
       [dashboardWorkspaceId, panelId]
     )
@@ -2848,6 +2855,7 @@ async function resolvePanelIntent(
        FROM workspace_panels
        WHERE workspace_id = $1
          AND deleted_at IS NULL
+         AND is_visible = true
          AND title ILIKE $2`,
       [dashboardWorkspaceId, `%${panelId}%`]
     )
