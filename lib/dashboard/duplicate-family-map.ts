@@ -17,8 +17,7 @@ export const DUPLICATE_FAMILY_MAP: Record<string, string> = {
   'links_note': 'quick-links',
   'links_note_tiptap': 'quick-links',
   'navigator': 'navigator',
-  'widget_manager': 'widget-manager',
-  'continue': 'continue',
+  // widget_manager, continue, recent are singletons — not duplicable
 }
 
 /**

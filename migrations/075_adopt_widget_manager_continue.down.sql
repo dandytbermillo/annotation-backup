@@ -1,5 +1,2 @@
--- Migration 075 down: Remove widget_manager and continue from duplicate-instance identity
-
-UPDATE workspace_panels
-  SET instance_label = NULL, duplicate_family = NULL
-  WHERE duplicate_family IN ('widget-manager', 'continue');
+-- Migration 075 down: no-op (cleanup is idempotent, no data to restore)
+-- The up migration only cleared stale metadata that shouldn't have been set.
