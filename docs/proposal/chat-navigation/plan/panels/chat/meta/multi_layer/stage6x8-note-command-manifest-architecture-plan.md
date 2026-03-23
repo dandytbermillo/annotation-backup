@@ -200,6 +200,20 @@ type NoteCommandManifestEntry = {
 
 The manifest should live at the family/policy level. It should not attempt to list every raw note query variant.
 
+### Purpose of manifest examples
+
+`examples` are not a giant phrase dictionary.
+
+In this plan they serve four bounded purposes:
+
+1. documentation of supported command shapes
+2. contract-test fixtures for resolver coverage
+3. optional deterministic resolver hints for family/subtype normalization
+4. optional retrieval seeds later, if similarity-backed resolver assistance is introduced
+
+They are **not** the primary execution mechanism.
+Do not make runtime correctness depend on exhaustively enumerating phrasings.
+
 ### Manifest location and runtime enforcement
 
 Use one code-owned manifest module for note commands rather than scattering entries across prompts or handlers.
@@ -317,6 +331,36 @@ Its responsibilities:
 
 This replaces the idea of adding one new replay contract for each new note query family.
 
+### Resolver strategy and ownership
+
+Phase 2 should not invent a second independent routing stack.
+
+Recommended resolution order:
+
+1. lightweight deterministic note-surface detection
+- detect whether the query is clearly note-targeted
+- detect obvious explicit note references, active-note references, or follow-up anchors
+
+2. manifest-backed note resolver
+- classify `intentFamily`
+- classify `intentSubtype`
+- resolve anchor source
+- extract arguments
+- compute confidence
+
+3. existing cross-surface arbiter remains the fallback
+- if note-surface detection is uncertain
+- if family/subtype confidence is below execution threshold
+- if the query may legitimately target more than one surface
+
+Division of labor:
+
+- the generic note resolver owns note-specific interpretation once the query is clearly note-targeted
+- the existing arbiter owns ambiguous cross-surface routing when the surface is not yet trustworthy
+- Stage 6 continues to own grounded answer generation for `read` families after note intent has already been resolved
+
+This keeps the note resolver from duplicating the arbiter, while also preventing the arbiter from re-interpreting clearly note-targeted commands from scratch.
+
 ### Confidence and clarify thresholds
 
 Confidence must be computed from concrete signals, not intuition.
@@ -350,6 +394,12 @@ Clarification wins over execution when:
 - required scope fields are missing
 - the command requires explicit target specificity but only contextual resolution is available
 
+Resolver implementation rule:
+
+- start deterministic-first
+- use manifest metadata and existing note/context state before introducing any LLM or embedding-assisted help
+- only add heavier resolver assistance if deterministic coverage is shown to be insufficient by runtime evidence
+
 ## Policy-Driven Note Executor
 
 Build one note executor that consumes `ResolvedNoteCommand`.
@@ -373,6 +423,7 @@ Execution depends on policy, not on raw phrasing.
 - resolve current note anchor
 - regenerate answer from current note content
 - memory may skip some routing work, but never reuse stale answer text as the final result
+- provenance for this path should not imply instant deterministic replay; it should communicate exact interpretation reuse with fresh answer generation
 
 4. `bounded_capability_answer`
 - used for `capability`
@@ -404,6 +455,14 @@ This means:
 - the generic note resolver does not replace Stage 6 answer generation
 - it replaces ad hoc note intent interpretation before Stage 6
 - it should feed structured note intent into the existing cross-surface arbiter where that arbiter still owns final lane selection
+
+Read-family provenance rule:
+
+- if memory/cache reuse only skips interpretation and still requires fresh Stage 6 generation, do not present it as an instant deterministic replay
+- use either:
+  - a distinct provenance label
+  - or a clearly documented interpretation-reuse badge
+- reserve stronger replay wording for deterministic navigation/state paths
 
 Practical rule:
 
@@ -437,6 +496,10 @@ Minimum rules:
   - `active_note` against `activeNoteId`
   - `followup_anchor` against `followupAnchorNoteId`
   - `resolved_reference` against currently resolvable note target and scope
+- when `followup_anchor` is used, staleness policy must apply:
+  - valid only for the immediately following eligible turn
+  - invalid once the anchor no longer matches current note state
+  - invalid once the anchored note closes or a new incompatible anchor supersedes it
 
 4. `capability`
 - must validate the same note anchor rules as `read` when note-targeted
@@ -652,6 +715,7 @@ Do not preemptively create bespoke replay contracts for long-tail note commands.
 - every manifest family has a declared execution and replay policy
 - manifest entries expose stable version metadata
 - manifest lookup and executor policy references stay in sync
+- examples are usable as documentation/test fixtures without requiring exhaustive phrase coverage
 
 ### Resolver tests
 
@@ -664,6 +728,8 @@ Do not preemptively create bespoke replay contracts for long-tail note commands.
 - ambiguous queries produce clarification intent
 - navigation resolution preserves scope for duplicate-title note targets
 - confidence thresholds choose execute vs clarify consistently
+- clearly note-targeted queries bypass cross-surface ambiguity once note intent is confidently resolved
+- uncertain surface cases fall back to the existing arbiter path
 
 ### Executor tests
 
@@ -674,6 +740,8 @@ Do not preemptively create bespoke replay contracts for long-tail note commands.
 - `mutate` never directly replays side effects without confirmation
 - validator rejects stale or incompatible anchor/scope state
 - Stage 6 integration consumes resolved note commands without re-interpreting note surface intent from scratch
+- follow-up anchors expire according to the stated staleness rule
+- read-family provenance does not claim instant deterministic replay when fresh Stage 6 generation still runs
 
 ### Memory tests
 

@@ -1,290 +1,463 @@
 How it works
 
-  The plan turns routing into one shared ladder for uncertain requests across
-  surfaces:
+The routing system is still one shared ladder for uncertain requests across surfaces:
 
-  1. Exact deterministic
-  2. Semantic retrieval / replay
-  3. Bounded LLM arbitration
-  4. Fallback clarification
+1. Exact deterministic
+2. Semantic retrieval / replay
+3. Bounded semantic arbitration
+4. Surface-specific structured resolution
+5. Policy-driven execution
+6. Fallback clarification
 
-  The key change is:
+The important update is that **notes are no longer headed toward more family-specific replay wiring**.
 
-  - deterministic keeps safety and exact wins
-  - but it stops vetoing noisy natural-language turns too early
+For note commands, the system is moving to:
 
-  ———
+- a static note command manifest
+- a generic note resolver
+- a policy-driven executor
+- memory as a resolution cache, not the behavior layer
 
-  Step 1: Exact deterministic
+That is the current implementation direction.
 
-  This still runs first.
+---
 
-  It handles only things the app can identify with high certainty:
+Step 1: Exact deterministic
 
-  - ordinals like 1, second, last
-  - exact validated commands like show links panel
-  - hard exclusions like dangerous mutation paths
-  - exact non-target scope
-  - exact obvious wins
+This still runs first.
 
-  If deterministic is truly certain:
+It handles only things the app can identify safely with high certainty:
 
-  - it resolves immediately
+- ordinals like `1`, `second`, `last`
+- exact validated commands and exact known targets
+- hard safety exclusions
+- exact obvious wins
 
-  If not:
+If deterministic is truly certain:
 
-  - it must not guess
-  - it must pass the turn forward
+- it resolves immediately
 
-  ———
+If not:
 
-  Step 2: Semantic retrieval / replay
+- it must not guess
+- it passes the turn forward
 
-  Before calling a new arbiter, the system can still use memory:
+For notes, this also includes obvious exact note-state questions where current live state is enough.
 
-  - B1 exact memory lookup
-  - B2 semantic memory lookup
-  - Stage 5 replay
+---
 
-  But only as advisory or safe replay:
+Step 2: Semantic retrieval / replay
 
-  - exact prior successful patterns
-  - semantically similar prior successful patterns
+Before any new semantic interpretation, the app can still try memory:
 
-  If replay confidence is high and validation passes:
+- B1 exact memory lookup
+- B2 semantic memory lookup
+- Stage 5 replay / exact reuse
 
-  - reuse the prior resolution
+But memory is only valid when:
 
-  If not:
+- the stored interpretation is still compatible with current validation
+- the action family is safe to reuse
+- the system still re-runs live policy execution where required
 
-  - continue to the arbiter
+For notes, this means:
 
-  So semantic memory helps reduce LLM calls, but does not replace safety checks.
+- memory may reuse the interpreted command shape
+- memory must not become the authority for stale answer text
+- memory must not directly replay note mutations
 
-  ———
+So memory helps reduce redundant routing work, but it does not replace live safety checks.
 
-  Step 3: Bounded LLM arbitration
+---
 
-  If deterministic and replay do not settle the turn, the app calls a bounded
-  semantic arbiter.
+Step 3: Bounded semantic arbitration
 
-  The arbiter does not execute anything.
-  It only returns a typed decision, like:
+If deterministic and replay do not settle the turn, the app can call a bounded semantic arbiter.
 
-  - surface=note, intentFamily=read_content
-  - surface=note, intentFamily=state_info
-  - surface=panel_widget, intentFamily=state_info
-  - surface=workspace, intentFamily=state_info
-  - surface=unknown, intentFamily=ambiguous
+The arbiter does not execute anything.
+It only returns a typed routing decision, such as:
 
-  This is bounded because:
+- `surface=note, intentFamily=state_info`
+- `surface=note, intentFamily=navigate`
+- `surface=note, intentFamily=read_content`
+- `surface=panel_widget, intentFamily=state_info`
+- `surface=workspace, intentFamily=state_info`
+- `surface=unknown, intentFamily=ambiguous`
 
-  - fixed schema
-  - confidence score
-  - no freeform tool execution
-  - no direct side effects
+This remains bounded because:
 
-  If confidence is below threshold:
+- fixed schema
+- confidence score
+- no freeform tool execution
+- no direct side effects
 
-  - unresolved
-  - move to clarification
+If confidence is below threshold:
 
-  If confidence is above threshold:
+- unresolved
+- move to clarification or safe fallback
 
-  - hand off to the correct deterministic family resolver
+If confidence is above threshold:
 
-  ———
+- hand off to the correct structured resolver path
 
-  Step 4: Deterministic family resolver
+---
 
-  After arbitration, the app resolves according to the chosen family.
+Step 4: Surface-specific structured resolution
 
-  ### note.read_content
+This is where the current note architecture changes.
 
-  - semantic arbiter classifies the turn as note content-read
-  - dispatcher builds contentContext
-  - existing Stage 6 runs:
-      - executeS6Loop(...)
-      - inspect
-      - grounded answer
-      - citations
-      - surfaced answer
+For notes, the long-term design is:
 
-  So Stage 6 remains the execution/answer pipeline.
+1. a **note command manifest** defines supported note command families
+2. a **generic note resolver** maps note-oriented user input into one `ResolvedNoteCommand`
+3. the resolved command carries:
+   - family
+   - subtype
+   - anchor source
+   - selector mode
+   - arguments
+   - confidence
+   - execution policy
+   - replay policy
+   - clarification policy
 
-  ### note.state_info
+So note routing stops being “one more family-specific replay patch” and becomes one structured command contract.
 
-  - semantic arbiter says:
-      - note + state_info
-  - deterministic resolver answers from live UI/session state:
-      - activeNoteId
-      - openNotes
-  - examples:
-      - Which note is open?
-      - What note am I on?
+### Note command manifest
 
-  If no note is open:
+The manifest is a capability/policy contract, not a phrase dictionary.
 
-  - explicit answer:
-      - No note is currently open.
+It defines things like:
 
-  ### panel_widget.state_info
+- `state_info.active_note`
+- `navigate.open_note`
+- later:
+  - `read.summary`
+  - `read.question`
+  - `capability.can_edit`
+  - `mutate.rename_note`
 
-  - answer from visible/open panel state and widget snapshots
-  - examples:
-      - What panel is open?
-      - Which widgets are visible?
+Each manifest entry declares:
 
-  ### workspace.state_info
+- examples
+- required arguments
+- anchor requirements
+- execution policy
+- replay policy
+- clarification policy
+- safety rules
 
-  - answer from workspace/session state
-  - example:
-      - Which workspace am I in?
+### Generic note resolver
 
-  ### navigate
+The generic note resolver maps note-oriented user input into a structured command.
 
-  - deferred until later migration
-  - because existing /api/chat/navigate already handles that family
+Its job is to:
 
-  ### mutate
+- identify the note family
+- identify the subtype
+- determine anchor source
+- extract arguments
+- compute confidence
+- choose the policy declared by the manifest
 
-  - classified if needed
-  - never executed in this slice
-  - returns bounded not-supported / clarifier behavior
+The current implementation direction is:
 
-  ———
+1. lightweight deterministic note-surface detection first
+2. manifest-backed note resolution second
+3. existing arbiter remains fallback when surface confidence is uncertain
 
-  Step 5: Fallback clarification
+This avoids creating a second fully separate routing stack while also avoiding ad hoc note-family branching.
 
-  Clarification happens only when:
+### In-scope first slice
 
-  - arbiter is not confident enough
-  - surface is unknown
-  - or the selected family lacks enough grounded live data
+The first implementation slice only covers:
 
-  Examples:
+- `state_info.active_note`
+- `navigate.open_note`
 
-  - Do you want me to explain the current note, or navigate somewhere else?
+That means the first resolved note commands will cover queries like:
 
-  Clarifier is last resort, not early default.
+- `which note is open?`
+- `what note am I in?`
+- `open note Project Plan`
 
-  ———
+This slice is intentionally narrow.
 
-  How migration works
+It is meant to prove the architecture, not to solve every note query at once.
 
-  The plan is staged.
+---
 
-  ### Phase 1
+Step 5: Policy-driven execution
 
-  Audit only:
+After note resolution, execution happens by policy, not by raw phrasing.
 
-  - which deterministic rules are real safety rules
-  - which ones are exact wins
-  - which ones should stop acting as weak vetoes
+### state_info
 
-  No unsafe guard-removal shipping by itself.
+Execution policy:
 
-  ### Phase 2
+- `live_state_resolve`
 
-  Lock the shared contract:
+Behavior:
 
-  - arbiter schema
-  - threshold
-  - dispatcher insertion seam
-  - Stage 6 handoff
-  - state_info resolvers
-  - migrated-family gate
+- always re-resolve current live note/workspace state
+- never return stale cached answer text
 
-  ### Phase 3
+Examples:
 
-  Migrate note families first:
+- `Which note is open?`
+- `What note am I in?`
 
-  - note.read_content
-  - note.state_info
+### navigate
 
-  This is where current pain is highest.
+Execution policy:
 
-  ### Phase 4
+- `navigate_note`
 
-  Extend to:
+Behavior:
 
-  - panel_widget
-  - dashboard
-  - workspace
-  - later navigate
+- resolve the actual target note and scope
+- execute the existing note navigation path
+- clarify if duplicate or ambiguous targets remain
 
-  ### Phase 5
+Example:
 
-  Add telemetry/evals:
+- `open note Project Plan`
 
-  - what stage handled the turn
-  - exact deterministic vs replay vs arbiter vs clarifier
+### read
 
-  ———
+Execution policy:
 
-  Why this solves the current problem
+- `stage6_grounded_answer`
 
-  Today, requests can fail because:
+Behavior:
 
-  - early regex/guard logic decides too soon
-  - different intent families use different routing quality levels
+- resolve the note anchor
+- run Stage 6 against current note content
+- regenerate the answer from current content
 
-  With this plan:
+Important:
 
-  - exact cases still stay fast and safe
-  - noisy but understandable requests get one shared semantic arbiter
-  - content-read and state-info stop depending on ad hoc family-specific wording
-    hacks
-  - clarification happens only after semantic routing also fails
+- memory reuse here is **interpretation reuse**
+- not instant deterministic replay of old answer text
 
-  ———
+### capability
 
-  Concrete example
+Execution policy:
 
-  User:
+- `bounded_capability_answer`
 
-  - hello which note is open
+Behavior:
 
-  Flow:
+- return bounded support/capability response
+- do not turn into mutation execution
 
-  1. deterministic exact win? no
-  2. semantic replay? maybe none
-  3. bounded arbiter:
-      - surface=note
-      - intentFamily=state_info
-      - confidence 0.87
-  4. deterministic note-state resolver:
-      - looks at activeNoteId
-      - returns:
-          - The open note is Main Document.
-  5. no clarifier needed
+### mutate
 
-  Another example:
+Execution policy:
 
-  User:
+- `confirm_then_mutate` or `blocked`
 
-  - could you summarize that note please
+Behavior:
 
-  Flow:
+- require explicit safety policy
+- do not directly replay side effects from memory
 
-  1. deterministic exact win? maybe yes if obvious, otherwise no
-  2. replay? optional
-  3. arbiter:
-      - surface=note
-      - intentFamily=read_content
-  4. Stage 6:
-      - inspect
-      - grounded answer
-      - citations
-  5. surfaced content answer
+---
 
-  ———
+Step 6: Fallback clarification
 
-  In one sentence
+Clarification happens only when:
 
-  The plan makes the router consistent by using:
+- deterministic routing is not certain
+- memory reuse is not safe
+- surface/family confidence is too low
+- anchor resolution is ambiguous
+- required scope is missing
+- explicit target specificity is required but only contextual resolution exists
 
-  - deterministic for certainty and safety,
-  - semantic memory for reuse,
-  - one bounded LLM arbiter for the uncertain middle,
-  - and clarifier only when even that is still unresolved.
+Examples:
+
+- `Do you mean the note in the current entry or the similarly named note in another workspace?`
+
+Clarifier remains the last resort, not the early default.
+
+---
+
+How note memory works now
+
+For notes, memory is moving toward **resolution caching** instead of bespoke replay behavior.
+
+That means memory stores:
+
+- the resolved family
+- the resolved subtype
+- anchor interpretation
+- extracted arguments
+- policy metadata
+- manifest version
+- handler id
+
+And it does **not** store as the final source of truth:
+
+- stale live-state answers
+- stale note-content answers
+- unchecked target assumptions
+- unsafe mutation results
+
+So:
+
+- `state_info` memory reuse still re-runs live state resolution
+- `navigate` memory reuse still re-runs navigation with current validation
+- `read` memory reuse still regenerates content answers from current content
+
+---
+
+How migration works now
+
+The note plan is now staged around the manifest architecture.
+
+### Phase 1
+
+Define the static contract:
+
+- note manifest module
+- manifest entry type
+- command schema
+- execution/replay/clarification enums
+
+No runtime behavior change is required yet.
+
+### Phase 2
+
+Build the first generic note resolver slice for:
+
+- `state_info.active_note`
+- `navigate.open_note`
+
+This gives unit-testable resolved note commands.
+
+### Phase 3
+
+Add policy-driven executor integration for those same families.
+
+This is where runtime behavior begins to move onto the new architecture.
+
+### Phase 4
+
+Attach memory as resolution acceleration:
+
+- cache the resolved command schema
+- revalidate against current manifest version and note context
+- keep live execution behavior
+
+### Phase 5
+
+Extend to additional note families after runtime evidence:
+
+- `read.*`
+- `capability.*`
+- later, carefully:
+  - `mutate.*`
+
+This ordering is deliberate:
+
+- start with deterministic-safe note families first
+- avoid pulling Stage 6, capability, and mutation complexity into the first slice
+
+---
+
+Why this solves the current problem better
+
+The older note direction risked growing into:
+
+- more family-specific replay builders
+- more validator branches
+- more client/server seams
+- more one-off patches per query family
+
+The new note direction scales by improving:
+
+- one manifest
+- one resolver
+- one executor model
+- one memory/cache contract
+
+So growth happens in:
+
+- better note interpretation
+- better anchor resolution
+- better execution policies
+
+Not in:
+
+- more special-case replay plumbing
+
+---
+
+Concrete examples
+
+User:
+
+- `which note is open?`
+
+Flow:
+
+1. deterministic exact win? maybe not
+2. memory? maybe none
+3. note-surface detection says this is clearly note-targeted
+4. note resolver emits:
+   - `family=state_info`
+   - `subtype=active_note`
+   - `anchor=active_note`
+   - `executionPolicy=live_state_resolve`
+5. executor re-resolves current live state
+6. answer:
+   - `The open note is Main Document.`
+
+Another example:
+
+User:
+
+- `open note Project Plan`
+
+Flow:
+
+1. deterministic exact win? maybe not
+2. memory? maybe none
+3. note resolver emits:
+   - `family=navigate`
+   - `subtype=open_note`
+   - `selectorMode=explicit`
+   - `arguments.noteTitle=Project Plan`
+   - `executionPolicy=navigate_note`
+4. executor resolves the actual note target
+5. if multiple matches remain:
+   - clarify
+6. otherwise execute note navigation
+
+Later example:
+
+User:
+
+- `summarize this note`
+
+Flow:
+
+1. note resolver emits:
+   - `family=read`
+   - `subtype=summary`
+   - anchored to the current note
+2. executor uses:
+   - `stage6_grounded_answer`
+3. Stage 6 regenerates the answer from current content
+
+---
+
+In one sentence
+
+The current direction keeps the shared routing ladder, but for notes it replaces growing replay-specific wiring with:
+
+- a manifest for capability and policy
+- a generic note resolver for structured interpretation
+- a policy-driven executor for live behavior
+- and memory as resolution acceleration, not the behavior layer
