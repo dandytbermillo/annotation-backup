@@ -1383,27 +1383,6 @@ export async function POST(request: NextRequest) {
       } catch { /* fail-open */ }
     }
 
-    // Phase A note replay: open_note writeback for navigate_note actions
-    if (!phase5PendingWrite && resolution.success && resolution.action === 'navigate_note') {
-      try {
-        const { buildNoteReplayWritePayload } = await import('@/lib/chat/routing-log/memory-write-payload')
-        phase5PendingWrite = buildNoteReplayWritePayload({
-          rawQueryText: replayQueryText,
-          noteFamily: 'open_note',
-          noteContext: {
-            noteId: (resolution as any).note?.id,
-            noteTitle: (resolution as any).note?.title,
-            workspaceId: (resolution as any).note?.workspaceId,
-            entryId: (resolution as any).note?.entryId,
-            anchorSource: 'resolved_reference',
-            selectorSpecific: true,
-          },
-          familySpecific: {},
-          contextSnapshot: navContextSnapshot,
-        })
-      } catch { /* fail-open */ }
-    }
-
     return NextResponse.json({
       intent,
       resolution,

@@ -627,13 +627,6 @@ export interface RoutingDispatcherResult {
     | { type: 'open_panel'; panelId: string; panelTitle: string }
     | { type: 'go_home' }
 
-  /** Phase A note replay: lightweight note state-info context for client-side writeback */
-  _noteStateInfo?: { activeNoteId?: string; stateSubtype: string; stateTargetMode: string }
-
-  /** Phase A note replay: first-class note replay action from memory */
-  noteReplayAction?:
-    | { type: 'note_state_info'; stateSubtype: string; stateTargetMode: string }
-    | { type: 'open_note'; noteId: string; noteTitle: string; workspaceId?: string; entryId?: string }
 }
 
 /** Type alias for grounding actions (extracted from RoutingDispatcherResult for reuse) */
@@ -1438,8 +1431,6 @@ export async function dispatchRouting(
     messageCount: ctx.messages.length,
   })
 
-  // Phase A note replay: note context for validator (hoisted for B1 + B2 use)
-  const noteCtx = { activeNoteId: ctx.uiContext?.workspace?.activeNoteId || undefined }
 
   if (memoryReadEnabled && !shouldSkipB1ForSelection) {
     try {
@@ -1458,7 +1449,7 @@ export async function dispatchRouting(
 
       if (memoryResult) {
         // First validation: reject obviously stale candidates early (concrete ID checks)
-        const validation = validateMemoryCandidate(memoryResult, turnSnapshotForLog, ctx.uiContext?.dashboard?.visibleWidgets, noteCtx)
+        const validation = validateMemoryCandidate(memoryResult, turnSnapshotForLog, ctx.uiContext?.dashboard?.visibleWidgets)
         if (validation.valid) {
           const defaultResult: RoutingDispatcherResult = {
             handled: false,
@@ -1537,7 +1528,7 @@ export async function dispatchRouting(
         const rawCount = lookupResult.candidates.length
         // Validate each candidate against live UI snapshot (Gate 3)
         const validatedCandidates = lookupResult.candidates.filter(c => {
-          const v = validateMemoryCandidate(c, turnSnapshotForLog, ctx.uiContext?.dashboard?.visibleWidgets, noteCtx)
+          const v = validateMemoryCandidate(c, turnSnapshotForLog, ctx.uiContext?.dashboard?.visibleWidgets)
           return v.valid
         })
         const validatedCount = validatedCandidates.length
@@ -1904,12 +1895,6 @@ export async function dispatchRouting(
           clarificationCleared: false, isNewQuestionOrCommandDetected: false,
           classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
           _devProvenanceHint: 'deterministic',
-          // Phase A note replay: attach lightweight context for client-side writeback
-          _noteStateInfo: {
-            activeNoteId: ctx.uiContext?.workspace?.activeNoteId || undefined,
-            stateSubtype: 'active_note',
-            stateTargetMode: 'live_state_only',
-          },
         }
         const statePayload = buildRoutingLogPayload(ctx, stateResult, turnSnapshotForLog)
         Object.assign(statePayload, arbiterTelemetry)

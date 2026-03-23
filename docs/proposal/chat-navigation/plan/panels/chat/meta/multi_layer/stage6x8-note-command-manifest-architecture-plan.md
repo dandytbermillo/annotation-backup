@@ -546,13 +546,13 @@ Discard it as the long-term pattern for:
 
 ## Cutover From Existing Phase A Note Replay
 
-The Phase A note replay bridge already exists in code for:
+The previous Phase A note replay bridge existed for:
 
 - `note_state_info`
 - `open_note`
 
-This new architecture must define a clear cutover rule so the system does not learn
-the same query through two incompatible mechanisms.
+That bridge has now been removed so the manifest-driven architecture can start from a clean baseline.
+This section preserves the cutover policy in case a narrow bridge is temporarily reintroduced during rollout.
 
 Cutover policy:
 
