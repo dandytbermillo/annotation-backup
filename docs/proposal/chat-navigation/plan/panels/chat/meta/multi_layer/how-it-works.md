@@ -48,7 +48,7 @@ For notes, this also includes obvious exact note-state questions where current l
 
 Step 2: Semantic retrieval / replay
 
-Before any new semantic interpretation, the app can still try memory:
+Before any new semantic interpretation, the broader routing system can still try memory:
 
 - B1 exact memory lookup
 - B2 semantic memory lookup
@@ -62,11 +62,16 @@ But memory is only valid when:
 
 For notes, this means:
 
-- memory may reuse the interpreted command shape
+- in the long term, memory may reuse the interpreted command shape
 - memory must not become the authority for stale answer text
 - memory must not directly replay note mutations
 
-So memory helps reduce redundant routing work, but it does not replace live safety checks.
+For the initial note-manifest rollout, the implementation direction is still deterministic-first:
+
+- manifest metadata and current note/context state come first
+- broader note retrieval/replay remains secondary and can be expanded later if runtime evidence justifies it
+
+So memory remains part of the overall routing ladder, but it is not the primary mechanism for the first note-manifest slice.
 
 ---
 
@@ -168,7 +173,7 @@ The current implementation direction is:
 
 This avoids creating a second fully separate routing stack while also avoiding ad hoc note-family branching.
 
-### In-scope first slice
+### Initial rollout scope
 
 The first implementation slice only covers:
 
@@ -184,6 +189,13 @@ That means the first resolved note commands will cover queries like:
 This slice is intentionally narrow.
 
 It is meant to prove the architecture, not to solve every note query at once.
+
+It is not the full end-state scope. Later phases extend the same manifest/resolver/executor model to:
+
+- `read.*`
+- `capability.*`
+- later, carefully:
+  - `mutate.*`
 
 ---
 
@@ -402,16 +414,15 @@ User:
 
 Flow:
 
-1. deterministic exact win? maybe not
-2. memory? maybe none
-3. note-surface detection says this is clearly note-targeted
-4. note resolver emits:
+1. the shared routing ladder may first check deterministic and memory paths
+2. if those do not already settle the turn, note-surface detection says this is clearly note-targeted
+3. the note resolver emits:
    - `family=state_info`
    - `subtype=active_note`
    - `anchor=active_note`
    - `executionPolicy=live_state_resolve`
-5. executor re-resolves current live state
-6. answer:
+4. the executor re-resolves current live state
+5. answer:
    - `The open note is Main Document.`
 
 Another example:
@@ -422,18 +433,17 @@ User:
 
 Flow:
 
-1. deterministic exact win? maybe not
-2. memory? maybe none
-3. note resolver emits:
+1. the shared routing ladder may first check deterministic and memory paths
+2. if those do not already settle the turn, the note resolver emits:
    - `family=navigate`
    - `subtype=open_note`
    - `selectorMode=explicit`
    - `arguments.noteTitle=Project Plan`
    - `executionPolicy=navigate_note`
-4. executor resolves the actual note target
-5. if multiple matches remain:
+3. the executor resolves the actual note target
+4. if multiple matches remain:
    - clarify
-6. otherwise execute note navigation
+5. otherwise execute note navigation
 
 Later example:
 
@@ -443,11 +453,11 @@ User:
 
 Flow:
 
-1. note resolver emits:
+1. after the shared routing ladder reaches the note path, the note resolver emits:
    - `family=read`
    - `subtype=summary`
    - anchored to the current note
-2. executor uses:
+2. the executor uses:
    - `stage6_grounded_answer`
 3. Stage 6 regenerates the answer from current content
 
