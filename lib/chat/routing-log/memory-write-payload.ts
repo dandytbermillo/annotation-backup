@@ -262,3 +262,67 @@ export function buildPhase5NavigationWritePayload(params: {
     tool_version: MEMORY_TOOL_VERSION,
   }
 }
+
+// --- Note replay write builder ---
+
+/**
+ * Build a MemoryWritePayload for successful note-family operations.
+ *
+ * Eligible families: note_state_info, open_note.
+ * Uses a parallel contract to panel replay — not the panel manifest registry.
+ *
+ * Returns null for invalid or incomplete note context.
+ */
+export function buildNoteReplayWritePayload(params: {
+  rawQueryText: string
+  noteFamily: 'note_state_info' | 'open_note'
+  noteContext: {
+    noteId?: string
+    noteTitle?: string
+    workspaceId?: string
+    entryId?: string
+    anchorSource: 'active_note' | 'resolved_reference'
+    selectorSpecific: boolean
+  }
+  familySpecific: Record<string, unknown>
+  contextSnapshot: ContextSnapshotV1
+}): MemoryWritePayload | null {
+  const { rawQueryText, noteFamily, noteContext, familySpecific, contextSnapshot } = params
+
+  const slotsJson: Record<string, unknown> = {
+    action_type: noteFamily,
+    noteFamily,
+    anchorSource: noteContext.anchorSource,
+    selectorSpecific: noteContext.selectorSpecific,
+    ...familySpecific,
+  }
+
+  let targetIds: string[] = []
+
+  if (noteFamily === 'open_note') {
+    if (!noteContext.noteId || !noteContext.noteTitle) return null
+    slotsJson.noteId = noteContext.noteId
+    slotsJson.noteTitle = noteContext.noteTitle
+    slotsJson.workspaceId = noteContext.workspaceId
+    slotsJson.entryId = noteContext.entryId
+    targetIds = [noteContext.noteId]
+  } else if (noteFamily === 'note_state_info') {
+    // State-info rows may optionally store noteId for telemetry but replay re-resolves live
+    if (noteContext.noteId) {
+      slotsJson.noteId = noteContext.noteId
+      slotsJson.noteTitle = noteContext.noteTitle
+    }
+  }
+
+  return {
+    raw_query_text: rawQueryText,
+    context_snapshot: contextSnapshot,
+    intent_id: noteFamily,
+    intent_class: 'action_intent',
+    slots_json: slotsJson,
+    target_ids: targetIds,
+    risk_tier: noteFamily === 'open_note' ? 'medium' : 'low',
+    schema_version: MEMORY_SCHEMA_VERSION,
+    tool_version: MEMORY_TOOL_VERSION,
+  }
+}

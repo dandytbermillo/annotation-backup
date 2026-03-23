@@ -26,9 +26,14 @@ interface VisibleWidgetForValidation {
   duplicateFamily?: string
 }
 
+/** Note context for note-family replay validation */
+export interface NoteContextForValidation {
+  activeNoteId?: string
+}
+
 export interface ValidationResult {
   valid: boolean
-  reason?: 'target_widget_gone' | 'target_item_gone' | 'target_candidate_gone' | 'high_risk' | 'unknown_action_type' | 'duplicate_family_ambiguous' | 'target_panel_hidden' | 'target_panel_selector_mismatch'
+  reason?: 'target_widget_gone' | 'target_item_gone' | 'target_candidate_gone' | 'high_risk' | 'unknown_action_type' | 'duplicate_family_ambiguous' | 'target_panel_hidden' | 'target_panel_selector_mismatch' | 'target_note_not_active' | 'note_selector_not_specific'
 }
 
 /**
@@ -48,6 +53,7 @@ export function validateMemoryCandidate(
   candidate: MemoryLookupResult,
   turnSnapshot: MinimalTurnSnapshot,
   visibleWidgets?: VisibleWidgetForValidation[],
+  noteContext?: NoteContextForValidation,
 ): ValidationResult {
   // Safety guard: reject high-risk actions
   if (candidate.risk_tier === 'high') {
@@ -135,6 +141,32 @@ export function validateMemoryCandidate(
       }
     }
     return { valid: true }
+  }
+
+  // Note-family action types — parallel to panel replay, not panel-registry dependent
+  const NOTE_ACTIONS = new Set(['note_state_info', 'open_note'])
+  if (NOTE_ACTIONS.has(actionType!)) {
+    if (actionType === 'note_state_info') {
+      const stateTargetMode = candidate.slots_json.stateTargetMode as string | undefined
+      if (stateTargetMode === 'active_note_target' && noteContext?.activeNoteId) {
+        const storedNoteId = candidate.slots_json.noteId as string | undefined
+        if (storedNoteId && storedNoteId !== noteContext.activeNoteId) {
+          return { valid: false, reason: 'target_note_not_active' }
+        }
+      }
+      // live_state_only → always valid (replay re-runs the live resolver)
+      return { valid: true }
+    }
+
+    if (actionType === 'open_note') {
+      // Minimal validation: selectorSpecific must be true for explicit note-open
+      const selectorSpecific = candidate.slots_json.selectorSpecific as boolean | undefined
+      if (!selectorSpecific) {
+        return { valid: false, reason: 'note_selector_not_specific' }
+      }
+      // Let navigate_note execution handle accessibility at runtime
+      return { valid: true }
+    }
   }
 
   // Unknown action type

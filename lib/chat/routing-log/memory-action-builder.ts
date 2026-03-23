@@ -41,6 +41,9 @@ interface MinimalRoutingResult {
     | { type: 'open_workspace'; workspaceId: string; workspaceName: string; entryId: string; entryName: string; isDefault: boolean }
     | { type: 'open_panel'; panelId: string; panelTitle: string }
     | { type: 'go_home' }
+  noteReplayAction?:
+    | { type: 'note_state_info'; stateSubtype: string; stateTargetMode: string }
+    | { type: 'open_note'; noteId: string; noteTitle: string; workspaceId?: string; entryId?: string }
 }
 
 /**
@@ -131,6 +134,36 @@ export function buildResultFromMemory(
         type: 'open_panel' as const,
         panelId: candidate.slots_json.panelId as string,
         panelTitle: candidate.slots_json.panelTitle as string,
+      },
+    }
+  } else if (actionType === 'note_state_info') {
+    return {
+      ...defaultResult,
+      handled: true,
+      handledByTier: undefined,
+      tierLabel: `memory_exact:${candidate.intent_id}`,
+      _devProvenanceHint: 'memory_exact',
+      _memoryCandidate: candidate,
+      noteReplayAction: {
+        type: 'note_state_info' as const,
+        stateSubtype: (candidate.slots_json.stateSubtype as string) || 'active_note',
+        stateTargetMode: (candidate.slots_json.stateTargetMode as string) || 'live_state_only',
+      },
+    }
+  } else if (actionType === 'open_note') {
+    return {
+      ...defaultResult,
+      handled: true,
+      handledByTier: undefined,
+      tierLabel: `memory_exact:${candidate.intent_id}`,
+      _devProvenanceHint: 'memory_exact',
+      _memoryCandidate: candidate,
+      noteReplayAction: {
+        type: 'open_note' as const,
+        noteId: candidate.slots_json.noteId as string,
+        noteTitle: candidate.slots_json.noteTitle as string,
+        workspaceId: (candidate.slots_json.workspaceId as string) || undefined,
+        entryId: (candidate.slots_json.entryId as string) || undefined,
       },
     }
   } else {
