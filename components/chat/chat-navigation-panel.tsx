@@ -556,7 +556,7 @@ function ChatNavigationPanelContent({
     lastAddedAssistantIdRef,
   } = useChatNavigationContext()
 
-  const { executeAction, selectOption, openPanelDrawer: openPanelDrawerBase } = useChatNavigation({
+  const { executeAction, selectOption, openPanelDrawer: openPanelDrawerBase, navigateToNote } = useChatNavigation({
     onNavigationComplete: () => {
       onNavigationComplete?.()
       setOpen(false)
@@ -1522,7 +1522,10 @@ function ChatNavigationPanelContent({
         // Preview shortcut (Tier 2g)
         lastPreview,
         openPanelDrawer,
+        navigateToNote,
         openPanelWithTracking,
+        // User identity for note/workspace resolver context
+        userId: 'local', // OPTION_A_USER_ID — single-user offline mode
         // Grounding-set fallback (Tier 4.5)
         sessionState,
         lastOptionsShown,

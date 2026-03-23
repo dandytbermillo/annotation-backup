@@ -79,6 +79,11 @@ Step 3: Bounded semantic arbitration
 
 If deterministic and replay do not settle the turn, the app can call a bounded semantic arbiter.
 
+This is the step where the bounded LLM call happens.
+
+Step 2 may retrieve memory candidates or semantic hints, but Step 2 by itself is not the LLM call.
+Those retrieved hints become evidence for Step 3.
+
 The arbiter does not execute anything.
 It only returns a typed routing decision, such as:
 
@@ -95,6 +100,13 @@ This remains bounded because:
 - confidence score
 - no freeform tool execution
 - no direct side effects
+
+So the role split is:
+
+- Step 2: retrieve prior exact/semantic evidence
+- Step 3: bounded LLM classifies within a fixed schema
+- Step 4: the surface resolver produces the canonical normalized command shape
+- Step 5: the executor validates and runs it
 
 If confidence is below threshold:
 

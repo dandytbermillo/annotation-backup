@@ -68,8 +68,16 @@ function extractNoteNavigateTitle(input: string): string | null {
   const match = input.match(NOTE_NAVIGATE_PATTERN)
   if (!match) return null
   const title = match[1].trim()
-  // Reject if title is empty or too short
-  return title.length >= 1 ? title : null
+  if (title.length < 1) return null
+  // Minimal guardrails — reject noisy tails for deterministic bypass safety
+  if (title.length > 80) return null                    // overly long extraction
+  if (/[?!]/.test(title)) return null                   // question/exclamation → not a clean command
+  if (/\bplease\b|\bthanks?\b/i.test(title)) return null // trailing politeness
+  if (/\bin\s+\w/i.test(title)) return null             // scoped variant: "in Budget" → fall through to LLM
+  if (/\bfrom\s+\w/i.test(title)) return null           // scoped: "from entry Y"
+  if (/\band\s+/i.test(title)) return null              // compound: "and also..."
+  if (/\bthen\s+/i.test(title)) return null             // sequential: "then do..."
+  return title
 }
 
 // =============================================================================

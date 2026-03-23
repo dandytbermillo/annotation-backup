@@ -100,6 +100,7 @@ import { classifyContentIntent, isAnchoredNoteResolverHardExcluded, isArbiterHar
 import { callAnchoredNoteResolver } from '@/lib/chat/anchored-note-intent-resolver'
 import { callCrossSurfaceArbiter } from '@/lib/chat/cross-surface-arbiter'
 import { resolveNoteStateInfo, isPanelOpenQuery, resolvePanelOpenStateInfo, resolvePanelWidgetStateInfo, resolveWorkspaceStateInfo, resolveDashboardStateInfo } from '@/lib/chat/state-info-resolvers'
+import { resolveNoteCommand } from '@/lib/chat/note-command-resolver'
 import { executeS6OpenPanel, isDuplicateAction } from '@/lib/chat/stage6-execution-bridge'
 import type { S6ParsedAction, S6ActionSignature } from '@/lib/chat/stage6-execution-bridge'
 
@@ -437,6 +438,10 @@ export interface RoutingDispatcherContext {
   // --- Preview Shortcut (Tier 2g) ---
   lastPreview: LastPreviewState | null
   openPanelDrawer: (panelId: string, panelTitle?: string, executionMeta?: import('@/lib/chat/action-trace').ExecutionMeta) => void
+  navigateToNote?: (note: import('@/lib/chat/resolution-types').NoteMatch) => Promise<{ success: boolean; message?: string }>
+
+  // --- User Identity ---
+  userId: string
   openPanelWithTracking: (content: ViewPanelContent, panelId?: string) => void
 
   // --- Grounding-Set Fallback (Tier 4.5, per grounding-set-fallback-plan.md) ---
@@ -1880,6 +1885,26 @@ export async function dispatchRouting(
       // ── Path 2: note.state_info (migrated, above threshold) ──
       } else if (isMigrated && rawDecision!.intentFamily === 'state_info' && rawDecision!.surface === 'note') {
         contentIntentMatchedThisTurn = true
+        // Manifest-driven note command resolution (validation + telemetry)
+        const noteCommand = resolveNoteCommand({
+          userInput: ctx.trimmedInput,
+          noteContext: {
+            activeNoteId: ctx.uiContext?.workspace?.activeNoteId || undefined,
+            openNotes: ctx.uiContext?.workspace?.openNotes,
+            currentEntryId: ctx.currentEntryId,
+          },
+          intentHint: { intentFamily: 'state_info' },
+        })
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'note_manifest_state_info',
+          metadata: noteCommand ? {
+            manifestVersion: noteCommand.manifestVersion,
+            handlerId: noteCommand.handlerId,
+            confidence: noteCommand.confidence,
+          } : { matched: false },
+        })
+        // Execute via existing path (manifest validation is additive)
         const stateAnswer = resolveNoteStateInfo(ctx.uiContext ?? {})
         const stateMsg: ChatMessage = {
           id: `assistant-${Date.now()}`,
@@ -5164,6 +5189,144 @@ async function dispatchRoutingInner(
       classifierLatencyMs,
       classifierError,
       isFollowUp,
+    }
+  }
+
+  // =========================================================================
+  // TIER 4.25 — Manifest-Driven Note Navigate (Pre-LLM)
+  //
+  // Deterministic note-navigate detection for clean "open note X" forms.
+  // Only intercepts on high confidence. Everything else falls through to LLM.
+  // =========================================================================
+  {
+    const noteNavCommand = resolveNoteCommand({
+      userInput: ctx.trimmedInput,
+      noteContext: {
+        activeNoteId: ctx.uiContext?.workspace?.activeNoteId || undefined,
+        openNotes: ctx.uiContext?.workspace?.openNotes,
+        currentEntryId: ctx.currentEntryId,
+      },
+    })
+
+    if (noteNavCommand && noteNavCommand.intentFamily === 'navigate' && noteNavCommand.confidence === 'high' && ctx.navigateToNote) {
+      const noteTitle = noteNavCommand.arguments.noteTitle as string
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'note_manifest_navigate_execute',
+        metadata: {
+          manifestVersion: noteNavCommand.manifestVersion,
+          handlerId: noteNavCommand.handlerId,
+          noteTitle,
+        },
+      })
+
+      // Resolve note via existing DB lookup
+      try {
+        const { resolveNote } = await import('@/lib/chat/note-resolver')
+        const noteResult = await resolveNote(noteTitle, {
+          currentEntryId: ctx.currentEntryId,
+          userId: ctx.userId,
+        })
+
+        if (noteResult.status === 'found' && noteResult.note) {
+          // Execute navigation via callback
+          await ctx.navigateToNote(noteResult.note)
+
+          const navMsg: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: `Opening note "${noteResult.note.title}"...`,
+            timestamp: new Date(),
+            isError: false,
+          }
+          ctx.addMessage(navMsg, { tierLabel: 'note_manifest_navigate', provenance: 'deterministic' })
+          ctx.setIsLoading(false)
+
+          return {
+            ...defaultResult,
+            handled: true,
+            handledByTier: 4,
+            tierLabel: 'note_manifest_navigate',
+            clarificationCleared,
+            isNewQuestionOrCommandDetected,
+            classifierCalled: false,
+            classifierTimeout: false,
+            classifierError: false,
+            isFollowUp: false,
+            _devProvenanceHint: 'deterministic' as const,
+          }
+        }
+
+        if (noteResult.status === 'multiple' && noteResult.matches) {
+          // Multiple matches — show clarification pills
+          const options = noteResult.matches.map((n, i) => ({
+            index: i + 1,
+            id: n.id,
+            label: n.title,
+            sublabel: n.entryName || n.workspaceName || undefined,
+            type: 'note' as const,
+            data: n,
+          }))
+
+          const msgId = `assistant-${Date.now()}`
+          ctx.setPendingOptions(options)
+          ctx.setPendingOptionsMessageId(msgId)
+          ctx.setPendingOptionsGraceCount?.(0)
+          // Sync clarification state for ordinal/label follow-ups
+          ctx.saveLastOptionsShown?.(
+            options.map(opt => ({ id: opt.id, label: opt.label, sublabel: opt.sublabel, type: opt.type })),
+            msgId
+          )
+          ctx.setLastClarification({
+            type: 'option_selection',
+            originalIntent: 'note_manifest_navigate',
+            messageId: msgId,
+            timestamp: Date.now(),
+            clarificationQuestion: `Multiple notes named "${noteTitle}" found.`,
+            options: options.map(opt => ({ id: opt.id, label: opt.label, sublabel: opt.sublabel, type: opt.type })),
+            metaCount: 0,
+          })
+
+          const clarifyMsg: ChatMessage = {
+            id: msgId,
+            role: 'assistant',
+            content: `Multiple notes named "${noteTitle}" found. Which one would you like to open?`,
+            timestamp: new Date(),
+            isError: false,
+          }
+          ctx.addMessage(clarifyMsg, { tierLabel: 'note_manifest_navigate_clarify', provenance: 'safe_clarifier' })
+          ctx.setIsLoading(false)
+
+          return {
+            ...defaultResult,
+            handled: true,
+            handledByTier: 4,
+            tierLabel: 'note_manifest_navigate_clarify',
+            clarificationCleared,
+            isNewQuestionOrCommandDetected,
+            classifierCalled: false,
+            classifierTimeout: false,
+            classifierError: false,
+            isFollowUp: false,
+            _devProvenanceHint: 'safe_clarifier' as const,
+          }
+        }
+
+        // Not found — fall through to LLM path
+      } catch {
+        // DB/resolver error — fall through to LLM path
+      }
+    } else if (noteNavCommand && noteNavCommand.intentFamily === 'navigate') {
+      // Shadow-mode: log but don't execute (low confidence or no callback)
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'note_manifest_navigate_shadow',
+        metadata: {
+          confidence: noteNavCommand.confidence,
+          noteTitle: noteNavCommand.arguments.noteTitle,
+          hasCallback: !!ctx.navigateToNote,
+        },
+      })
     }
   }
 
