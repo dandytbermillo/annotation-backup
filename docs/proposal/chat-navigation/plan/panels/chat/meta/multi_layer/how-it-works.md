@@ -471,3 +471,198 @@ The current direction keeps the shared routing ladder, but for notes it replaces
 - a generic note resolver for structured interpretation
 - a policy-driven executor for live behavior
 - and memory as resolution acceleration, not the behavior layer
+
+
+
+There are two different kinds of reuse, and they solve different
+problems:
+
+### 1. `Memory-Exact` or exact command reuse
+
+This is about **behavior reuse**.
+
+Question:
+
+- have we already seen this exact query in a compatible context?
+- if yes, can we safely reuse the same interpreted command or action?
+
+If the answer is yes:
+
+- the system can skip some routing work
+- it can reuse the prior interpreted command shape
+- it still must revalidate current context when the family requires it
+
+This is what drives:
+
+- exact resolved-command reuse
+- exact action reuse where safe
+- `Memory-Exact`-style behavior
+
+### 2. Embedding reuse
+
+This is about **vector generation cost**, not action safety.
+
+Question:
+
+- do we already have an embedding for this exact normalized query text with a compatible embedding model version?
+
+If yes:
+
+- the system may be able to avoid a new embedding API call
+
+But that does **not** mean:
+
+- the old action is safe to replay
+- the old answer text is safe to reuse
+- the current anchor or target assumptions are still valid
+
+### Important distinction
+
+A query may reuse:
+
+1. its prior interpreted action or command
+2. its prior embedding vector
+
+These are related, but they are not the same layer.
+
+### What the current implementation actually does
+
+Today, this codebase only has a **small server-side in-process embedding cache** keyed by query fingerprint.
+
+Implementation nuance:
+
+- conceptually, embedding reuse should be tied to embedding model/version compatibility
+- currently, the in-process cache key is just the query fingerprint because the embedding model/version is fixed in code today
+
+That means:
+
+- exact repeated queries may avoid a new embedding API call if they hit the in-memory cache in the current server process
+- but the system does **not** currently implement a DB-level exact-query embedding cache that reloads a previously stored embedding from the database to skip embedding generation
+
+So:
+
+- `Memory-Exact` reuse is about safe command/action reuse
+- embedding reuse is about reducing vector generation cost
+- current exact embedding reuse is only via the server’s in-memory cache, not via database round-trip reuse of stored embeddings
+
+### Similar versus exact queries
+
+For a merely similar query, a stored prior embedding does **not** let the system skip embedding the new query.
+
+Why:
+
+- semantic search still needs a vector for the new query text
+- the old stored embeddings act as the search corpus
+- but the new query usually still needs its own embedding
+
+So the practical rule is:
+
+- exact repeated query -> may reuse command interpretation and may hit the in-process embedding cache
+- similar query -> may benefit from stored semantic corpus, but still usually needs a fresh query embedding
+
+
+
+Scenario where semantic retrieval is useful:
+
+When the user phrasing is slightly different, but the same or very similar intent has already succeeded before.
+
+The flow below describes the intended behavior for the note-manifest architecture.
+It is not a claim that every active semantic path in the broader routing stack already behaves this way.
+
+Example:
+
+- current user query:
+  - `take me to the project plan note`
+- prior successful rows in memory:
+  - `open note project plan`
+  - `go to note project plan`
+
+This is where semantic retrieval helps.
+
+### Safe flow
+
+1. in the current implementation, the new query still gets embedded
+- because the phrasing is different
+- exact-query reuse does not apply
+- the previously stored embeddings act as retrieval corpus, not as a substitute for the new query vector
+
+2. semantic lookup retrieves close prior matches from the database
+- similar intent
+- similar anchor or target pattern
+- similar successful history
+
+3. retrieved matches are used as hints, not as authority
+- they can reduce ambiguity
+- they can help a bounded LLM infer likely structured intent
+- they can help the resolver infer likely family/subtype and argument shape
+- they do not by themselves authorize replay or direct execution
+
+4. bounded LLM should decide structured intent or provide a classification hint, not final raw execution
+- good:
+  - `surface=note`
+  - `intentFamily=navigate`
+  - `intentSubtype=open_note`
+  - maybe a `noteTitle` hint
+- bad:
+  - “just execute this exact old command from memory”
+- in practice, the LLM should help with likely family, subtype, and candidate arguments
+- it should not be the final authority for the exact executable command
+
+5. the resolver remains the canonical producer of the normalized command shape
+- it turns the query plus any safe hints into:
+  - family
+  - subtype
+  - arguments
+  - confidence
+  - policy
+- this is the point where the app normalizes the intent into the manifest-backed command contract
+
+6. the executor still resolves and validates the concrete target before execution
+- resolve the actual note target
+- validate anchor and scope
+- clarify if ambiguous
+- then execute
+- for `open_note`, the final concrete target may still depend on live note resolution and clarification
+
+### Important safety rule
+
+The safe flow is:
+
+- semantic retrieval finds close prior examples
+- bounded LLM may use them as evidence to infer likely structured intent
+- the structured resolver produces the canonical command shape
+- the executor validates and runs it
+
+Not:
+
+- semantic match -> bounded LLM -> direct command execution with no resolver or validation
+
+That shortcut is too risky because similar phrasing does not guarantee:
+
+- the same target
+- the same anchor
+- the same current state
+- the same safe action
+
+### Practical meaning
+
+Semantic retrieval is the right tool for slightly different phrasing.
+
+For the note-manifest architecture, it should be used to improve:
+
+- classification
+- argument hints
+- confidence
+- candidate command-family selection
+
+It should not replace:
+
+- resolver authority
+- deterministic validation
+- executor policy
+
+Current broader-system caveat:
+
+- B2 semantic lookup still behaves as a hint-producing lane in the shared routing ladder
+- but the broader current routing stack also contains a Stage 5 semantic replay path that may directly replay when eligible
+- that existing Stage 5 behavior is separate from the intended note-manifest resolver/executor flow described above
