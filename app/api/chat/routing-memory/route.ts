@@ -37,6 +37,11 @@ const UPSERT_SQL = `
     success_count = chat_routing_memory_index.success_count + 1,
     last_success_at = now(),
     ttl_expires_at = now() + interval '${MEMORY_DEFAULT_TTL_DAYS} days',
+    -- Self-upgrade: refresh payload fields so stale rows adopt new contracts
+    intent_id = EXCLUDED.intent_id,
+    slots_json = EXCLUDED.slots_json,
+    target_ids = EXCLUDED.target_ids,
+    risk_tier = EXCLUDED.risk_tier,
     semantic_embedding = COALESCE(EXCLUDED.semantic_embedding, chat_routing_memory_index.semantic_embedding),
     embedding_model_version = CASE
       WHEN EXCLUDED.semantic_embedding IS NOT NULL THEN EXCLUDED.embedding_model_version

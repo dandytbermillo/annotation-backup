@@ -205,10 +205,11 @@ export function revalidateMemoryHit<T extends RevalidatableResult>(
   result: T,
   freshSnapshot: MinimalTurnSnapshot,
   visibleWidgets?: VisibleWidgetForValidation[],
+  noteContext?: NoteContextForValidation,
 ): T {
   if (!result._memoryCandidate) return result
 
-  const check = validateMemoryCandidate(result._memoryCandidate, freshSnapshot, visibleWidgets)
+  const check = validateMemoryCandidate(result._memoryCandidate, freshSnapshot, visibleWidgets, noteContext)
   if (check.valid) return result
 
   console.warn('[routing-memory] commit-point revalidation failed:', check.reason)

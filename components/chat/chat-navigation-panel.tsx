@@ -1705,7 +1705,7 @@ function ChatNavigationPanelContent({
       // failed log (best-effort). Result falls through to LLM API below.
       // ---------------------------------------------------------------------------
       if (routingResult._memoryCandidate) {
-        routingResult = revalidateMemoryHit(routingResult, buildTurnSnapshot({}), uiContext?.dashboard?.visibleWidgets)
+        routingResult = revalidateMemoryHit(routingResult, buildTurnSnapshot({}), uiContext?.dashboard?.visibleWidgets, { activeNoteId: uiContext?.workspace?.activeNoteId || undefined })
       }
 
       // ---------------------------------------------------------------------------
@@ -1926,6 +1926,86 @@ function ChatNavigationPanelContent({
       }
 
       // ---------------------------------------------------------------------------
+      // Phase A: Note Replay Execution (Memory-Exact for note families)
+      // Sibling to navigationReplayAction — handles note_state_info and open_note.
+      // ---------------------------------------------------------------------------
+      if (routingResult.handled && routingResult.noteReplayAction) {
+        let noteReplaySucceeded = false
+        const noteAction = routingResult.noteReplayAction
+        try {
+          if (noteAction.type === 'note_state_info') {
+            // Re-resolve live state — not cached answer
+            const { resolveNoteStateInfo } = await import('@/lib/chat/state-info-resolvers')
+            const stateAnswer = resolveNoteStateInfo(uiContext ?? {})
+            const replayMsg: ChatMessage = {
+              id: `assistant-${Date.now()}`,
+              role: 'assistant',
+              content: stateAnswer,
+              timestamp: new Date(),
+              isError: false,
+              provenance: 'memory_exact',
+            }
+            addMessage(replayMsg, { tierLabel: routingResult.tierLabel, provenance: 'memory_exact' })
+            noteReplaySucceeded = true
+          } else if (noteAction.type === 'open_note') {
+            const replayResolution = {
+              success: true,
+              action: 'navigate_note' as const,
+              note: {
+                id: noteAction.noteId,
+                title: noteAction.noteTitle,
+                noteId: noteAction.noteId,
+                workspaceId: noteAction.workspaceId,
+                entryId: noteAction.entryId,
+              },
+              message: `Opening note "${noteAction.noteTitle}"...`,
+            }
+            const result = await executeAction(replayResolution)
+            if (result && (result as { success?: boolean }).success !== false) {
+              noteReplaySucceeded = true
+              const replayMsg: ChatMessage = {
+                id: `assistant-${Date.now()}`,
+                role: 'assistant',
+                content: replayResolution.message ?? 'Opening note...',
+                timestamp: new Date(),
+                isError: false,
+                provenance: 'memory_exact',
+              }
+              addMessage(replayMsg, { tierLabel: routingResult.tierLabel, provenance: 'memory_exact' })
+            } else {
+              const failMsg: ChatMessage = {
+                id: `assistant-${Date.now()}`,
+                role: 'assistant',
+                content: 'Note replay could not complete. The note may no longer be available.',
+                timestamp: new Date(),
+                isError: true,
+              }
+              addMessage(failMsg)
+            }
+          }
+          // Fire pending logs on success
+          if (noteReplaySucceeded) {
+            if (routingResult._pendingMemoryLog) recordRoutingLog(routingResult._pendingMemoryLog).catch(() => {})
+            if (routingResult._pendingMemoryWrite) recordMemoryEntry(routingResult._pendingMemoryWrite).catch(() => {})
+          }
+        } catch {
+          const errorMsg: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: 'Note replay failed. Please try again.',
+            timestamp: new Date(),
+            isError: true,
+          }
+          addMessage(errorMsg)
+        }
+        if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current && noteReplaySucceeded) {
+          setProvenance(lastAddedAssistantIdRef.current, 'memory_exact')
+        }
+        setIsLoading(false)
+        return
+      }
+
+      // ---------------------------------------------------------------------------
       // Tier 4.5: Widget Registry Item Execution
       // Per widget-registry-implementation-plan.md §4d.
       // ---------------------------------------------------------------------------
@@ -2102,6 +2182,36 @@ function ChatNavigationPanelContent({
               })
             }
           } catch { /* fail-open: don't block panel open for writeback */ }
+        }
+
+        // Phase A note replay: note_state_info writeback
+        if (routingResult._noteStateInfo && routingResult._phase5ReplaySnapshot) {
+          try {
+            const { buildNoteReplayWritePayload } = await import('@/lib/chat/routing-log/memory-write-payload')
+            const nsi = routingResult._noteStateInfo
+            const noteWrite = buildNoteReplayWritePayload({
+              rawQueryText: trimmedInput,
+              noteFamily: 'note_state_info',
+              noteContext: {
+                noteId: nsi.activeNoteId,
+                anchorSource: 'active_note',
+                selectorSpecific: false,
+              },
+              familySpecific: {
+                stateSubtype: nsi.stateSubtype,
+                stateTargetMode: nsi.stateTargetMode,
+              },
+              contextSnapshot: routingResult._phase5ReplaySnapshot,
+            })
+            if (noteWrite) {
+              setPendingPhase5Write({
+                payload: noteWrite,
+                turnTimestamp: Date.now(),
+                fromClarifiedSuccess: false,
+                fromCuratedSeedAssisted: false,
+              })
+            }
+          } catch { /* fail-open */ }
         }
 
         return
