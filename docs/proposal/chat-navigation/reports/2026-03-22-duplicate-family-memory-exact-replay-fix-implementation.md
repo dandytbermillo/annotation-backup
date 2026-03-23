@@ -101,7 +101,21 @@ The UPSERT in `routing-memory/route.ts` increments `success_count` but doesn't r
 | "open links panel" (generic) | Still clarifies (not replayed) |
 | "open widget manager" (singleton) | Memory-Exact (unchanged) |
 
+**Turn 2 vs Turn 3 variance:** Phase 5 writes are one-turn delayed. The pending write is promoted fire-and-forget (`void recordMemoryEntry(...)` at `routing-dispatcher.ts:1392`) before B1 lookup runs. Because the write is not awaited, Turn 2's B1 lookup may run before the promoted row is committed. Turn 3 reliably finds it. This is a nondeterministic async promotion race, not a correctness issue.
+
+## Resolver Coverage Note
+
+The important return sites now forward `duplicateFamily` + `instanceLabel`:
+- Quick Links exact badge path (`resolveShowQuickLinks`)
+- Quick Links single-panel path
+- Generic duplicate-family exact instance + single-sibling paths
+- `resolveDrawerPanelTarget` → `IntentResolutionResult` mapping
+- Drawer fallback path
+
+The panel-handler `open_panel_drawer` pass-through (from `executePanelIntent` result) does NOT forward these fields. That path is less common for duplicate-family panels but is a documented gap.
+
 ## Follow-ups
 
-1. **Legacy row self-upgrade** — UPSERT should refresh `slots_json` on conflict so pre-fix rows don't require manual deletion
+1. **Legacy row self-upgrade** — UPSERT should refresh `slots_json` on conflict so pre-fix rows don't require manual deletion. Currently increments `success_count` but doesn't update `intent_id`, `slots_json`, `target_ids`, or `risk_tier`
 2. **Known-noun writeback parity** — Tier 4 known-noun deterministic panel opens don't emit Phase 5 writebacks (separate gap)
+3. **Async promotion race** — Phase 5 pending write promotion is fire-and-forget. Memory-Exact may appear on Turn 2 or Turn 3 depending on DB commit timing. Not a correctness issue but a UX nondeterminism
