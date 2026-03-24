@@ -180,7 +180,8 @@ type NoteCommandManifestEntry = {
   selectorMode: 'explicit' | 'contextual' | 'either';
   executionPolicy:
     | 'live_state_resolve'
-    | 'navigate_note'
+    | 'open_note_in_current_workspace'
+    | 'navigate_to_note_workspace'
     | 'stage6_grounded_answer'
     | 'bounded_capability_answer'
     | 'confirm_then_mutate'
@@ -192,6 +193,7 @@ type NoteCommandManifestEntry = {
   clarificationPolicy:
     | 'clarify_on_ambiguous_target'
     | 'clarify_on_low_confidence'
+    | 'clarify_target_workspace'
     | 'no_clarification';
   safetyRules: string[];
   handlerId: string;
@@ -199,6 +201,12 @@ type NoteCommandManifestEntry = {
 ```
 
 The manifest should live at the family/policy level. It should not attempt to list every raw note query variant.
+
+Clarification policy reminder:
+
+- `clarify_on_ambiguous_target` -> multiple candidate note identities or anchors
+- `clarify_on_low_confidence` -> interpretation is not safe enough to execute directly
+- `clarify_target_workspace` -> `open_note` has no current workspace to preserve, so the target workspace must be chosen explicitly
 
 ### Purpose of manifest examples
 
@@ -413,24 +421,31 @@ Execution depends on policy, not on raw phrasing.
 - always re-resolve current state
 - never return stale cached answer text
 
-2. `navigate_note`
+2. `open_note_in_current_workspace`
 - used for `navigate`
-- execute note navigation once the target is resolved
+- preserve the current workspace when one exists
+- focus the note if it is already open there
+- otherwise open the resolved note into that workspace
+- if there is no current workspace, do not silently choose one; use `clarify_target_workspace`
+
+3. `navigate_to_note_workspace`
+- used only for explicit cross-workspace note-navigation commands
+- switch to the workspace containing the resolved note
 - validate target and scope as needed
 
-3. `stage6_grounded_answer`
+4. `stage6_grounded_answer`
 - used for `read`
 - resolve current note anchor
 - regenerate answer from current note content
 - memory may skip some routing work, but never reuse stale answer text as the final result
 - provenance for this path should not imply instant deterministic replay; it should communicate exact interpretation reuse with fresh answer generation
 
-4. `bounded_capability_answer`
+5. `bounded_capability_answer`
 - used for `capability`
 - return deterministic or bounded policy answer
 - do not route into mutation execution
 
-5. `confirm_then_mutate` / `blocked`
+6. `confirm_then_mutate` / `blocked`
 - used for `mutate`
 - require explicit confirmation or reject safely
 - no direct memory replay of side effects
@@ -445,7 +460,8 @@ Recommended integration model:
 2. the generic note resolver produces `ResolvedNoteCommand`
 3. execution then branches by policy:
    - `state_info` -> deterministic state resolver path
-   - `navigate_note` -> existing note navigation path
+   - `open_note_in_current_workspace` -> current-workspace note-open/focus path
+   - `navigate_to_note_workspace` -> explicit cross-workspace note navigation path
    - `stage6_grounded_answer` -> existing Stage 6 grounded-answer path, but with pre-resolved note command and anchor
    - `bounded_capability_answer` -> bounded capability responder
    - `confirm_then_mutate` / `blocked` -> mutation safety path
@@ -468,6 +484,24 @@ Practical rule:
 
 - if the query is clearly note-targeted, resolver output should constrain or bypass cross-surface ambiguity
 - if surface detection is uncertain, existing arbiter logic remains the safety fallback
+
+### Navigate policy refinement
+
+The navigate family should not collapse two different user intents into one execution policy.
+
+Keep these separate:
+
+1. `open_note`
+- preserve current workspace
+- open/focus the note in that workspace
+- do not silently switch workspace
+
+2. explicit workspace-navigation note intents
+- `go to the workspace containing note X`
+- `switch to where note X is open`
+- these may use `navigate_to_note_workspace`
+
+This refinement aligns the note-manifest plan with the shared-surface architecture addendum and prevents plain note-open from behaving like implicit workspace navigation.
 
 ## Concrete Note Validation Context
 
@@ -516,6 +550,7 @@ Clarify when:
 - note target is ambiguous
 - anchor resolution is low confidence
 - the command requires explicit target specificity but only contextual anchor is available
+- `open_note` has no current workspace to preserve, so the target workspace must be chosen explicitly
 - the requested mutation lacks confirmation
 
 Do not clarify when:

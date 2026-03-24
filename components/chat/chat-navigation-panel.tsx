@@ -2058,6 +2058,23 @@ function ChatNavigationPanelContent({
         try {
           const entryId = currentEntryId ?? sessionState.currentEntryId ?? getActiveEntryContext() ?? undefined
           const workspaceId = currentWorkspaceId ?? sessionState.currentWorkspaceId ?? undefined
+          // TEMPORARY INSTRUMENTATION — remove after repro
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'note_manifest_navigate_scope_debug',
+            metadata: {
+              noteTitle,
+              currentWorkspaceId,
+              sessionStateWorkspaceId: sessionState.currentWorkspaceId,
+              uiContextWorkspaceId: (uiContext as Record<string, unknown>)?.workspace && ((uiContext as Record<string, unknown>).workspace as Record<string, unknown>)?.workspaceId,
+              getActiveWorkspaceContext: getActiveWorkspaceContext(),
+              resolvedWorkspaceId: workspaceId,
+              currentEntryId,
+              sessionStateEntryId: sessionState.currentEntryId,
+              activeNoteId: uiContext?.workspace?.activeNoteId,
+              openNotes: uiContext?.workspace?.openNotes?.map((n: { id: string; title?: string; active?: boolean }) => ({ id: n.id, title: n.title, active: n.active })),
+            },
+          })
           const response = await fetch('/api/chat/navigate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
