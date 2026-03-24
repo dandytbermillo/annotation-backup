@@ -633,6 +633,9 @@ export interface RoutingDispatcherResult {
 
   /** Phase 3 note manifest: extracted noteTitle for client-side navigate API call */
   _noteManifestNavigate?: { noteTitle: string }
+
+  /** Phase 3 note manifest: durable telemetry for routing log */
+  _noteCommandTelemetry?: Record<string, string>
 }
 
 /** Type alias for grounding actions (extracted from RoutingDispatcherResult for reuse) */
@@ -1924,6 +1927,17 @@ export async function dispatchRouting(
         }
         const statePayload = buildRoutingLogPayload(ctx, stateResult, turnSnapshotForLog)
         Object.assign(statePayload, arbiterTelemetry)
+        // Durable note-command telemetry
+        if (noteCommand) {
+          Object.assign(statePayload, {
+            note_command_manifest_version: noteCommand.manifestVersion,
+            note_command_handler_id: noteCommand.handlerId,
+            note_command_family: noteCommand.intentFamily,
+            note_command_subtype: noteCommand.intentSubtype,
+            note_command_confidence: noteCommand.confidence,
+            note_command_execution_policy: noteCommand.executionPolicy,
+          })
+        }
         void recordRoutingLog(statePayload)
         return stateResult
 
@@ -2396,6 +2410,11 @@ export async function dispatchRouting(
       // 6x.7 Phase A: merge resolver telemetry if the resolver ran (Path 2 navigation fallthrough)
       if (resolverTelemetryForLog) {
         Object.assign(logPayload, resolverTelemetryForLog)
+      }
+
+      // Phase 3 note manifest: merge note-command telemetry if present
+      if (result?._noteCommandTelemetry) {
+        Object.assign(logPayload, result._noteCommandTelemetry)
       }
 
       await recordRoutingLog(logPayload)
@@ -5236,6 +5255,15 @@ async function dispatchRoutingInner(
         isFollowUp: false,
         _devProvenanceHint: 'deterministic' as const,
         _noteManifestNavigate: { noteTitle },
+        // Durable telemetry — merged into routing log by wrapper
+        _noteCommandTelemetry: {
+          note_command_manifest_version: noteNavCommand.manifestVersion,
+          note_command_handler_id: noteNavCommand.handlerId,
+          note_command_family: noteNavCommand.intentFamily,
+          note_command_subtype: noteNavCommand.intentSubtype,
+          note_command_confidence: noteNavCommand.confidence,
+          note_command_execution_policy: noteNavCommand.executionPolicy,
+        },
       }
     } else if (noteNavCommand && noteNavCommand.intentFamily === 'navigate') {
       // Shadow-mode: log but don't execute (low confidence or no callback)
