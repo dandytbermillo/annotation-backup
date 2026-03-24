@@ -117,6 +117,7 @@ If confidence is above threshold:
 
 - hand off to the correct structured resolver path
 
+
 ---
 
 Step 4: Surface-specific structured resolution
