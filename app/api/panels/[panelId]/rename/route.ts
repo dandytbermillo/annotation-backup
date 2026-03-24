@@ -82,8 +82,8 @@ export async function POST(
 
         if (noteResult.rows.length > 0) {
           await client.query(
-            `INSERT INTO panels (id, note_id, panel_id, title, position, dimensions, state, type, last_accessed)
-             VALUES (gen_random_uuid(), $1, $2, $3, $4::jsonb, $5::jsonb, 'active', 'editor', NOW())`,
+            `INSERT INTO panels (id, note_id, panel_id, title, position, dimensions, state, type, last_accessed, position_x_world, position_y_world, width_world, height_world)
+             VALUES (gen_random_uuid(), $1, $2, $3, $4::jsonb, $5::jsonb, 'active', 'editor', NOW(), 0, 0, 800, 600)`,
             [
               noteId,
               panelId,

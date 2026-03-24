@@ -12,6 +12,7 @@
 import { useEffect, useCallback } from 'react'
 import { useCanvasWorkspace } from '@/components/canvas/canvas-workspace-context'
 import { getActiveWorkspaceContext } from '@/lib/note-workspaces/state'
+import { debugLog } from '@/lib/utils/debug-logger'
 
 export interface UseChatNavigationListenerOptions {
   /** Whether the listener is enabled */
@@ -56,6 +57,19 @@ export function useChatNavigationListener(
       try {
         // Open the note in the canvas — use current workspace as safety fallback
         const targetWorkspaceId = workspaceId ?? getActiveWorkspaceContext() ?? null
+
+        // TEMPORARY INSTRUMENTATION — remove after repro
+        void debugLog({
+          component: 'ChatNavigationListener',
+          action: 'open_note_listener_received',
+          metadata: {
+            noteId,
+            eventWorkspaceId: workspaceId,
+            fallbackWorkspaceId: getActiveWorkspaceContext(),
+            targetWorkspaceId,
+          },
+        })
+
         await workspace.openNote(noteId, {
           workspaceId: targetWorkspaceId,
           persist: true,

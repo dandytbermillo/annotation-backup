@@ -81,8 +81,27 @@ export const MultiWorkspaceCanvasContainer = forwardRef<any, MultiWorkspaceCanva
       getRuntimeSnapshot, // SSR snapshot
     )
 
+    // TEMPORARY INSTRUMENTATION — remove after repro
+    void debugLog({
+      component: 'MultiWorkspaceCanvas',
+      action: 'render_snapshot',
+      metadata: { hotRuntimeIds, activeWorkspaceId },
+    })
+
     // Get full runtime info for rendering
-    const hotRuntimes = useMemo(() => getHotRuntimesInfo(), [hotRuntimeIds])
+    const hotRuntimes = useMemo(() => {
+      const result = getHotRuntimesInfo()
+      // TEMPORARY INSTRUMENTATION — remove after repro
+      void debugLog({
+        component: 'MultiWorkspaceCanvas',
+        action: 'hot_runtimes_computed',
+        metadata: {
+          count: result.length,
+          runtimes: result.map(r => ({ ws: r.workspaceId, notes: r.openNotes.length, noteIds: r.openNotes.map(n => n.noteId) })),
+        },
+      })
+      return result
+    }, [hotRuntimeIds])
 
     // FIX 11: Track which workspaces have been rendered to keep them alive
     // Once a canvas is mounted, we keep it mounted even if openNotes temporarily drops to 0.

@@ -404,10 +404,23 @@ export const subscribeToRuntimeChanges = (listener: () => void) => {
 // Track pending notification to batch multiple calls
 let notificationPending = false
 
-export const notifyRuntimeChanges = () => {
+export const notifyRuntimeChanges = (debugSource?: string) => {
+  const prevVersion = runtimeVersion
   // Increment version so useSyncExternalStore detects the change
   // This must happen synchronously so getSnapshot() returns the current value
   runtimeVersion++
+
+  // TEMPORARY INSTRUMENTATION — remove after repro
+  void debugLog({
+    component: 'WorkspaceRuntime',
+    action: 'runtime_notify_changes',
+    metadata: {
+      source: debugSource,
+      prevVersion,
+      newVersion: runtimeVersion,
+      listenerCount: runtimeChangeListeners.size,
+    },
+  })
 
   // Defer listener notification to avoid setState-during-render errors
   // When notifyRuntimeChanges() is called during another component's render phase,
@@ -810,10 +823,21 @@ export const setRuntimeOpenNotes = (
   runtime.openNotes = slots
   runtime.openNotesUpdatedAt = writeTimestamp
 
+  // TEMPORARY INSTRUMENTATION — remove after repro
+  void debugLog({
+    component: 'WorkspaceRuntime',
+    action: 'runtime_set_open_notes',
+    metadata: {
+      workspaceId,
+      noteIds: slots.map(s => s.noteId),
+      noteCount: slots.length,
+    },
+  })
+
   // Phase 2: Notify container that openNotes changed so it re-renders
   // Use queueMicrotask to defer notification, avoiding setState-during-render issues
   queueMicrotask(() => {
-    notifyRuntimeChanges()
+    notifyRuntimeChanges('setRuntimeOpenNotes')
   })
 }
 

@@ -12,6 +12,7 @@
 import { useCallback } from 'react'
 import { setActiveEntryContext } from '@/lib/entry/entry-context'
 import { setActiveWorkspaceContext, getActiveWorkspaceContext, requestWorkspaceListRefresh } from '@/lib/note-workspaces/state'
+import { debugLog } from '@/lib/utils/debug-logger'
 import type { IntentResolutionResult } from './intent-resolver'
 import type { WorkspaceMatch, NoteMatch, EntryMatch } from './resolution-types'
 import type { ExecutionMeta } from './action-trace'
@@ -189,6 +190,19 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
           // Do NOT call onNavigationComplete — that triggers panel-close side effects.
           // This is a clarification, not a completed navigation.
         }
+
+        // TEMPORARY INSTRUMENTATION — remove after repro
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'open_note_in_current_workspace_dispatch',
+          metadata: {
+            noteId: note.id,
+            noteTitle: note.title,
+            noteSourceWorkspaceId: note.workspaceId,
+            currentWorkspaceId,
+            activeWorkspaceAtDispatch: getActiveWorkspaceContext(),
+          },
+        })
 
         // Dispatch event with CURRENT workspace (not note's source workspace)
         const event = new CustomEvent('chat-navigate-note', {

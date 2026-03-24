@@ -1990,9 +1990,8 @@ const initialWorkspaceSyncRef = useRef(false)
   )
 
   // Shared floating toolbar for canvas (rendered as child of the canvas)
-  // DISABLED: Floating toolbar replaced by iOS Control Center (canvas-control-center.tsx)
-  // Keeping code intact for reference. To re-enable, change `false &&` back to `showNotesWidget ?`
-  const floatingToolbarChild = false && showNotesWidget ? (
+  // Re-enabled: floating toolbar shows recently opened notes across workspaces
+  const floatingToolbarChild = showNotesWidget ? (
     <CanvasAwareFloatingToolbar
       x={notesWidgetPosition.x}
       y={notesWidgetPosition.y}

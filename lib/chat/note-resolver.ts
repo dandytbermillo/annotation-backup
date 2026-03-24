@@ -223,6 +223,17 @@ export async function resolveNote(
     }
 
     if (matches.length === 1) {
+      // Phase A: require exact title match for single-result auto-resolve on
+      // ANY query path. A single fuzzy LIKE match (e.g., "new note" matching
+      // "New Note – Mar 14, 11:18 AM 1") should clarify, not auto-open.
+      const isFuzzyOnly = matches[0].title.toLowerCase() !== searchTerm
+      if (isFuzzyOnly) {
+        return {
+          status: 'multiple',
+          matches,
+          message: `Found "${matches[0].title}" — is this the note you meant?`,
+        }
+      }
       return {
         status: 'found',
         note: matches[0],
