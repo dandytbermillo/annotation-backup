@@ -20,7 +20,7 @@ export { deriveFallbackInteractionId, simpleStringHash } from './ids'
 export type { RoutingLogPayload } from './payload'
 
 // Phase 2a: Memory write (client-safe)
-export { buildMemoryWritePayload } from './memory-write-payload'
+export { buildMemoryWritePayload, buildNoteManifestWritePayload } from './memory-write-payload'
 export { recordMemoryEntry } from './memory-writer'
 export type { MemoryWritePayload } from './memory-write-payload'
 

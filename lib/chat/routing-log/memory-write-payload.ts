@@ -263,3 +263,61 @@ export function buildPhase5NavigationWritePayload(params: {
   }
 }
 
+// --- Phase 4: Note manifest cache write builder ---
+
+/**
+ * Build a MemoryWritePayload for a resolved note command.
+ *
+ * Stores the full ResolvedNoteCommand interpretation in slots_json
+ * under a single action_type: 'note_manifest_cache'. Both families
+ * re-resolve targets at execution time — target_ids is intentionally
+ * empty (interpretation-only reuse, not resolved target identity).
+ */
+export function buildNoteManifestWritePayload(params: {
+  rawQueryText: string
+  resolvedCommand: {
+    surface: string
+    manifestVersion: string
+    intentFamily: string
+    intentSubtype: string
+    executionPolicy: string
+    replayPolicy: string
+    clarificationPolicy: string
+    handlerId: string
+    arguments: Record<string, unknown>
+    noteAnchor: { source: string; noteId?: string; isValidated: boolean }
+    selectorMode: string
+    confidence: string
+    targetScope?: { workspaceId?: string; entryId?: string }
+  }
+  contextSnapshot: ContextSnapshotV1
+}): MemoryWritePayload {
+  const { rawQueryText, resolvedCommand: cmd, contextSnapshot } = params
+
+  return {
+    raw_query_text: rawQueryText,
+    context_snapshot: contextSnapshot,
+    intent_id: `note_manifest:${cmd.intentFamily}.${cmd.intentSubtype}`,
+    intent_class: cmd.replayPolicy === 'cache_resolution_only' ? 'info_intent' : 'action_intent',
+    slots_json: {
+      action_type: 'note_manifest_cache',
+      surface: cmd.surface,
+      manifestVersion: cmd.manifestVersion,
+      intentFamily: cmd.intentFamily,
+      intentSubtype: cmd.intentSubtype,
+      executionPolicy: cmd.executionPolicy,
+      replayPolicy: cmd.replayPolicy,
+      clarificationPolicy: cmd.clarificationPolicy,
+      handlerId: cmd.handlerId,
+      arguments: cmd.arguments,
+      noteAnchor: cmd.noteAnchor,
+      selectorMode: cmd.selectorMode,
+      confidence: cmd.confidence,
+    },
+    target_ids: [],
+    risk_tier: 'low',
+    schema_version: MEMORY_SCHEMA_VERSION,
+    tool_version: MEMORY_TOOL_VERSION,
+  }
+}
+

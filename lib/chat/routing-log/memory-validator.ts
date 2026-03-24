@@ -10,6 +10,7 @@
 import type { MemoryLookupResult } from './memory-reader'
 import type { RoutingLogPayload } from './payload'
 import { recordRoutingLog } from './writer'
+import { findManifestEntry, NOTE_MANIFEST_VERSION, type NoteIntentFamily } from '@/lib/chat/note-command-manifest'
 
 // Minimal turn snapshot interface to avoid importing the full UI snapshot builder
 interface MinimalTurnSnapshot {
@@ -28,7 +29,7 @@ interface VisibleWidgetForValidation {
 
 export interface ValidationResult {
   valid: boolean
-  reason?: 'target_widget_gone' | 'target_item_gone' | 'target_candidate_gone' | 'high_risk' | 'unknown_action_type' | 'duplicate_family_ambiguous' | 'target_panel_hidden' | 'target_panel_selector_mismatch'
+  reason?: 'target_widget_gone' | 'target_item_gone' | 'target_candidate_gone' | 'high_risk' | 'unknown_action_type' | 'duplicate_family_ambiguous' | 'target_panel_hidden' | 'target_panel_selector_mismatch' | 'manifest_version_mismatch' | 'manifest_entry_removed' | 'execution_policy_changed' | 'handler_id_changed' | 'replay_policy_changed' | 'required_argument_missing'
 }
 
 /**
@@ -84,6 +85,56 @@ export function validateMemoryCandidate(
     )
     if (!found) {
       return { valid: false, reason: 'target_candidate_gone' }
+    }
+
+    return { valid: true }
+  }
+
+  // Phase 4: Note manifest cache — generic validation against current manifest.
+  // Both families (state_info, navigate) re-resolve live, so no target visibility check.
+  // Safe for current two families; future families will need note-context validation hints.
+  if (actionType === 'note_manifest_cache') {
+    const family = candidate.slots_json.intentFamily as string
+    const subtype = candidate.slots_json.intentSubtype as string
+    const storedVersion = candidate.slots_json.manifestVersion as string
+    const storedPolicy = candidate.slots_json.executionPolicy as string
+    const storedHandlerId = candidate.slots_json.handlerId as string
+    const storedReplayPolicy = candidate.slots_json.replayPolicy as string
+    const storedArgs = candidate.slots_json.arguments as Record<string, unknown> | undefined
+
+    // 1. Manifest version must match (architecture rule §578)
+    if (storedVersion !== NOTE_MANIFEST_VERSION) {
+      return { valid: false, reason: 'manifest_version_mismatch' }
+    }
+
+    // 2. Manifest entry must still exist for this family+subtype
+    const entry = findManifestEntry(family as NoteIntentFamily, subtype)
+    if (!entry) {
+      return { valid: false, reason: 'manifest_entry_removed' }
+    }
+
+    // 3. Execution policy must match current manifest
+    if (entry.executionPolicy !== storedPolicy) {
+      return { valid: false, reason: 'execution_policy_changed' }
+    }
+
+    // 4. Handler ID must match current manifest (architecture rule §236)
+    if (entry.handlerId !== storedHandlerId) {
+      return { valid: false, reason: 'handler_id_changed' }
+    }
+
+    // 5. Replay policy must be compatible with current manifest (architecture rule §581)
+    if (entry.replayPolicy !== storedReplayPolicy) {
+      return { valid: false, reason: 'replay_policy_changed' }
+    }
+
+    // 6. Required arguments from manifest must exist in cached command
+    if (entry.requiredArguments) {
+      for (const arg of entry.requiredArguments) {
+        if (!storedArgs || storedArgs[arg] == null || storedArgs[arg] === '') {
+          return { valid: false, reason: 'required_argument_missing' }
+        }
+      }
     }
 
     return { valid: true }

@@ -2085,6 +2085,13 @@ function ChatNavigationPanelContent({
                   setProvenance(lastAddedAssistantIdRef.current, 'deterministic')
                 }
                 setIsLoading(false)
+                // Phase 4: fire deferred memory log/write on confirmed navigate success
+                if (routingResult._pendingMemoryLog) {
+                  recordRoutingLog(routingResult._pendingMemoryLog).catch(() => {})
+                }
+                if (routingResult._pendingMemoryWrite) {
+                  recordMemoryEntry(routingResult._pendingMemoryWrite).catch(() => {})
+                }
                 return
               }
             }
@@ -2153,6 +2160,14 @@ function ChatNavigationPanelContent({
               })
             }
           } catch { /* fail-open: don't block panel open for writeback */ }
+        }
+
+        // Phase 4: fire deferred memory log/write for handled results (e.g. state_info B1 replay)
+        if (routingResult._pendingMemoryLog) {
+          recordRoutingLog(routingResult._pendingMemoryLog).catch(() => {})
+        }
+        if (routingResult._pendingMemoryWrite) {
+          recordMemoryEntry(routingResult._pendingMemoryWrite).catch(() => {})
         }
 
         return

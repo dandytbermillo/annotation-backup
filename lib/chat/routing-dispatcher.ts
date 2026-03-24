@@ -81,7 +81,7 @@ import {
   deriveFallbackInteractionId,
 } from '@/lib/chat/routing-log'
 import type { RoutingLogPayload } from '@/lib/chat/routing-log'
-import { buildMemoryWritePayload } from '@/lib/chat/routing-log/memory-write-payload'
+import { buildMemoryWritePayload, buildNoteManifestWritePayload } from '@/lib/chat/routing-log/memory-write-payload'
 import { lookupExactMemory } from '@/lib/chat/routing-log/memory-reader'
 import { lookupSemanticMemory, type SemanticCandidate, type SemanticLookupResult } from '@/lib/chat/routing-log/memory-semantic-reader'
 import { validateMemoryCandidate } from '@/lib/chat/routing-log/memory-validator'
@@ -636,6 +636,9 @@ export interface RoutingDispatcherResult {
 
   /** Phase 3 note manifest: durable telemetry for routing log */
   _noteCommandTelemetry?: Record<string, string>
+
+  /** Phase 4: resolved note command (from fresh resolution or cache recovery) */
+  _resolvedNoteCommand?: import('@/lib/chat/note-command-manifest').ResolvedNoteCommand
 }
 
 /** Type alias for grounding actions (extracted from RoutingDispatcherResult for reuse) */
@@ -1471,21 +1474,87 @@ export async function dispatchRouting(
           }
           const memoryAction = buildResultFromMemory(memoryResult, defaultResult) as RoutingDispatcherResult | null
           if (memoryAction) {
-            // Gate 6: Defer durable log — attach as pending, sendMessage fires after commit-point
-            try {
-              memoryAction._pendingMemoryLog = buildRoutingLogPayloadFromMemory(ctx, memoryAction, turnSnapshotForLog)
-            } catch { /* fail-open */ }
+            let noteManifestRejected = false
 
-            // Gate 8: Build writeback payload for success_count increment
-            if (memoryWriteEnabled) {
-              try {
-                memoryAction._pendingMemoryWrite = buildMemoryWritePayload(ctx, memoryAction, turnSnapshotForLog) ?? undefined
-              } catch { /* fail-open */ }
+            // Phase 4: note manifest cache hit — generic dispatch by executionPolicy
+            if (memoryAction._resolvedNoteCommand) {
+              const cmd = memoryAction._resolvedNoteCommand
+
+              if (cmd.executionPolicy === 'live_state_resolve') {
+                // Re-resolve live state (never return cached answer text)
+                const stateAnswer = resolveNoteStateInfo(ctx.uiContext ?? {})
+                const stateMsg: ChatMessage = {
+                  id: `assistant-${Date.now()}`, role: 'assistant',
+                  content: stateAnswer, timestamp: new Date(), isError: false,
+                }
+                ctx.addMessage(stateMsg, {
+                  tierLabel: memoryAction.tierLabel ?? 'memory_exact',
+                  provenance: 'memory_exact',
+                })
+                ctx.setIsLoading(false)
+                memoryAction._noteCommandTelemetry = {
+                  note_command_manifest_version: cmd.manifestVersion,
+                  note_command_handler_id: cmd.handlerId,
+                  note_command_family: cmd.intentFamily,
+                  note_command_subtype: cmd.intentSubtype,
+                  note_command_confidence: cmd.confidence,
+                  note_command_execution_policy: cmd.executionPolicy,
+                }
+
+              } else if (cmd.executionPolicy === 'navigate_note') {
+                // Convert to navigate hint — client Block F handles live re-resolution
+                memoryAction.handled = false
+                memoryAction._noteManifestNavigate = {
+                  noteTitle: (cmd.arguments as Record<string, unknown>).noteTitle as string,
+                }
+                memoryAction._noteCommandTelemetry = {
+                  note_command_manifest_version: cmd.manifestVersion,
+                  note_command_handler_id: cmd.handlerId,
+                  note_command_family: cmd.intentFamily,
+                  note_command_subtype: cmd.intentSubtype,
+                  note_command_confidence: cmd.confidence,
+                  note_command_execution_policy: cmd.executionPolicy,
+                }
+
+              } else {
+                // Unknown/unsupported policy — reject cache hit entirely.
+                noteManifestRejected = true
+              }
+
+              // Build writeback for success_count increment (only if not rejected)
+              if (!noteManifestRejected && memoryWriteEnabled) {
+                try {
+                  memoryAction._pendingMemoryWrite = buildNoteManifestWritePayload({
+                    rawQueryText: ctx.trimmedInput,
+                    resolvedCommand: cmd,
+                    contextSnapshot: phase5ReplaySnapshot,
+                  })
+                } catch { /* fail-open */ }
+              }
             }
 
-            // Return with _memoryCandidate + _pendingMemoryLog + _pendingMemoryWrite attached
-            // sendMessage() does commit-point revalidation (Gate 1) then fires log + write
-            return memoryAction
+            if (!noteManifestRejected) {
+              // Gate 6: Defer durable log — attach as pending, sendMessage fires after commit-point
+              try {
+                memoryAction._pendingMemoryLog = buildRoutingLogPayloadFromMemory(ctx, memoryAction, turnSnapshotForLog)
+                // Phase 4: merge note-command telemetry into the memory log payload
+                if (memoryAction._noteCommandTelemetry && memoryAction._pendingMemoryLog) {
+                  Object.assign(memoryAction._pendingMemoryLog, memoryAction._noteCommandTelemetry)
+                }
+              } catch { /* fail-open */ }
+
+              // Gate 8: Build writeback payload for success_count increment (non-manifest actions)
+              if (memoryWriteEnabled && !memoryAction._pendingMemoryWrite) {
+                try {
+                  memoryAction._pendingMemoryWrite = buildMemoryWritePayload(ctx, memoryAction, turnSnapshotForLog) ?? undefined
+                } catch { /* fail-open */ }
+              }
+
+              // Return with _memoryCandidate + _pendingMemoryLog + _pendingMemoryWrite attached
+              // sendMessage() does commit-point revalidation (Gate 1) then fires log + write
+              return memoryAction
+            }
+            // else: noteManifestRejected — fall through to normal tier chain
           }
         }
       }
@@ -1939,6 +2008,19 @@ export async function dispatchRouting(
           })
         }
         void recordRoutingLog(statePayload)
+        // Phase 4: attach resolved command + memory write payload
+        if (noteCommand) {
+          stateResult._resolvedNoteCommand = noteCommand
+          if (memoryWriteEnabled) {
+            try {
+              stateResult._pendingMemoryWrite = buildNoteManifestWritePayload({
+                rawQueryText: ctx.trimmedInput,
+                resolvedCommand: noteCommand,
+                contextSnapshot: phase5ReplaySnapshot,
+              })
+            } catch { /* fail-open */ }
+          }
+        }
         return stateResult
 
       // ── Phase 4: panel_widget.state_info (migrated) ──
@@ -2442,6 +2524,19 @@ export async function dispatchRouting(
     } catch {
       // Payload build failure: silently ignore (fail-open)
     }
+  }
+
+  // Phase 4: note manifest cache write for navigate (handled: false, no groundingAction).
+  // The inner function attached _resolvedNoteCommand; outer builds the write payload
+  // with phase5ReplaySnapshot. Client fires after confirmed navigate API success.
+  if (memoryWriteEnabled && result!._resolvedNoteCommand && !result!._pendingMemoryWrite) {
+    try {
+      result!._pendingMemoryWrite = buildNoteManifestWritePayload({
+        rawQueryText: ctx.trimmedInput,
+        resolvedCommand: result!._resolvedNoteCommand,
+        contextSnapshot: phase5ReplaySnapshot,
+      })
+    } catch { /* fail-open */ }
   }
 
   return result!
@@ -5264,6 +5359,8 @@ async function dispatchRoutingInner(
           note_command_confidence: noteNavCommand.confidence,
           note_command_execution_policy: noteNavCommand.executionPolicy,
         },
+        // Phase 4: attach resolved command for outer wrapper to build write payload
+        _resolvedNoteCommand: noteNavCommand,
       }
     } else if (noteNavCommand && noteNavCommand.intentFamily === 'navigate') {
       // Shadow-mode: log but don't execute (low confidence or no callback)

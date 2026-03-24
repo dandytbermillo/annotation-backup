@@ -8,6 +8,7 @@
  */
 
 import type { MemoryLookupResult } from './memory-reader'
+import type { ResolvedNoteCommand } from '@/lib/chat/note-command-manifest'
 
 // Forward-reference to avoid importing full dispatcher (too many deps)
 interface MinimalRoutingResult {
@@ -41,6 +42,8 @@ interface MinimalRoutingResult {
     | { type: 'open_workspace'; workspaceId: string; workspaceName: string; entryId: string; entryName: string; isDefault: boolean }
     | { type: 'open_panel'; panelId: string; panelTitle: string }
     | { type: 'go_home' }
+  /** Phase 4: recovered ResolvedNoteCommand from note_manifest_cache row */
+  _resolvedNoteCommand?: ResolvedNoteCommand
 }
 
 /**
@@ -131,6 +134,32 @@ export function buildResultFromMemory(
         type: 'open_panel' as const,
         panelId: candidate.slots_json.panelId as string,
         panelTitle: candidate.slots_json.panelTitle as string,
+      },
+    }
+  } else if (actionType === 'note_manifest_cache') {
+    // Phase 4: Generic note manifest cache recovery.
+    // Recover the full ResolvedNoteCommand from slots_json.
+    // The CALLER dispatches by executionPolicy, not this builder.
+    return {
+      ...defaultResult,
+      handled: true,
+      handledByTier: undefined,
+      tierLabel: `memory_exact:${candidate.intent_id}`,
+      _devProvenanceHint: 'memory_exact',
+      _memoryCandidate: candidate,
+      _resolvedNoteCommand: {
+        surface: 'note' as const,
+        manifestVersion: candidate.slots_json.manifestVersion as string,
+        intentFamily: candidate.slots_json.intentFamily as ResolvedNoteCommand['intentFamily'],
+        intentSubtype: candidate.slots_json.intentSubtype as string,
+        executionPolicy: candidate.slots_json.executionPolicy as ResolvedNoteCommand['executionPolicy'],
+        replayPolicy: candidate.slots_json.replayPolicy as ResolvedNoteCommand['replayPolicy'],
+        clarificationPolicy: candidate.slots_json.clarificationPolicy as ResolvedNoteCommand['clarificationPolicy'],
+        handlerId: candidate.slots_json.handlerId as string,
+        arguments: (candidate.slots_json.arguments ?? {}) as ResolvedNoteCommand['arguments'],
+        noteAnchor: candidate.slots_json.noteAnchor as ResolvedNoteCommand['noteAnchor'],
+        selectorMode: candidate.slots_json.selectorMode as ResolvedNoteCommand['selectorMode'],
+        confidence: candidate.slots_json.confidence as ResolvedNoteCommand['confidence'],
       },
     }
   } else {
