@@ -1043,19 +1043,6 @@ export async function POST(request: NextRequest) {
     // Generic duplicate-instance label extraction override
     intent = applyInstanceLabelOverride(intent, userMessage)
 
-    // TEMPORARY INSTRUMENTATION — remove after repro
-    void debugLog({
-      component: 'NavigateAPI',
-      action: 'scope_debug_before_resolve',
-      metadata: {
-        currentWorkspaceId: currentWorkspaceId || undefined,
-        currentEntryId: currentEntryId || undefined,
-        currentEntryName,
-        intent: intent.intent,
-        intentTarget: (intent as Record<string, unknown>).target,
-      },
-    })
-
     const resolutionContext = {
       userId,
       currentEntryId: currentEntryId || undefined,
@@ -1081,19 +1068,6 @@ export async function POST(request: NextRequest) {
     }
 
     let resolution = await resolveIntent(intent, resolutionContext)
-
-    // TEMPORARY INSTRUMENTATION — remove after repro
-    void debugLog({
-      component: 'NavigateAPI',
-      action: 'resolution_debug_after_resolve',
-      metadata: {
-        action: resolution?.action,
-        success: resolution?.success,
-        message: resolution?.message,
-        noteId: (resolution as Record<string, unknown>)?.noteId,
-        noteTitle: (resolution as Record<string, unknown>)?.noteTitle,
-      },
-    })
 
     // Phase 0 metrics: track whether semantic fallback guard remaps intent
     let fallbackRemapApplied = false

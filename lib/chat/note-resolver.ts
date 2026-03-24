@@ -153,13 +153,37 @@ export async function resolveNote(
       params = [`%${searchTerm}%`, searchTerm]
     }
 
-    const result = await serverPool.query(query, params)
+    let result = await serverPool.query(query, params)
+
+    // Global fallback: if scoped query (workspace or entry) returned 0 rows,
+    // re-run with global-by-title search. This allows "open note X" to find
+    // notes that aren't in the current workspace or entry while preserving
+    // preference for locally-scoped matches (found on first pass).
+    const wasScoped = !!(context.currentWorkspaceId || context.currentEntryId) && !entryName
+    if (result.rows.length === 0 && wasScoped) {
+      const globalQuery = `
+        SELECT DISTINCT ON (n.id)
+          n.id,
+          n.title,
+          n.id as note_id,
+          i.parent_id as entry_id,
+          parent_item.name as entry_name,
+          SUBSTRING(n.content_text, 1, 100) as excerpt
+        FROM notes n
+        LEFT JOIN items i ON n.id = i.id AND i.type = 'note' AND i.deleted_at IS NULL
+        LEFT JOIN items parent_item ON i.parent_id = parent_item.id
+        WHERE n.deleted_at IS NULL
+          AND LOWER(n.title) LIKE $1
+        ORDER BY n.id,
+          CASE WHEN LOWER(n.title) = $2 THEN 0 ELSE 1 END,
+          n.updated_at DESC NULLS LAST
+        LIMIT 10
+      `
+      result = await serverPool.query(globalQuery, [`%${searchTerm}%`, searchTerm])
+    }
 
     if (result.rows.length === 0) {
-      // No results in current scope - offer to broaden
-      const scopeMessage = context.currentWorkspaceId
-        ? 'No note found in current workspace. Try searching in the full entry?'
-        : 'No note found matching that title.'
+      const scopeMessage = 'No note found matching that title.'
 
       return {
         status: 'not_found',

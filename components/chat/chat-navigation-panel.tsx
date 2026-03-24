@@ -2057,24 +2057,8 @@ function ChatNavigationPanelContent({
         const { noteTitle } = routingResult._noteManifestNavigate
         try {
           const entryId = currentEntryId ?? sessionState.currentEntryId ?? getActiveEntryContext() ?? undefined
-          const workspaceId = currentWorkspaceId ?? sessionState.currentWorkspaceId ?? undefined
-          // TEMPORARY INSTRUMENTATION — remove after repro
-          void debugLog({
-            component: 'ChatNavigation',
-            action: 'note_manifest_navigate_scope_debug',
-            metadata: {
-              noteTitle,
-              currentWorkspaceId,
-              sessionStateWorkspaceId: sessionState.currentWorkspaceId,
-              uiContextWorkspaceId: (uiContext as Record<string, unknown>)?.workspace && ((uiContext as Record<string, unknown>).workspace as Record<string, unknown>)?.workspaceId,
-              getActiveWorkspaceContext: getActiveWorkspaceContext(),
-              resolvedWorkspaceId: workspaceId,
-              currentEntryId,
-              sessionStateEntryId: sessionState.currentEntryId,
-              activeNoteId: uiContext?.workspace?.activeNoteId,
-              openNotes: uiContext?.workspace?.openNotes?.map((n: { id: string; title?: string; active?: boolean }) => ({ id: n.id, title: n.title, active: n.active })),
-            },
-          })
+          // Phase A: use live workspace source for deterministic note-open bridge
+          const workspaceId = currentWorkspaceId ?? getActiveWorkspaceContext() ?? undefined
           const response = await fetch('/api/chat/navigate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -2102,13 +2086,21 @@ function ChatNavigationPanelContent({
                   setProvenance(lastAddedAssistantIdRef.current, 'deterministic')
                 }
                 setIsLoading(false)
-                // Phase 4: fire deferred memory log/write on confirmed navigate success
-                if (routingResult._pendingMemoryLog) {
-                  recordRoutingLog(routingResult._pendingMemoryLog).catch(() => {})
+                // Phase A: suppress deferred memory log/write — event dispatch is not
+                // a reliable commit point (note may not actually open in canvas).
+                // Cache acceleration for this path deferred until commit-point gap is closed.
+                return
+              } else if (result && (result as { message?: string }).message) {
+                // Phase A: surface no-workspace clarification as assistant message
+                const clarifyMsg: ChatMessage = {
+                  id: `assistant-${Date.now()}`,
+                  role: 'assistant',
+                  content: (result as { message: string }).message,
+                  timestamp: new Date(),
+                  isError: false,
                 }
-                if (routingResult._pendingMemoryWrite) {
-                  recordMemoryEntry(routingResult._pendingMemoryWrite).catch(() => {})
-                }
+                addMessage(clarifyMsg, { tierLabel: 'note_manifest_navigate', provenance: 'deterministic' })
+                setIsLoading(false)
                 return
               }
             }

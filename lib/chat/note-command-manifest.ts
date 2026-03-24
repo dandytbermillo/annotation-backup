@@ -24,7 +24,8 @@ export type NoteIntentFamily = 'state_info' | 'navigate' | 'read' | 'capability'
 
 export type NoteExecutionPolicy =
   | 'live_state_resolve'
-  | 'navigate_note'
+  | 'open_note_in_current_workspace'
+  | 'navigate_to_note_workspace'
   | 'stage6_grounded_answer'
   | 'bounded_capability_answer'
   | 'confirm_then_mutate'
@@ -38,6 +39,7 @@ export type NoteReplayPolicy =
 export type NoteClarificationPolicy =
   | 'clarify_on_ambiguous_target'
   | 'clarify_on_low_confidence'
+  | 'clarify_target_workspace'
   | 'no_clarification'
 
 // =============================================================================
@@ -70,7 +72,7 @@ export interface NoteCommandManifestEntry {
 // Manifest Version
 // =============================================================================
 
-export const NOTE_MANIFEST_VERSION = '1.0'
+export const NOTE_MANIFEST_VERSION = '1.1'
 
 // =============================================================================
 // Seed Manifest Entries
@@ -110,7 +112,7 @@ export const NOTE_COMMAND_MANIFEST: NoteCommandManifestEntry[] = [
     requiredArguments: ['noteTitle'],
     optionalArguments: ['entryName'],
     selectorMode: 'explicit',
-    executionPolicy: 'navigate_note',
+    executionPolicy: 'open_note_in_current_workspace',
     replayPolicy: 'safe_with_revalidation',
     clarificationPolicy: 'clarify_on_ambiguous_target',
     anchorRequirements: { allowResolvedReference: true, requireSpecificTarget: true },

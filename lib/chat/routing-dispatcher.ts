@@ -1501,7 +1501,7 @@ export async function dispatchRouting(
                   note_command_execution_policy: cmd.executionPolicy,
                 }
 
-              } else if (cmd.executionPolicy === 'navigate_note') {
+              } else if (cmd.executionPolicy === 'open_note_in_current_workspace') {
                 // Convert to navigate hint — client Block F handles live re-resolution
                 memoryAction.handled = false
                 memoryAction._noteManifestNavigate = {

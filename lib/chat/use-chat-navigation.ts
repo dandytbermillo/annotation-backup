@@ -11,7 +11,7 @@
 
 import { useCallback } from 'react'
 import { setActiveEntryContext } from '@/lib/entry/entry-context'
-import { setActiveWorkspaceContext, requestWorkspaceListRefresh } from '@/lib/note-workspaces/state'
+import { setActiveWorkspaceContext, getActiveWorkspaceContext, requestWorkspaceListRefresh } from '@/lib/note-workspaces/state'
 import type { IntentResolutionResult } from './intent-resolver'
 import type { WorkspaceMatch, NoteMatch, EntryMatch } from './resolution-types'
 import type { ExecutionMeta } from './action-trace'
@@ -153,6 +153,67 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
         return {
           success: false,
           message: `Failed to navigate: ${err.message}`,
+          action: 'error',
+        }
+      }
+    },
+    [onNavigationComplete, onError]
+  )
+
+  // ---------------------------------------------------------------------------
+  // Open Note in Current Workspace (Phase A bridge)
+  //
+  // Preserves the current workspace — does NOT switch to the note's source
+  // workspace. Uses getActiveWorkspaceContext() for the live workspace ID.
+  // When no workspace is active, returns an error with a clarification message
+  // instead of silently picking a workspace.
+  //
+  // This is a temporary Phase A bridge. The server still emits action:
+  // 'navigate_note'; this handler reinterprets it as open-in-current-workspace.
+  // ---------------------------------------------------------------------------
+
+  const openNoteInCurrentWorkspace = useCallback(
+    async (note: NoteMatch): Promise<ChatNavigationResult> => {
+      try {
+        const currentWorkspaceId = getActiveWorkspaceContext()
+
+        // No current workspace → clarify_target_workspace
+        // Phase A: return error with clarification-style message.
+        // Does NOT offer workspace options — that is future polish.
+        if (!currentWorkspaceId) {
+          return {
+            success: false,
+            message: 'No workspace is currently active. Please open a workspace first, then try again.',
+            action: 'error',
+          }
+          // Do NOT call onNavigationComplete — that triggers panel-close side effects.
+          // This is a clarification, not a completed navigation.
+        }
+
+        // Dispatch event with CURRENT workspace (not note's source workspace)
+        const event = new CustomEvent('chat-navigate-note', {
+          detail: {
+            noteId: note.id,
+            workspaceId: currentWorkspaceId,
+            entryId: undefined, // do not switch entry
+          },
+        })
+        window.dispatchEvent(event)
+
+        const result: ChatNavigationResult = {
+          success: true,
+          message: `Opened note "${note.title}"`,
+          action: 'navigated',
+        }
+
+        onNavigationComplete?.(result)
+        return result
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error))
+        onError?.(err)
+        return {
+          success: false,
+          message: `Failed to open note: ${err.message}`,
           action: 'error',
         }
       }
@@ -459,7 +520,9 @@ export function useChatNavigation(options: UseChatNavigationOptions = {}) {
 
         case 'navigate_note':
           if (resolution.note) {
-            return navigateToNote({
+            // Phase A bridge: route to openNoteInCurrentWorkspace instead of
+            // navigateToNote. Preserves current workspace, does not switch.
+            return openNoteInCurrentWorkspace({
               id: resolution.note.id,
               title: resolution.note.title,
               noteId: resolution.note.id,
