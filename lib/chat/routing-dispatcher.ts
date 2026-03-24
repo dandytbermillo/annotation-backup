@@ -438,7 +438,6 @@ export interface RoutingDispatcherContext {
   // --- Preview Shortcut (Tier 2g) ---
   lastPreview: LastPreviewState | null
   openPanelDrawer: (panelId: string, panelTitle?: string, executionMeta?: import('@/lib/chat/action-trace').ExecutionMeta) => void
-  navigateToNote?: (note: import('@/lib/chat/resolution-types').NoteMatch) => Promise<{ success: boolean; message?: string }>
 
   // --- User Identity ---
   userId: string
@@ -632,6 +631,8 @@ export interface RoutingDispatcherResult {
     | { type: 'open_panel'; panelId: string; panelTitle: string }
     | { type: 'go_home' }
 
+  /** Phase 3 note manifest: extracted noteTitle for client-side navigate API call */
+  _noteManifestNavigate?: { noteTitle: string }
 }
 
 /** Type alias for grounding actions (extracted from RoutingDispatcherResult for reuse) */
@@ -5208,11 +5209,11 @@ async function dispatchRoutingInner(
       },
     })
 
-    if (noteNavCommand && noteNavCommand.intentFamily === 'navigate' && noteNavCommand.confidence === 'high' && ctx.navigateToNote) {
+    if (noteNavCommand && noteNavCommand.intentFamily === 'navigate' && noteNavCommand.confidence === 'high') {
       const noteTitle = noteNavCommand.arguments.noteTitle as string
       void debugLog({
         component: 'ChatNavigation',
-        action: 'note_manifest_navigate_execute',
+        action: 'note_manifest_navigate_intercept',
         metadata: {
           manifestVersion: noteNavCommand.manifestVersion,
           handlerId: noteNavCommand.handlerId,
@@ -5220,101 +5221,21 @@ async function dispatchRoutingInner(
         },
       })
 
-      // Resolve note via existing DB lookup
-      try {
-        const { resolveNote } = await import('@/lib/chat/note-resolver')
-        const noteResult = await resolveNote(noteTitle, {
-          currentEntryId: ctx.currentEntryId,
-          userId: ctx.userId,
-        })
-
-        if (noteResult.status === 'found' && noteResult.note) {
-          // Execute navigation via callback
-          await ctx.navigateToNote(noteResult.note)
-
-          const navMsg: ChatMessage = {
-            id: `assistant-${Date.now()}`,
-            role: 'assistant',
-            content: `Opening note "${noteResult.note.title}"...`,
-            timestamp: new Date(),
-            isError: false,
-          }
-          ctx.addMessage(navMsg, { tierLabel: 'note_manifest_navigate', provenance: 'deterministic' })
-          ctx.setIsLoading(false)
-
-          return {
-            ...defaultResult,
-            handled: true,
-            handledByTier: 4,
-            tierLabel: 'note_manifest_navigate',
-            clarificationCleared,
-            isNewQuestionOrCommandDetected,
-            classifierCalled: false,
-            classifierTimeout: false,
-            classifierError: false,
-            isFollowUp: false,
-            _devProvenanceHint: 'deterministic' as const,
-          }
-        }
-
-        if (noteResult.status === 'multiple' && noteResult.matches) {
-          // Multiple matches — show clarification pills
-          const options = noteResult.matches.map((n, i) => ({
-            index: i + 1,
-            id: n.id,
-            label: n.title,
-            sublabel: n.entryName || n.workspaceName || undefined,
-            type: 'note' as const,
-            data: n,
-          }))
-
-          const msgId = `assistant-${Date.now()}`
-          ctx.setPendingOptions(options)
-          ctx.setPendingOptionsMessageId(msgId)
-          ctx.setPendingOptionsGraceCount?.(0)
-          // Sync clarification state for ordinal/label follow-ups
-          ctx.saveLastOptionsShown?.(
-            options.map(opt => ({ id: opt.id, label: opt.label, sublabel: opt.sublabel, type: opt.type })),
-            msgId
-          )
-          ctx.setLastClarification({
-            type: 'option_selection',
-            originalIntent: 'note_manifest_navigate',
-            messageId: msgId,
-            timestamp: Date.now(),
-            clarificationQuestion: `Multiple notes named "${noteTitle}" found.`,
-            options: options.map(opt => ({ id: opt.id, label: opt.label, sublabel: opt.sublabel, type: opt.type })),
-            metaCount: 0,
-          })
-
-          const clarifyMsg: ChatMessage = {
-            id: msgId,
-            role: 'assistant',
-            content: `Multiple notes named "${noteTitle}" found. Which one would you like to open?`,
-            timestamp: new Date(),
-            isError: false,
-          }
-          ctx.addMessage(clarifyMsg, { tierLabel: 'note_manifest_navigate_clarify', provenance: 'safe_clarifier' })
-          ctx.setIsLoading(false)
-
-          return {
-            ...defaultResult,
-            handled: true,
-            handledByTier: 4,
-            tierLabel: 'note_manifest_navigate_clarify',
-            clarificationCleared,
-            isNewQuestionOrCommandDetected,
-            classifierCalled: false,
-            classifierTimeout: false,
-            classifierError: false,
-            isFollowUp: false,
-            _devProvenanceHint: 'safe_clarifier' as const,
-          }
-        }
-
-        // Not found — fall through to LLM path
-      } catch {
-        // DB/resolver error — fall through to LLM path
+      // Return handled: false with _noteManifestNavigate hint.
+      // The client tries the navigate API first with the extracted noteTitle.
+      // If that fails, the normal LLM path runs (handled: false allows fallthrough).
+      return {
+        ...defaultResult,
+        handled: false,
+        tierLabel: 'note_manifest_navigate',
+        clarificationCleared,
+        isNewQuestionOrCommandDetected,
+        classifierCalled: false,
+        classifierTimeout: false,
+        classifierError: false,
+        isFollowUp: false,
+        _devProvenanceHint: 'deterministic' as const,
+        _noteManifestNavigate: { noteTitle },
       }
     } else if (noteNavCommand && noteNavCommand.intentFamily === 'navigate') {
       // Shadow-mode: log but don't execute (low confidence or no callback)
@@ -5324,7 +5245,6 @@ async function dispatchRoutingInner(
         metadata: {
           confidence: noteNavCommand.confidence,
           noteTitle: noteNavCommand.arguments.noteTitle,
-          hasCallback: !!ctx.navigateToNote,
         },
       })
     }

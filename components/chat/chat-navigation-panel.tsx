@@ -67,6 +67,7 @@ import { handleCrossCorpusPillSelection } from '@/lib/chat/cross-corpus-handler'
 import { recordMemoryEntry, recordRoutingLog, revalidateMemoryHit, fireOutcomeLog, fireFailedOutcomeLog, type RoutingLogPayload } from '@/lib/chat/routing-log'
 import { buildPhase5NavigationWritePayload } from '@/lib/chat/routing-log/memory-write-payload'
 import { computeClarifierReorderTelemetry } from '@/lib/chat/routing-log/clarifier-reorder'
+import { OPTION_A_USER_ID } from '@/lib/chat/routing-log/types'
 import { buildTurnSnapshot } from '@/lib/chat/ui-snapshot-builder'
 
 export interface ChatNavigationPanelProps {
@@ -1522,10 +1523,9 @@ function ChatNavigationPanelContent({
         // Preview shortcut (Tier 2g)
         lastPreview,
         openPanelDrawer,
-        navigateToNote,
         openPanelWithTracking,
         // User identity for note/workspace resolver context
-        userId: 'local', // OPTION_A_USER_ID — single-user offline mode
+        userId: OPTION_A_USER_ID,
         // Grounding-set fallback (Tier 4.5)
         sessionState,
         lastOptionsShown,
@@ -2045,6 +2045,54 @@ function ChatNavigationPanelContent({
         }
         setIsLoading(false)
         return
+      }
+
+      // -------------------------------------------------------------------
+      // Phase 3 note manifest: deterministic note-navigate via navigate API
+      // The dispatcher detected "open note X" and returned handled: false
+      // with _noteManifestNavigate. Try the navigate API first — if it
+      // succeeds, we're done. If not, fall through to the normal LLM path.
+      // -------------------------------------------------------------------
+      if (routingResult._noteManifestNavigate) {
+        const { noteTitle } = routingResult._noteManifestNavigate
+        try {
+          const entryId = currentEntryId ?? sessionState.currentEntryId ?? getActiveEntryContext() ?? undefined
+          const workspaceId = currentWorkspaceId ?? sessionState.currentWorkspaceId ?? undefined
+          const response = await fetch('/api/chat/navigate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message: `open note ${noteTitle}`,
+              currentEntryId: entryId,
+              currentWorkspaceId: workspaceId,
+              context: { sessionState },
+            }),
+          })
+          if (response.ok) {
+            const { resolution } = await response.json()
+            if (resolution?.success && resolution?.action === 'navigate_note') {
+              const result = await executeAction(resolution)
+              if (result && (result as { success?: boolean }).success !== false) {
+                const navMsg: ChatMessage = {
+                  id: `assistant-${Date.now()}`,
+                  role: 'assistant',
+                  content: resolution.message || `Opening note "${noteTitle}"...`,
+                  timestamp: new Date(),
+                  isError: false,
+                }
+                addMessage(navMsg, { tierLabel: 'note_manifest_navigate', provenance: 'deterministic' })
+                if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current) {
+                  setProvenance(lastAddedAssistantIdRef.current, 'deterministic')
+                }
+                setIsLoading(false)
+                return
+              }
+            }
+          }
+        } catch {
+          // Navigate API error — fall through to normal LLM path
+        }
+        // Navigate API failed or note not found — fall through to LLM path below
       }
 
       if (routingResult.handled) {
