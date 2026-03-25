@@ -197,6 +197,40 @@ function AnnotationAppContent({
     getWorkspace
   } = useCanvasWorkspace()
 
+  // TEMPORARY INSTRUMENTATION — mount/unmount + stale split trace (consumer side)
+  const shellInstanceIdRef = useRef(Math.random().toString(36).slice(2, 8))
+  useEffect(() => {
+    const id = shellInstanceIdRef.current
+    void debugLog({
+      component: "StaleTrace",
+      action: "shell_consumer_MOUNT",
+      metadata: { instanceId: id },
+    })
+    return () => {
+      void debugLog({
+        component: "StaleTrace",
+        action: "shell_consumer_UNMOUNT",
+        metadata: { instanceId: id },
+      })
+    }
+  }, [])
+
+  useEffect(() => {
+    void debugLog({
+      component: "StaleTrace",
+      action: "shell_consumer_context_received",
+      metadata: {
+        shellInstanceId: shellInstanceIdRef.current,
+        openNotesCount: openNotes.length,
+        openNotesIds: openNotes.map(n => n.noteId),
+        openNotesWorkspaceId,
+        isWorkspaceReady,
+        isWorkspaceLoading,
+        isHydrating,
+      },
+    })
+  }, [openNotes, openNotesWorkspaceId, isWorkspaceReady, isWorkspaceLoading, isHydrating])
+
   // Chat navigation listener - handles 'chat-navigate-note' events from ChatNavigationPanel
   useChatNavigationListener({ enabled: true })
   const { setUiContext } = useChatNavigationContext()
@@ -1318,6 +1352,23 @@ const initialWorkspaceSyncRef = useRef(false)
     // Phase 3: isStale flag during hydration/loading or workspace mismatch
     // Allows LLM to respond appropriately ("Notes are loading...")
     const isStale = isHydrating || isWorkspaceLoading || workspaceIdsMismatch || undefined
+
+    // TEMPORARY INSTRUMENTATION — stale split trace
+    void debugLog({
+      component: "StaleTrace",
+      action: "shell_set_ui_context",
+      metadata: {
+        providerOpenNotesCount: openNotes.length,
+        providerOpenNotesIds: openNotes.map(n => n.noteId),
+        openNotesForContextCount: openNotesForContext.length,
+        openNotesWorkspaceId,
+        noteWorkspaceStateCurrentWsId: noteWorkspaceState.currentWorkspaceId,
+        isStale: isStale || false,
+        isHydrating,
+        isWorkspaceLoading,
+        workspaceIdsMismatch,
+      },
+    })
 
     setUiContext({
       mode: 'workspace',

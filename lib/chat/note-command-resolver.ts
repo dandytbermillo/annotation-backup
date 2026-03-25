@@ -42,9 +42,9 @@ export interface NoteResolverInput {
 // Deterministic Note-Surface Detection
 // =============================================================================
 
-/** Patterns for note state-info queries */
+/** Patterns for note state-info queries (singular and plural) */
 const NOTE_STATE_PATTERNS = [
-  /\b(?:which|what)\s+note\s+(?:is|are)\s+(?:open|active|current)/i,
+  /\b(?:which|what)\s+notes?\s+(?:is|are)\s+(?:open|active|current)\b/i,
   /\bwhat\s+note\s+am\s+I\s+in\b/i,
   /\bwhat\s+is\s+the\s+(?:current|active|open)\s+note\b/i,
   /\bwhat\s+note\s+is\s+this\b/i,

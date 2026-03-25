@@ -131,6 +131,39 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
   const activeWorkspaceId = useSyncExternalStore(subscribeActiveWorkspace, getActiveWorkspaceSnapshot)
   const selectedWorkspaceIdRef = useRef<string | null>(null)
 
+  // TEMPORARY INSTRUMENTATION — mount/unmount + render counter
+  const instanceIdRef = useRef(Math.random().toString(36).slice(2, 8))
+  const renderCountRef = useRef(0)
+  renderCountRef.current++
+
+  useEffect(() => {
+    const id = instanceIdRef.current
+    void debugLog({
+      component: "StaleTrace",
+      action: "provider_v2_MOUNT",
+      metadata: { instanceId: id },
+    })
+    return () => {
+      void debugLog({
+        component: "StaleTrace",
+        action: "provider_v2_UNMOUNT",
+        metadata: { instanceId: id },
+      })
+    }
+  }, [])
+
+  void debugLog({
+    component: "StaleTrace",
+    action: "provider_v2_render",
+    metadata: {
+      instanceId: instanceIdRef.current,
+      renderCount: renderCountRef.current,
+      activeWorkspaceId,
+      currentOpenNotesWorkspaceId,
+      currentOpenNotesCount: currentOpenNotes.length,
+    },
+  })
+
   const syncRuntimeOpenState = useCallback((workspaceId: string, slots: OpenWorkspaceNote[]) => {
     if (!workspaceId) return
     const normalized: NoteWorkspaceSlot[] = slots
@@ -230,6 +263,19 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
     })
 
     setCurrentOpenNotes(nextSlots)
+    // TEMPORARY INSTRUMENTATION — stale split trace
+    void debugLog({
+      component: "StaleTrace",
+      action: "provider_set_open_notes",
+      metadata: {
+        workspaceId,
+        providerNoteCount: nextSlots.length,
+        providerNoteIds: nextSlots.map(s => s.noteId),
+        runtimeNoteCount: runtimeNotes.length,
+        runtimeNoteIds: runtimeNotes.map(n => n.noteId),
+        source: useRuntime ? "runtime" : "waiting_for_hydration",
+      },
+    })
     // FIX 20: Only sync to runtime if we read FROM runtime (authoritative source).
     // If runtime was empty, don't write empty/stale data to it - let hydrateWorkspace populate it.
     if (useRuntime) {
@@ -448,6 +494,22 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
   const refreshWorkspace = useCallback(async () => {
     // No-op for V2; state is client-managed
   }, [])
+
+  // TEMPORARY INSTRUMENTATION — stale split trace
+  // Log every time the context value is recomputed to verify state propagation
+  useEffect(() => {
+    void debugLog({
+      component: "StaleTrace",
+      action: "provider_context_value_changed",
+      metadata: {
+        currentOpenNotesWorkspaceId,
+        currentOpenNotesCount: currentOpenNotes.length,
+        currentOpenNotesIds: currentOpenNotes.map(n => n.noteId),
+        activeWorkspaceId,
+        activeWorkspaceFromModule: getActiveWorkspaceContext(),
+      },
+    })
+  }, [currentOpenNotesWorkspaceId, currentOpenNotes, activeWorkspaceId])
 
   const value = useMemo<CanvasWorkspaceContextValue>(
     () => ({

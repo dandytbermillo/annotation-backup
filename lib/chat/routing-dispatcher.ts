@@ -5308,6 +5308,69 @@ async function dispatchRoutingInner(
   }
 
   // =========================================================================
+  // TIER 4.2 — Manifest-Driven Note State-Info (Pre-LLM)
+  //
+  // Deterministic note state-info for "which note(s) is/are open?" forms.
+  // Mirrors Tier 4.25 pattern but for state_info instead of navigate.
+  // Without this, plural queries fall through to the arbiter/LLM path.
+  // =========================================================================
+  {
+    const noteStateCommand = resolveNoteCommand({
+      userInput: ctx.trimmedInput,
+      noteContext: {
+        activeNoteId: ctx.uiContext?.workspace?.activeNoteId || undefined,
+        openNotes: ctx.uiContext?.workspace?.openNotes,
+        currentEntryId: ctx.currentEntryId,
+      },
+    })
+
+    if (noteStateCommand && noteStateCommand.intentFamily === 'state_info' && noteStateCommand.confidence === 'high') {
+      void debugLog({
+        component: 'ChatNavigation',
+        action: 'note_manifest_state_info_intercept',
+        metadata: {
+          manifestVersion: noteStateCommand.manifestVersion,
+          handlerId: noteStateCommand.handlerId,
+        },
+      })
+
+      const stateAnswer = resolveNoteStateInfo(ctx.uiContext ?? {})
+      const stateMsg: ChatMessage = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: stateAnswer,
+        timestamp: new Date(),
+        isError: false,
+      }
+      ctx.addMessage(stateMsg, { tierLabel: 'note_manifest_state_info', provenance: 'deterministic' })
+      ctx.setIsLoading(false)
+
+      return {
+        ...defaultResult,
+        handled: true,
+        handledByTier: 4,
+        tierLabel: 'note_manifest_state_info',
+        clarificationCleared,
+        isNewQuestionOrCommandDetected,
+        classifierCalled: false,
+        classifierTimeout: false,
+        classifierError: false,
+        isFollowUp: false,
+        _devProvenanceHint: 'deterministic',
+        _resolvedNoteCommand: noteStateCommand,
+        _noteCommandTelemetry: {
+          note_command_manifest_version: noteStateCommand.manifestVersion,
+          note_command_handler_id: noteStateCommand.handlerId,
+          note_command_family: noteStateCommand.intentFamily,
+          note_command_subtype: noteStateCommand.intentSubtype,
+          note_command_confidence: noteStateCommand.confidence,
+          note_command_execution_policy: noteStateCommand.executionPolicy,
+        },
+      }
+    }
+  }
+
+  // =========================================================================
   // TIER 4.25 — Manifest-Driven Note Navigate (Pre-LLM)
   //
   // Deterministic note-navigate detection for clean "open note X" forms.
