@@ -18,15 +18,7 @@ Anti-pattern applicability: **not applicable**. This is command/routing architec
 
 ## Goal
 
-Use one shared manifest framework for built-in surfaces across dashboard and workspace, while keeping per-surface policy explicit.
-
-This plan should:
-
-1. fix the immediate note-open policy mistake
-2. keep workspace switching explicit rather than implicit
-3. unify built-in dashboard and workspace surfaces under one manifest architecture
-4. keep notes aligned to the same high-level vocabulary without forcing them into the generic surface manifest layer
-
+w
 ## Core Product Rule
 
 The product rule should be:

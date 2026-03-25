@@ -174,16 +174,21 @@ Each section shows:
 
 ---
 
-## 7. Note Command Manifest Architecture (Phases 1-3)
+## 7. Note Command Manifest Architecture (Phases 1-4 + Phase A Bridge)
 
 **Plan:** `stage6x8-note-command-manifest-architecture-plan.md`
-**Report:** (no separate report — committed across multiple commits)
-**Status:** Phase 1-3 implemented, Phase 4 pending
+**Report:** (no consolidated report yet — implemented across multiple commits)
+**Status:** Phase 1-4 implemented; Phase A workspace-preserving note-open bridge implemented
 
 **What it does:**
 - Phase 1: Manifest types, policy enums, seed entries (`note-command-manifest.ts`)
 - Phase 2: Generic note resolver with deterministic detection (`note-command-resolver.ts`)
 - Phase 3: Executor integration — state_info validation + navigate pre-LLM intercept + durable telemetry
+- Phase 4: `note_manifest_cache` exact-query memory/cache integration for `state_info.active_note` and `navigate.open_note`
+- Phase A bridge: plain `open note X` now routes through `open_note_in_current_workspace` instead of silently switching to the note's source workspace
+- Contract split in manifest:
+  - `open_note_in_current_workspace`
+  - `navigate_to_note_workspace`
 
 **Depends on:**
 - UPSERT self-upgrade from selector-aware replay fix (shared infrastructure)
@@ -191,13 +196,15 @@ Each section shows:
 - Existing note resolver (navigate DB lookup)
 
 **Enables:**
-- Phase 4: Memory/cache integration for note queries
 - Future: `read`, `capability`, `mutate` families
+- Future explicit cross-workspace note-navigation commands using `navigate_to_note_workspace`
 
 **Key files:**
 - `lib/chat/note-command-manifest.ts` — manifest types + seed entries
 - `lib/chat/note-command-resolver.ts` — generic resolver + strict navigate gate
-- `lib/chat/routing-dispatcher.ts` — state_info validation + navigate intercept
+- `lib/chat/routing-dispatcher.ts` — state_info validation + note-manifest cache dispatch + navigate intercept
+- `lib/chat/routing-log/memory-write-payload.ts` — `note_manifest_cache` write builder
+- `lib/chat/use-chat-navigation.ts` — `openNoteInCurrentWorkspace()` Phase A bridge
 
 **Supersedes:**
 - `stage6x8-phase5-note-query-memory-exact-plan.md` (the per-family replay approach was reverted in favor of this manifest-driven architecture)
@@ -249,17 +256,18 @@ Dashboard Panel Hide/Show ◄─────────────────
                                     UPSERT Self-Upgrade (shared)
                                                   │
                                                   ▼
-                                    Note Command Manifest (1-3)
+                                    Note Command Manifest (1-4)
                                                   │
                                                   ▼
-                                    Phase 4: Note Memory/Cache (pending)
+                        Phase A: Workspace-Preserving Note Open Bridge
 ```
 
 ## Follow-ups (Documented but Not Implemented)
 
 1. **Known-noun writeback parity** — Tier 4 known-noun deterministic panel opens don't emit Phase 5 writebacks
 2. **Gap 2: Instance-aware visible disambiguation** — Clarifier pills should show instance labels ("Widget Manager A" vs "Widget Manager B")
-3. **Note Phase 4: Memory/cache integration** — Exact-query cache for `state_info.active_note` + `navigate.open_note`
-4. **Note Phase B families** — `note_read_content` (needs follow-up anchor), `note_capability_info` (needs responder), `note_mutation_request` (needs idempotency)
-5. **Async promotion race** — Phase 5 pending write promotion is fire-and-forget; Memory-Exact may appear on Turn 2 or Turn 3
-6. **Navigate telemetry outcome attribution** — Navigate telemetry logs intercept attempt, not confirmed execution outcome
+3. **Note-open commit-point acknowledgment** — Phase A bridge still treats event dispatch as success before the canvas confirms the note visibly opened
+4. **Workspace/chat-context sync for note-state reporting** — runtime/canvas note state can diverge from shell `widgetState` / chat context, making `which notes are open?` unreliable
+5. **Note Phase B families** — `note_read_content` (needs follow-up anchor), `note_capability_info` (needs responder), `note_mutation_request` (needs idempotency)
+6. **Async promotion race** — Phase 5 pending write promotion is fire-and-forget; Memory-Exact may appear on Turn 2 or Turn 3
+7. **Navigate telemetry outcome attribution** — Navigate telemetry logs intercept attempt, not confirmed execution outcome
