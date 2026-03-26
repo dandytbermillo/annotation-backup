@@ -47,7 +47,7 @@ export interface SurfaceCandidateHint {
   similarityScore: number
   visibleSurfaceMatch: boolean
   containerMatch: boolean
-  sourceKind: 'curated_seed' | 'learned_success'
+  sourceKind: 'curated_seed' | 'learned_success' | 'manifest_fallback'
   selectorSpecific: boolean
   instanceLabel?: string
   arguments: Record<string, unknown>
@@ -75,6 +75,75 @@ const NEAR_TIE_MARGIN = 0.03
 const CURATED_SEED_BIAS = 0.02  // boost curated seeds over learned rows
 const LOOKUP_TIMEOUT_MS = 1500
 const LOOKUP_ENDPOINT = '/api/chat/surface-command/lookup'
+
+// =============================================================================
+// Query Normalization (retrieval aid only — not a phrase parser)
+// =============================================================================
+
+function normalizeSurfaceQuery(input: string): string {
+  let q = input.trim().toLowerCase()
+  // Strip low-information words — preserve single-letter tokens (instance labels)
+  q = q.replace(/\b(my|the|please|can you|could you)\b/gi, ' ')
+  // Normalize surface vocabulary
+  q = q.replace(/\bwidgets?\b/gi, 'panel')
+  q = q.replace(/\bdrawers?\b/gi, 'panel')
+  // Normalize singular/plural for common nouns
+  q = q.replace(/\bentries\b/gi, 'entry')
+  q = q.replace(/\bitems\b/gi, 'item')
+  // Collapse whitespace
+  q = q.replace(/\s+/g, ' ').trim()
+  return q
+}
+
+// =============================================================================
+// Manifest-Derived Fallback Hint (recent-only first slice)
+// =============================================================================
+
+function tryManifestFallbackHint(
+  normalizedInput: string,
+  runtimeContext: SurfaceRuntimeContext,
+): SurfaceCandidateHint | null {
+  registerBuiltInSurfaceManifests()
+
+  // First slice: only 'recent' singleton surface
+  for (const surfaceType of runtimeContext.visibleSurfaceTypes) {
+    if (surfaceType !== 'recent') continue
+    if (!normalizedInput.includes(surfaceType)) continue
+
+    const entry = findSurfaceEntry(surfaceType, runtimeContext.containerType)
+    if (!entry) continue
+
+    const stateCmd = entry.supportedCommands.find(
+      c => c.intentFamily === 'state_info' && c.executionPolicy === 'list_items'
+    )
+    if (!stateCmd) continue
+
+    // Require object-noun overlap (not bare verbs — avoids "show recent" collision)
+    const hasContentOverlap = /\b(entry|item|list)\b/.test(normalizedInput)
+    if (!hasContentOverlap) continue
+
+    return {
+      surfaceType,
+      containerType: runtimeContext.containerType,
+      intentFamily: stateCmd.intentFamily,
+      intentSubtype: stateCmd.intentSubtype,
+      candidateConfidence: 'medium',
+      similarityScore: 0,
+      visibleSurfaceMatch: true,
+      containerMatch: true,
+      sourceKind: 'manifest_fallback',
+      selectorSpecific: false,
+      arguments: {},
+      validationSnapshot: {
+        requiresVisibleSurface: true,
+        requiresContainerMatch: true,
+        manifestMatched: true,
+        commandMatched: true,
+      },
+    }
+  }
+  return null
+}
 
 // =============================================================================
 // Seed Retrieval (Client-side)
@@ -163,16 +232,24 @@ export async function resolveSurfaceCommand(
   input: string,
   runtimeContext: SurfaceRuntimeContext,
 ): Promise<SurfaceResolverResult> {
-  // 1. Retrieve candidates
-  const rawCandidates = await lookupSurfaceSeeds(input)
-  if (rawCandidates.length === 0) return null
+  // 0. Normalize query for retrieval (improves embedding similarity for paraphrases)
+  const normalizedInput = normalizeSurfaceQuery(input)
+
+  // 1. Retrieve candidates (using normalized text for better embedding match)
+  const rawCandidates = await lookupSurfaceSeeds(normalizedInput)
+  if (rawCandidates.length === 0) {
+    // No DB candidates — try manifest-derived fallback hint
+    return tryManifestFallbackHint(normalizedInput, runtimeContext)
+  }
 
   // 2. Rerank with live context signals + curated-seed bias
   const candidates = rerankCandidates(rawCandidates, runtimeContext)
   const top = candidates[0]
 
-  // 3. Gate: minimum medium floor
-  if (top.similarity_score < MEDIUM_CONFIDENCE_FLOOR) return null
+  // 3. Gate: minimum medium floor — if below, try manifest fallback
+  if (top.similarity_score < MEDIUM_CONFIDENCE_FLOOR) {
+    return tryManifestFallbackHint(normalizedInput, runtimeContext)
+  }
 
   // 4. Gate: action type discriminant
   if (top.slots_json.action_type !== 'surface_manifest_execute') return null

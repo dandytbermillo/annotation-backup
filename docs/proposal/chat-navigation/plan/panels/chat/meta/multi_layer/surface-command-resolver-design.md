@@ -31,6 +31,11 @@ This means:
 - no LLM needed for obvious validated surface commands
 - semantic retrieval is useful even when deterministic execution does not fire
 
+Fallback order:
+1. deterministic/app-capable resolution first
+2. if deterministic resolution cannot safely resolve, bounded arbiter/LLM is the default next step
+3. clarification or other safe fallback only after deterministic routing and bounded arbiter/LLM still cannot resolve safely
+
 ## Inputs
 
 ```
@@ -76,7 +81,7 @@ Each row should carry:
   - `typeFilter`
   - `requiresVisibleSurface`
   - `requiresContainerMatch`
-  - `sourceKind` (`curated_seed` vs `learned_success`)
+  - `sourceKind` (`curated_seed` | `learned_success` | `manifest_fallback`)
   - `successCount`
   - `lastSuccessAt`
 
@@ -84,6 +89,11 @@ The retrieval model is:
 - curated seeds define the initial canonical intent neighborhoods
 - learned successful rows help the app generalize to nearby paraphrases over time
 - neither source executes directly without live validation
+
+Operational policy:
+- curated seeds are a controlled, reviewed anchor set maintained through normal development/release work
+- production adaptation should come primarily from automatic `learned_success` rows created from validated successful handling
+- manual curated-seed expansion should be occasional and intentional, not the default reaction to every production miss
 
 ### Learned-row eligibility policy
 
@@ -139,6 +149,17 @@ A bounded-await client function `lookupSurfaceCommand()` in `lib/chat/surface-re
 - Timeout: 1500ms (fail-open, returns null on timeout/error)
 - Gated by env flag: `NEXT_PUBLIC_SURFACE_COMMAND_RESOLVER_ENABLED`
 
+### Query normalization before retrieval
+
+Before DB lookup, apply lightweight normalization intended to improve retrieval recall without turning code into a phrase parser. This may include:
+
+- singular/plural normalization for obvious nouns like `entry` / `entries`
+- stripping low-information wrappers such as `my`
+- normalization of stable surface vocabulary such as `widget` / `panel` / `drawer` where product semantics already treat them as neighboring UI nouns
+- whitespace/punctuation cleanup beyond the existing storage normalization
+
+This normalization is for retrieval quality only. It must not become a broad regex intent layer.
+
 ## Resolver Contract
 
 ### Confidence bands and ownership rules
@@ -166,6 +187,7 @@ Ranking should not rely on embedding distance alone. The resolver should combine
 - curated-seed bias
 - learned-row recency/success signals
 - live-context compatibility
+- lexical/surface-vocabulary overlap from normalized query text
 
 A practical implementation can use a two-stage approach:
 1. retrieve top `K` by embedding similarity
@@ -202,6 +224,30 @@ It should:
 8. On medium-confidence plausible match: return a `SurfaceCandidateHint`
 9. On low/no match: return null
 
+### Manifest/runtime-derived fallback hint
+
+If DB semantic retrieval does not produce a usable medium/high candidate, the resolver may still form a bounded fallback `SurfaceCandidateHint` when all of the following are true:
+
+- the candidate surface is currently visible
+- the surface command family is low-risk, read-only `state_info`
+- the normalized query has strong vocabulary overlap with the surface and command family
+- runtime/container context is compatible
+
+Example:
+- visible singleton surface: `recent`
+- query includes overlapping terms such as `recent` + `entry` / `entries` + `widget`
+- no strong DB row match exists yet
+
+In that case, the resolver may synthesize a medium-confidence hint from:
+- the manifest definition
+- the visible runtime surface
+- normalized lexical overlap
+
+This fallback hint:
+- must never directly execute
+- is advisory only
+- exists to prevent avoidable misses on new phrasings before learned rows accumulate
+
 ## Candidate Hint Output
 
 Add a separate result shape for non-deterministic but useful semantic candidates, for example:
@@ -234,7 +280,7 @@ This is distinct from existing exact-preference hints. It is advisory only and m
 - `intentSubtype`
 - `candidateConfidence`
 - `similarityScore`
-- `sourceKind` (`curated_seed` or `learned_success`)
+- `sourceKind` (`curated_seed` | `learned_success` | `manifest_fallback`)
 - `visibleSurfaceMatch`
 - `containerMatch`
 - `selectorSpecific`
@@ -323,6 +369,10 @@ If a medium-confidence hint is provided to arbiter/LLM but the model still decli
 - normal LLM routing continues from the original query
 - the rejected hint should be logged for offline analysis, not executed
 
+If DB retrieval is weak but a manifest/runtime-derived fallback hint exists:
+- pass that hint to arbiter/LLM before clarifying
+- only fall all the way to clarification/safe fallback if deterministic routing and bounded arbiter/LLM both still cannot resolve safely
+
 ## What This Replaces
 
 Do not use:
@@ -360,6 +410,7 @@ without adding regex phrase logic.
 Add dispatcher-level tests for:
 - strong seeded recent query → resolved surface command → bounded answer
 - semantically close paraphrase → medium or high candidate path, not notes-only clarifier
+- weak DB match + strong manifest/runtime overlap → fallback `SurfaceCandidateHint`, not direct clarification
 - no visible recent surface → bounded deterministic failure
 - wrong container → bounded deterministic failure
 - medium-confidence candidate → arbiter/LLM receives structured surface hint
