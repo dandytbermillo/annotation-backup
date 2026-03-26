@@ -15,6 +15,7 @@ import { normalizeForStorage, computeQueryFingerprint } from '@/lib/chat/routing
 import { computeEmbedding } from '@/lib/chat/routing-log/embedding-service'
 import {
   OPTION_A_TENANT_ID,
+  OPTION_A_USER_ID,
   ROUTING_MEMORY_CURATED_SEED_USER_ID,
   MEMORY_SCHEMA_VERSION,
   MEMORY_TOOL_VERSION,
@@ -25,18 +26,23 @@ const LOOKUP_SQL = `
     intent_id,
     intent_class,
     slots_json,
+    scope_source,
     1 - (semantic_embedding <=> $3::vector) as similarity_score
   FROM chat_routing_memory_index
   WHERE tenant_id = $1
-    AND user_id = $2
-    AND scope_source = 'curated_seed'
+    AND (
+      (user_id = $2 AND scope_source = 'curated_seed')
+      OR (user_id = $6 AND scope_source = 'learned_success' AND success_count >= 2)
+    )
     AND intent_id LIKE 'surface_manifest:%'
     AND is_deleted = false
     AND semantic_embedding IS NOT NULL
     AND schema_version = $4
     AND tool_version = $5
+    AND risk_tier IN ('low', 'medium')
+    AND (ttl_expires_at IS NULL OR ttl_expires_at > now())
   ORDER BY semantic_embedding <=> $3::vector
-  LIMIT 3
+  LIMIT 5
 `
 
 export async function POST(request: NextRequest) {
@@ -56,7 +62,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ candidates: [] })
     }
 
-    // Query surface manifest seeds only
+    // Query surface manifest seeds + eligible learned rows
     const embeddingStr = `[${embedding.join(',')}]`
     const { rows } = await serverPool.query(LOOKUP_SQL, [
       OPTION_A_TENANT_ID,
@@ -64,6 +70,7 @@ export async function POST(request: NextRequest) {
       embeddingStr,
       MEMORY_SCHEMA_VERSION,
       MEMORY_TOOL_VERSION,
+      OPTION_A_USER_ID,
     ])
 
     const candidates = rows.map(row => ({
@@ -71,7 +78,8 @@ export async function POST(request: NextRequest) {
       intent_class: row.intent_class as string,
       slots_json: row.slots_json as Record<string, unknown>,
       similarity_score: parseFloat(row.similarity_score),
-      from_curated_seed: true,
+      from_curated_seed: row.scope_source === 'curated_seed',
+      source_kind: row.scope_source === 'curated_seed' ? 'curated_seed' : 'learned_success',
     }))
 
     return NextResponse.json({ candidates })

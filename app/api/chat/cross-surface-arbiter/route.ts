@@ -30,6 +30,16 @@ interface ArbiterRequest {
   visiblePanels?: string[]
   workspaceName?: string
   entryName?: string
+  // Phase E: medium-confidence surface candidate hint (advisory only)
+  surfaceCandidateHint?: {
+    surfaceType: string
+    containerType: string
+    intentFamily: string
+    intentSubtype: string
+    candidateConfidence: string
+    similarityScore: number
+    sourceKind: string
+  }
 }
 
 interface ArbiterResponse {
@@ -131,6 +141,7 @@ If unclear, return "ambiguous" — do NOT guess.
 
 Respond with JSON only: { "surface": "...", "intentFamily": "...", "confidence": 0.0-1.0, "reason": "...", "intentSubtype": "..." }
 ${buildRecentContextSection(req)}
+${buildSurfaceHintSection(req)}
 User said: "${req.userInput}"`
 }
 
@@ -146,6 +157,17 @@ function buildRecentContextSection(req: ArbiterRequest): string {
   parts.push('- Explicit current-turn nouns and verbs always outrank prior context.')
   parts.push('- If prior context does not clarify the current request, ignore it.')
   return parts.join('\n')
+}
+
+function buildSurfaceHintSection(req: ArbiterRequest): string {
+  const hint = req.surfaceCandidateHint
+  if (!hint) return ''
+  return `
+Semantic retrieval advisory (from prior successful queries):
+- A similar query was previously resolved as: surface="${hint.surfaceType}", intent="${hint.intentFamily}.${hint.intentSubtype}"
+- Similarity score: ${hint.similarityScore.toFixed(2)}, source: ${hint.sourceKind}
+- This is advisory only. Use it if the user's current query is compatible with this classification.
+- If the current query clearly does NOT match this surface/intent, ignore this hint.`
 }
 
 // =============================================================================

@@ -35,6 +35,16 @@ export type CrossSurfaceArbiterRequest = {
   visiblePanels?: string[]     // widget titles
   workspaceName?: string
   entryName?: string           // dashboard-only; undefined in workspace mode
+  // Phase E: medium-confidence surface candidate hint (advisory only)
+  surfaceCandidateHint?: {
+    surfaceType: string
+    containerType: string
+    intentFamily: string
+    intentSubtype: string
+    candidateConfidence: string
+    similarityScore: number
+    sourceKind: string
+  }
 }
 
 export type CrossSurfaceSemanticDecision = {

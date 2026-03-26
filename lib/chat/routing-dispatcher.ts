@@ -82,7 +82,7 @@ import {
 } from '@/lib/chat/routing-log'
 import type { RoutingLogPayload } from '@/lib/chat/routing-log'
 import { buildMemoryWritePayload, buildNoteManifestWritePayload } from '@/lib/chat/routing-log/memory-write-payload'
-import { resolveSurfaceCommand, isSurfaceResolverError } from '@/lib/chat/surface-resolver'
+import { resolveSurfaceCommand, isSurfaceResolverError, isSurfaceCandidateHint, isResolvedSurfaceCommand, type SurfaceCandidateHint } from '@/lib/chat/surface-resolver'
 import { lookupExactMemory } from '@/lib/chat/routing-log/memory-reader'
 import { lookupSemanticMemory, type SemanticCandidate, type SemanticLookupResult } from '@/lib/chat/routing-log/memory-semantic-reader'
 import { validateMemoryCandidate } from '@/lib/chat/routing-log/memory-validator'
@@ -1795,6 +1795,7 @@ export async function dispatchRouting(
       // ── Pre-arbiter: Dedicated surface command resolver (Tier 4.3) ──
       // Runs BEFORE the arbiter so seeded surface commands are resolved
       // without the arbiter classifying them as generic panel_widget.state_info.
+      let surfaceCandidateHintForArbiter: SurfaceCandidateHint | undefined
       {
         const containerType: import('./surface-manifest').SurfaceContainerType =
           ctx.uiContext?.mode === 'workspace' ? 'workspace' : 'dashboard'
@@ -1808,7 +1809,7 @@ export async function dispatchRouting(
 
         const surfaceResult = await resolveSurfaceCommand(ctx.trimmedInput, runtimeContext)
 
-        if (surfaceResult && !isSurfaceResolverError(surfaceResult)) {
+        if (surfaceResult && isResolvedSurfaceCommand(surfaceResult)) {
           if (surfaceResult.executionPolicy === 'list_items') {
             let answerContent = "I couldn't load that information right now. Try again in a moment."
             try {
@@ -1872,6 +1873,13 @@ export async function dispatchRouting(
           const surfaceErrorPayload = buildRoutingLogPayload(ctx, surfaceErrorResult, turnSnapshotForLog)
           void recordRoutingLog(surfaceErrorPayload)
           return surfaceErrorResult
+        } else if (surfaceResult && isSurfaceCandidateHint(surfaceResult)) {
+          // MEDIUM: do NOT execute. Store hint for arbiter handoff.
+          surfaceCandidateHintForArbiter = surfaceResult
+          void debugLog({ component: 'ChatNavigation', action: 'surface_command_hint', metadata: {
+            surfaceType: surfaceResult.surfaceType, intentFamily: surfaceResult.intentFamily,
+            similarityScore: surfaceResult.similarityScore, sourceKind: surfaceResult.sourceKind,
+          }})
         }
         // else: weak/no match — continue to arbiter
       }
@@ -1889,6 +1897,8 @@ export async function dispatchRouting(
         visiblePanels: visiblePanelTitles.length > 0 ? visiblePanelTitles : undefined,
         workspaceName: ctx.uiContext?.workspace?.workspaceName ?? undefined,
         entryName: (ctx.uiContext?.dashboard as any)?.entryName ?? undefined,
+        // Phase E: medium-confidence surface candidate hint (advisory)
+        surfaceCandidateHint: surfaceCandidateHintForArbiter,
       })
 
       // Telemetry: compute effective result
@@ -2111,6 +2121,61 @@ export async function dispatchRouting(
       // ── Phase 4: panel_widget.state_info (migrated) ──
       } else if (isMigrated && rawDecision!.intentFamily === 'state_info' && rawDecision!.surface === 'panel_widget') {
         contentIntentMatchedThisTurn = true
+
+        // Phase E: if a medium surface hint exists and the arbiter confirmed
+        // the matching surface/intent, route through the surface executor
+        // instead of the generic panel state-info resolver.
+        if (surfaceCandidateHintForArbiter
+            && surfaceCandidateHintForArbiter.intentFamily === 'state_info'
+            && surfaceCandidateHintForArbiter.visibleSurfaceMatch) {
+          // Use the surface executor for this specific surface
+          let hintAnswerContent = "I couldn't load that information right now. Try again in a moment."
+          try {
+            const hintApiRes = await fetch(`${typeof window !== 'undefined' ? '' : process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'}/api/panels/recent/list`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ params: { limit: 5 } }),
+            })
+            if (hintApiRes.ok) {
+              const hintData = await hintApiRes.json()
+              const hintItems = hintData.items as Array<{ name?: string; title?: string; type?: string; subtitle?: string }> | undefined
+              if (hintItems && hintItems.length > 0) {
+                const lines = hintItems.map((item, i) => {
+                  const label = item.title ?? item.name ?? 'Untitled'
+                  const detail = item.subtitle ? ` — ${item.subtitle}` : ''
+                  const kind = item.type ? ` (${item.type})` : ''
+                  return `${i + 1}. ${label}${detail}${kind}`
+                }).join('\n')
+                hintAnswerContent = `Recently visited:\n${lines}`
+              } else {
+                hintAnswerContent = 'No recently visited items found.'
+              }
+            }
+          } catch { /* bounded error */ }
+
+          const hintMsg: ChatMessage = {
+            id: `assistant-${Date.now()}`, role: 'assistant',
+            content: hintAnswerContent, timestamp: new Date(), isError: false,
+          }
+          ctx.addMessage(hintMsg, { tierLabel: 'surface_command_hint_assisted', provenance: 'deterministic' })
+          ctx.setIsLoading(false)
+          void debugLog({ component: 'ChatNavigation', action: 'surface_command_hint_assisted', metadata: {
+            surfaceType: surfaceCandidateHintForArbiter.surfaceType,
+            intentFamily: surfaceCandidateHintForArbiter.intentFamily,
+            similarityScore: surfaceCandidateHintForArbiter.similarityScore,
+          }})
+          const hintResult: RoutingDispatcherResult = {
+            handled: true, handledByTier: 6, tierLabel: 'surface_command_hint_assisted',
+            clarificationCleared: false, isNewQuestionOrCommandDetected: false,
+            classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
+            _devProvenanceHint: 'deterministic',
+          }
+          const hintPayload = buildRoutingLogPayload(ctx, hintResult, turnSnapshotForLog)
+          Object.assign(hintPayload, arbiterTelemetry)
+          void recordRoutingLog(hintPayload)
+          return hintResult
+        }
+
         const answer = isPanelOpenQuery(ctx.trimmedInput)
           ? resolvePanelOpenStateInfo(ctx.uiContext ?? {})
           : resolvePanelWidgetStateInfo(ctx.uiContext ?? {})
