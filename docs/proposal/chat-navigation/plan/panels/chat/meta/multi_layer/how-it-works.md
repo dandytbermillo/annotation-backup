@@ -9,7 +9,7 @@ The routing system is still one shared ladder for uncertain requests across surf
 5. Policy-driven execution
 6. Fallback clarification
 
-The important update is that **notes are no longer headed toward more family-specific replay wiring**.
+The important update is that **routing is moving toward structured resolvers by surface family, not more family-specific replay wiring**.
 
 For note commands, the system is moving to:
 
@@ -17,6 +17,13 @@ For note commands, the system is moving to:
 - a generic note resolver
 - a policy-driven executor
 - memory as a resolution cache, not the behavior layer
+
+For built-in non-note surfaces, the system is also moving to:
+
+- a dedicated surface-command resolver
+- DB-backed seeded + learned query rows as the phrase source of truth
+- manifest and live-context validation before execution
+- bounded arbiter/LLM handoff when retrieval is useful but not deterministic
 
 That is the current implementation direction.
 
@@ -122,7 +129,16 @@ If confidence is above threshold:
 
 Step 4: Surface-specific structured resolution
 
-This is where the current note architecture changes.
+This is where the current architecture changes.
+
+There are now two sibling structured-resolution paths:
+
+1. a note resolver for note commands
+2. a dedicated surface-command resolver for built-in non-note surfaces
+
+Both use manifests as capability/policy contracts rather than phrase dictionaries.
+
+### Note resolver
 
 For notes, the long-term design is:
 
@@ -209,6 +225,74 @@ It is not the full end-state scope. Later phases extend the same manifest/resolv
 - `capability.*`
 - later, carefully:
   - `mutate.*`
+
+### Dedicated surface-command resolver
+
+For built-in non-note surfaces, the dedicated surface resolver:
+
+1. retrieves semantic candidates from DB-backed curated seeds and eligible learned rows
+2. re-ranks them with live context
+3. validates them against the shared surface manifest
+4. returns one of three outcomes:
+   - high-confidence resolved command
+   - medium-confidence candidate hint
+   - unresolved / low-confidence
+
+This resolver sits before the bounded arbiter/LLM and is independent of Phase 5 hint-scope logic.
+
+#### High-confidence outcome
+
+- a validated `ResolvedSurfaceCommand`
+- deterministic execution
+- no LLM fallthrough
+
+#### Medium-confidence outcome
+
+- a structured `SurfaceCandidateHint`
+- no direct execution
+- bounded arbiter/LLM receives the hint as advisory evidence
+
+#### Low / unresolved outcome
+
+- no interception
+- normal bounded arbiter/LLM routing continues
+
+#### Retrieval and fallback model
+
+The phrase layer for non-note surfaces comes from:
+
+- curated seed rows
+- eligible learned-success rows
+
+To improve recall without turning code into a phrase parser, the surface resolver may also use:
+
+- lightweight query normalization before retrieval
+- deterministic reranking using live context and lexical overlap
+- a manifest/runtime-derived fallback hint for low-risk visible surfaces when DB similarity is too weak
+
+That fallback hint:
+
+- is advisory only
+- must never directly execute
+- exists to reduce avoidable misses on new phrasings before learned rows accumulate
+
+#### Clarification boundary
+
+Clarification is not only a low-confidence arbiter fallback.
+
+It is also required when:
+
+- the user query appears to ask for a specific surface command or specific surface contents
+- but the system only has a coarse result such as `panel_widget.state_info`
+- and there is no validated specific surface resolution and no accepted hint-assisted execution path
+
+In that case, the app must not confidently execute a broader generic answer such as a visible-panels list.
+
+It should clarify instead, because:
+
+- the broader answer does not actually answer the user’s specific request
+- clarification creates a safer path to a validated final resolution
+- that validated final resolution is what can justify learned-row writeback later
 
 ---
 

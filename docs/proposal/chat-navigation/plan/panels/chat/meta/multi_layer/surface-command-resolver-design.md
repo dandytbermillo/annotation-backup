@@ -112,6 +112,61 @@ Rows must **not** be written or reused when the turn ended in:
 - user correction / repair in the same resolution window
 - unknown or unvalidated target
 
+Clarification is a bridge to later learning, not a successful learning outcome by itself.
+The system must not treat:
+- `clarifier shown`
+- `user answered`
+
+as sufficient for learned-row writeback.
+
+Writeback is allowed only after a later turn or follow-up produces:
+- a final validated specific surface resolution
+- a successful bounded answer or execution from that validated resolution
+- the concrete resolved surface metadata used for execution
+
+The original noisy phrasing from a clarification-mediated turn may still be retained as weak evidence,
+but it should be stored separately from replay-eligible learned-success rows.
+
+That weak evidence tier may record:
+- the original noisy query text
+- that clarification or clarification-like recovery was required
+- the final validated command it eventually resolved to
+
+Operationally, this weak evidence should live in a non-replay-eligible evidence channel:
+- either a separate evidence table / telemetry stream
+- or rows in the existing memory store that are explicitly marked as not lookup-eligible
+
+It must not participate in deterministic replay or normal semantic candidate retrieval until promotion occurs.
+It should also inherit the same redaction, retention, and privacy rules as other routing-memory or telemetry artifacts, since the original noisy phrasing may contain sensitive user text.
+
+It must not be treated as:
+- direct deterministic replay evidence
+- proof that the original raw phrasing is already safe to auto-execute
+
+Promotion from weak evidence into a stronger learned-success tier should require repeated validated successes with little or no clarification.
+Promotion should also require that:
+- the promoted row carries the same validated surface metadata contract as normal learned-success rows
+- the noisy phrasing has shown stable alignment with the same final command across multiple turns
+- promotion remains reversible through normal cleanup/delete flows if it later proves noisy or misleading
+
+For the first implementation, make this threshold explicit:
+- require at least 2 validated successful resolutions of the same noisy phrasing to the same final command
+- and at least 1 of those successes must occur without clarification, or with only a minimal confirmation step
+
+This keeps promotion conservative while still allowing noisy phrasing to improve over time.
+
+For this policy, a “minimal confirmation step” should be defined narrowly:
+- a short binary confirmation of one already-proposed plausible target
+- or a one-tap confirmation of a single bounded suggestion
+
+It should not include:
+- a broad open-ended clarifier
+- a multi-option disambiguation list
+- a follow-up that required the user to restate the target in a more explicit way
+
+For the first slice, implement weak evidence in the existing memory system only if rows can be explicitly marked as non-lookup-eligible.
+If that cannot be done cleanly, prefer a separate telemetry/evidence channel rather than overloading replay-eligible routing memory rows.
+
 To avoid noisy rows poisoning retrieval:
 - curated seeds remain the strongest base anchors
 - learned rows participate only as semantic support
@@ -373,6 +428,73 @@ If DB retrieval is weak but a manifest/runtime-derived fallback hint exists:
 - pass that hint to arbiter/LLM before clarifying
 - only fall all the way to clarification/safe fallback if deterministic routing and bounded arbiter/LLM both still cannot resolve safely
 
+### Post-arbiter coarse-result guardrail
+
+The system must distinguish:
+
+- generic panel/container state questions
+- specific surface-content requests
+
+Examples:
+- generic:
+  - `what panels are visible?`
+  - `which panels are open?`
+- specific:
+  - `list recent widget entries`
+  - `show links panel b items`
+
+If arbiter/LLM returns only a coarse result such as `panel_widget.state_info`, that is sufficient only for generic panel-state questions.
+
+If all of the following are true:
+- the query shape appears to ask for a specific surface's contents/items/state rather than generic visible-panels state
+- there is no validated `ResolvedSurfaceCommand`
+- there is no accepted `SurfaceCandidateHint` path that can be executed safely
+- arbiter/LLM still only produces a coarse surface-family result
+
+then the app must not execute the broader generic answer (for example, a visible-panels list).
+
+It must clarify instead.
+
+This guardrail is structural, not widget-specific:
+- it should not depend on maintaining per-widget regex phrase rules
+- it should rely on the mismatch between a specific-looking query and a coarse unresolved result
+
+The “specific surface-content request” detector should stay narrow and structural.
+Useful signals are:
+- a content/listing verb such as `list`, `show`, `display`, or `view`
+- an object noun such as `entries`, `items`, or `content`
+- plus some sign of target specificity, for example:
+  - an explicit surface term
+  - an accepted surface candidate hint
+  - strong surface-family evidence from retrieval/runtime context
+  - an instance reference
+
+These signals are guardrail inputs, not a replacement phrase-matching system.
+They must not grow into a hidden per-widget phrase table.
+
+Clarification is important here not only for safety, but also because it creates a path to a validated final resolution that can justify learned-row writeback later.
+
+When this guardrail fires, the clarifier should be bounded and preferably grounded:
+- generic safe fallback is acceptable: `I'm not sure which panel you mean. Could you be more specific?`
+- better when possible: use visible-surface context to propose likely safe options without executing them
+- keep proposals to a small plausible set rather than dumping all visible panels
+- do not suggest a surface only because it is visible; suggestions should still be informed by retrieval/runtime evidence
+
+Examples:
+- `Do you mean the Recent panel or another visible panel?`
+- `Do you want the items from the Recent panel, or are you asking which panels are visible?`
+
+The clarifier must not:
+- assume a specific surface has already been chosen
+- execute a candidate command before the user confirms
+- be treated as a successful learned resolution by itself
+
+Clarification should also have a bounded anti-loop rule:
+- if the user repeats the same unresolved noisy phrasing or gives another low-information reply after one grounded clarifier
+- do not keep asking similar clarifiers indefinitely
+- fall back to a more explicit bounded prompt such as:
+  - `I'm still not sure which panel you mean. Name the panel directly.`
+
 ## What This Replaces
 
 Do not use:
@@ -411,6 +533,8 @@ Add dispatcher-level tests for:
 - strong seeded recent query → resolved surface command → bounded answer
 - semantically close paraphrase → medium or high candidate path, not notes-only clarifier
 - weak DB match + strong manifest/runtime overlap → fallback `SurfaceCandidateHint`, not direct clarification
+- specific-looking query + only coarse `panel_widget.state_info` result → clarification, not generic visible-panels answer
+- generic visible-panels query + coarse `panel_widget.state_info` result → generic visible-panels answer is still allowed
 - no visible recent surface → bounded deterministic failure
 - wrong container → bounded deterministic failure
 - medium-confidence candidate → arbiter/LLM receives structured surface hint
