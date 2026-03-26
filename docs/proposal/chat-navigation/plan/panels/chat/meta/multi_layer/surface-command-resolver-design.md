@@ -474,15 +474,36 @@ They must not grow into a hidden per-widget phrase table.
 
 Clarification is important here not only for safety, but also because it creates a path to a validated final resolution that can justify learned-row writeback later.
 
-When this guardrail fires, the clarifier should be bounded and preferably grounded:
-- generic safe fallback is acceptable: `I'm not sure which panel you mean. Could you be more specific?`
-- better when possible: use visible-surface context to propose likely safe options without executing them
+When this guardrail fires, the clarifier should be bounded and preferably candidate-backed:
+- generic safe fallback is acceptable only when no plausible bounded candidates exist
+- better when possible: use plausible low/medium candidates plus visible-surface context to propose likely safe options without executing them
 - keep proposals to a small plausible set rather than dumping all visible panels
 - do not suggest a surface only because it is visible; suggestions should still be informed by retrieval/runtime evidence
+
+Candidate-backed clarification is preferred because it helps confused users recover without unsafe execution.
+These candidates may come from:
+- medium-confidence surface hints that were not accepted for execution
+- weaker semantic retrieval candidates
+- visible/runtime-compatible surface evidence
+- recent routing context from the latest conversation, such as:
+  - previous user phrasing
+  - previous assistant clarification
+  - previous resolved surface
+  - previous resolved intent family
+  - previous turn outcome
+
+Recent routing context should be used as bounded evidence for ranking or proposing clarification options,
+especially for follow-up replies and typo-corrections after an unresolved turn.
+It should not be treated as execution authority by itself.
+
+Low-confidence candidates are clarification aids only:
+- they may be presented as options
+- they must not be auto-executed
 
 Examples:
 - `Do you mean the Recent panel or another visible panel?`
 - `Do you want the items from the Recent panel, or are you asking which panels are visible?`
+- `Did you mean Recent, or were you asking which panels are visible?`
 
 The clarifier must not:
 - assume a specific surface has already been chosen

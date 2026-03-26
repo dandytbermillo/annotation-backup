@@ -670,6 +670,24 @@ function detectHintScope(input: string): 'history_info' | 'navigation' | null {
 }
 
 /**
+ * Detect generic panel/widget state questions that should receive the
+ * generic visible-panels answer (not be guardrailed as specific-content queries).
+ * Examples: "what panels are visible?", "which widgets are there?", "how many panels?"
+ * NOT: "list recent widget entries" (asks for specific content, not panel state)
+ */
+function isGenericPanelStateQuestion(input: string): boolean {
+  const lower = input.toLowerCase()
+  // Must reference panels/widgets generically
+  const hasPanelRef = /\b(panels?|widgets?|drawers?)\b/.test(lower)
+  if (!hasPanelRef) return false
+  // Must have a state/visibility question word
+  const hasStateWord = /\b(visible|active|current|there|showing|have|many)\b/.test(lower)
+  // Must NOT have content-object nouns that indicate specific content request
+  const hasContentObject = /\b(entr|item|content)\b/i.test(lower)
+  return hasStateWord && !hasContentObject
+}
+
+/**
  * Decide whether the cross-surface arbiter should be SKIPPED for this input.
  * True for action/imperative navigation commands. False for everything else.
  *
@@ -2174,6 +2192,48 @@ export async function dispatchRouting(
           Object.assign(hintPayload, arbiterTelemetry)
           void recordRoutingLog(hintPayload)
           return hintResult
+        }
+
+        // Post-arbiter coarse-result guardrail (structural, no regex):
+        // If the surface resolver ran and produced NO result at all (no high,
+        // no medium, no manifest fallback), AND the query is NOT a generic
+        // panel/widget state question, then the arbiter's coarse
+        // panel_widget.state_info is not specific enough to execute.
+        // Clarify instead of answering with the generic visible-panels list.
+        //
+        // Generic panel-state questions are allowed through:
+        // - "which panel is open?" (isPanelOpenQuery)
+        // - "what panels are visible?" / "which widgets are there?" etc.
+        //   (generic panel/widget + state adjective, no content-object nouns)
+        const surfaceResolverProducedNothing = !surfaceCandidateHintForArbiter
+        const isGenericPanelQuestion = isPanelOpenQuery(ctx.trimmedInput)
+          || isGenericPanelStateQuestion(ctx.trimmedInput)
+        if (surfaceResolverProducedNothing && !isGenericPanelQuestion) {
+          // Anti-loop: check if previous assistant was already this clarifier
+          const lastAssistant = ctx.messages.filter((m: { role: string }) => m.role === 'assistant').at(-1) as { content?: string } | undefined
+          const isRepeat = lastAssistant?.content?.startsWith("I'm not sure which panel")
+          const clarifyContent = isRepeat
+            ? "Please name the panel directly, for example: 'list recent entries' or 'show links panel b items'."
+            : "I'm not sure which panel's items you want. Could you be more specific?"
+          const clarifyMsg: ChatMessage = {
+            id: `assistant-${Date.now()}`, role: 'assistant',
+            content: clarifyContent, timestamp: new Date(), isError: false,
+          }
+          ctx.addMessage(clarifyMsg, { tierLabel: 'arbiter_panel_widget_state_info_clarify', provenance: 'safe_clarifier' })
+          ctx.setIsLoading(false)
+          void debugLog({ component: 'ChatNavigation', action: 'surface_coarse_guardrail', metadata: {
+            query: ctx.trimmedInput, isRepeat: !!isRepeat,
+          }})
+          const clarifyResult: RoutingDispatcherResult = {
+            handled: true, handledByTier: 6, tierLabel: 'arbiter_panel_widget_state_info_clarify',
+            clarificationCleared: false, isNewQuestionOrCommandDetected: false,
+            classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
+            _devProvenanceHint: 'safe_clarifier',
+          }
+          const clarifyPayload = buildRoutingLogPayload(ctx, clarifyResult, turnSnapshotForLog)
+          Object.assign(clarifyPayload, arbiterTelemetry)
+          void recordRoutingLog(clarifyPayload)
+          return clarifyResult
         }
 
         const answer = isPanelOpenQuery(ctx.trimmedInput)
