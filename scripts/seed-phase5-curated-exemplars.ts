@@ -54,6 +54,51 @@ const CURATED_SEEDS: CuratedSeed[] = [
   // Stable panel command families only — no user-specific targets
   { query: 'open links panel b', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel b' } },
   { query: 'open navigator', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'navigator' } },
+  // Surface manifest seeds (Phase E) — dedicated surface resolver
+  // Only entry/workspace-focused phrasings. No history/action phrasing.
+  // No imperative "show recent" / "open recent" (Tier 4 known-noun).
+  {
+    query: 'list my recent entries',
+    intent_id: 'surface_manifest:recent.state_info.list_recent',
+    intent_class: 'info_intent',
+    slots_json: {
+      action_type: 'surface_manifest_execute',
+      surface_manifest: {
+        surfaceType: 'recent',
+        containerType: 'dashboard',
+        intentFamily: 'state_info',
+        intentSubtype: 'list_recent',
+        executionPolicy: 'list_items',
+        handlerId: 'recent_panel_handler',
+      },
+      validation: {
+        requiresVisibleSurface: true,
+        requiresContainerMatch: true,
+      },
+      executionMode: 'chat_answer',
+    },
+  },
+  {
+    query: 'show my recent entries',
+    intent_id: 'surface_manifest:recent.state_info.list_recent',
+    intent_class: 'info_intent',
+    slots_json: {
+      action_type: 'surface_manifest_execute',
+      surface_manifest: {
+        surfaceType: 'recent',
+        containerType: 'dashboard',
+        intentFamily: 'state_info',
+        intentSubtype: 'list_recent',
+        executionPolicy: 'list_items',
+        handlerId: 'recent_panel_handler',
+      },
+      validation: {
+        requiresVisibleSurface: true,
+        requiresContainerMatch: true,
+      },
+      executionMode: 'chat_answer',
+    },
+  },
 ]
 
 // ---------------------------------------------------------------------------
