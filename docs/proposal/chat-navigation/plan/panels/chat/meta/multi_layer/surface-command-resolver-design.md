@@ -495,6 +495,8 @@ These candidates may come from:
 Recent routing context should be used as bounded evidence for ranking or proposing clarification options,
 especially for follow-up replies and typo-corrections after an unresolved turn.
 It should not be treated as execution authority by itself.
+Explicit current-turn nouns, targets, and surface cues must always outrank recent routing context.
+Recent context is a ranking hint for recovery, not a carry-forward assumption that can override the current turn.
 
 Low-confidence candidates are clarification aids only:
 - they may be presented as options
@@ -515,6 +517,75 @@ Clarification should also have a bounded anti-loop rule:
 - do not keep asking similar clarifiers indefinitely
 - fall back to a more explicit bounded prompt such as:
   - `I'm still not sure which panel you mean. Name the panel directly.`
+
+### Rewrite-Assisted Retrieval Recovery
+
+For typo-heavy or noisy surface queries, the resolver may use a bounded LLM rewrite as a second-pass retrieval aid.
+
+This is a retrieval recovery layer, not an execution shortcut:
+- the original raw query remains the source of truth for logs, UX, and safety
+- the rewritten query is used only to improve semantic retrieval recall
+- the rewritten query must never become direct execution authority
+
+Recommended flow:
+1. run semantic retrieval on the raw query against curated seeds + learned-success rows
+2. if raw retrieval is weak or unresolved, optionally request a bounded retrieval rewrite from the LLM
+3. run semantic retrieval again on the rewritten query against the same query-memory rows
+4. merge and rerank raw-query and rewritten-query candidate sets, preserving provenance
+5. validate candidates against manifest policy and live runtime context
+6. choose:
+   - high validated match -> execute
+   - medium validated match -> hint / arbiter
+   - still coarse or unresolved -> clarify
+
+Rewrite-assisted retrieval should not run universally. It should be gated to recovery cases such as:
+- raw retrieval is weak or unresolved
+- the query shows typo/noise signals
+- the query structurally looks like a surface-content request
+- the candidate action family is read-only / low-risk
+
+The rewrite task must stay narrow:
+- correct obvious typos
+- simplify wording
+- preserve likely intent
+- do not add new goals
+- do not invent missing entities
+
+When merging candidates, prefer agreement between raw-query and rewritten-query retrieval:
+- strongest: candidates supported by both raw and rewritten retrieval
+- next: strong rewritten-query candidates with good validation support
+- weakest: one-sided low-confidence candidates
+
+Disagreement handling:
+- disagreement between raw-query and rewritten-query retrieval must not by itself produce a high-confidence execute
+- if raw and rewritten retrieval point at different top commands, the result should remain medium-confidence or clarify unless one candidate clearly wins under validation and provenance-aware reranking
+- unresolved raw-vs-rewrite disagreement should bias toward hint / clarification, not deterministic execution
+
+Rewrite budget:
+- at most one bounded rewrite attempt per user turn
+- bounded timeout / latency budget for the rewrite request
+- no rewrite-on-rewrite chaining
+- if the rewrite step times out or fails, continue with the normal non-rewrite path
+- if the rewrite step succeeds syntactically but rewritten-query retrieval still returns zero useful candidates, do not retry; continue with the normal hint / clarification path
+
+All merged candidates must preserve provenance such as:
+- `source=raw_query`
+- `source=llm_rewrite`
+- score / confidence per source
+- whether rewrite assistance was used
+
+Bad implementations to avoid:
+- replacing the original user query with the rewritten form
+- allowing rewritten-query retrieval to bypass normal manifest/runtime validation
+- learning rewrite-assisted successes as if they were direct raw-query deterministic wins without provenance
+- using creative rewrites for destructive or mutation actions
+
+This rewrite-assisted retrieval layer should roll out narrowly first:
+- implement for the `recent` slice first
+- observe outcome quality and drift
+- expand to other surfaces only after the recovery behavior is stable
+
+Even when rewrite-assisted retrieval is enabled, the post-arbiter guardrail still remains mandatory. If recovery retrieval still cannot produce a safe specific result, the system must clarify rather than execute a coarse generic answer.
 
 ## What This Replaces
 
@@ -554,6 +625,10 @@ Add dispatcher-level tests for:
 - strong seeded recent query → resolved surface command → bounded answer
 - semantically close paraphrase → medium or high candidate path, not notes-only clarifier
 - weak DB match + strong manifest/runtime overlap → fallback `SurfaceCandidateHint`, not direct clarification
+- weak/noisy raw query + bounded rewrite retrieval → improved candidate recall with preserved provenance
+- raw/rewrite agreement outranks rewrite-only candidates during reranking
+- raw top candidate != rewritten top candidate → disagreement alone does not produce a high-confidence execute
+- rewrite-assisted retrieval still requires normal manifest/runtime validation before execute or hint
 - specific-looking query + only coarse `panel_widget.state_info` result → clarification, not generic visible-panels answer
 - generic visible-panels query + coarse `panel_widget.state_info` result → generic visible-panels answer is still allowed
 - no visible recent surface → bounded deterministic failure
@@ -576,11 +651,15 @@ On successful handling of a paraphrased surface query:
 Writeback policy:
 - deterministic high-confidence success may write immediately
 - medium-confidence hint accepted by arbiter/LLM may write only after the final action/answer succeeds and the resolved surface metadata is known
+- rewrite-assisted success may write only with explicit rewrite-assistance provenance preserved
+- rewrite-assisted successes should not be treated as direct raw-query deterministic wins during learning or promotion
+- rewrite-assisted successes may enter `learned_success` only with rewrite-assistance provenance preserved; if promotion rules later distinguish weaker evidence tiers, rewrite-assisted rows should start conservatively rather than outranking stable raw-query wins too early
 - writeback should store:
   - normalized query text
   - validated surface metadata
   - sourceKind=`learned_success`
   - success counters / timestamps
+  - whether rewrite assistance was used
 - writeback should not occur for failed, ambiguous, corrected, or reverted turns
 
 This is how the app should improve over time without manual paraphrase farming.
@@ -592,5 +671,6 @@ This is how the app should improve over time without manual paraphrase farming.
 3. Wire a pre-LLM surface resolver branch (Tier 4.3)
 4. Implement recent-only deterministic execution first
 5. Add medium-confidence candidate handoff to arbiter/LLM
-6. Verify logs/provenance and learned-row writeback
-7. Extend to multi-instance surfaces later
+6. Add rewrite-assisted retrieval recovery for typo-heavy recent queries
+7. Verify logs/provenance and learned-row writeback
+8. Extend to multi-instance surfaces later
