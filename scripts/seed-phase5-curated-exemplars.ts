@@ -55,8 +55,11 @@ const CURATED_SEEDS: CuratedSeed[] = [
   { query: 'open links panel b', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel b' } },
   { query: 'open navigator', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'navigator' } },
   // Surface manifest seeds (Phase E) — dedicated surface resolver
-  // Only entry/workspace-focused phrasings. No history/action phrasing.
-  // No imperative "show recent" / "open recent" (Tier 4 known-noun).
+  // Contract (surface-command-resolver-design.md:644-651):
+  //   show recent / show recent widget / show recent widget entries → drawer/display
+  //   list recent entries / show recent entries in the chat → chat answer
+
+  // ── Chat-list seeds (explicit list/in-the-chat phrasing) ──
   {
     query: 'list my recent entries',
     intent_id: 'surface_manifest:recent.state_info.list_recent',
@@ -79,7 +82,7 @@ const CURATED_SEEDS: CuratedSeed[] = [
     },
   },
   {
-    query: 'show my recent entries',
+    query: 'show recent entries in the chat',
     intent_id: 'surface_manifest:recent.state_info.list_recent',
     intent_class: 'info_intent',
     slots_json: {
@@ -97,6 +100,92 @@ const CURATED_SEEDS: CuratedSeed[] = [
         requiresContainerMatch: true,
       },
       executionMode: 'chat_answer',
+    },
+  },
+
+  // ── Drawer/display seeds (bare "show" defaults to drawer) ──
+  {
+    query: 'show recent',
+    intent_id: 'surface_manifest:recent.navigate.open_drawer',
+    intent_class: 'action_intent',
+    slots_json: {
+      action_type: 'surface_manifest_execute',
+      surface_manifest: {
+        surfaceType: 'recent',
+        containerType: 'dashboard',
+        intentFamily: 'navigate',
+        intentSubtype: 'open_drawer',
+        executionPolicy: 'open_surface',
+        handlerId: 'recent_panel_handler',
+      },
+      validation: {
+        requiresVisibleSurface: true,
+        requiresContainerMatch: true,
+      },
+      executionMode: 'drawer_display',
+    },
+  },
+  {
+    query: 'show me my recent items',
+    intent_id: 'surface_manifest:recent.navigate.open_drawer',
+    intent_class: 'action_intent',
+    slots_json: {
+      action_type: 'surface_manifest_execute',
+      surface_manifest: {
+        surfaceType: 'recent',
+        containerType: 'dashboard',
+        intentFamily: 'navigate',
+        intentSubtype: 'open_drawer',
+        executionPolicy: 'open_surface',
+        handlerId: 'recent_panel_handler',
+      },
+      validation: {
+        requiresVisibleSurface: true,
+        requiresContainerMatch: true,
+      },
+      executionMode: 'drawer_display',
+    },
+  },
+  {
+    query: 'show my recent entries',
+    intent_id: 'surface_manifest:recent.navigate.open_drawer',
+    intent_class: 'action_intent',
+    slots_json: {
+      action_type: 'surface_manifest_execute',
+      surface_manifest: {
+        surfaceType: 'recent',
+        containerType: 'dashboard',
+        intentFamily: 'navigate',
+        intentSubtype: 'open_drawer',
+        executionPolicy: 'open_surface',
+        handlerId: 'recent_panel_handler',
+      },
+      validation: {
+        requiresVisibleSurface: true,
+        requiresContainerMatch: true,
+      },
+      executionMode: 'drawer_display',
+    },
+  },
+  {
+    query: 'show recent widget entries',
+    intent_id: 'surface_manifest:recent.navigate.open_drawer',
+    intent_class: 'action_intent',
+    slots_json: {
+      action_type: 'surface_manifest_execute',
+      surface_manifest: {
+        surfaceType: 'recent',
+        containerType: 'dashboard',
+        intentFamily: 'navigate',
+        intentSubtype: 'open_drawer',
+        executionPolicy: 'open_surface',
+        handlerId: 'recent_panel_handler',
+      },
+      validation: {
+        requiresVisibleSurface: true,
+        requiresContainerMatch: true,
+      },
+      executionMode: 'drawer_display',
     },
   },
 ]
@@ -183,6 +272,9 @@ const UPSERT_SQL = `
   ON CONFLICT (tenant_id, user_id, query_fingerprint, context_fingerprint, schema_version, tool_version)
     WHERE is_deleted = false
   DO UPDATE SET
+    intent_id = EXCLUDED.intent_id,
+    intent_class = EXCLUDED.intent_class,
+    slots_json = EXCLUDED.slots_json,
     success_count = chat_routing_memory_index.success_count + 1,
     last_success_at = now(),
     ttl_expires_at = now() + interval '${MEMORY_DEFAULT_TTL_DAYS} days',

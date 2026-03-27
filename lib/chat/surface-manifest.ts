@@ -123,6 +123,8 @@ export interface ResolvedSurfaceCommand {
   replayPolicy: SurfaceReplayPolicy
   clarificationPolicy: SurfaceClarificationPolicy
   handlerId: string
+  /** How the winning candidate was retrieved (provenance for durable logs) */
+  retrievalSource?: 'raw_query' | 'llm_rewrite' | 'agreement'
 }
 
 // =============================================================================

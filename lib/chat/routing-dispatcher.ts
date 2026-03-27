@@ -1762,7 +1762,135 @@ export async function dispatchRouting(
       // Loop didn't produce an answer (abort/timeout/error) — durable row already written above.
       // Fall through to normal routing. Do NOT rerun via runS6ShadowLoop.
       contentIntentMatchedThisTurn = true
-    } else if ((() => {
+    }
+
+    // ── Dedicated surface command resolver (Tier 4.3) ──
+    // Runs unconditionally before the isActionNav gate so surface-content
+    // queries containing "show" can reach the resolver. The resolver has its
+    // own validation (manifest, confidence bands, feature flag) and returns
+    // null for queries it cannot handle.
+    let surfaceCandidateHintForArbiter: SurfaceCandidateHint | undefined
+    if (!contentIntentMatchedThisTurn) {
+      const containerType: import('./surface-manifest').SurfaceContainerType =
+        ctx.uiContext?.mode === 'workspace' ? 'workspace' : 'dashboard'
+      const visibleWidgets = ctx.uiContext?.dashboard?.visibleWidgets ?? []
+      const runtimeContext: import('./surface-manifest').SurfaceRuntimeContext = {
+        containerType,
+        visibleSurfaceIds: visibleWidgets.map((w: { id: string }) => w.id),
+        visibleSurfaceTypes: visibleWidgets.map((w: { type?: string }) => w.type ?? ''),
+        duplicateFamilies: {},
+      }
+
+      const surfaceResult = await resolveSurfaceCommand(ctx.trimmedInput, runtimeContext)
+
+      if (surfaceResult && isResolvedSurfaceCommand(surfaceResult)) {
+        if (surfaceResult.executionPolicy === 'list_items') {
+          let answerContent = "I couldn't load that information right now. Try again in a moment."
+          try {
+            const apiRes = await fetch(`${typeof window !== 'undefined' ? '' : process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'}/api/panels/recent/list`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ params: { limit: 5 } }),
+            })
+            if (apiRes.ok) {
+              const data = await apiRes.json()
+              const items = data.items as Array<{ name?: string; title?: string; type?: string; subtitle?: string }> | undefined
+              if (items && items.length > 0) {
+                const lines = items.map((item, i) => {
+                  const label = item.title ?? item.name ?? 'Untitled'
+                  const detail = item.subtitle ? ` — ${item.subtitle}` : ''
+                  const kind = item.type ? ` (${item.type})` : ''
+                  return `${i + 1}. ${label}${detail}${kind}`
+                }).join('\n')
+                answerContent = `Recently visited:\n${lines}`
+              } else {
+                answerContent = 'No recently visited items found.'
+              }
+            }
+          } catch { /* bounded error */ }
+
+          const answerMsg: ChatMessage = {
+            id: `assistant-${Date.now()}`, role: 'assistant',
+            content: answerContent, timestamp: new Date(), isError: false,
+          }
+          ctx.addMessage(answerMsg, { tierLabel: 'surface_command_resolve', provenance: 'deterministic' })
+          ctx.setIsLoading(false)
+          void debugLog({ component: 'ChatNavigation', action: 'surface_command_resolve', metadata: {
+            surfaceType: surfaceResult.surfaceType, intentFamily: surfaceResult.intentFamily, intentSubtype: surfaceResult.intentSubtype,
+            retrievalSource: surfaceResult.retrievalSource,
+          }})
+
+          const surfaceRouteResult: RoutingDispatcherResult = {
+            handled: true, handledByTier: 4, tierLabel: 'surface_command_resolve',
+            clarificationCleared: false, isNewQuestionOrCommandDetected: false,
+            classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
+            _devProvenanceHint: 'deterministic',
+          }
+          const surfacePayload = buildRoutingLogPayload(ctx, surfaceRouteResult, turnSnapshotForLog)
+          if (surfaceResult.retrievalSource) {
+            surfacePayload.surface_resolver_retrieval_source = surfaceResult.retrievalSource
+          }
+          void recordRoutingLog(surfacePayload)
+          return surfaceRouteResult
+        } else if (surfaceResult.executionPolicy === 'open_surface') {
+          const targetId = surfaceResult.targetSurfaceId
+          if (targetId && ctx.openPanelDrawer) {
+            ctx.openPanelDrawer(targetId)
+          }
+          const surfaceLabel = surfaceResult.surfaceType === 'recent' ? 'Recent' : surfaceResult.surfaceType
+          const drawerMsg: ChatMessage = {
+            id: `assistant-${Date.now()}`, role: 'assistant',
+            content: `Opening ${surfaceLabel}...`, timestamp: new Date(), isError: false,
+          }
+          ctx.addMessage(drawerMsg, { tierLabel: 'surface_command_resolve', provenance: 'deterministic' })
+          ctx.setIsLoading(false)
+          void debugLog({ component: 'ChatNavigation', action: 'surface_command_resolve_drawer', metadata: {
+            surfaceType: surfaceResult.surfaceType, intentFamily: surfaceResult.intentFamily, intentSubtype: surfaceResult.intentSubtype,
+            retrievalSource: surfaceResult.retrievalSource,
+          }})
+
+          const drawerRouteResult: RoutingDispatcherResult = {
+            handled: true, handledByTier: 4, tierLabel: 'surface_command_resolve',
+            clarificationCleared: false, isNewQuestionOrCommandDetected: false,
+            classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
+            _devProvenanceHint: 'deterministic',
+          }
+          const drawerPayload = buildRoutingLogPayload(ctx, drawerRouteResult, turnSnapshotForLog)
+          if (surfaceResult.retrievalSource) {
+            drawerPayload.surface_resolver_retrieval_source = surfaceResult.retrievalSource
+          }
+          void recordRoutingLog(drawerPayload)
+          return drawerRouteResult
+        }
+      } else if (surfaceResult && isSurfaceResolverError(surfaceResult)) {
+        const errorMsg: ChatMessage = {
+          id: `assistant-${Date.now()}`, role: 'assistant',
+          content: "I couldn't load that information right now. Try again in a moment.",
+          timestamp: new Date(), isError: false,
+        }
+        ctx.addMessage(errorMsg, { tierLabel: 'surface_command_resolve', provenance: 'deterministic' })
+        ctx.setIsLoading(false)
+
+        const surfaceErrorResult: RoutingDispatcherResult = {
+          handled: true, handledByTier: 4, tierLabel: 'surface_command_resolve',
+          clarificationCleared: false, isNewQuestionOrCommandDetected: false,
+          classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
+          _devProvenanceHint: 'deterministic',
+        }
+        const surfaceErrorPayload = buildRoutingLogPayload(ctx, surfaceErrorResult, turnSnapshotForLog)
+        void recordRoutingLog(surfaceErrorPayload)
+        return surfaceErrorResult
+      } else if (surfaceResult && isSurfaceCandidateHint(surfaceResult)) {
+        surfaceCandidateHintForArbiter = surfaceResult
+        void debugLog({ component: 'ChatNavigation', action: 'surface_command_hint', metadata: {
+          surfaceType: surfaceResult.surfaceType, intentFamily: surfaceResult.intentFamily,
+          similarityScore: surfaceResult.similarityScore, sourceKind: surfaceResult.sourceKind,
+        }})
+      }
+      // else: weak/no match — continue to arbiter
+    }
+
+    if (!contentIntentMatchedThisTurn && (() => {
       // 6x.8 Phase 4: cross-surface arbiter eligibility — note + panel + workspace + dashboard
       const NOTE_REFERENCE_PATTERN = /\b(this|that|the|my|which|what|any|a)\s+(note|document|page)\b/i
       const noteRefDetected = NOTE_REFERENCE_PATTERN.test(ctx.trimmedInput.toLowerCase())
@@ -1809,100 +1937,8 @@ export async function dispatchRouting(
           }
         }
       }
-
-      // ── Pre-arbiter: Dedicated surface command resolver (Tier 4.3) ──
-      // Runs BEFORE the arbiter so seeded surface commands are resolved
-      // without the arbiter classifying them as generic panel_widget.state_info.
-      let surfaceCandidateHintForArbiter: SurfaceCandidateHint | undefined
-      {
-        const containerType: import('./surface-manifest').SurfaceContainerType =
-          ctx.uiContext?.mode === 'workspace' ? 'workspace' : 'dashboard'
-        const visibleWidgets = ctx.uiContext?.dashboard?.visibleWidgets ?? []
-        const runtimeContext: import('./surface-manifest').SurfaceRuntimeContext = {
-          containerType,
-          visibleSurfaceIds: visibleWidgets.map((w: { id: string }) => w.id),
-          visibleSurfaceTypes: visibleWidgets.map((w: { type?: string }) => w.type ?? ''),
-          duplicateFamilies: {},
-        }
-
-        const surfaceResult = await resolveSurfaceCommand(ctx.trimmedInput, runtimeContext)
-
-        if (surfaceResult && isResolvedSurfaceCommand(surfaceResult)) {
-          if (surfaceResult.executionPolicy === 'list_items') {
-            let answerContent = "I couldn't load that information right now. Try again in a moment."
-            try {
-              const apiRes = await fetch(`${typeof window !== 'undefined' ? '' : process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'}/api/panels/recent/list`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ params: { limit: 5 } }),
-              })
-              if (apiRes.ok) {
-                const data = await apiRes.json()
-                const items = data.items as Array<{ name?: string; title?: string; type?: string; subtitle?: string }> | undefined
-                if (items && items.length > 0) {
-                  const lines = items.map((item, i) => {
-                    const label = item.title ?? item.name ?? 'Untitled'
-                    const detail = item.subtitle ? ` — ${item.subtitle}` : ''
-                    const kind = item.type ? ` (${item.type})` : ''
-                    return `${i + 1}. ${label}${detail}${kind}`
-                  }).join('\n')
-                  answerContent = `Recently visited:\n${lines}`
-                } else {
-                  answerContent = 'No recently visited items found.'
-                }
-              }
-            } catch { /* bounded error */ }
-
-            const answerMsg: ChatMessage = {
-              id: `assistant-${Date.now()}`, role: 'assistant',
-              content: answerContent, timestamp: new Date(), isError: false,
-            }
-            ctx.addMessage(answerMsg, { tierLabel: 'surface_command_resolve', provenance: 'deterministic' })
-            ctx.setIsLoading(false)
-            void debugLog({ component: 'ChatNavigation', action: 'surface_command_resolve', metadata: {
-              surfaceType: surfaceResult.surfaceType, intentFamily: surfaceResult.intentFamily, intentSubtype: surfaceResult.intentSubtype,
-            }})
-
-            const surfaceRouteResult: RoutingDispatcherResult = {
-              handled: true, handledByTier: 4, tierLabel: 'surface_command_resolve',
-              clarificationCleared: false, isNewQuestionOrCommandDetected: false,
-              classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
-              _devProvenanceHint: 'deterministic',
-            }
-            const surfacePayload = buildRoutingLogPayload(ctx, surfaceRouteResult, turnSnapshotForLog)
-            void recordRoutingLog(surfacePayload)
-            return surfaceRouteResult
-          }
-        } else if (surfaceResult && isSurfaceResolverError(surfaceResult)) {
-          const errorMsg: ChatMessage = {
-            id: `assistant-${Date.now()}`, role: 'assistant',
-            content: "I couldn't load that information right now. Try again in a moment.",
-            timestamp: new Date(), isError: false,
-          }
-          ctx.addMessage(errorMsg, { tierLabel: 'surface_command_resolve', provenance: 'deterministic' })
-          ctx.setIsLoading(false)
-
-          const surfaceErrorResult: RoutingDispatcherResult = {
-            handled: true, handledByTier: 4, tierLabel: 'surface_command_resolve',
-            clarificationCleared: false, isNewQuestionOrCommandDetected: false,
-            classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
-            _devProvenanceHint: 'deterministic',
-          }
-          const surfaceErrorPayload = buildRoutingLogPayload(ctx, surfaceErrorResult, turnSnapshotForLog)
-          void recordRoutingLog(surfaceErrorPayload)
-          return surfaceErrorResult
-        } else if (surfaceResult && isSurfaceCandidateHint(surfaceResult)) {
-          // MEDIUM: do NOT execute. Store hint for arbiter handoff.
-          surfaceCandidateHintForArbiter = surfaceResult
-          void debugLog({ component: 'ChatNavigation', action: 'surface_command_hint', metadata: {
-            surfaceType: surfaceResult.surfaceType, intentFamily: surfaceResult.intentFamily,
-            similarityScore: surfaceResult.similarityScore, sourceKind: surfaceResult.sourceKind,
-          }})
-        }
-        // else: weak/no match — continue to arbiter
-      }
-
       // Phase 4: pass cross-surface context
+      // (Surface resolver already ran in the unconditional Tier 4.3 block above)
       const visiblePanelTitles = (ctx.uiContext?.dashboard?.visibleWidgets ?? []).map((w: any) => w.title)
 
       const arbiterResult = await callCrossSurfaceArbiter({
@@ -1931,12 +1967,16 @@ export async function dispatchRouting(
         effectiveResult = `${rawDecision!.surface}:${rawDecision!.intentFamily}`
       }
 
-      const arbiterTelemetry = {
+      const arbiterTelemetry: Record<string, unknown> = {
         cross_surface_arbiter_called: true as const,
         cross_surface_arbiter_surface: rawDecision?.surface,
         cross_surface_arbiter_intent: rawDecision?.intentFamily,
         cross_surface_arbiter_confidence: confidence,
         cross_surface_arbiter_result: effectiveResult,
+      }
+      // Phase E: surface resolver retrieval provenance (from medium-confidence hint)
+      if (surfaceCandidateHintForArbiter?.retrievalSource) {
+        arbiterTelemetry.surface_resolver_retrieval_source = surfaceCandidateHintForArbiter.retrievalSource
       }
       resolverTelemetryForLog = arbiterTelemetry
 

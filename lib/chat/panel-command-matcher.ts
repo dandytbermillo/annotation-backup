@@ -179,6 +179,41 @@ function isSubset(setA: Set<string>, setB: Set<string>): boolean {
 }
 
 // =============================================================================
+// Extra-Content Guard (single-word title protection)
+// =============================================================================
+
+/**
+ * Action verbs and panel keywords that naturally surround a panel title
+ * in a valid panel command. These are NOT "extra content."
+ */
+const COMMAND_CONTEXT_TOKENS = new Set([
+  // Action verbs
+  'open', 'show', 'close', 'go', 'view', 'list', 'display', 'get',
+  // Panel/surface keywords
+  'panel', 'widget', 'drawer',
+])
+
+/**
+ * Common wrapper/helper words that are harmless in panel command context.
+ * These survive normalizeToTokenSet (not in STOPWORDS) but frequently appear
+ * in valid wrapped commands like "can you open recent" or "i just want to show entries".
+ */
+const FILLER_TOKENS = new Set([
+  'can', 'you', 'me', 'i', 'to', 'do', 'just', 'want', 'would', 'could',
+  'hi', 'hello', 'hey', 'there', 'it', 'up',
+])
+
+/**
+ * Check if input tokens contain "extra content" beyond the title, command context, and filler.
+ * Used to suppress false exact matches where a short title (e.g., "Entries") is incidentally
+ * contained in a longer natural language sentence (e.g., "show the recent widget entries").
+ */
+function hasExtraContentTokens(inputTokens: Set<string>, titleTokens: Set<string>): boolean {
+  const remaining = [...inputTokens].filter(t => !titleTokens.has(t))
+  return remaining.some(t => !COMMAND_CONTEXT_TOKENS.has(t) && !FILLER_TOKENS.has(t))
+}
+
+// =============================================================================
 // Verb Prefix Stripping
 // =============================================================================
 
@@ -236,6 +271,14 @@ export function matchVisiblePanelCommand(
     // Exact match: all title tokens are in input
     // "links panel d pls" contains all tokens of "Links Panel D" → exact match
     if (isSubset(titleTokens, inputTokens)) {
+      // Guard: for short titles (≤ 2 tokens), check if the remaining input tokens
+      // are just command-context words (verbs, panel keywords) and filler (pronouns, helpers).
+      // If extra content tokens exist beyond those, the match is incidental containment
+      // in a natural language sentence, not a genuine panel reference.
+      // Design doc: surface-command-resolver-design.md:477-493
+      if (titleTokens.size <= 2 && hasExtraContentTokens(inputTokens, titleTokens)) {
+        continue // Extra content → not a panel reference
+      }
       exactMatches.push({ widget, tokenCount: titleTokens.size })
     }
     // Partial match: all input tokens are in title

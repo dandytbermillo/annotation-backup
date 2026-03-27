@@ -97,8 +97,10 @@ export async function executeS6OpenPanel(
       return { executed: false, reason: 'toctou_stale' }
     }
 
-    // Resolve panel label from fresh dashboard for UI message
+    // Resolve panel label + concrete panelId (UUID) from fresh dashboard
+    // DashboardView listener matches on panel.id (UUID), not widget slug.
     let panelLabel = panelSlug
+    let resolvedPanelId = panelSlug
     if (freshDashboard.status === 'ok' && freshDashboard.tool === 'inspect_dashboard') {
       const slugLower = panelSlug.toLowerCase()
       const widget = (freshDashboard as S6InspectDashboardResponse).data.widgets.find(
@@ -106,11 +108,14 @@ export async function executeS6OpenPanel(
           || w.panelId.toLowerCase() === slugLower
           || w.label.toLowerCase().replace(/\s+/g, '-') === slugLower,
       )
-      if (widget) panelLabel = widget.label
+      if (widget) {
+        panelLabel = widget.label
+        if (widget.panelId) resolvedPanelId = widget.panelId
+      }
     }
 
-    // Execute via existing mechanism
-    openPanelDrawer(panelSlug, panelLabel)
+    // Execute via existing mechanism — pass UUID so dashboard listener can match
+    openPanelDrawer(resolvedPanelId, panelLabel)
 
     return { executed: true, panelSlug, panelLabel }
   } catch {

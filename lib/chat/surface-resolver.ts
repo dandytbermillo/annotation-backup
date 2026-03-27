@@ -51,6 +51,8 @@ export interface SurfaceCandidateHint {
   selectorSpecific: boolean
   instanceLabel?: string
   arguments: Record<string, unknown>
+  /** How the winning candidate was retrieved (provenance for durable logs) */
+  retrievalSource?: 'raw_query' | 'llm_rewrite' | 'agreement'
   validationSnapshot?: {
     requiresVisibleSurface: boolean
     requiresContainerMatch: boolean
@@ -73,8 +75,11 @@ const HIGH_CONFIDENCE_FLOOR = 0.88
 const MEDIUM_CONFIDENCE_FLOOR = 0.78
 const NEAR_TIE_MARGIN = 0.03
 const CURATED_SEED_BIAS = 0.02  // boost curated seeds over learned rows
+const AGREEMENT_BOOST = 0.03    // boost candidates found by both raw + rewrite
 const LOOKUP_TIMEOUT_MS = 1500
+const REWRITE_TIMEOUT_MS = 1500
 const LOOKUP_ENDPOINT = '/api/chat/surface-command/lookup'
+const REWRITE_ENDPOINT = '/api/chat/surface-command/rewrite'
 
 // =============================================================================
 // Query Normalization (retrieval aid only — not a phrase parser)
@@ -84,15 +89,139 @@ function normalizeSurfaceQuery(input: string): string {
   let q = input.trim().toLowerCase()
   // Strip low-information words — preserve single-letter tokens (instance labels)
   q = q.replace(/\b(my|the|please|can you|could you)\b/gi, ' ')
-  // Normalize surface vocabulary
-  q = q.replace(/\bwidgets?\b/gi, 'panel')
-  q = q.replace(/\bdrawers?\b/gi, 'panel')
-  // Normalize singular/plural for common nouns
-  q = q.replace(/\bentries\b/gi, 'entry')
-  q = q.replace(/\bitems\b/gi, 'item')
+  // NOTE: vocabulary normalization (widget→panel, entries→entry) removed.
+  // It created an embedding mismatch: query was normalized but seeds were
+  // embedded with original text via normalizeForStorage. Embeddings handle
+  // semantic similarity between widget/panel and entries/entry natively.
   // Collapse whitespace
   q = q.replace(/\s+/g, ' ').trim()
   return q
+}
+
+// =============================================================================
+// Levenshtein Distance (inline — no external dependency)
+// =============================================================================
+
+function levenshteinDistance(a: string, b: string): number {
+  const m = a.length
+  const n = b.length
+  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0))
+  for (let i = 0; i <= m; i++) dp[i][0] = i
+  for (let j = 0; j <= n; j++) dp[0][j] = j
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1])
+    }
+  }
+  return dp[m][n]
+}
+
+function hasNearMatchToken(tokens: string[], target: string, maxDistance: number): boolean {
+  return tokens.some(t => levenshteinDistance(t, target) <= maxDistance)
+}
+
+// =============================================================================
+// Recent-Family Evidence Gate
+// =============================================================================
+
+/** Content verb + object noun shape for list/display queries */
+const CONTENT_LIST_SHAPE = /\b(list|show|display|view|get|what|which)\b.*\b(entry|entries|item|items|panel|thing|stuff)\b/i
+
+function hasRecentFamilyEvidence(
+  normalizedInput: string,
+  rawCandidates: SurfaceSeedCandidate[],
+  runtimeContext: SurfaceRuntimeContext,
+): boolean {
+  // 1. Literal "recent" in normalized query
+  if (normalizedInput.includes('recent')) return true
+
+  // 2. Weak candidates pointing to recent surface
+  const hasRecentCandidate = rawCandidates.some(c => {
+    const manifest = c.slots_json.surface_manifest as Record<string, string> | undefined
+    return manifest?.surfaceType === 'recent'
+  })
+  if (hasRecentCandidate) return true
+
+  // 3. Typo-tolerant near-match to "recent" (Levenshtein ≤ 2 on any token)
+  const tokens = normalizedInput.split(/\s+/)
+  if (hasNearMatchToken(tokens, 'recent', 2)) return true
+
+  // 4. Visible recent surface + content/list shape
+  const hasVisibleRecent = runtimeContext.visibleSurfaceTypes.includes('recent')
+  if (hasVisibleRecent && CONTENT_LIST_SHAPE.test(normalizedInput)) return true
+
+  return false
+}
+
+// =============================================================================
+// Rewrite-Assisted Retrieval Recovery
+// =============================================================================
+
+async function rewriteForRetrieval(input: string): Promise<string | null> {
+  if (process.env.NEXT_PUBLIC_SURFACE_COMMAND_RESOLVER_ENABLED !== 'true') {
+    return null
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined
+
+  try {
+    const result = await Promise.race([
+      fetch(REWRITE_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ raw_query_text: input }),
+      }).then(async (res) => {
+        clearTimeout(timer)
+        if (!res.ok) return null
+        const data = await res.json()
+        return (data.rewritten_text as string) ?? null
+      }),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), REWRITE_TIMEOUT_MS)
+      }),
+    ])
+
+    return result
+  } catch {
+    clearTimeout(timer)
+    return null
+  }
+}
+
+// =============================================================================
+// Candidate Merge (raw + rewrite with provenance)
+// =============================================================================
+
+interface TaggedCandidate extends SurfaceSeedCandidate {
+  _source: 'raw_query' | 'llm_rewrite' | 'agreement'
+}
+
+function mergeCandidates(
+  rawCandidates: SurfaceSeedCandidate[],
+  rewrittenCandidates: SurfaceSeedCandidate[],
+): TaggedCandidate[] {
+  const merged = new Map<string, TaggedCandidate>()
+
+  // Add raw candidates
+  for (const c of rawCandidates) {
+    merged.set(c.intent_id, { ...c, _source: 'raw_query' })
+  }
+
+  // Add rewritten candidates — if overlap, mark as agreement + boost
+  for (const c of rewrittenCandidates) {
+    const existing = merged.get(c.intent_id)
+    if (existing) {
+      // Agreement: keep higher score + agreement boost
+      existing._source = 'agreement'
+      existing.similarity_score = Math.max(existing.similarity_score, c.similarity_score) + AGREEMENT_BOOST
+    } else {
+      merged.set(c.intent_id, { ...c, _source: 'llm_rewrite' })
+    }
+  }
+
+  return Array.from(merged.values())
 }
 
 // =============================================================================
@@ -119,7 +248,7 @@ function tryManifestFallbackHint(
     if (!stateCmd) continue
 
     // Require object-noun overlap (not bare verbs — avoids "show recent" collision)
-    const hasContentOverlap = /\b(entry|item|list)\b/.test(normalizedInput)
+    const hasContentOverlap = /\b(entry|entries|item|items|list)\b/.test(normalizedInput)
     if (!hasContentOverlap) continue
 
     return {
@@ -194,9 +323,10 @@ function rerankCandidates(
     .map(c => {
       let boostedScore = c.similarity_score
       const manifest = c.slots_json.surface_manifest as Record<string, string> | undefined
+      const tagged = c as TaggedCandidate
 
-      // Curated-seed bias
-      if (c.from_curated_seed || c.source_kind === 'curated_seed') {
+      // Curated-seed bias — rewrite-only candidates do NOT get this boost
+      if ((c.from_curated_seed || c.source_kind === 'curated_seed') && tagged._source !== 'llm_rewrite') {
         boostedScore += CURATED_SEED_BIAS
       }
 
@@ -237,24 +367,60 @@ export async function resolveSurfaceCommand(
 
   // 1. Retrieve candidates (using normalized text for better embedding match)
   const rawCandidates = await lookupSurfaceSeeds(normalizedInput)
-  if (rawCandidates.length === 0) {
-    // No DB candidates — try manifest-derived fallback hint
-    return tryManifestFallbackHint(normalizedInput, runtimeContext)
+
+  // 2. Try to resolve from raw candidates first
+  const rawResult = evaluateCandidates(rawCandidates, runtimeContext)
+  if (rawResult !== null) return rawResult
+
+  // 3. Raw retrieval was weak/empty — check manifest fallback
+  const manifestHint = tryManifestFallbackHint(normalizedInput, runtimeContext)
+  if (manifestHint !== null) return manifestHint
+
+  // 4. Rewrite-assisted retrieval recovery
+  //    Gate: recent-family evidence required for this slice
+  if (!hasRecentFamilyEvidence(normalizedInput, rawCandidates, runtimeContext)) {
+    return null
   }
 
-  // 2. Rerank with live context signals + curated-seed bias
+  const rewrittenQuery = await rewriteForRetrieval(normalizedInput)
+  if (!rewrittenQuery || rewrittenQuery.toLowerCase() === normalizedInput) {
+    return null // Rewrite returned same text or failed
+  }
+
+  // 5. Second-pass retrieval on rewritten query
+  const rewrittenCandidates = await lookupSurfaceSeeds(rewrittenQuery)
+  if (rewrittenCandidates.length === 0 && rawCandidates.length === 0) {
+    return null
+  }
+
+  // 6. Merge raw + rewritten candidates with provenance
+  const merged = mergeCandidates(rawCandidates, rewrittenCandidates)
+
+  // 7. Evaluate merged set
+  return evaluateCandidates(merged, runtimeContext)
+}
+
+// =============================================================================
+// Candidate Evaluation (shared by raw and merged paths)
+// =============================================================================
+
+function evaluateCandidates(
+  rawCandidates: SurfaceSeedCandidate[],
+  runtimeContext: SurfaceRuntimeContext,
+): SurfaceResolverResult {
+  if (rawCandidates.length === 0) return null
+
+  // Rerank with live context signals + curated-seed bias
   const candidates = rerankCandidates(rawCandidates, runtimeContext)
   const top = candidates[0]
 
-  // 3. Gate: minimum medium floor — if below, try manifest fallback
-  if (top.similarity_score < MEDIUM_CONFIDENCE_FLOOR) {
-    return tryManifestFallbackHint(normalizedInput, runtimeContext)
-  }
+  // Gate: minimum medium floor
+  if (top.similarity_score < MEDIUM_CONFIDENCE_FLOOR) return null
 
-  // 4. Gate: action type discriminant
+  // Gate: action type discriminant
   if (top.slots_json.action_type !== 'surface_manifest_execute') return null
 
-  // 5. Gate: near-tie (for high-confidence execution only)
+  // Gate: near-tie (for high-confidence execution only)
   const hasNearTie = candidates[1] && (top.similarity_score - candidates[1].similarity_score) < NEAR_TIE_MARGIN
 
   // Extract metadata
@@ -281,7 +447,15 @@ export async function resolveSurfaceCommand(
 
   const isHighConfidence = top.similarity_score >= HIGH_CONFIDENCE_FLOOR && !hasNearTie
 
-  if (isHighConfidence) {
+  // Safety: rewrite-only candidates cannot reach high-confidence execution
+  const tagged = top as TaggedCandidate
+  const isRewriteOnly = tagged._source === 'llm_rewrite'
+  const effectiveHighConfidence = isHighConfidence && !isRewriteOnly
+
+  // Provenance: how the winning candidate was retrieved
+  const retrievalSource = tagged._source as 'raw_query' | 'llm_rewrite' | 'agreement' | undefined
+
+  if (effectiveHighConfidence) {
     // HIGH: validate and execute or error
 
     // Container validation
@@ -327,6 +501,7 @@ export async function resolveSurfaceCommand(
       replayPolicy: cmd.replayPolicy,
       clarificationPolicy: cmd.clarificationPolicy,
       handlerId: entry.handlerId,
+      retrievalSource,
     }
   }
 
@@ -343,6 +518,7 @@ export async function resolveSurfaceCommand(
     sourceKind,
     selectorSpecific: false,
     arguments: (top.slots_json.arguments ?? {}) as Record<string, unknown>,
+    retrievalSource,
     validationSnapshot: {
       requiresVisibleSurface: !!validation?.requiresVisibleSurface,
       requiresContainerMatch: !!validation?.requiresContainerMatch,

@@ -157,6 +157,8 @@ export interface RoutingLogPayload {
   cross_surface_arbiter_intent?: string
   cross_surface_arbiter_confidence?: number
   cross_surface_arbiter_result?: string
+  // Phase E: Surface resolver retrieval provenance
+  surface_resolver_retrieval_source?: 'raw_query' | 'llm_rewrite' | 'agreement'
 
   // Phase 5: Retrieval-backed semantic hint telemetry
   h1_lookup_attempted?: boolean

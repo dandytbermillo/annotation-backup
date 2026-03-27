@@ -474,11 +474,46 @@ They must not grow into a hidden per-widget phrase table.
 
 Clarification is important here not only for safety, but also because it creates a path to a validated final resolution that can justify learned-row writeback later.
 
+Visible-panel ambiguity and panel-evidence matching must also stay bounded:
+- they should not treat a long natural-language sentence as a panel-title reference merely because the sentence contains one or more single-word visible panel titles
+- they should prefer panel-title ambiguity only when the overall input shape still resembles a panel reference or panel command
+- this rule is general, not `recent`-specific; it should protect any present or future single-word panel title from over-triggering panel disambiguation
+- implementation must apply this constraint consistently to both:
+  - pre-LLM panel disambiguation
+  - `visible_panels` grounding / panel-evidence fallback
+- fixing only one of those paths is insufficient; otherwise the same false ambiguity can reappear later in routing
+
+The design requirement above intentionally does not force a single implementation shape.
+Acceptable bounded mechanisms could include:
+- a token-ratio or title-length guard in panel-title matching so single-word titles do not dominate long natural-language input
+- a content-noun/content-verb guard that prevents words like `entries` or `items` from being treated as panel references when they are clearly acting as content objects
+- a narrow pre-disambiguation routing guard for specific surface-content requests
+
+The detailed implementation plan should choose one mechanism or a small compatible combination.
+It should not satisfy this rule by adding a growing set of per-panel special cases.
+
+Examples:
+- `recent`
+- `open recent`
+- `recent panel`
+  - these may still be treated as panel-reference inputs
+- `show the recent widget entries`
+- `i want to see the recent widget entries`
+- `can you list the recent entries`
+  - these should not become a visible-panel ambiguity between `Recent` and another single-word panel like `Entries` merely because both title words appear in the sentence
+
 When this guardrail fires, the clarifier should be bounded and preferably candidate-backed:
 - generic safe fallback is acceptable only when no plausible bounded candidates exist
 - better when possible: use plausible low/medium candidates plus visible-surface context to propose likely safe options without executing them
 - keep proposals to a small plausible set rather than dumping all visible panels
 - do not suggest a surface only because it is visible; suggestions should still be informed by retrieval/runtime evidence
+- when the ambiguity is between two intent shapes rather than two surfaces, prefer intent-shaped options over bare panel-title options
+- for example, prefer:
+  - `Open the Recent panel`
+  - `List recent entries here in chat`
+  over:
+  - `Recent`
+  - `Entries`
 
 Candidate-backed clarification is preferred because it helps confused users recover without unsafe execution.
 These candidates may come from:
@@ -606,9 +641,32 @@ This surface resolver is its own semantic retrieval path. It may still hand off 
 Implement first for:
 - `recent.state_info.list_recent`
 
-With seed examples like:
-- `list my recent entries`
-- `show my recent entries`
+The first slice should also make the user-facing contract explicit:
+- `show recent`
+- `show recent widget`
+- `show recent widget entries`
+  - default to showing the Recent surface in its drawer / surface display
+- `list recent entries`
+- `show recent entries in the chat`
+  - default to listing Recent content in chat
+
+Current-code tension to resolve during implementation:
+- the existing broad action-navigation gate treats `show` as navigation/open language
+- that broad gate must not prevent the surface resolver or equivalent drawer/display path from correctly handling:
+  - `show recent`
+  - `show recent widget`
+  - `show recent widget entries`
+- the detailed implementation plan must therefore specify how the `show ... recent ...` contract is honored without letting those turns fall into the wrong generic panel/open ambiguity path
+
+Curated seeds must be aligned to that contract before broadening retrieval behavior:
+- keep a small reviewed anchor set for drawer/show phrasing
+- keep a small reviewed anchor set for explicit chat-list phrasing
+- audit existing curated seeds for conflicting meanings
+- revise or remove conflicting seeds rather than letting contradictory anchors coexist
+- the seed audit should explicitly review any current rows whose normalized phrasing resembles:
+  - `show my recent entries`
+  - `show me my recent items`
+  when those rows map to a chat-list answer under a contract where bare `show ... recent ...` should default to drawer/surface display
 
 Not:
 - `what did I open recently?`
@@ -616,6 +674,8 @@ Not:
 The goal of the first slice is not exact-phrase dependence. A small curated seed set should generalize to nearby paraphrases such as:
 - `list recent entries`
 - `list my recent widget entries`
+- `show recent`
+- `show recent widget entries`
 
 without adding regex phrase logic.
 
@@ -631,6 +691,7 @@ Add dispatcher-level tests for:
 - rewrite-assisted retrieval still requires normal manifest/runtime validation before execute or hint
 - specific-looking query + only coarse `panel_widget.state_info` result → clarification, not generic visible-panels answer
 - generic visible-panels query + coarse `panel_widget.state_info` result → generic visible-panels answer is still allowed
+- long natural-language input containing single-word panel titles should not trigger visible-panel ambiguity unless the overall input still looks like a panel reference
 - no visible recent surface → bounded deterministic failure
 - wrong container → bounded deterministic failure
 - medium-confidence candidate → arbiter/LLM receives structured surface hint

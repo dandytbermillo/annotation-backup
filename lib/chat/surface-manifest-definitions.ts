@@ -90,6 +90,15 @@ const RECENT_MANIFEST: SurfaceManifestEntry = {
       clarificationPolicy: 'clarify_on_ambiguous_target',
       safetyRules: ['validate_item_exists'],
     },
+    {
+      intentFamily: 'navigate',
+      intentSubtype: 'open_drawer',
+      examples: ['show recent', 'show recent widget entries'],
+      executionPolicy: 'open_surface',
+      replayPolicy: 'safe_with_revalidation',
+      clarificationPolicy: 'no_clarification',
+      safetyRules: ['read_only'],
+    },
   ],
 }
 
