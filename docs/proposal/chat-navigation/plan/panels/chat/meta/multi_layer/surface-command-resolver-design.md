@@ -418,6 +418,26 @@ Examples:
 The executor should only run on `ResolvedSurfaceCommand` high-confidence results.
 `SurfaceCandidateHint` results are guidance for downstream routing, not executable commands.
 
+Future write-target expansion should define explicit write execution policies rather than overloading presentation behavior.
+Representative policies may include:
+- `write_into_note`
+- `write_into_editable_surface`
+
+Those write policies must remain stricter than presentation policies. Before any write-target execution, the app should validate:
+- the target exists
+- the target is writable
+- the target is uniquely identified enough for safe execution
+- the requested insertion behavior is defined, for example:
+  - `append`
+  - `replace`
+  - `insert`
+- mutation policy allows the write without additional confirmation
+
+If any of the above remain unresolved:
+- do not silently downgrade the request to a presentation action
+- do not pick an arbitrary writable target
+- clarify instead
+
 ## Product Rule
 
 Question-form surface state/info queries:
@@ -428,6 +448,12 @@ Imperative surface-open commands:
 - open/focus the UI surface
 
 Do not mix these in one policy.
+
+Future write-delivery requests should be treated as a separate product rule:
+- retrieve/prepare the requested content first
+- resolve the write target separately
+- apply write-specific validation and policy before mutation
+- if target resolution or write mode is ambiguous, clarify instead of auto-writing
 
 ## Failure Modes
 
@@ -481,13 +507,45 @@ Bounded candidate arbitration should be informed by:
   - intent family / subtype
   - execution policy
   - provenance / source kind
-- generic current-turn output cues such as:
+- structured current-turn delivery state, for example:
+  - `delivery_kind = present | write`
+  - `presentation_target = chat | surface | unspecified`
+  - `write_target = none | active_note | named_note | open_editable_surface | any_open_editable_surface`
+  - `destination_source = explicit | inferred | default`
+- generic current-turn cue extraction that can inform that destination state, such as:
   - `in the chat`
   - `here in the chat`
   - `in chat`
   - `open`
   - `show`
   - `list`
+
+Delivery state should be treated as a first-class routing constraint, not merely wording embedded in free text.
+
+The distinction between destination value and destination source matters:
+- explicit user constraints, for example `in the chat`, are stronger than product defaults
+- inferred/default behavior, for example bare `show recent` usually meaning surface display, must not be treated as if the user explicitly requested that destination
+- a practical structure is:
+  - `delivery_kind = present | write`
+  - `presentation_target = chat | surface | unspecified`
+  - `write_target = none | active_note | named_note | open_editable_surface | any_open_editable_surface`
+  - `destination_source = explicit | inferred | default`
+
+Presentation destination and write target must not be collapsed into one field:
+- presentation requests such as `show recent in the chat` are usually read-only and low-risk
+- write-target requests such as `put it in the note` or `write it into any open editable panel` are mutation requests and require stricter validation
+
+For the current present-only slice:
+- `delivery_kind = present`
+- `presentation_target` is the relevant destination field
+- `write_target = none`
+
+For future write-target expansion:
+- `delivery_kind = write`
+- `write_target` becomes the routing target
+- `presentation_target` may be irrelevant or secondary
+- write-specific policy may later include fields such as:
+  - `write_mode = append | replace | insert | unspecified`
 
 For single-candidate medium-confidence cases:
 - arbitration is still allowed, because the bounded decision may still be:
@@ -497,15 +555,36 @@ For single-candidate medium-confidence cases:
   - for example, when the single candidate clearly cannot be auto-executed and should move directly to clarification
   - or when existing bounded routing rules already consume that one candidate safely without an additional arbitration call
 
-These cues are ranking/arbitration signals, not execution authority.
-They should help distinguish intent shape across surfaces generally
-for example chat-answer/listing versus drawer/display,
+Delivery state and extracted cues are ranking/arbitration signals, not execution authority.
+They should help distinguish intent shape across surfaces generally,
+for example chat-answer/listing versus surface display,
 without becoming a per-widget phrase table.
 
+Structured delivery state should be applied in multiple places, not only late arbitration:
+- retrieval reranking:
+  - chat-compatible candidates may receive a boost when `delivery_kind = present` and `presentation_target = chat`
+  - surface/display candidates may receive a penalty when they conflict with an explicit chat destination
+- deterministic gating:
+  - a high-confidence candidate must not auto-execute if it conflicts with an explicit destination constraint and a plausible compatible candidate still exists in the bounded set
+- bounded candidate arbitration:
+  - the structured delivery state should be part of the arbitration input, not merely implied by raw text
+- clarification:
+  - wording should reflect the destination conflict explicitly when relevant
+
+Future write-target handling should be stricter than presentation handling:
+- validate that the chosen write target exists, is writable, and is uniquely identified enough
+- if the request names an `any open editable` target, auto-selection is safe only when exactly one eligible target exists
+- otherwise clarify instead of silently choosing a writable target
+
 Cue precedence should remain explicit:
-- output-destination cues such as `in the chat`, `here in the chat`, or `in chat`
-  should outrank generic action verbs such as `show` when the bounded candidate set already contains both chat-answer/list and drawer/display interpretations
+- explicit output-destination cues such as `in the chat`, `here in the chat`, or `in chat`
+  should outrank generic action verbs such as `show` when the bounded candidate set already contains both chat-answer/list and surface/display interpretations
 - generic action verbs alone should not override an explicit current-turn output-destination cue
+
+Conflict handling should remain explicit:
+- if the top candidate conflicts with an explicit destination constraint and no plausible compatible candidate survives in the bounded set:
+  - do not execute the conflicting candidate anyway
+  - fall back to candidate-backed clarification
 
 Bounded candidate arbitration output must be validated structurally:
 - the model should return only:
@@ -801,6 +880,21 @@ Add dispatcher-level tests for:
 - medium/low plausible candidates + bounded candidate arbitration → either validated selection or candidate-backed clarification, not unrelated fallback
 - explicit current-turn output cue like `in the chat` should bias bounded arbitration toward chat-answer/list candidates when those candidates are already in the validated set
 - wrapped/preamble query such as `hi there show the recent widget entries in the chat` with a medium-confidence chat-list candidate → bounded arbitration preserves the `in the chat` cue and selects the chat-answer/list candidate rather than drawer/display or unrelated fallback
+- structured destination state should distinguish:
+  - explicit destination constraint
+  - inferred destination
+  - default destination
+- structured delivery state should distinguish:
+  - `delivery_kind = present | write`
+  - `presentation_target`
+  - `write_target`
+- explicit chat destination must demote conflicting surface/display high-confidence candidates when a plausible chat-answer/list candidate remains in the bounded set
+- `show recent` → surface destination by default policy
+- `list recent entries` → chat destination by likely-intent policy
+- `show recent contents in the chat` → chat destination
+- `show recent in the chat` with no safe chat-compatible candidate → clarify rather than forcing surface/display
+- `list the recent widget content in the note` → write delivery targeting the active note only if write-target validation succeeds
+- `list the recent widget content in any open editable panel` → clarify unless exactly one eligible writable target exists
 - bounded candidate arbitration timeout/error/unusable output → fail open to candidate-backed clarification or bounded non-execution path
 - bounded candidate arbitration response outside the provided candidate IDs/indexes → rejected as unusable
 - arbitration-selected candidate fails normal app validation → no execution; clarification or other bounded fallback
