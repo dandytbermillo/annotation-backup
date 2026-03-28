@@ -82,7 +82,7 @@ import {
 } from '@/lib/chat/routing-log'
 import type { RoutingLogPayload } from '@/lib/chat/routing-log'
 import { buildMemoryWritePayload, buildNoteManifestWritePayload } from '@/lib/chat/routing-log/memory-write-payload'
-import { resolveSurfaceCommand, isSurfaceResolverError, isSurfaceCandidateHint, isResolvedSurfaceCommand, type SurfaceCandidateHint } from '@/lib/chat/surface-resolver'
+import { resolveSurfaceCommand, isSurfaceResolverError, isSurfaceCandidateHint, isResolvedSurfaceCommand, isSurfaceClarificationSet, hasSurfaceFamilyEvidence, type SurfaceCandidateHint, type SurfaceClarificationSet } from '@/lib/chat/surface-resolver'
 import { lookupExactMemory } from '@/lib/chat/routing-log/memory-reader'
 import { lookupSemanticMemory, type SemanticCandidate, type SemanticLookupResult } from '@/lib/chat/routing-log/memory-semantic-reader'
 import { validateMemoryCandidate } from '@/lib/chat/routing-log/memory-validator'
@@ -1770,7 +1770,11 @@ export async function dispatchRouting(
     // own validation (manifest, confidence bands, feature flag) and returns
     // null for queries it cannot handle.
     let surfaceCandidateHintForArbiter: SurfaceCandidateHint | undefined
-    if (!contentIntentMatchedThisTurn) {
+    let surfaceClarificationCandidates: SurfaceCandidateHint[] | undefined
+    // S6 priority seam: surface resolver runs even if S6 matched, when the input
+    // has surface-family evidence (design doc line 462). If the surface resolver
+    // handles the turn, it pre-empts S6. If it declines, S6's result stands.
+    if (!contentIntentMatchedThisTurn || hasSurfaceFamilyEvidence(ctx.trimmedInput)) {
       const containerType: import('./surface-manifest').SurfaceContainerType =
         ctx.uiContext?.mode === 'workspace' ? 'workspace' : 'dashboard'
       const visibleWidgets = ctx.uiContext?.dashboard?.visibleWidgets ?? []
@@ -1886,6 +1890,57 @@ export async function dispatchRouting(
           surfaceType: surfaceResult.surfaceType, intentFamily: surfaceResult.intentFamily,
           similarityScore: surfaceResult.similarityScore, sourceKind: surfaceResult.sourceKind,
         }})
+      } else if (surfaceResult && isSurfaceClarificationSet(surfaceResult)) {
+        // Multiple candidates for intent-shaped clarification
+        surfaceClarificationCandidates = surfaceResult.candidates
+        void debugLog({ component: 'ChatNavigation', action: 'surface_command_clarification_set', metadata: {
+          candidateCount: surfaceResult.candidates.length,
+          reason: surfaceResult.reason,
+          intents: surfaceResult.candidates.map(c => `${c.intentFamily}.${c.intentSubtype}`),
+        }})
+
+        // Build intent-shaped clarification options
+        // Resolve concrete panel UUID from visible widgets (not surface slug)
+        const visibleWidgetsForClarify = ctx.uiContext?.dashboard?.visibleWidgets ?? []
+        const clarifyMsgId = `assistant-${Date.now()}`
+        const options = surfaceResult.candidates.map((c, idx) => {
+          const label = c.intentFamily === 'state_info'
+            ? `List ${c.surfaceType === 'recent' ? 'recent entries' : c.surfaceType + ' items'} here in chat`
+            : `Open the ${c.surfaceType === 'recent' ? 'Recent' : c.surfaceType} panel`
+          // Find the concrete panel UUID from visible widgets matching this surface type
+          const matchedWidget = visibleWidgetsForClarify.find(
+            (w: { id: string; type?: string }) => w.type === c.surfaceType
+          )
+          return {
+            type: 'panel_drawer' as const,
+            id: `surface_arb_${idx}`,
+            label,
+            data: {
+              panelId: matchedWidget?.id ?? c.surfaceType, // UUID when available, slug as fallback
+              panelTitle: label,
+              panelType: c.surfaceType,
+            },
+          }
+        })
+
+        const clarifyMsg: ChatMessage = {
+          id: clarifyMsgId, role: 'assistant',
+          content: 'What would you like to do?',
+          timestamp: new Date(), isError: false,
+          options,
+        }
+        ctx.addMessage(clarifyMsg)
+        ctx.setIsLoading(false)
+
+        const clarifyResult: RoutingDispatcherResult = {
+          handled: true, handledByTier: 4, tierLabel: 'surface_candidate_clarification',
+          clarificationCleared: false, isNewQuestionOrCommandDetected: false,
+          classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
+          _devProvenanceHint: 'safe_clarifier',
+        }
+        const clarifyPayload = buildRoutingLogPayload(ctx, clarifyResult, turnSnapshotForLog)
+        void recordRoutingLog(clarifyPayload)
+        return clarifyResult
       }
       // else: weak/no match — continue to arbiter
     }

@@ -124,6 +124,14 @@ Writeback is allowed only after a later turn or follow-up produces:
 - a successful bounded answer or execution from that validated resolution
 - the concrete resolved surface metadata used for execution
 
+For this policy, a qualifying “follow-up” may occur:
+- in a later conversational turn
+- or within the same interaction window, for example a bounded clarification-pill tap or equivalent follow-up action
+
+The important rule is not turn count by itself. The important rule is that:
+- the clarifier alone is not treated as success
+- the subsequent follow-up still must produce a final validated specific surface resolution and successful bounded outcome before any learned-row writeback occurs
+
 The original noisy phrasing from a clarification-mediated turn may still be retained as weak evidence,
 but it should be stored separately from replay-eligible learned-success rows.
 
@@ -208,10 +216,20 @@ A bounded-await client function `lookupSurfaceCommand()` in `lib/chat/surface-re
 
 Before DB lookup, apply lightweight normalization intended to improve retrieval recall without turning code into a phrase parser. This may include:
 
-- singular/plural normalization for obvious nouns like `entry` / `entries`
-- stripping low-information wrappers such as `my`
-- normalization of stable surface vocabulary such as `widget` / `panel` / `drawer` where product semantics already treat them as neighboring UI nouns
-- whitespace/punctuation cleanup beyond the existing storage normalization
+- stripping low-information wrappers or filler such as `my`
+- conservative cleanup of whitespace and punctuation beyond the existing storage normalization
+- optional removal of other clearly low-information polite wrappers if this can be done without changing the target noun phrase
+
+Avoid aggressive vocabulary rewriting before retrieval, for example:
+- `widget` -> `panel`
+- `entries` -> `entry`
+- `drawer` -> `panel`
+
+Those transformations can create embedding mismatches between stored seed rows and lookup queries.
+Plural/surface vocabulary relationships should instead be handled through:
+- embeddings
+- lexical overlap features during reranking
+- explicit manifest/runtime validation after retrieval
 
 This normalization is for retrieval quality only. It must not become a broad regex intent layer.
 
@@ -230,7 +248,7 @@ This normalization is for retrieval quality only. It must not become a broad reg
 ### Ownership rule
 
 - **High-confidence match** (passes high floor, margin, and validation): branch owns the turn. Returns `handled: true` on success or bounded error on failure. No LLM fallthrough.
-- **Medium-confidence candidate** (plausible candidate but not safe for deterministic execution): branch does not execute, but returns a structured surface-candidate hint to arbiter/LLM.
+- **Medium-confidence candidate** (plausible candidate but not safe for deterministic execution): branch does not execute, but returns a structured surface-candidate hint for the next bounded resolver stage, with bounded candidate arbitration as the primary next consumer and arbiter/LLM as a secondary path when arbitration is not needed, declines, or is unavailable.
 - **Low/no match** (fails medium floor or is too ambiguous): returns null. Normal routing continues. No interception.
 
 This preserves the note-manifest style ownership for safe high-confidence wins, while using the DB/semantic layer more effectively for paraphrases that are helpful but not yet deterministic.
@@ -349,10 +367,14 @@ This is distinct from existing exact-preference hints. It is advisory only and m
 
 Dispatcher behavior:
 - high-confidence `ResolvedSurfaceCommand` → execute directly
-- medium-confidence `SurfaceCandidateHint` → attach to arbiter/LLM request
+- medium-confidence `SurfaceCandidateHint` → carry forward as structured bounded context for the next resolver stage
 - low/no match → no hint
 
-Arbiter/LLM behavior:
+Arbitration / arbiter behavior:
+- bounded candidate arbitration is the primary next consumer for plausible medium-confidence surface candidates
+- if bounded candidate arbitration is not needed, declines, or is unavailable for the current path, the same structured hint may still be attached to arbiter/LLM request context
+
+Arbiter/LLM behavior when it receives a hint:
 - treat `surfaceCandidateHint` as bounded advisory context
 - may select the hinted surface intent if the original query is compatible
 - may ignore the hint if the original query or broader context contradicts it
@@ -415,7 +437,9 @@ If a candidate matched strongly enough to claim ownership:
 
 If a medium-confidence candidate exists:
 - no deterministic execution
-- forward the original user query plus structured surface-candidate hint to arbiter/LLM
+- keep the structured surface-candidate hint as bounded context for the next resolver stage
+- run bounded candidate arbitration first when the medium-confidence candidate remains plausible for execution or bounded answer
+- if arbitration is not needed, declines, or is unavailable, the same hint may still be forwarded to arbiter/LLM
 
 If there is low/no candidate:
 - normal routing continues with no surface hint
@@ -425,8 +449,93 @@ If a medium-confidence hint is provided to arbiter/LLM but the model still decli
 - the rejected hint should be logged for offline analysis, not executed
 
 If DB retrieval is weak but a manifest/runtime-derived fallback hint exists:
-- pass that hint to arbiter/LLM before clarifying
-- only fall all the way to clarification/safe fallback if deterministic routing and bounded arbiter/LLM both still cannot resolve safely
+- admit that hint into the same bounded surface-candidate decision scope
+- run bounded candidate arbitration first when the fallback hint remains plausible for execution or bounded answer
+- if arbitration is not needed, declines, or is unavailable, the same hint may still be passed to arbiter/LLM before clarifying
+- only fall all the way to clarification/safe fallback if deterministic routing, bounded candidate arbitration, and bounded arbiter/LLM all still cannot resolve safely
+
+If retrieval or reranking yields only medium/low-confidence but still plausible candidates:
+- do not jump straight from retrieval miss to clarification
+- run one bounded candidate-arbitration step over the small validated candidate set
+- this bounded arbitration step must run before broad fallback gates or later routing layers discard a correct medium-confidence surface hint
+- in particular, broad action/navigation handling such as `show` must not bypass or erase a valid surface-candidate arbitration opportunity
+- likewise, earlier fallback or enforcement layers such as `Stage 6` content-intent routing must not preempt a valid bounded surface-candidate arbitration opportunity when the current turn is already inside the validated surface-candidate decision scope
+- bounded candidate arbitration should have an explicit fail-open latency budget
+  - first implementation target: `<= 2000ms`
+  - if the arbitration call times out, errors, or returns unusable output, continue with candidate-backed clarification or the normal bounded non-execution path
+  - if arbitration is known to be unavailable up front, for example missing API configuration or disabled provider access, skip the call entirely and continue with the same bounded non-execution path rather than waiting for timeout
+- whole-path latency should still be monitored across retrieval, optional rewrite, optional second retrieval, and optional arbitration
+  - the first slice does not require a single hard end-to-end cap
+  - later rollout should add telemetry and budget tuning so optional stages can be skipped when compound latency becomes too high
+- this arbitration step may:
+  - select one candidate for normal app-side validation and execution
+  - decline to choose and request clarification instead
+- it must not be a free-form retry over the whole query space
+- it must not invent new targets outside the bounded candidate set
+
+Bounded candidate arbitration should be informed by:
+- the current user query
+- the top validated candidates from raw retrieval and, if present, rewrite-assisted retrieval
+- candidate metadata such as:
+  - surface type
+  - intent family / subtype
+  - execution policy
+  - provenance / source kind
+- generic current-turn output cues such as:
+  - `in the chat`
+  - `here in the chat`
+  - `in chat`
+  - `open`
+  - `show`
+  - `list`
+
+For single-candidate medium-confidence cases:
+- arbitration is still allowed, because the bounded decision may still be:
+  - select this candidate
+  - or decline and clarify
+- implementation may skip arbitration as a latency optimization when deterministic rules already make the next bounded step obvious
+  - for example, when the single candidate clearly cannot be auto-executed and should move directly to clarification
+  - or when existing bounded routing rules already consume that one candidate safely without an additional arbitration call
+
+These cues are ranking/arbitration signals, not execution authority.
+They should help distinguish intent shape across surfaces generally
+for example chat-answer/listing versus drawer/display,
+without becoming a per-widget phrase table.
+
+Cue precedence should remain explicit:
+- output-destination cues such as `in the chat`, `here in the chat`, or `in chat`
+  should outrank generic action verbs such as `show` when the bounded candidate set already contains both chat-answer/list and drawer/display interpretations
+- generic action verbs alone should not override an explicit current-turn output-destination cue
+
+Bounded candidate arbitration output must be validated structurally:
+- the model should return only:
+  - one candidate ID / index from the provided bounded set
+  - or an explicit decline-to-choose outcome
+- any output that does not map exactly to the provided candidate set must be rejected as unusable
+- rejected or unusable arbitration output should fail open to candidate-backed clarification, not free-form execution
+
+The app must still validate the chosen candidate normally after bounded arbitration:
+- manifest policy
+- visible/runtime context
+- execution policy
+- normal safety checks
+
+If arbitration selects a candidate but normal app-side validation then fails:
+- do not execute that candidate
+- do not treat the failed selection as proof that another candidate should execute automatically
+- the app may try another candidate only if:
+  - that alternative is already in the same bounded validated surface-candidate set
+  - and it independently passes normal validation without relying on the failed pick
+  - and the near-tie / ambiguity rules still permit deterministic selection
+- otherwise, fall back to candidate-backed clarification
+
+If bounded candidate arbitration still cannot safely choose:
+- reuse the same bounded candidate set for candidate-backed clarification
+- do not discard the retrieved candidates and start an unrelated free-form fallback
+
+Candidate-set purity is required here:
+- bounded candidate arbitration should operate only on the validated surface candidate set produced by the surface resolver / rewrite-retrieval path
+- it should not silently expand to unrelated later grounding candidates such as widget-list items, visible-panel fallbacks, or generic referents unless those candidates have already been admitted into the same validated surface-candidate decision scope
 
 ### Post-arbiter coarse-result guardrail
 
@@ -519,6 +628,7 @@ Candidate-backed clarification is preferred because it helps confused users reco
 These candidates may come from:
 - medium-confidence surface hints that were not accepted for execution
 - weaker semantic retrieval candidates
+- candidates that remained plausible after bounded candidate arbitration declined to choose
 - visible/runtime-compatible surface evidence
 - recent routing context from the latest conversation, such as:
   - previous user phrasing
@@ -570,7 +680,9 @@ Recommended flow:
 5. validate candidates against manifest policy and live runtime context
 6. choose:
    - high validated match -> execute
-   - medium validated match -> hint / arbiter
+   - medium/low but plausible -> bounded candidate arbitration
+   - if arbitration chooses -> validate and execute
+   - if arbitration declines -> candidate-backed clarification
    - still coarse or unresolved -> clarify
 
 Rewrite-assisted retrieval should not run universally. It should be gated to recovery cases such as:
@@ -686,6 +798,12 @@ Add dispatcher-level tests for:
 - semantically close paraphrase → medium or high candidate path, not notes-only clarifier
 - weak DB match + strong manifest/runtime overlap → fallback `SurfaceCandidateHint`, not direct clarification
 - weak/noisy raw query + bounded rewrite retrieval → improved candidate recall with preserved provenance
+- medium/low plausible candidates + bounded candidate arbitration → either validated selection or candidate-backed clarification, not unrelated fallback
+- explicit current-turn output cue like `in the chat` should bias bounded arbitration toward chat-answer/list candidates when those candidates are already in the validated set
+- wrapped/preamble query such as `hi there show the recent widget entries in the chat` with a medium-confidence chat-list candidate → bounded arbitration preserves the `in the chat` cue and selects the chat-answer/list candidate rather than drawer/display or unrelated fallback
+- bounded candidate arbitration timeout/error/unusable output → fail open to candidate-backed clarification or bounded non-execution path
+- bounded candidate arbitration response outside the provided candidate IDs/indexes → rejected as unusable
+- arbitration-selected candidate fails normal app validation → no execution; clarification or other bounded fallback
 - raw/rewrite agreement outranks rewrite-only candidates during reranking
 - raw top candidate != rewritten top candidate → disagreement alone does not produce a high-confidence execute
 - rewrite-assisted retrieval still requires normal manifest/runtime validation before execute or hint
@@ -712,6 +830,7 @@ On successful handling of a paraphrased surface query:
 Writeback policy:
 - deterministic high-confidence success may write immediately
 - medium-confidence hint accepted by arbiter/LLM may write only after the final action/answer succeeds and the resolved surface metadata is known
+- arbitration-mediated success may write only after the final action/answer succeeds and the resolved surface metadata is known
 - rewrite-assisted success may write only with explicit rewrite-assistance provenance preserved
 - rewrite-assisted successes should not be treated as direct raw-query deterministic wins during learning or promotion
 - rewrite-assisted successes may enter `learned_success` only with rewrite-assistance provenance preserved; if promotion rules later distinguish weaker evidence tiers, rewrite-assisted rows should start conservatively rather than outranking stable raw-query wins too early
@@ -732,6 +851,7 @@ This is how the app should improve over time without manual paraphrase farming.
 3. Wire a pre-LLM surface resolver branch (Tier 4.3)
 4. Implement recent-only deterministic execution first
 5. Add medium-confidence candidate handoff to arbiter/LLM
-6. Add rewrite-assisted retrieval recovery for typo-heavy recent queries
-7. Verify logs/provenance and learned-row writeback
-8. Extend to multi-instance surfaces later
+6. Add bounded candidate arbitration for plausible medium/low-confidence candidates
+7. Add rewrite-assisted retrieval recovery for typo-heavy recent queries
+8. Verify logs/provenance and learned-row writeback
+9. Extend to multi-instance surfaces later

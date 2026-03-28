@@ -61,9 +61,15 @@ export interface SurfaceCandidateHint {
   }
 }
 
+export interface SurfaceClarificationSet {
+  candidates: SurfaceCandidateHint[]
+  reason: 'arbitration_declined' | 'arbitration_validation_failed' | 'arbitration_unavailable'
+}
+
 export type SurfaceResolverResult =
   | ResolvedSurfaceCommand
   | SurfaceCandidateHint
+  | SurfaceClarificationSet
   | SurfaceResolverError
   | null
 
@@ -78,8 +84,10 @@ const CURATED_SEED_BIAS = 0.02  // boost curated seeds over learned rows
 const AGREEMENT_BOOST = 0.03    // boost candidates found by both raw + rewrite
 const LOOKUP_TIMEOUT_MS = 1500
 const REWRITE_TIMEOUT_MS = 1500
+const ARBITRATION_TIMEOUT_MS = 2000
 const LOOKUP_ENDPOINT = '/api/chat/surface-command/lookup'
 const REWRITE_ENDPOINT = '/api/chat/surface-command/rewrite'
+const ARBITRATE_ENDPOINT = '/api/chat/surface-command/arbitrate'
 
 // =============================================================================
 // Query Normalization (retrieval aid only — not a phrase parser)
@@ -87,8 +95,9 @@ const REWRITE_ENDPOINT = '/api/chat/surface-command/rewrite'
 
 function normalizeSurfaceQuery(input: string): string {
   let q = input.trim().toLowerCase()
-  // Strip low-information words — preserve single-letter tokens (instance labels)
-  q = q.replace(/\b(my|the|please|can you|could you)\b/gi, ' ')
+  // Strip low-information words + greetings — preserve single-letter tokens (instance labels)
+  // Greeting stripping is a small optional retrieval helper, not the main mechanism.
+  q = q.replace(/\b(my|the|please|can you|could you|hi|hello|hey|good morning|good afternoon|hi there|hey there)\b/gi, ' ')
   // NOTE: vocabulary normalization (widget→panel, entries→entry) removed.
   // It created an embedding mismatch: query was normalized but seeds were
   // embedded with original text via normalizeForStorage. Embeddings handle
@@ -180,6 +189,66 @@ async function rewriteForRetrieval(input: string): Promise<string | null> {
       }),
       new Promise<null>((resolve) => {
         timer = setTimeout(() => resolve(null), REWRITE_TIMEOUT_MS)
+      }),
+    ])
+
+    return result
+  } catch {
+    clearTimeout(timer)
+    return null
+  }
+}
+
+// =============================================================================
+// Bounded Candidate Arbitration (LLM selection over validated candidates)
+// =============================================================================
+
+async function arbitrateSurfaceCandidates(
+  userQuery: string,
+  candidates: SurfaceCandidateHint[],
+): Promise<number | null> {
+  if (process.env.NEXT_PUBLIC_SURFACE_COMMAND_RESOLVER_ENABLED !== 'true') {
+    return null
+  }
+  if (candidates.length === 0) return null
+
+  registerBuiltInSurfaceManifests()
+  const requestCandidates = candidates.map((c, i) => {
+    // Resolve actual execution policy from manifest for meaningful arbitration metadata
+    const cmd = findSurfaceCommand(c.surfaceType, c.containerType, c.intentFamily, c.intentSubtype)
+    const policy = cmd?.executionPolicy ?? 'unknown'
+    // Map to human-readable intent shape for the LLM prompt
+    const policyLabel = policy === 'list_items' ? 'chat-answer/list'
+      : policy === 'open_surface' ? 'drawer/display'
+      : policy === 'execute_item' ? 'execute-item'
+      : policy
+    return {
+      index: i + 1,
+      surface_type: c.surfaceType,
+      intent_family: c.intentFamily,
+      intent_subtype: c.intentSubtype,
+      execution_policy: policyLabel,
+      similarity_score: c.similarityScore,
+      source_kind: c.sourceKind,
+    }
+  })
+
+  let timer: ReturnType<typeof setTimeout> | undefined
+
+  try {
+    const result = await Promise.race([
+      fetch(ARBITRATE_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_query: userQuery, candidates: requestCandidates }),
+      }).then(async (res) => {
+        clearTimeout(timer)
+        if (!res.ok) return null
+        const data = await res.json()
+        return (data.selected_index as number | null) ?? null
+      }),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), ARBITRATION_TIMEOUT_MS)
       }),
     ])
 
@@ -370,34 +439,130 @@ export async function resolveSurfaceCommand(
 
   // 2. Try to resolve from raw candidates first
   const rawResult = evaluateCandidates(rawCandidates, runtimeContext)
-  if (rawResult !== null) return rawResult
+  if (rawResult !== null && !isSurfaceCandidateHint(rawResult)) return rawResult
 
-  // 3. Raw retrieval was weak/empty — check manifest fallback
-  const manifestHint = tryManifestFallbackHint(normalizedInput, runtimeContext)
-  if (manifestHint !== null) return manifestHint
+  // 3. Raw retrieval was weak/empty — check manifest fallback (only if no medium hit)
+  if (rawResult === null) {
+    const manifestHint = tryManifestFallbackHint(normalizedInput, runtimeContext)
+    if (manifestHint !== null) {
+      // Manifest fallback is always medium — collect for potential arbitration
+      return tryArbitrationOrReturn(input, [manifestHint], runtimeContext, 'arbitration_unavailable')
+    }
+  }
 
   // 4. Rewrite-assisted retrieval recovery
   //    Gate: recent-family evidence required for this slice
-  if (!hasRecentFamilyEvidence(normalizedInput, rawCandidates, runtimeContext)) {
-    return null
+  let mergedResult: SurfaceResolverResult = rawResult
+  if (rawResult === null && hasRecentFamilyEvidence(normalizedInput, rawCandidates, runtimeContext)) {
+    const rewrittenQuery = await rewriteForRetrieval(normalizedInput)
+    if (rewrittenQuery && rewrittenQuery.toLowerCase() !== normalizedInput) {
+      const rewrittenCandidates = await lookupSurfaceSeeds(rewrittenQuery)
+      if (rewrittenCandidates.length > 0 || rawCandidates.length > 0) {
+        const merged = mergeCandidates(rawCandidates, rewrittenCandidates)
+        mergedResult = evaluateCandidates(merged, runtimeContext)
+      }
+    }
   }
 
-  const rewrittenQuery = await rewriteForRetrieval(normalizedInput)
-  if (!rewrittenQuery || rewrittenQuery.toLowerCase() === normalizedInput) {
-    return null // Rewrite returned same text or failed
+  // 5. If we have a high/error result from merge, return directly
+  if (mergedResult !== null && !isSurfaceCandidateHint(mergedResult)) return mergedResult
+
+  // 6. Medium hint(s) available — try bounded candidate arbitration
+  const mediumHint = mergedResult !== null && isSurfaceCandidateHint(mergedResult) ? mergedResult : null
+  if (mediumHint) {
+    // Collect medium candidates: the top hint, plus rawResult if it was also medium and different
+    const candidates: SurfaceCandidateHint[] = [mediumHint]
+    if (rawResult && isSurfaceCandidateHint(rawResult) && rawResult !== mediumHint) {
+      // Different medium candidate from raw vs merged — both go to arbitration
+      if (rawResult.intentSubtype !== mediumHint.intentSubtype) {
+        candidates.push(rawResult)
+      }
+    }
+    return tryArbitrationOrReturn(input, candidates, runtimeContext, 'arbitration_declined')
   }
 
-  // 5. Second-pass retrieval on rewritten query
-  const rewrittenCandidates = await lookupSurfaceSeeds(rewrittenQuery)
-  if (rewrittenCandidates.length === 0 && rawCandidates.length === 0) {
-    return null
+  return null
+}
+
+// =============================================================================
+// Arbitration-Mediated Resolution
+// =============================================================================
+
+async function tryArbitrationOrReturn(
+  rawInput: string,
+  candidates: SurfaceCandidateHint[],
+  runtimeContext: SurfaceRuntimeContext,
+  fallbackReason: SurfaceClarificationSet['reason'],
+): Promise<SurfaceResolverResult> {
+  // Try bounded arbitration
+  const selectedIndex = await arbitrateSurfaceCandidates(rawInput, candidates)
+
+  if (selectedIndex !== null && selectedIndex >= 1 && selectedIndex <= candidates.length) {
+    const chosen = candidates[selectedIndex - 1]
+
+    // Validate the chosen candidate against manifest/runtime
+    registerBuiltInSurfaceManifests()
+    const entry = findSurfaceEntry(chosen.surfaceType, chosen.containerType)
+    const cmd = entry ? findSurfaceCommand(
+      chosen.surfaceType, chosen.containerType, chosen.intentFamily, chosen.intentSubtype
+    ) : undefined
+
+    if (entry && cmd) {
+      // Check runtime context
+      const visibleMatch = runtimeContext.visibleSurfaceTypes.includes(chosen.surfaceType)
+      if (chosen.validationSnapshot?.requiresVisibleSurface && !visibleMatch) {
+        // Validation failed — try next candidate or clarify
+        return fallbackAfterValidationFailure(candidates, selectedIndex - 1, runtimeContext, fallbackReason)
+      }
+
+      const targetSurface = runtimeContext.visibleSurfaceIds[
+        runtimeContext.visibleSurfaceTypes.indexOf(chosen.surfaceType)
+      ]
+
+      return {
+        surfaceType: chosen.surfaceType,
+        containerType: chosen.containerType,
+        manifestVersion: entry.manifestVersion,
+        intentFamily: chosen.intentFamily,
+        intentSubtype: chosen.intentSubtype,
+        targetSurfaceId: targetSurface,
+        selectorSpecific: chosen.selectorSpecific,
+        arguments: chosen.arguments,
+        confidence: 'high', // arbitration-mediated
+        executionPolicy: cmd.executionPolicy,
+        replayPolicy: cmd.replayPolicy,
+        clarificationPolicy: cmd.clarificationPolicy,
+        handlerId: entry.handlerId,
+        retrievalSource: 'agreement' as const, // arbitration-mediated provenance
+      }
+    }
+
+    // Manifest validation failed
+    return fallbackAfterValidationFailure(candidates, selectedIndex - 1, runtimeContext, 'arbitration_validation_failed')
   }
 
-  // 6. Merge raw + rewritten candidates with provenance
-  const merged = mergeCandidates(rawCandidates, rewrittenCandidates)
+  // Arbitration declined or unavailable — preserve candidates for downstream
+  if (candidates.length === 1) {
+    return candidates[0] // single hint for arbiter path
+  }
+  return { candidates, reason: fallbackReason }
+}
 
-  // 7. Evaluate merged set
-  return evaluateCandidates(merged, runtimeContext)
+function fallbackAfterValidationFailure(
+  candidates: SurfaceCandidateHint[],
+  failedIndex: number,
+  _runtimeContext: SurfaceRuntimeContext,
+  reason: SurfaceClarificationSet['reason'],
+): SurfaceResolverResult {
+  // Remove the failed candidate, try remaining
+  const remaining = candidates.filter((_, i) => i !== failedIndex)
+  if (remaining.length === 0) {
+    // All candidates failed validation — return original set for clarification
+    // rather than bare null (preserves bounded candidate scope per design doc)
+    return { candidates, reason: 'arbitration_validation_failed' }
+  }
+  if (remaining.length === 1) return remaining[0]
+  return { candidates: remaining, reason }
 }
 
 // =============================================================================
@@ -541,5 +706,24 @@ export function isSurfaceCandidateHint(result: SurfaceResolverResult): result is
 }
 
 export function isResolvedSurfaceCommand(result: SurfaceResolverResult): result is ResolvedSurfaceCommand {
-  return result !== null && 'executionPolicy' in result && !('matchedStrongly' in result) && !('candidateConfidence' in result)
+  return result !== null && 'executionPolicy' in result && !('matchedStrongly' in result) && !('candidateConfidence' in result) && !('candidates' in result)
+}
+
+export function isSurfaceClarificationSet(result: SurfaceResolverResult): result is SurfaceClarificationSet {
+  return result !== null && 'candidates' in result && 'reason' in result
+}
+
+/**
+ * Quick check: does the input have surface-family evidence?
+ * Used by the dispatcher to decide whether the surface resolver should run
+ * even when S6 content-intent has already matched.
+ */
+export function hasSurfaceFamilyEvidence(input: string): boolean {
+  const lower = input.toLowerCase()
+  // Check for known surface-family terms
+  if (/\brecent\b/.test(lower)) return true
+  if (/\blinks?\s*panel\b/.test(lower)) return true
+  // Content/list shape with surface term
+  if (/\b(list|show|display|view)\b/.test(lower) && /\b(entries|entry|items|item|panel|widget)\b/.test(lower)) return true
+  return false
 }
