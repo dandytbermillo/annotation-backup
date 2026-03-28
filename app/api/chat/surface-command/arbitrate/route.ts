@@ -33,6 +33,10 @@ interface ArbitrationCandidate {
 interface ArbitrationRequest {
   user_query: string
   candidates: ArbitrationCandidate[]
+  delivery_state?: {
+    presentation_target: string
+    destination_source: string
+  }
 }
 
 interface ArbitrationResponse {
@@ -68,10 +72,18 @@ function buildArbitrationPrompt(req: ArbitrationRequest): string {
     `${c.index}. ${c.surface_type}.${c.intent_family}.${c.intent_subtype} — ${c.execution_policy} (score: ${c.similarity_score.toFixed(2)}, source: ${c.source_kind})`
   ).join('\n')
 
+  // Build structured destination section when available
+  const ds = req.delivery_state
+  const destinationSection = ds?.destination_source === 'explicit'
+    ? `\nUser's explicit destination: ${ds.presentation_target}\nThis is an explicit user constraint, not a default. Prefer candidates compatible with this destination.\n`
+    : ds?.presentation_target && ds.presentation_target !== 'unspecified'
+      ? `\nInferred destination: ${ds.presentation_target} (default, not explicit)\n`
+      : ''
+
   return `You are selecting the most likely user intent from a small set of validated candidates.
 
 User said: "${req.user_query}"
-
+${destinationSection}
 Candidates:
 ${candidateLines}
 

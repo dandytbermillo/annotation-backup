@@ -845,9 +845,32 @@ Current-code tension to resolve during implementation:
 - the existing broad action-navigation gate treats `show` as navigation/open language
 - that broad gate must not prevent the surface resolver or equivalent drawer/display path from correctly handling:
   - `show recent`
+  - `open recent`
   - `show recent widget`
   - `show recent widget entries`
 - the detailed implementation plan must therefore specify how the `show ... recent ...` contract is honored without letting those turns fall into the wrong generic panel/open ambiguity path
+- `open recent` should be owned by the surface resolver / surface-memory path for consistency with the `Recent` drawer/display contract rather than depending on legacy memory-only routing
+
+Recent ownership must also stay bounded:
+- the Recent resolver must not claim generic content-noun queries such as `show entries` unless there is real Recent-family evidence
+- generic nouns like `entries`, `items`, or `content` are not enough by themselves to prove the user means `Recent`
+- acceptable Recent-family evidence can include:
+  - an explicit `recent` / `recently` term
+  - a validated Recent candidate from retrieval
+  - typo-tolerant near-match evidence pointing at `recent`
+  - strong runtime evidence tied to a Recent-specific content request
+- when that evidence is absent, the Recent resolver should decline ownership and let bounded clarification or other candidate sources compete normally
+
+Queries like `show entries` are structurally ambiguous:
+- they may refer to Recent content
+- they may refer to links panels containing entries
+- they may refer to a visible panel/widget titled `Entries`
+- the system must not deterministically map that query to `Recent` without stronger evidence
+- when multiple bounded candidates remain plausible, it should clarify instead
+- even if only one bounded non-Recent candidate survives, bare generic phrasing like `show entries` should still prefer clarification unless that candidate is both:
+  - extremely strong under the normal validation rules
+  - and explicitly approved by product policy as a safe default for that generic phrase
+- without that stronger policy decision, surviving alone is not enough to convert a structurally generic phrase into deterministic execution
 
 Curated seeds must be aligned to that contract before broadening retrieval behavior:
 - keep a small reviewed anchor set for drawer/show phrasing
@@ -890,8 +913,11 @@ Add dispatcher-level tests for:
   - `write_target`
 - explicit chat destination must demote conflicting surface/display high-confidence candidates when a plausible chat-answer/list candidate remains in the bounded set
 - `show recent` → surface destination by default policy
+- `open recent` → surface-resolver-owned surface destination, not legacy memory-only routing
 - `list recent entries` → chat destination by likely-intent policy
 - `show recent contents in the chat` → chat destination
+- `show entries` with no Recent-family evidence → do not route deterministically to Recent; bounded clarification across surviving candidates instead
+- `show entries in the chat` with no clear surviving Recent-compatible candidate → clarify rather than forcing Recent chat-list
 - `show recent in the chat` with no safe chat-compatible candidate → clarify rather than forcing surface/display
 - `list the recent widget content in the note` → write delivery targeting the active note only if write-target validation succeeds
 - `list the recent widget content in any open editable panel` → clarify unless exactly one eligible writable target exists

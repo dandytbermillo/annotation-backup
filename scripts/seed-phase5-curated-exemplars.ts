@@ -103,6 +103,28 @@ const CURATED_SEEDS: CuratedSeed[] = [
     },
   },
 
+  {
+    query: 'show recent widget contents in the chat',
+    intent_id: 'surface_manifest:recent.state_info.list_recent',
+    intent_class: 'info_intent',
+    slots_json: {
+      action_type: 'surface_manifest_execute',
+      surface_manifest: {
+        surfaceType: 'recent',
+        containerType: 'dashboard',
+        intentFamily: 'state_info',
+        intentSubtype: 'list_recent',
+        executionPolicy: 'list_items',
+        handlerId: 'recent_panel_handler',
+      },
+      validation: {
+        requiresVisibleSurface: true,
+        requiresContainerMatch: true,
+      },
+      executionMode: 'chat_answer',
+    },
+  },
+
   // ── Drawer/display seeds (bare "show" defaults to drawer) ──
   {
     query: 'show recent',

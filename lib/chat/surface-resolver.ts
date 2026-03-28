@@ -24,6 +24,50 @@ import { registerBuiltInSurfaceManifests } from './surface-manifest-definitions'
 // Types
 // =============================================================================
 
+// =============================================================================
+// Delivery State (structured output-destination constraint)
+// =============================================================================
+
+export interface DeliveryState {
+  deliveryKind: 'present' | 'write'
+  presentationTarget: 'chat' | 'surface' | 'unspecified'
+  writeTarget: 'none'  // current slice: present-only
+  destinationSource: 'explicit' | 'inferred' | 'default'
+}
+
+/**
+ * Extract structured delivery state from the raw query.
+ * Runs once before candidate evaluation — used in reranking,
+ * deterministic gating, arbitration, and clarification.
+ *
+ * This is a narrow bounded extraction, not a phrase parser.
+ */
+export function extractDeliveryState(input: string): DeliveryState {
+  const lower = input.toLowerCase()
+
+  // Explicit chat destination cues (strongest signal)
+  if (/\bin the chat\b|\bhere in the chat\b|\bin chat\b/.test(lower)) {
+    return { deliveryKind: 'present', presentationTarget: 'chat', writeTarget: 'none', destinationSource: 'explicit' }
+  }
+
+  // Inferred chat: "list" verb without surface-open context
+  if (/\blist\b/.test(lower) && !/\bopen\b/.test(lower)) {
+    return { deliveryKind: 'present', presentationTarget: 'chat', writeTarget: 'none', destinationSource: 'inferred' }
+  }
+
+  // Inferred surface: bare "show" / "open" without chat cue
+  if (/\b(show|open)\b/.test(lower)) {
+    return { deliveryKind: 'present', presentationTarget: 'surface', writeTarget: 'none', destinationSource: 'inferred' }
+  }
+
+  // Default: unspecified
+  return { deliveryKind: 'present', presentationTarget: 'unspecified', writeTarget: 'none', destinationSource: 'default' }
+}
+
+// =============================================================================
+// Types
+// =============================================================================
+
 export interface SurfaceSeedCandidate {
   intent_id: string
   intent_class: string
@@ -136,7 +180,7 @@ function hasNearMatchToken(tokens: string[], target: string, maxDistance: number
 // =============================================================================
 
 /** Content verb + object noun shape for list/display queries */
-const CONTENT_LIST_SHAPE = /\b(list|show|display|view|get|what|which)\b.*\b(entry|entries|item|items|panel|thing|stuff)\b/i
+const CONTENT_LIST_SHAPE = /\b(list|show|display|view|get|what|which)\b.*\b(entry|entries|item|items|content|contents|panel|thing|stuff)\b/i
 
 function hasRecentFamilyEvidence(
   normalizedInput: string,
@@ -206,6 +250,7 @@ async function rewriteForRetrieval(input: string): Promise<string | null> {
 async function arbitrateSurfaceCandidates(
   userQuery: string,
   candidates: SurfaceCandidateHint[],
+  deliveryState?: DeliveryState,
 ): Promise<number | null> {
   if (process.env.NEXT_PUBLIC_SURFACE_COMMAND_RESOLVER_ENABLED !== 'true') {
     return null
@@ -240,7 +285,14 @@ async function arbitrateSurfaceCandidates(
       fetch(ARBITRATE_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_query: userQuery, candidates: requestCandidates }),
+        body: JSON.stringify({
+          user_query: userQuery,
+          candidates: requestCandidates,
+          delivery_state: deliveryState ? {
+            presentation_target: deliveryState.presentationTarget,
+            destination_source: deliveryState.destinationSource,
+          } : undefined,
+        }),
       }).then(async (res) => {
         clearTimeout(timer)
         if (!res.ok) return null
@@ -317,7 +369,7 @@ function tryManifestFallbackHint(
     if (!stateCmd) continue
 
     // Require object-noun overlap (not bare verbs — avoids "show recent" collision)
-    const hasContentOverlap = /\b(entry|entries|item|items|list)\b/.test(normalizedInput)
+    const hasContentOverlap = /\b(entry|entries|item|items|content|contents|list)\b/.test(normalizedInput)
     if (!hasContentOverlap) continue
 
     return {
@@ -431,14 +483,17 @@ export async function resolveSurfaceCommand(
   input: string,
   runtimeContext: SurfaceRuntimeContext,
 ): Promise<SurfaceResolverResult> {
-  // 0. Normalize query for retrieval (improves embedding similarity for paraphrases)
+  // 0. Extract structured delivery state (used in reranking, gating, arbitration)
+  const deliveryState = extractDeliveryState(input)
+
+  // 1. Normalize query for retrieval (improves embedding similarity for paraphrases)
   const normalizedInput = normalizeSurfaceQuery(input)
 
-  // 1. Retrieve candidates (using normalized text for better embedding match)
+  // 2. Retrieve candidates (using normalized text for better embedding match)
   const rawCandidates = await lookupSurfaceSeeds(normalizedInput)
 
-  // 2. Try to resolve from raw candidates first
-  const rawResult = evaluateCandidates(rawCandidates, runtimeContext)
+  // 3. Try to resolve from raw candidates first
+  const rawResult = evaluateCandidates(rawCandidates, runtimeContext, deliveryState)
   if (rawResult !== null && !isSurfaceCandidateHint(rawResult)) return rawResult
 
   // 3. Raw retrieval was weak/empty — check manifest fallback (only if no medium hit)
@@ -446,7 +501,7 @@ export async function resolveSurfaceCommand(
     const manifestHint = tryManifestFallbackHint(normalizedInput, runtimeContext)
     if (manifestHint !== null) {
       // Manifest fallback is always medium — collect for potential arbitration
-      return tryArbitrationOrReturn(input, [manifestHint], runtimeContext, 'arbitration_unavailable')
+      return tryArbitrationOrReturn(input, [manifestHint], runtimeContext, 'arbitration_unavailable', deliveryState)
     }
   }
 
@@ -459,7 +514,7 @@ export async function resolveSurfaceCommand(
       const rewrittenCandidates = await lookupSurfaceSeeds(rewrittenQuery)
       if (rewrittenCandidates.length > 0 || rawCandidates.length > 0) {
         const merged = mergeCandidates(rawCandidates, rewrittenCandidates)
-        mergedResult = evaluateCandidates(merged, runtimeContext)
+        mergedResult = evaluateCandidates(merged, runtimeContext, deliveryState)
       }
     }
   }
@@ -478,7 +533,7 @@ export async function resolveSurfaceCommand(
         candidates.push(rawResult)
       }
     }
-    return tryArbitrationOrReturn(input, candidates, runtimeContext, 'arbitration_declined')
+    return tryArbitrationOrReturn(input, candidates, runtimeContext, 'arbitration_declined', deliveryState)
   }
 
   return null
@@ -493,9 +548,10 @@ async function tryArbitrationOrReturn(
   candidates: SurfaceCandidateHint[],
   runtimeContext: SurfaceRuntimeContext,
   fallbackReason: SurfaceClarificationSet['reason'],
+  deliveryState?: DeliveryState,
 ): Promise<SurfaceResolverResult> {
   // Try bounded arbitration
-  const selectedIndex = await arbitrateSurfaceCandidates(rawInput, candidates)
+  const selectedIndex = await arbitrateSurfaceCandidates(rawInput, candidates, deliveryState)
 
   if (selectedIndex !== null && selectedIndex >= 1 && selectedIndex <= candidates.length) {
     const chosen = candidates[selectedIndex - 1]
@@ -572,11 +628,23 @@ function fallbackAfterValidationFailure(
 function evaluateCandidates(
   rawCandidates: SurfaceSeedCandidate[],
   runtimeContext: SurfaceRuntimeContext,
+  deliveryState?: DeliveryState,
 ): SurfaceResolverResult {
   if (rawCandidates.length === 0) return null
 
   // Rerank with live context signals + curated-seed bias
   const candidates = rerankCandidates(rawCandidates, runtimeContext)
+
+  // Delivery-state reranking boost (applied after base rerank)
+  if (deliveryState?.presentationTarget === 'chat' && deliveryState.destinationSource === 'explicit') {
+    for (const c of candidates) {
+      const m = c.slots_json.surface_manifest as Record<string, string> | undefined
+      if (m?.executionPolicy === 'list_items') c.similarity_score += 0.02
+      if (m?.executionPolicy === 'open_surface') c.similarity_score -= 0.02
+    }
+    candidates.sort((a, b) => b.similarity_score - a.similarity_score)
+  }
+
   const top = candidates[0]
 
   // Gate: minimum medium floor
@@ -615,7 +683,52 @@ function evaluateCandidates(
   // Safety: rewrite-only candidates cannot reach high-confidence execution
   const tagged = top as TaggedCandidate
   const isRewriteOnly = tagged._source === 'llm_rewrite'
-  const effectiveHighConfidence = isHighConfidence && !isRewriteOnly
+  let effectiveHighConfidence = isHighConfidence && !isRewriteOnly
+
+  // Cue-aware deterministic gating: explicit chat destination conflicts with surface/display candidate
+  if (effectiveHighConfidence
+    && deliveryState?.presentationTarget === 'chat'
+    && deliveryState.destinationSource === 'explicit'
+    && manifest.executionPolicy === 'open_surface') {
+    // Do NOT auto-execute — explicit chat destination conflicts with drawer candidate
+    // Check if a plausible chat-compatible candidate exists in the bounded set
+    const chatCandidate = candidates.find(c => {
+      const m = c.slots_json.surface_manifest as Record<string, string> | undefined
+      return m?.executionPolicy === 'list_items' && c.similarity_score >= MEDIUM_CONFIDENCE_FLOOR
+    })
+    if (chatCandidate) {
+      // Demote to medium — let arbitration resolve the conflict
+      effectiveHighConfidence = false
+    } else {
+      // No compatible chat candidate survives — return candidate-backed clarification set
+      // rather than executing the conflicting surface/display candidate or returning a
+      // single medium hint that could fall through to unrelated routing
+      const conflictingHint: SurfaceCandidateHint = {
+        surfaceType: manifest.surfaceType,
+        containerType: manifest.containerType as SurfaceContainerType,
+        intentFamily: manifest.intentFamily,
+        intentSubtype: manifest.intentSubtype,
+        candidateConfidence: 'medium',
+        similarityScore: top.similarity_score,
+        visibleSurfaceMatch,
+        containerMatch,
+        sourceKind,
+        selectorSpecific: false,
+        arguments: (top.slots_json.arguments ?? {}) as Record<string, unknown>,
+        retrievalSource: tagged._source as 'raw_query' | 'llm_rewrite' | 'agreement' | undefined,
+        validationSnapshot: {
+          requiresVisibleSurface: !!validation?.requiresVisibleSurface,
+          requiresContainerMatch: !!validation?.requiresContainerMatch,
+          manifestMatched,
+          commandMatched,
+        },
+      }
+      return {
+        candidates: [conflictingHint],
+        reason: 'arbitration_declined' as const,
+      } satisfies SurfaceClarificationSet
+    }
+  }
 
   // Provenance: how the winning candidate was retrieved
   const retrievalSource = tagged._source as 'raw_query' | 'llm_rewrite' | 'agreement' | undefined
