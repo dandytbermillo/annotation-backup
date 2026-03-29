@@ -50,6 +50,7 @@ export function tierToLane(tier: number | undefined): RoutingLane {
 export function provenanceToDecisionSource(hint: string | undefined): DecisionSource {
   switch (hint) {
     case 'deterministic': return 'deterministic'
+    case 'deterministic_surface': return 'deterministic'
     case 'llm_executed': return 'llm'
     case 'llm_influenced': return 'llm'
     case 'llm_clarifier': return 'clarifier'

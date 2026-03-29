@@ -1817,7 +1817,7 @@ export async function dispatchRouting(
             id: `assistant-${Date.now()}`, role: 'assistant',
             content: answerContent, timestamp: new Date(), isError: false,
           }
-          ctx.addMessage(answerMsg, { tierLabel: 'surface_command_resolve', provenance: 'deterministic' })
+          ctx.addMessage(answerMsg, { tierLabel: 'surface_command_resolve', provenance: 'deterministic_surface' })
           ctx.setIsLoading(false)
           void debugLog({ component: 'ChatNavigation', action: 'surface_command_resolve', metadata: {
             surfaceType: surfaceResult.surfaceType, intentFamily: surfaceResult.intentFamily, intentSubtype: surfaceResult.intentSubtype,
@@ -1828,7 +1828,7 @@ export async function dispatchRouting(
             handled: true, handledByTier: 4, tierLabel: 'surface_command_resolve',
             clarificationCleared: false, isNewQuestionOrCommandDetected: false,
             classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
-            _devProvenanceHint: 'deterministic',
+            _devProvenanceHint: 'deterministic_surface',
           }
           const surfacePayload = buildRoutingLogPayload(ctx, surfaceRouteResult, turnSnapshotForLog)
           if (surfaceResult.retrievalSource) {
@@ -1846,7 +1846,7 @@ export async function dispatchRouting(
             id: `assistant-${Date.now()}`, role: 'assistant',
             content: `Opening ${surfaceLabel}...`, timestamp: new Date(), isError: false,
           }
-          ctx.addMessage(drawerMsg, { tierLabel: 'surface_command_resolve', provenance: 'deterministic' })
+          ctx.addMessage(drawerMsg, { tierLabel: 'surface_command_resolve', provenance: 'deterministic_surface' })
           ctx.setIsLoading(false)
           void debugLog({ component: 'ChatNavigation', action: 'surface_command_resolve_drawer', metadata: {
             surfaceType: surfaceResult.surfaceType, intentFamily: surfaceResult.intentFamily, intentSubtype: surfaceResult.intentSubtype,
@@ -1857,7 +1857,7 @@ export async function dispatchRouting(
             handled: true, handledByTier: 4, tierLabel: 'surface_command_resolve',
             clarificationCleared: false, isNewQuestionOrCommandDetected: false,
             classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
-            _devProvenanceHint: 'deterministic',
+            _devProvenanceHint: 'deterministic_surface',
           }
           const drawerPayload = buildRoutingLogPayload(ctx, drawerRouteResult, turnSnapshotForLog)
           if (surfaceResult.retrievalSource) {
@@ -1872,14 +1872,14 @@ export async function dispatchRouting(
           content: "I couldn't load that information right now. Try again in a moment.",
           timestamp: new Date(), isError: false,
         }
-        ctx.addMessage(errorMsg, { tierLabel: 'surface_command_resolve', provenance: 'deterministic' })
+        ctx.addMessage(errorMsg, { tierLabel: 'surface_command_resolve', provenance: 'deterministic_surface' })
         ctx.setIsLoading(false)
 
         const surfaceErrorResult: RoutingDispatcherResult = {
           handled: true, handledByTier: 4, tierLabel: 'surface_command_resolve',
           clarificationCleared: false, isNewQuestionOrCommandDetected: false,
           classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
-          _devProvenanceHint: 'deterministic',
+          _devProvenanceHint: 'deterministic_surface',
         }
         const surfaceErrorPayload = buildRoutingLogPayload(ctx, surfaceErrorResult, turnSnapshotForLog)
         void recordRoutingLog(surfaceErrorPayload)
@@ -2270,7 +2270,7 @@ export async function dispatchRouting(
             id: `assistant-${Date.now()}`, role: 'assistant',
             content: hintAnswerContent, timestamp: new Date(), isError: false,
           }
-          ctx.addMessage(hintMsg, { tierLabel: 'surface_command_hint_assisted', provenance: 'deterministic' })
+          ctx.addMessage(hintMsg, { tierLabel: 'surface_command_hint_assisted', provenance: 'deterministic_surface' })
           ctx.setIsLoading(false)
           void debugLog({ component: 'ChatNavigation', action: 'surface_command_hint_assisted', metadata: {
             surfaceType: surfaceCandidateHintForArbiter.surfaceType,
@@ -2281,7 +2281,7 @@ export async function dispatchRouting(
             handled: true, handledByTier: 6, tierLabel: 'surface_command_hint_assisted',
             clarificationCleared: false, isNewQuestionOrCommandDetected: false,
             classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
-            _devProvenanceHint: 'deterministic',
+            _devProvenanceHint: 'deterministic_surface',
           }
           const hintPayload = buildRoutingLogPayload(ctx, hintResult, turnSnapshotForLog)
           Object.assign(hintPayload, arbiterTelemetry)
@@ -6349,6 +6349,28 @@ async function dispatchRoutingInner(
                 const matchingOption = ctx.pendingOptions.find(opt => opt.id === selected.id)
                   || (ctx.clarificationSnapshot?.options.find(opt => opt.id === selected.id))
 
+                // Guard: bare generic phrases should not auto-execute panel open via handleSelectOption.
+                // Same guard as grounding_llm_panel_execute path — prevents "show entries" from auto-opening.
+                const GENERIC_FILLER_SELECT = new Set([
+                  'show', 'open', 'list', 'view', 'display', 'get', 'close',
+                  'can', 'you', 'me', 'i', 'to', 'do', 'just', 'want', 'would', 'could',
+                  'hi', 'hello', 'hey', 'there', 'pls', 'please', 'the', 'my', 'a',
+                  'panel', 'widget', 'drawer',
+                ])
+                const selectContentTokens = ctx.trimmedInput.toLowerCase().split(/\s+/)
+                  .filter(t => t.length > 0 && !GENERIC_FILLER_SELECT.has(t))
+                const selectHasQualifier = /\b(links?\s*panel|navigator|quick\s*links|widget\s*manager|recent)\b/i.test(ctx.trimmedInput)
+                const selectIsGeneric = selectContentTokens.length <= 1 && !selectHasQualifier
+                  && selected.source === 'visible_panels'
+
+                if (selectIsGeneric) {
+                  void debugLog({
+                    component: 'ChatNavigation',
+                    action: 'grounding_llm_select_blocked_generic',
+                    metadata: { input: ctx.trimmedInput, candidateLabel: selected.label, contentTokens: selectContentTokens },
+                  })
+                  // Fall through — do NOT execute. Let downstream clarification handle it.
+                } else
                 // widget_option must fall through to the dedicated execute_widget_item handler,
                 // not handleSelectOption (which doesn't handle 'widget_option' type).
                 if (matchingOption && 'type' in matchingOption && 'data' in matchingOption
@@ -6505,6 +6527,29 @@ async function dispatchRoutingInner(
                 // silently fall through to Tier 5 (no handler for option-type without
                 // message history, referent, or widget_option match).
                 if (selected.source === 'visible_panels') {
+                  // Guard: bare generic phrases should not auto-execute panel open.
+                  // "show entries" is ambiguous — could mean Recent content, Entries panel, links panel entries.
+                  // Per design doc lines 870-873: bare generic phrases prefer clarification.
+                  const GENERIC_FILLER = new Set([
+                    'show', 'open', 'list', 'view', 'display', 'get', 'close',
+                    'can', 'you', 'me', 'i', 'to', 'do', 'just', 'want', 'would', 'could',
+                    'hi', 'hello', 'hey', 'there', 'pls', 'please', 'the', 'my', 'a',
+                    'panel', 'widget', 'drawer',
+                  ])
+                  const contentTokens = ctx.trimmedInput.toLowerCase().split(/\s+/)
+                    .filter(t => t.length > 0 && !GENERIC_FILLER.has(t))
+                  const hasExplicitPanelQualifier = /\b(links?\s*panel|navigator|quick\s*links|widget\s*manager|recent)\b/i.test(ctx.trimmedInput)
+                  const isGenericPhrase = contentTokens.length <= 1 && !hasExplicitPanelQualifier
+
+                  if (isGenericPhrase) {
+                    // Skip auto-execute — prefer bounded clarification for generic phrases.
+                    void debugLog({
+                      component: 'ChatNavigation',
+                      action: 'grounding_llm_panel_execute_blocked_generic',
+                      metadata: { input: ctx.trimmedInput, candidateLabel: selected.label, contentTokens },
+                    })
+                    // Fall through — do NOT return handled. Let downstream clarification handle it.
+                  } else {
                   void debugLog({
                     component: 'ChatNavigation',
                     action: 'grounding_llm_panel_execute',
@@ -6549,6 +6594,7 @@ async function dispatchRoutingInner(
                     // Phase 5: pass panel identity for client-side navigation writeback
                     _groundingPanelOpen: { panelId: selected.id, panelTitle: selected.label },
                   }
+                  } // close else (non-generic phrase)
                 }
               }
             }

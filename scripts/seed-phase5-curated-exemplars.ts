@@ -125,7 +125,28 @@ const CURATED_SEEDS: CuratedSeed[] = [
     },
   },
 
-  // ── Drawer/display seeds (bare "show" defaults to drawer) ──
+  // ── Drawer/display seeds (bare "show" / "open" defaults to drawer) ──
+  {
+    query: 'open recent',
+    intent_id: 'surface_manifest:recent.navigate.open_drawer',
+    intent_class: 'action_intent',
+    slots_json: {
+      action_type: 'surface_manifest_execute',
+      surface_manifest: {
+        surfaceType: 'recent',
+        containerType: 'dashboard',
+        intentFamily: 'navigate',
+        intentSubtype: 'open_drawer',
+        executionPolicy: 'open_surface',
+        handlerId: 'recent_panel_handler',
+      },
+      validation: {
+        requiresVisibleSurface: true,
+        requiresContainerMatch: true,
+      },
+      executionMode: 'drawer_display',
+    },
+  },
   {
     query: 'show recent',
     intent_id: 'surface_manifest:recent.navigate.open_drawer',

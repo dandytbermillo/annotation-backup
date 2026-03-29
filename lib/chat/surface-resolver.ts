@@ -176,7 +176,27 @@ function hasNearMatchToken(tokens: string[], target: string, maxDistance: number
 }
 
 // =============================================================================
-// Recent-Family Evidence Gate
+// Independent Recent-Family Evidence (ownership proof)
+// =============================================================================
+
+/**
+ * Check if the raw input has independent Recent-family evidence.
+ * Independent means: from the raw input text, NOT from retrieval candidates.
+ * Retrieval candidates cannot serve as their own proof of ownership —
+ * otherwise "show entries" matching a Recent seed would self-justify the match.
+ */
+function hasIndependentRecentEvidence(rawInput: string): boolean {
+  const lower = rawInput.toLowerCase()
+  // Explicit "recent" or "recently" in the input
+  if (/\brecent(ly)?\b/.test(lower)) return true
+  // Typo-tolerant near-match to "recent" (Levenshtein ≤ 2)
+  const tokens = lower.split(/\s+/)
+  if (hasNearMatchToken(tokens, 'recent', 2)) return true
+  return false
+}
+
+// =============================================================================
+// Recent-Family Evidence Gate (for rewrite recovery gating)
 // =============================================================================
 
 /** Content verb + object noun shape for list/display queries */
@@ -493,7 +513,7 @@ export async function resolveSurfaceCommand(
   const rawCandidates = await lookupSurfaceSeeds(normalizedInput)
 
   // 3. Try to resolve from raw candidates first
-  const rawResult = evaluateCandidates(rawCandidates, runtimeContext, deliveryState)
+  const rawResult = evaluateCandidates(rawCandidates, runtimeContext, deliveryState, input)
   if (rawResult !== null && !isSurfaceCandidateHint(rawResult)) return rawResult
 
   // 3. Raw retrieval was weak/empty — check manifest fallback (only if no medium hit)
@@ -514,7 +534,7 @@ export async function resolveSurfaceCommand(
       const rewrittenCandidates = await lookupSurfaceSeeds(rewrittenQuery)
       if (rewrittenCandidates.length > 0 || rawCandidates.length > 0) {
         const merged = mergeCandidates(rawCandidates, rewrittenCandidates)
-        mergedResult = evaluateCandidates(merged, runtimeContext, deliveryState)
+        mergedResult = evaluateCandidates(merged, runtimeContext, deliveryState, input)
       }
     }
   }
@@ -629,6 +649,7 @@ function evaluateCandidates(
   rawCandidates: SurfaceSeedCandidate[],
   runtimeContext: SurfaceRuntimeContext,
   deliveryState?: DeliveryState,
+  rawInput?: string,
 ): SurfaceResolverResult {
   if (rawCandidates.length === 0) return null
 
@@ -684,6 +705,15 @@ function evaluateCandidates(
   const tagged = top as TaggedCandidate
   const isRewriteOnly = tagged._source === 'llm_rewrite'
   let effectiveHighConfidence = isHighConfidence && !isRewriteOnly
+
+  // Recent ownership guard: the Recent resolver must not claim generic queries without
+  // independent Recent-family evidence. "show entries" matching a Recent seed is not enough —
+  // retrieval candidates cannot serve as their own proof of ownership.
+  if (manifest.surfaceType === 'recent' && rawInput && !hasIndependentRecentEvidence(rawInput)) {
+    // Generic query — Recent resolver declines ownership
+    // Return null so downstream routing (panel disambiguation, other candidate sources) can compete
+    return null
+  }
 
   // Cue-aware deterministic gating: explicit chat destination conflicts with surface/display candidate
   if (effectiveHighConfidence

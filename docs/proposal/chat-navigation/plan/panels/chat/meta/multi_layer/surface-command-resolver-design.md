@@ -566,6 +566,27 @@ Structured delivery state should be applied in multiple places, not only late ar
   - surface/display candidates may receive a penalty when they conflict with an explicit chat destination
 - deterministic gating:
   - a high-confidence candidate must not auto-execute if it conflicts with an explicit destination constraint and a plausible compatible candidate still exists in the bounded set
+- execution gating across all lanes:
+  - no panel-open path should execute a structurally generic ambiguous phrase unless the target is sufficiently specific and validated
+  - this rule must apply consistently to:
+    - bounded grounding execution paths
+    - `/api/chat/navigate` intent parsing
+    - `intent-resolver` panel execution branches
+  - a broad generic phrase such as `open entries` must not be allowed to:
+    - exact-open a visible `Entries` panel
+    - collapse to a navigator-family or similar family-specific clarification by itself
+    - or otherwise execute a panel-open chosen by model preference alone
+  - generic phrases should execute only when:
+    - the user supplied an explicit sufficiently specific target, for example `open entry navigator c` or `open links panel cc`
+    - or product explicitly approves a safe default for that exact generic phrase
+  - any product-approved safe default exception must stay narrow:
+    - it should be documented for that exact phrase or phrase family
+    - it should be covered by explicit regression tests
+    - it should not be inferred ad hoc from model preference or a surviving single candidate alone
+  - implementation should enforce this as one shared ambiguity policy across lanes rather than duplicating slightly different guards in each path
+    - grounding execution, `/api/chat/navigate`, and `intent-resolver` should all consult the same generic-phrase execution rule
+    - otherwise the same ambiguous phrase can still clarify in one lane and auto-execute in another
+  - otherwise the bounded candidate set should be clarified instead of executed
 - bounded candidate arbitration:
   - the structured delivery state should be part of the arbitration input, not merely implied by raw text
 - clarification:
@@ -917,8 +938,14 @@ Add dispatcher-level tests for:
 - `list recent entries` → chat destination by likely-intent policy
 - `show recent contents in the chat` → chat destination
 - `show entries` with no Recent-family evidence → do not route deterministically to Recent; bounded clarification across surviving candidates instead
+- `open entries` with no product-approved safe default → bounded clarification across surviving candidates instead of exact-opening `Entries` or collapsing to a family-specific panel interpretation
+- `open entry navigator c` → deterministic panel open
+- `open links panel cc` → deterministic panel open
 - `show entries in the chat` with no clear surviving Recent-compatible candidate → clarify rather than forcing Recent chat-list
 - `show recent in the chat` with no safe chat-compatible candidate → clarify rather than forcing surface/display
+- the same generic-phrase ambiguity rule must hold in both:
+  - grounding execution paths
+  - `/api/chat/navigate` + `intent-resolver` execution paths
 - `list the recent widget content in the note` → write delivery targeting the active note only if write-target validation succeeds
 - `list the recent widget content in any open editable panel` → clarify unless exactly one eligible writable target exists
 - bounded candidate arbitration timeout/error/unusable output → fail open to candidate-backed clarification or bounded non-execution path
