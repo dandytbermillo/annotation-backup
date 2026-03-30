@@ -397,8 +397,9 @@ async function resolveOpenWorkspace(
     default:
       // Fallback: Check if workspaceName matches a visible panel
       // Handles "open my categories" being parsed as workspace intent when user meant panel
+      const isGenericWs = context.rawUserMessage && isGenericAmbiguousPanelPhrase(context.rawUserMessage)
       const panelMatch = matchVisiblePanel(workspaceName, context.visibleWidgets)
-      if (panelMatch) {
+      if (panelMatch && !isGenericWs) {
         return {
           success: true,
           action: 'open_panel_drawer',
@@ -407,6 +408,20 @@ async function resolveOpenWorkspace(
           semanticPanelId: workspaceName.toLowerCase(),
           message: `Opening ${panelMatch.title}...`,
           executionMeta: classifyExecutionMeta({ matchKind: 'exact', candidateCount: 1, resolverPath: 'executeAction' }),
+        }
+      }
+      // Generic phrase with panel match → clarify instead of auto-open or error
+      if (panelMatch && isGenericWs) {
+        return {
+          success: true,
+          action: 'select',
+          options: [{
+            type: 'panel_drawer' as const,
+            id: panelMatch.id,
+            label: panelMatch.title,
+            data: { panelId: panelMatch.id, panelTitle: panelMatch.title, semanticPanelId: workspaceName.toLowerCase() },
+          }],
+          message: `Which panel did you mean?`,
         }
       }
 
@@ -2338,11 +2353,30 @@ async function resolveBareName(
 
   // Case 1: No matches at all - try visibleWidgets fallback before error
   if (!hasWorkspaces && !hasEntries) {
+    // Guard: do not auto-open for generic ambiguous phrases (shared rule)
+    const isGenericInput = context.rawUserMessage && isGenericAmbiguousPanelPhrase(context.rawUserMessage)
+
     // Fallback: Check if name matches a visible panel (handles "open continue", "open categories", etc.)
     const panelMatches = matchVisiblePanels(name, context.visibleWidgets)
 
-    if (panelMatches.length === 1) {
-      // Single match - open directly
+    // Generic ambiguous phrase with matches → force clarification instead of auto-open or error
+    if (isGenericInput && panelMatches.length >= 1) {
+      return {
+        success: true,
+        action: 'select',
+        options: panelMatches.map((w) => ({
+          type: 'panel_drawer' as const,
+          id: w.id,
+          label: w.title,
+          sublabel: w.type,
+          data: { panelId: w.id, panelTitle: w.title, semanticPanelId: name.toLowerCase() },
+        })),
+        message: `Which panel did you mean?`,
+      }
+    }
+
+    if (panelMatches.length === 1 && !isGenericInput) {
+      // Single match + specific phrase → open directly
       return {
         success: true,
         action: 'open_panel_drawer',

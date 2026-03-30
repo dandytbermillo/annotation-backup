@@ -641,6 +641,10 @@ export interface RoutingDispatcherResult {
 
   /** Phase 4: resolved note command (from fresh resolution or cache recovery) */
   _resolvedNoteCommand?: import('@/lib/chat/note-command-manifest').ResolvedNoteCommand
+
+  /** Whether this result came from a clarification-first bridge selection.
+   *  Used to prevent clarified ambiguous generic phrases from becoming Memory-Exact defaults. */
+  _fromClarifiedSelection?: boolean
 }
 
 /** Type alias for grounding actions (extracted from RoutingDispatcherResult for reuse) */
@@ -1425,7 +1429,17 @@ export async function dispatchRouting(
       // Non-correction follow-up — promote the pending exemplar
       const pending = ctx.pendingPhase5Write
       ctx.setPendingPhase5Write(null)
-      void recordMemoryEntry(pending.payload).catch(() => {})
+
+      // Gate: do not promote ambiguous generic panel phrases to exact memory.
+      // "open entries" / "show entries" should continue to clarify on future turns,
+      // not become Memory-Exact defaults — regardless of how the success happened
+      // (clarified selection, auto-executed, or any other path).
+      const shouldSkipPromotion = pending.payload.intent_id === 'open_panel'
+        && isGenericAmbiguousPanelPhrase(pending.payload.raw_query_text ?? '')
+
+      if (!shouldSkipPromotion) {
+        void recordMemoryEntry(pending.payload).catch(() => {})
+      }
     }
   }
 
@@ -3160,6 +3174,8 @@ async function dispatchRoutingInner(
       // Phase 3c: propagate selection correlation set by wrappedHandleSelectOption
       _clarifierOriginMessageId: defaultResult._clarifierOriginMessageId,
       _selectedOptionId: defaultResult._selectedOptionId,
+      // Clarification bridge: propagate flag so writeback can suppress ambiguous generic promotion
+      _fromClarifiedSelection: clarificationResult._fromClarifiedSelection,
     }
   }
 
@@ -4908,7 +4924,8 @@ async function dispatchRoutingInner(
       const optionLabels = lastOptionsMessage.options.map(opt => opt.label)
       const selectionResult = isSelectionOnly(ctx.trimmedInput, lastOptionsMessage.options.length, optionLabels, 'strict')
 
-      if (selectionResult.isSelection && selectionResult.index !== undefined) {
+      if (selectionResult.isSelection && selectionResult.index !== undefined
+          && !isGenericAmbiguousPanelPhrase(ctx.trimmedInput)) {
         const selectedOption = lastOptionsMessage.options[selectionResult.index]
         void debugLog({
           component: 'ChatNavigation',
@@ -4954,7 +4971,7 @@ async function dispatchRoutingInner(
       // Tier 3a (cont.): Label/shorthand matching for message-derived options — gated by confidence gate.
       // High-confidence only executes deterministically; soft matches fall through to LLM.
       const messageLabelMatch = findHighConfidenceMatch(ctx.trimmedInput, lastOptionsMessage.options)
-      if (messageLabelMatch) {
+      if (messageLabelMatch && !isGenericAmbiguousPanelPhrase(ctx.trimmedInput)) {
         const labelMatch = messageLabelMatch.match
         void debugLog({
           component: 'ChatNavigation',
@@ -5358,8 +5375,10 @@ async function dispatchRoutingInner(
         llmCandidates.push({ id: opt.id, label: opt.label, type: opt.type || 'option' })
       }
       sourceContext = 'chat'
-    } else if (hasRecoverableChatContext && ctx.lastOptionsShown) {
+    } else if (hasRecoverableChatContext && ctx.lastOptionsShown
+        && !isGenericAmbiguousPanelPhrase(ctx.trimmedInput)) {
       // Priority 2: Recoverable chat context (lastOptionsShown — cleared by Tier 2a but still recent)
+      // Guard: generic ambiguous panel phrases must not use recoverable state — only live pendingOptions
       for (const opt of ctx.lastOptionsShown.options) {
         llmCandidates.push({ id: opt.id, label: opt.label, type: opt.type || 'option' })
       }
@@ -6675,6 +6694,7 @@ async function dispatchRoutingInner(
               const singlePanelCandidate = groundingResult.llmCandidates.length === 1
                 && isExplicitCommand(ctx.trimmedInput)
                 && groundingResult.llmCandidates[0].source === 'visible_panels'
+                && !isGenericAmbiguousPanelPhrase(ctx.trimmedInput)  // veto for generic ambiguous phrases
                 ? groundingResult.llmCandidates[0]
                 : null
 
@@ -6725,7 +6745,29 @@ async function dispatchRoutingInner(
               }
 
               const clarifierMsgId = `assistant-${Date.now()}`
-              const effectiveCandidates = maybeActiveReorder(groundingResult.llmCandidates)
+              let effectiveCandidates = maybeActiveReorder(groundingResult.llmCandidates)
+
+              // Expand collapsed single-candidate for generic ambiguous phrases.
+              // If only 1 visible_panels candidate survived but the phrase is generic,
+              // expand to all title-matching visible panels for multi-option clarification.
+              if (isGenericAmbiguousPanelPhrase(ctx.trimmedInput)
+                  && effectiveCandidates.length === 1
+                  && effectiveCandidates[0].source === 'visible_panels') {
+                const contentToks = extractContentTokens(ctx.trimmedInput)
+                const allVisibleWidgets = ctx.uiContext?.dashboard?.visibleWidgets ?? []
+                const expanded = allVisibleWidgets.filter(
+                  (w: { id: string; title: string }) => contentToks.some(t => w.title.toLowerCase().includes(t))
+                )
+                if (expanded.length > 1) {
+                  effectiveCandidates = expanded.map((w: { id: string; title: string; type?: string }) => ({
+                    id: w.id,
+                    label: w.title,
+                    type: 'option' as const,
+                    source: 'visible_panels' as const,
+                  }))
+                }
+              }
+
               const boundOptions = bindGroundingClarifierOptions(ctx, effectiveCandidates, clarifierMsgId)
               const clarifierMsg: ChatMessage = {
                 id: clarifierMsgId,

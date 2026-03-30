@@ -1289,7 +1289,7 @@ export async function handleClarificationIntercept(
             : { type: matchedOption.type as SelectionOption['type'], id: matchedOption.id, label: matchedOption.label, data: {} as SelectionOption['data'] }
           setIsLoading(false)
           handleSelectOption(optionToSelect)
-          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
+          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const, _fromClarifiedSelection: true }
         }
       }
 

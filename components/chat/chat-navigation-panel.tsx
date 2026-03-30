@@ -2171,7 +2171,7 @@ function ChatNavigationPanelContent({
               setPendingPhase5Write({
                 payload: pendingWrite,
                 turnTimestamp: Date.now(),
-                fromClarifiedSuccess: false,
+                fromClarifiedSuccess: routingResult._fromClarifiedSelection === true,
                 fromCuratedSeedAssisted: false,
               })
             }
@@ -2436,7 +2436,7 @@ function ChatNavigationPanelContent({
         setPendingPhase5Write({
           payload: phase5WriteFromServer,
           turnTimestamp: Date.now(),
-          fromClarifiedSuccess: false,
+          fromClarifiedSuccess: routingResult._fromClarifiedSelection === true,
           fromCuratedSeedAssisted: false,
         })
       }

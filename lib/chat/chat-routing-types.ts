@@ -161,6 +161,9 @@ export interface ClarificationInterceptResult extends HandlerResult {
     confirmedScope: ScopeCueResult
     isReplay: true  // guards against recursive replay loops
   }
+  /** Whether this result came from a clarification-first bridge selection.
+   *  Used to prevent clarified ambiguous generic phrases from becoming Memory-Exact defaults. */
+  _fromClarifiedSelection?: boolean
 }
 
 export interface ClarificationInterceptContext {

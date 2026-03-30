@@ -9,6 +9,9 @@ import { join } from 'path'
 const SUMMARY_THRESHOLD = 10 // Trigger summary when this many messages since last summary
 const RECENT_WINDOW = 6 // Keep this many recent messages out of summary
 const MAX_SUMMARY_LENGTH = 500
+const MAX_CHUNK_SIZE = 40 // Max messages per summarization chunk (token budget)
+const MAX_CONTENT_LENGTH = 200 // Max chars per message content in prompt
+const OPENAI_TIMEOUT_MS = 10000
 
 /**
  * Get OpenAI API key from environment or config file
@@ -35,13 +38,30 @@ function getOpenAIApiKey(): string | null {
 }
 
 /**
+ * Check if an OpenAI error is retryable (429, timeout, transient server errors).
+ * Non-retryable errors (bad config, auth, invalid model) should surface as 500.
+ */
+function isRetryableOpenAIError(err: unknown): boolean {
+  const msg = (err as Error).message || ''
+  const name = (err as Error).name || ''
+  // 429 rate limit
+  if (msg.includes('429') || msg.includes('rate_limit')) return true
+  // Timeout / connection errors
+  if (name === 'AbortError' || msg.includes('timeout') || msg.includes('ECONNRESET')) return true
+  // OpenAI 5xx server errors
+  if (msg.includes('500') || msg.includes('502') || msg.includes('503') || msg.includes('529')) return true
+  return false
+}
+
+/**
  * POST /api/chat/conversations/[conversationId]/summary
  * Trigger async summarization of older messages.
  *
- * This endpoint:
- * 1. Counts messages since the last summary
- * 2. If above threshold, summarizes older messages (excluding recent window)
- * 3. Updates the conversation's summary field
+ * Uses incremental bounded summarization:
+ * - Summarizes one chunk at a time (MAX_CHUNK_SIZE messages)
+ * - Only advances summary_until_message_id to the last message actually included
+ * - Preserves prior summary as context for continuity
+ * - Never marks messages as summarized that the model didn't see
  *
  * Body (optional):
  *   - force: boolean (skip threshold check)
@@ -140,9 +160,8 @@ export async function POST(
       })
     }
 
-    // Messages to summarize (excluding recent window)
+    // Messages eligible for summarization (excluding recent window)
     const messagesToSummarize = allMessages.slice(0, -RECENT_WINDOW)
-    const lastMessageToSummarize = messagesToSummarize[messagesToSummarize.length - 1]
 
     // Check OpenAI availability
     const apiKey = getOpenAIApiKey()
@@ -155,9 +174,36 @@ export async function POST(
       })
     }
 
-    // Build prompt for summarization
-    const conversationText = messagesToSummarize
-      .map((m) => `${m.role}: ${m.content}`)
+    // Incremental bounded summarization:
+    // Only summarize one chunk at a time. The chunk starts from where we left off.
+    // If there's no prior summary, start from the oldest messages.
+    // If there IS a prior summary, start from the first unsummarized message.
+    let chunkStart = 0
+    if (currentSummaryUntilId) {
+      const lastSummarizedIndex = messagesToSummarize.findIndex(m => m.id === currentSummaryUntilId)
+      if (lastSummarizedIndex >= 0) {
+        chunkStart = lastSummarizedIndex + 1
+      }
+    }
+
+    // Take the next bounded chunk
+    const chunk = messagesToSummarize.slice(chunkStart, chunkStart + MAX_CHUNK_SIZE)
+
+    if (chunk.length === 0) {
+      return NextResponse.json({
+        updated: false,
+        summary: conversation.summary,
+        messagesSummarized: 0,
+        reason: 'No new messages to summarize in this chunk',
+      })
+    }
+
+    // The last message actually included in the prompt — this is where we advance to
+    const lastMessageInChunk = chunk[chunk.length - 1]
+
+    // Build prompt
+    const conversationText = chunk
+      .map((m) => `${m.role}: ${(m.content as string).slice(0, MAX_CONTENT_LENGTH)}`)
       .join('\n')
 
     const existingSummary = conversation.summary
@@ -173,20 +219,36 @@ Summarize this chat navigation conversation in 2-3 sentences. Focus on:
 
 Keep the summary under ${MAX_SUMMARY_LENGTH} characters.`
 
-    // Call OpenAI for summarization
-    const client = new OpenAI({ apiKey })
-    const completion = await client.chat.completions.create({
-      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
-      temperature: 0.3,
-      max_tokens: 150,
-      messages: [
-        {
-          role: 'system',
-          content: 'You are a helpful assistant that summarizes chat navigation conversations concisely.',
-        },
-        { role: 'user', content: prompt },
-      ],
-    })
+    // Call OpenAI for summarization (with timeout to avoid blocking UI)
+    const client = new OpenAI({ apiKey, timeout: OPENAI_TIMEOUT_MS })
+    let completion
+    try {
+      completion = await client.chat.completions.create({
+        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+        temperature: 0.3,
+        max_tokens: 150,
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a helpful assistant that summarizes chat navigation conversations concisely.',
+          },
+          { role: 'user', content: prompt },
+        ],
+      })
+    } catch (err) {
+      if (isRetryableOpenAIError(err)) {
+        const errMsg = (err as Error).message || 'Unknown error'
+        console.warn(`[chat/summary] Retryable error: ${errMsg.slice(0, 100)}`)
+        return NextResponse.json({
+          updated: false,
+          summary: conversation.summary,
+          messagesSummarized: 0,
+          reason: `Retryable error — will retry next turn: ${errMsg.slice(0, 80)}`,
+        })
+      }
+      // Non-retryable errors (bad config, auth, invalid model) → surface as 500
+      throw err
+    }
 
     const newSummary = completion.choices[0]?.message?.content?.trim() || ''
 
@@ -199,7 +261,8 @@ Keep the summary under ${MAX_SUMMARY_LENGTH} characters.`
       })
     }
 
-    // Update conversation with new summary (with concurrency guard)
+    // Update conversation with new summary
+    // Only advance summary_until_message_id to the last message actually in the prompt
     const updateResult = await serverPool.query(
       `
       UPDATE chat_conversations
@@ -210,7 +273,7 @@ Keep the summary under ${MAX_SUMMARY_LENGTH} characters.`
       `,
       [
         newSummary.slice(0, MAX_SUMMARY_LENGTH),
-        lastMessageToSummarize.id,
+        lastMessageInChunk.id,
         conversationId,
         currentSummaryUntilId,
       ]
@@ -228,7 +291,7 @@ Keep the summary under ${MAX_SUMMARY_LENGTH} characters.`
     return NextResponse.json({
       updated: true,
       summary: newSummary.slice(0, MAX_SUMMARY_LENGTH),
-      messagesSummarized: messagesToSummarize.length,
+      messagesSummarized: chunk.length,
     })
   } catch (error) {
     console.error('[chat/summary] Error:', error)
