@@ -39,6 +39,7 @@ import {
 } from './chat-routing-arbitration'
 // EntryMatch — used by reconstructSnapshotData in chat-routing-clarification-utils.ts
 import { matchVisiblePanelCommand } from '@/lib/chat/panel-command-matcher'
+import { resolveContextDecision, isReferentialFollowUp } from '@/lib/chat/context-decision-helper'
 import {
   classifyResponseFit,
   getEscalationMessage,
@@ -1238,7 +1239,7 @@ export async function handleClarificationIntercept(
       return lastClarification.options.some(opt => isStrictExactMatch(trimmedInput, opt.label))
     })()
 
-    const commandBypassesLabelMatching =
+    let commandBypassesLabelMatching =
       (isNewQuestionOrCommandDetected || inputIsExplicitCommand)
       && !inputIsSelectionLike
       && !inputTargetsActiveOption  // ANY match keeps in selection flow
@@ -1248,6 +1249,64 @@ export async function handleClarificationIntercept(
     // even if it looks like a new command. Selection takes priority over new-intent escape.
     // IMPORTANT: If input matches MULTIPLE options (e.g., "links panel" matches both D and E),
     // do NOT auto-select - fall through to re-show options instead.
+    // ── CLARIFICATION-FIRST BRIDGE ──
+    // Per clarification-vs-active-surface-priority-plan.md Step 1:
+    // Before explicit-command bypass clears state, check if the input
+    // strongly matches an active clarification option. If it does,
+    // treat it as a selection instead of a fresh command.
+    if (commandBypassesLabelMatching && lastClarification?.options?.length) {
+      const bridgeDecision = resolveContextDecision(trimmedInput, {
+        clarificationOptions: lastClarification.options,
+        hasPendingOptions: pendingOptions.length > 0,
+        isReferentialInput: isReferentialFollowUp(trimmedInput),
+      })
+
+      if (bridgeDecision.mode === 'clarification_selection') {
+        // Unique strong match → treat as clarification selection (Tier 1b.3 pattern)
+        const matchedOption = lastClarification.options.find(o => o.id === bridgeDecision.optionId)
+        if (matchedOption) {
+          void debugLog({
+            component: 'ChatNavigation',
+            action: 'clarification_bridge_selection',
+            metadata: {
+              input: trimmedInput,
+              matchedLabel: bridgeDecision.optionLabel,
+              optionId: bridgeDecision.optionId,
+              confidence: bridgeDecision.confidence,
+            },
+          })
+
+          // Save snapshot + repair memory (same as Tier 1b.3)
+          saveClarificationSnapshot(lastClarification)
+          setRepairMemory(matchedOption.id, lastClarification.options)
+          setLastClarification(null)
+          setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+
+          // Execute selection
+          const fullOption = pendingOptions.find(opt => opt.id === matchedOption.id)
+          const optionToSelect: SelectionOption = fullOption
+            ? { type: fullOption.type as SelectionOption['type'], id: fullOption.id, label: fullOption.label, sublabel: fullOption.sublabel, data: fullOption.data as SelectionOption['data'] }
+            : { type: matchedOption.type as SelectionOption['type'], id: matchedOption.id, label: matchedOption.label, data: {} as SelectionOption['data'] }
+          setIsLoading(false)
+          handleSelectOption(optionToSelect)
+          return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'deterministic' as const }
+        }
+      }
+
+      if (bridgeDecision.mode === 'conflict') {
+        // Multiple matches or conflict → re-show clarification, do NOT clear state
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'clarification_bridge_conflict',
+          metadata: { input: trimmedInput, mode: 'conflict' },
+        })
+        // Override commandBypassesLabelMatching so the bypass block below does NOT clear state
+        commandBypassesLabelMatching = false
+      }
+
+      // mode: 'none' or 'active_surface_followup' → proceed with bypass
+    }
+
     if (commandBypassesLabelMatching) {
       // Clear stale clarification state so downstream tiers don't inherit it.
       // Without this, Tier 4.5 grounding LLM picks up stale options as candidates.

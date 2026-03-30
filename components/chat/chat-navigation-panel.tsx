@@ -2129,7 +2129,14 @@ function ChatNavigationPanelContent({
         // This path opens panels client-side (ctx.openPanelDrawer) and never calls
         // the navigate API, so the server-side writeback at route.ts:1325 is unreachable.
         // Build the writeback here using the shared replay snapshot from the dispatcher.
-        if (routingResult._groundingPanelOpen && routingResult._phase5ReplaySnapshot) {
+        // Skip legacy open_panel writeback only for Recent drawer family owned by the surface resolver.
+        // The surface resolver owns "open recent" via curated seed — legacy open_panel
+        // writeback would create a competing B1 row that reclaims the turn.
+        // Narrowed to Recent only: other surface-resolver-owned panel opens can still learn normally.
+        const isRecentSurfaceResolverOwned = (routingResult.tierLabel === 'surface_command_resolve'
+          || routingResult.tierLabel === 'surface_command_hint_assisted')
+          && routingResult._groundingPanelOpen?.panelTitle?.toLowerCase().includes('recent')
+        if (routingResult._groundingPanelOpen && routingResult._phase5ReplaySnapshot && !isRecentSurfaceResolverOwned) {
           try {
             const gp = routingResult._groundingPanelOpen
             // Look up selector metadata from visible widgets

@@ -24,6 +24,8 @@ For built-in non-note surfaces, the system is also moving to:
 - DB-backed seeded + learned query rows as the phrase source of truth
 - manifest and live-context validation before execution
 - bounded arbiter/LLM handoff when retrieval is useful but not deterministic
+- explicit destination-aware and ambiguity-aware execution gating
+- clarification-first follow-up handling when the latest assistant turn offered bounded options
 
 That is the current implementation direction.
 
@@ -118,7 +120,7 @@ So the role split is:
 If confidence is below threshold:
 
 - unresolved
-- move to clarification or safe fallback
+- move to bounded clarification or another bounded non-execution path
 
 If confidence is above threshold:
 
@@ -276,6 +278,98 @@ That fallback hint:
 - must never directly execute
 - exists to reduce avoidable misses on new phrasings before learned rows accumulate
 
+#### Delivery and destination cues
+
+Surface routing now distinguishes:
+
+- **scope** cues
+  - choose which conversational/source context the user means
+  - examples:
+    - `from chat`
+    - `from active widget`
+- **destination** cues
+  - choose where the result should appear
+  - examples:
+    - `in the chat`
+    - `here in the chat`
+
+These cues must not be collapsed into one undifferentiated override rule.
+
+For present/read-style surface requests:
+
+- explicit destination cues such as `in the chat` must outrank generic verbs such as `show`
+- a conflicting surface/display candidate must not auto-execute just because retrieval ranked it first
+- if no safe compatible candidate remains, the turn should clarify rather than execute the conflicting candidate anyway
+
+This is the reason queries such as:
+
+- `show recent`
+  - default to the Recent drawer / surface display
+- `list recent entries`
+  - default to chat delivery
+- `show recent entries in the chat`
+  - prefer chat delivery over drawer/display when a validated chat-compatible candidate exists
+
+#### Generic ambiguous panel-open guardrail
+
+Structurally generic panel-open phrases must not execute just because one lane found a plausible panel.
+
+Examples:
+
+- `open entries`
+- `show entries`
+
+These phrases may refer to:
+
+- Recent content
+- a visible panel titled `Entries`
+- a navigator-family panel
+- some other bounded candidate set admitted by the same routing scope
+
+So the rule is:
+
+- no panel-open path should execute a generic ambiguous phrase unless the target is sufficiently specific and validated
+- this rule must be shared across lanes rather than reimplemented differently in grounding, `/api/chat/navigate`, and `intent-resolver`
+- generic phrases should clarify unless:
+  - the user supplied a sufficiently specific explicit target, such as `open entry navigator c` or `open links panel cc`
+  - or product explicitly approved a safe default for that exact phrase family
+
+This is why:
+
+- `open entry navigator c`
+  - may execute deterministically
+- `open links panel cc`
+  - may execute deterministically
+- `open entries`
+  - should clarify from the bounded candidate set instead of exact-opening `Entries` or collapsing to a family-specific interpretation by itself
+
+#### Recent ownership stays bounded
+
+The Recent resolver is intentionally narrow.
+
+It may claim queries like:
+
+- `show recent`
+- `open recent`
+- `show recent widget entries`
+
+But it must not claim a generic content-noun query like:
+
+- `show entries`
+
+unless there is real Recent-family evidence, such as:
+
+- an explicit `recent` / `recently` term
+- a validated Recent candidate from retrieval
+- typo-tolerant near-match evidence pointing at `recent`
+- strong runtime evidence tied to a Recent-specific content request
+
+Without that stronger evidence:
+
+- the Recent resolver should decline ownership
+- other bounded candidates may compete
+- the turn should clarify rather than being forced to `Recent`
+
 #### Clarification boundary
 
 Clarification is not only a low-confidence arbiter fallback.
@@ -294,11 +388,71 @@ It should clarify instead, because:
 - clarification creates a safer path to a validated final resolution
 - that validated final resolution is what can justify learned-row writeback later
 
+Clarification is also required when:
+
+- a generic ambiguous panel-open phrase survives with multiple plausible bounded candidates
+- the top candidate conflicts with an explicit destination cue such as `in the chat`
+- the latest assistant turn already asked a bounded clarification question and the user is still plausibly answering that clarification
+
+So clarification is not only a terminal fallback step.
+It is also an explicit safety tool used to prevent unsafe execution when:
+
+- the system has bounded candidates but not enough specificity to execute
+- the latest clarification context and active-surface context conflict
+- a generic phrase would otherwise auto-execute differently across lanes
+
+#### Clarification-first follow-up context
+
+The router now treats the latest clarification and the active/just-opened surface as separate bounded context signals with a fixed order:
+
+1. explicit current-turn scope, explicit destination, or explicit specific target
+2. latest active clarification
+3. active or just-opened surface
+4. general routing
+
+This means:
+
+- the latest clarification stays primary for option-like follow-ups
+- active or just-opened surface context stays strong for referential follow-ups such as `read it` or `what does it say`
+- focus changes alone do **not** make the clarification stale
+
+So if the assistant just offered options including `Entries`, and the user replies:
+
+- `open entries`
+
+the router should usually treat that as a clarification-follow-up or clarification-confirmation attempt before it treats it as a fresh command.
+
+Likewise, if a panel is active and the user says:
+
+- `read it`
+- `show me the content`
+
+then active-surface continuity may win, but only because the follow-up is referential, not merely because a panel is visible.
+
+Conflict rule:
+
+- if clarification context and active-surface context point to different plausible targets
+- do not execute
+- reuse the bounded candidate set and ask a tighter clarifier instead
+
+Single-owner rule:
+
+- one shared helper must own clarification-state clearing, recoverable-source validation, and context-winner selection
+- no lane should clear active clarification state before that shared decision runs
+- otherwise the same phrase can still loop as a fresh command in one lane and a clarification follow-up in another
+
 ---
 
 Step 5: Policy-driven execution
 
 After note resolution, execution happens by policy, not by raw phrasing.
+
+For non-note surface commands, policy-driven execution now also means:
+
+- execution authority comes from validated structured resolution, not from raw phrase similarity alone
+- explicit destination constraints must be checked before execution
+- generic ambiguous panel-open phrases must not execute without sufficient specificity
+- if bounded arbitration declines or returns an unusable answer, the app must fail open to candidate-backed clarification rather than free-form execution
 
 ### state_info
 
@@ -375,7 +529,7 @@ Behavior:
 
 Step 6: Fallback clarification
 
-Clarification happens only when:
+Clarification happens when:
 
 - deterministic routing is not certain
 - memory reuse is not safe
@@ -383,12 +537,19 @@ Clarification happens only when:
 - anchor resolution is ambiguous
 - required scope is missing
 - explicit target specificity is required but only contextual resolution exists
+- generic ambiguous panel-open phrases remain unresolved across the bounded candidate set
+- the current turn conflicts with an explicit destination cue
+- latest clarification context and active-surface context remain in conflict
 
 Examples:
 
 - `Do you mean the note in the current entry or the similarly named note in another workspace?`
+- `Do you want the Recent panel, or do you want recent entries listed here in chat?`
+- `I found multiple matching panels for "entries". Which one do you want to open?`
 
-Clarifier remains the last resort, not the early default.
+Clarifier is still bounded and policy-driven.
+It is not a free-form guess, and it is not only a last-resort terminal fallback.
+It is also the correct safety outcome when the system has a bounded candidate set but not enough specificity to execute safely.
 
 ---
 

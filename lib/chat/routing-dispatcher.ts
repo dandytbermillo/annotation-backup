@@ -83,6 +83,7 @@ import {
 import type { RoutingLogPayload } from '@/lib/chat/routing-log'
 import { buildMemoryWritePayload, buildNoteManifestWritePayload } from '@/lib/chat/routing-log/memory-write-payload'
 import { resolveSurfaceCommand, isSurfaceResolverError, isSurfaceCandidateHint, isResolvedSurfaceCommand, isSurfaceClarificationSet, hasSurfaceFamilyEvidence, type SurfaceCandidateHint, type SurfaceClarificationSet } from '@/lib/chat/surface-resolver'
+import { isGenericAmbiguousPanelPhrase, extractContentTokens } from '@/lib/chat/generic-phrase-guard'
 import { lookupExactMemory } from '@/lib/chat/routing-log/memory-reader'
 import { lookupSemanticMemory, type SemanticCandidate, type SemanticLookupResult } from '@/lib/chat/routing-log/memory-semantic-reader'
 import { validateMemoryCandidate } from '@/lib/chat/routing-log/memory-validator'
@@ -6349,25 +6350,16 @@ async function dispatchRoutingInner(
                 const matchingOption = ctx.pendingOptions.find(opt => opt.id === selected.id)
                   || (ctx.clarificationSnapshot?.options.find(opt => opt.id === selected.id))
 
-                // Guard: bare generic phrases should not auto-execute panel open via handleSelectOption.
-                // Same guard as grounding_llm_panel_execute path — prevents "show entries" from auto-opening.
-                const GENERIC_FILLER_SELECT = new Set([
-                  'show', 'open', 'list', 'view', 'display', 'get', 'close',
-                  'can', 'you', 'me', 'i', 'to', 'do', 'just', 'want', 'would', 'could',
-                  'hi', 'hello', 'hey', 'there', 'pls', 'please', 'the', 'my', 'a',
-                  'panel', 'widget', 'drawer',
-                ])
-                const selectContentTokens = ctx.trimmedInput.toLowerCase().split(/\s+/)
-                  .filter(t => t.length > 0 && !GENERIC_FILLER_SELECT.has(t))
-                const selectHasQualifier = /\b(links?\s*panel|navigator|quick\s*links|widget\s*manager|recent)\b/i.test(ctx.trimmedInput)
-                const selectIsGeneric = selectContentTokens.length <= 1 && !selectHasQualifier
-                  && selected.source === 'visible_panels'
+                // Shared guard: bare generic phrases should not auto-execute panel open.
+                // Uses shared isGenericAmbiguousPanelPhrase() from generic-phrase-guard.ts
+                const selectIsGeneric = selected.source === 'visible_panels'
+                  && isGenericAmbiguousPanelPhrase(ctx.trimmedInput)
 
                 if (selectIsGeneric) {
                   void debugLog({
                     component: 'ChatNavigation',
                     action: 'grounding_llm_select_blocked_generic',
-                    metadata: { input: ctx.trimmedInput, candidateLabel: selected.label, contentTokens: selectContentTokens },
+                    metadata: { input: ctx.trimmedInput, candidateLabel: selected.label },
                   })
                   // Fall through — do NOT execute. Let downstream clarification handle it.
                 } else
@@ -6407,7 +6399,9 @@ async function dispatchRoutingInner(
                 // widget_option must route to the dedicated execute_widget_item handler below,
                 // not through handleSelectOption (which doesn't handle 'widget_option' type).
                 // Per universal-selection-resolver-plan.md:10.
-                if (messageOption && selected.type !== 'widget_option') {
+                // Shared guard: same generic-phrase check as grounding_llm_select path
+                if (messageOption && selected.type !== 'widget_option'
+                    && !(selected.source === 'visible_panels' && isGenericAmbiguousPanelPhrase(ctx.trimmedInput))) {
                   const optionToSelect: SelectionOption = {
                     type: messageOption.type as SelectionOption['type'],
                     id: messageOption.id,
@@ -6527,26 +6521,14 @@ async function dispatchRoutingInner(
                 // silently fall through to Tier 5 (no handler for option-type without
                 // message history, referent, or widget_option match).
                 if (selected.source === 'visible_panels') {
-                  // Guard: bare generic phrases should not auto-execute panel open.
-                  // "show entries" is ambiguous — could mean Recent content, Entries panel, links panel entries.
-                  // Per design doc lines 870-873: bare generic phrases prefer clarification.
-                  const GENERIC_FILLER = new Set([
-                    'show', 'open', 'list', 'view', 'display', 'get', 'close',
-                    'can', 'you', 'me', 'i', 'to', 'do', 'just', 'want', 'would', 'could',
-                    'hi', 'hello', 'hey', 'there', 'pls', 'please', 'the', 'my', 'a',
-                    'panel', 'widget', 'drawer',
-                  ])
-                  const contentTokens = ctx.trimmedInput.toLowerCase().split(/\s+/)
-                    .filter(t => t.length > 0 && !GENERIC_FILLER.has(t))
-                  const hasExplicitPanelQualifier = /\b(links?\s*panel|navigator|quick\s*links|widget\s*manager|recent)\b/i.test(ctx.trimmedInput)
-                  const isGenericPhrase = contentTokens.length <= 1 && !hasExplicitPanelQualifier
-
-                  if (isGenericPhrase) {
+                  // Shared guard: bare generic phrases should not auto-execute panel open.
+                  // Uses shared isGenericAmbiguousPanelPhrase() from generic-phrase-guard.ts
+                  if (isGenericAmbiguousPanelPhrase(ctx.trimmedInput)) {
                     // Skip auto-execute — prefer bounded clarification for generic phrases.
                     void debugLog({
                       component: 'ChatNavigation',
                       action: 'grounding_llm_panel_execute_blocked_generic',
-                      metadata: { input: ctx.trimmedInput, candidateLabel: selected.label, contentTokens },
+                      metadata: { input: ctx.trimmedInput, candidateLabel: selected.label },
                     })
                     // Fall through — do NOT return handled. Let downstream clarification handle it.
                   } else {

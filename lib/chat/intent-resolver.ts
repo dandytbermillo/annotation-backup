@@ -28,6 +28,7 @@ import { serverPool } from '@/lib/db/pool'
 import { buildQuickLinksViewItems } from './parse-quick-links'
 import { executePanelIntent, panelRegistry } from '@/lib/panels/panel-registry'
 import { debugLog } from '@/lib/utils/debug-logger'
+import { isGenericAmbiguousPanelPhrase, extractContentTokens } from '@/lib/chat/generic-phrase-guard'
 import type { ActionTraceEntry, ReasonCode, SourceKind, ExecutionMeta } from './action-trace'
 import { classifyExecutionMeta } from '@/lib/chat/input-classifiers'
 import { getDuplicateFamily } from '@/lib/dashboard/duplicate-family-map'
@@ -2759,6 +2760,36 @@ async function resolvePanelIntent(
     // Step 2: Exact title match (case-insensitive)
     // Step 3: Multiple matches → return 'multiple' for disambiguation
     // Step 4: Fuzzy match only if it yields exactly one result
+
+    // Shared generic-phrase guard: bare generic phrases must not auto-execute.
+    // Uses the same isGenericAmbiguousPanelPhrase() as grounding paths.
+    // Design doc lines 569-589: shared across all execution lanes.
+    if (context.rawUserMessage && isGenericAmbiguousPanelPhrase(context.rawUserMessage)) {
+      const contentTokens = extractContentTokens(context.rawUserMessage)
+      // Collect title-matched visible widgets as bounded candidates for clarification
+      const matchedWidgets = (context.visibleWidgets ?? []).filter((w: { title: string }) =>
+        contentTokens.some(t => w.title.toLowerCase().includes(t))
+      )
+      if (matchedWidgets.length > 0) {
+        return {
+          status: 'multiple' as const,
+          panels: matchedWidgets.map((w: { id: string; title: string; type?: string }) => ({
+            id: w.id, title: w.title, panel_type: (w as any).type ?? '',
+          })),
+        }
+      }
+      // No title-matched widgets but phrase is still generic —
+      // clarify with all visible widgets rather than falling through
+      if (context.visibleWidgets && context.visibleWidgets.length > 0) {
+        return {
+          status: 'multiple' as const,
+          panels: context.visibleWidgets.map((w: { id: string; title: string; type?: string }) => ({
+            id: w.id, title: w.title, panel_type: (w as any).type ?? '',
+          })),
+        }
+      }
+      return { status: 'not_found' as const }
+    }
 
     // Step 0: Check visibleWidgets using centralized panel matching
     if (context.visibleWidgets && context.visibleWidgets.length > 0) {
