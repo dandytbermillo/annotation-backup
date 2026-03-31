@@ -9,6 +9,7 @@
  */
 
 import { debugLog } from '@/lib/utils/debug-logger'
+import { isGenericAmbiguousPanelPhrase } from '@/lib/chat/generic-phrase-guard'
 import { hasQuestionIntent, isPoliteImperativeRequest } from '@/lib/chat/query-patterns'
 import type { ChatMessage, SelectionOption } from '@/lib/chat'
 import type { ClarificationOption } from '@/lib/chat/chat-navigation-context'
@@ -489,9 +490,11 @@ export async function handleScopeCuePhase(
               action: 'scope_cue_unresolved_hook_question_escape',
               metadata: { input: trimmedInput, matchCount: labelMatches.length, source: recoverable.source },
             })
-          } else if (llmResult.autoExecute && llmResult.suggestedId) {
+          } else if (llmResult.autoExecute && llmResult.suggestedId
+              && !isGenericAmbiguousPanelPhrase(trimmedInput)) {
             // ===== Phase C: LLM high-confidence auto-execute (scope-cue parity) =====
             // All 3 gates passed in tryLLMLastChance (kill switch + confidence + allowlisted reason).
+            // Veto: generic ambiguous panel phrases must not auto-execute from recoverable context.
             const selectedOption = recoverableOptions.find(o => o.id === llmResult.suggestedId)
             if (selectedOption) {
               void debugLog({

@@ -3992,7 +3992,8 @@ async function dispatchRoutingInner(
             },
           })
 
-          if (llmResult.success && llmResult.response?.decision === 'select' && llmResult.response.choiceId) {
+          if (llmResult.success && llmResult.response?.decision === 'select' && llmResult.response.choiceId
+              && !isGenericAmbiguousPanelPhrase(ctx.trimmedInput)) {
             const selected = scopedGroundingResult.llmCandidates.find(
               c => c.id === llmResult.response!.choiceId
             )
@@ -6369,10 +6370,12 @@ async function dispatchRoutingInner(
                 const matchingOption = ctx.pendingOptions.find(opt => opt.id === selected.id)
                   || (ctx.clarificationSnapshot?.options.find(opt => opt.id === selected.id))
 
-                // Shared guard: bare generic phrases should not auto-execute panel open.
-                // Uses shared isGenericAmbiguousPanelPhrase() from generic-phrase-guard.ts
-                const selectIsGeneric = selected.source === 'visible_panels'
-                  && isGenericAmbiguousPanelPhrase(ctx.trimmedInput)
+                // Shared guard: bare generic phrases should not auto-execute panel open
+                // from ANY source (visible_panels, snapshot, recoverable chat).
+                // Only live pendingOptions via the clarification bridge should resolve generic phrases.
+                const isFromLivePending = ctx.pendingOptions.some(opt => opt.id === selected.id)
+                const selectIsGeneric = isGenericAmbiguousPanelPhrase(ctx.trimmedInput)
+                  && !isFromLivePending
 
                 if (selectIsGeneric) {
                   void debugLog({
@@ -6418,9 +6421,10 @@ async function dispatchRoutingInner(
                 // widget_option must route to the dedicated execute_widget_item handler below,
                 // not through handleSelectOption (which doesn't handle 'widget_option' type).
                 // Per universal-selection-resolver-plan.md:10.
-                // Shared guard: same generic-phrase check as grounding_llm_select path
+                // Shared guard: generic phrases blocked from all sources except live pendingOptions
+                const msgIsFromLivePending = ctx.pendingOptions.some(opt => opt.id === selected.id)
                 if (messageOption && selected.type !== 'widget_option'
-                    && !(selected.source === 'visible_panels' && isGenericAmbiguousPanelPhrase(ctx.trimmedInput))) {
+                    && !(isGenericAmbiguousPanelPhrase(ctx.trimmedInput) && !msgIsFromLivePending)) {
                   const optionToSelect: SelectionOption = {
                     type: messageOption.type as SelectionOption['type'],
                     id: messageOption.id,

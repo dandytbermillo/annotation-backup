@@ -40,6 +40,7 @@ import {
 // EntryMatch — used by reconstructSnapshotData in chat-routing-clarification-utils.ts
 import { matchVisiblePanelCommand } from '@/lib/chat/panel-command-matcher'
 import { resolveContextDecision, isReferentialFollowUp } from '@/lib/chat/context-decision-helper'
+import { isGenericAmbiguousPanelPhrase } from '@/lib/chat/generic-phrase-guard'
 import {
   classifyResponseFit,
   getEscalationMessage,
@@ -1808,9 +1809,11 @@ export async function handleClarificationIntercept(
             },
           })
           // Fall through to downstream tiers
-        } else if (llmResult.autoExecute && llmResult.suggestedId) {
+        } else if (llmResult.autoExecute && llmResult.suggestedId
+            && !isGenericAmbiguousPanelPhrase(trimmedInput)) {
           // ===== Phase C: LLM high-confidence auto-execute =====
           // All 3 gates passed in tryLLMLastChance (kill switch + confidence + allowlisted reason).
+          // Veto: generic ambiguous panel phrases must not auto-execute from old clarification context.
           const selectedOption = lastClarification.options.find(o => o.id === llmResult.suggestedId)
           if (selectedOption) {
             const fullOption = pendingOptions.find(opt => opt.id === selectedOption.id)

@@ -1067,7 +1067,9 @@ export async function POST(request: NextRequest) {
       pendingOptions: conversationContext?.pendingOptions,
     }
 
+    console.log('[ChatNavigateAPI] calling resolveIntent:', { intent: intent.intent, panelId: intent.args?.panelId, name: intent.args?.name, userMessage: userMessage?.slice(0, 50) })
     let resolution = await resolveIntent(intent, resolutionContext)
+    console.log('[ChatNavigateAPI] resolveIntent result:', { action: resolution.action, success: resolution.success, panelId: (resolution as any).panelId })
 
     // Phase 0 metrics: track whether semantic fallback guard remaps intent
     let fallbackRemapApplied = false

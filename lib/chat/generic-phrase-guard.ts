@@ -44,6 +44,51 @@ export function extractContentTokens(rawInput: string): string[] {
 }
 
 // =============================================================================
+// Stem-expanded bounded candidate builder
+// =============================================================================
+
+/** Visible widget shape expected by the stem matcher */
+type VisibleWidget = { id: string; title: string; type?: string }
+
+/**
+ * Expand content tokens to singular/plural stems.
+ * - "entries" → ["entries", "entry"]  (ies → y)
+ * - "panels"  → ["panels", "panel"]  (trailing s)
+ * - "recent"  → ["recent"]           (no expansion)
+ */
+export function expandStems(contentTokens: string[]): string[] {
+  return contentTokens.flatMap(t => {
+    const stems = [t]
+    if (t.endsWith('ies')) stems.push(t.slice(0, -3) + 'y')
+    else if (t.endsWith('s') && t.length > 2) stems.push(t.slice(0, -1))
+    return stems
+  })
+}
+
+/**
+ * Build a stem-bounded candidate set from visible widgets.
+ *
+ * Returns widgets whose title contains any expanded stem of the input.
+ * If stem matching yields 0 matches, returns empty array (caller decides fallback).
+ * Never falls back to all visible widgets — that is the caller's choice.
+ *
+ * @param rawInput  - The user's raw message (e.g., "open entries")
+ * @param widgets   - Visible widgets to filter
+ * @returns Stem-matched widgets (may be empty, 1, or many)
+ */
+export function buildStemBoundedCandidates(
+  rawInput: string,
+  widgets: VisibleWidget[]
+): VisibleWidget[] {
+  const contentTokens = extractContentTokens(rawInput)
+  const stems = expandStems(contentTokens)
+  if (stems.length === 0) return []
+  return widgets.filter(w =>
+    stems.some(stem => w.title.toLowerCase().includes(stem))
+  )
+}
+
+// =============================================================================
 // Shared ambiguity check
 // =============================================================================
 

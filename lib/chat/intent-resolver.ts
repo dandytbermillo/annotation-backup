@@ -28,7 +28,7 @@ import { serverPool } from '@/lib/db/pool'
 import { buildQuickLinksViewItems } from './parse-quick-links'
 import { executePanelIntent, panelRegistry } from '@/lib/panels/panel-registry'
 import { debugLog } from '@/lib/utils/debug-logger'
-import { isGenericAmbiguousPanelPhrase, extractContentTokens } from '@/lib/chat/generic-phrase-guard'
+import { isGenericAmbiguousPanelPhrase, buildStemBoundedCandidates } from '@/lib/chat/generic-phrase-guard'
 import type { ActionTraceEntry, ReasonCode, SourceKind, ExecutionMeta } from './action-trace'
 import { classifyExecutionMeta } from '@/lib/chat/input-classifiers'
 import { getDuplicateFamily } from '@/lib/dashboard/duplicate-family-map'
@@ -236,6 +236,12 @@ export async function resolveIntent(
   intent: IntentResponse,
   context: ResolutionContext
 ): Promise<IntentResolutionResult> {
+  console.log('[intent-resolver] resolveIntent called:', { intent: intent.intent, panelId: intent.args?.panelId, name: intent.args?.name, rawUserMessage: context.rawUserMessage?.slice(0, 50) })
+  void debugLog({
+    component: 'IntentResolver',
+    action: 'resolveIntent_dispatch',
+    metadata: { intent: intent.intent, panelId: intent.args?.panelId, rawUserMessage: context.rawUserMessage?.slice(0, 50) },
+  })
   switch (intent.intent) {
     case 'open_workspace':
       return resolveOpenWorkspace(intent, context)
@@ -410,18 +416,21 @@ async function resolveOpenWorkspace(
           executionMeta: classifyExecutionMeta({ matchKind: 'exact', candidateCount: 1, resolverPath: 'executeAction' }),
         }
       }
-      // Generic phrase with panel match → clarify instead of auto-open or error
-      if (panelMatch && isGenericWs) {
-        return {
-          success: true,
-          action: 'select',
-          options: [{
-            type: 'panel_drawer' as const,
-            id: panelMatch.id,
-            label: panelMatch.title,
-            data: { panelId: panelMatch.id, panelTitle: panelMatch.title, semanticPanelId: workspaceName.toLowerCase() },
-          }],
-          message: `Which panel did you mean?`,
+      // Generic phrase → stem-bounded clarification instead of single-match or error
+      if (isGenericWs) {
+        const wsCandidates = buildStemBoundedCandidates(context.rawUserMessage!, context.visibleWidgets ?? [])
+        if (wsCandidates.length > 0) {
+          return {
+            success: true,
+            action: 'select',
+            options: wsCandidates.map((w) => ({
+              type: 'panel_drawer' as const,
+              id: w.id,
+              label: w.title,
+              data: { panelId: w.id, panelTitle: w.title, semanticPanelId: workspaceName.toLowerCase() },
+            })),
+            message: `Which panel did you mean?`,
+          }
         }
       }
 
@@ -2333,6 +2342,7 @@ async function resolveBareName(
   context: ResolutionContext
 ): Promise<IntentResolutionResult> {
   const { name } = intent.args
+  console.log('[intent-resolver] resolveBareName called:', { name, rawUserMessage: context.rawUserMessage?.slice(0, 50) })
 
   if (!name) {
     return {
@@ -2359,19 +2369,22 @@ async function resolveBareName(
     // Fallback: Check if name matches a visible panel (handles "open continue", "open categories", etc.)
     const panelMatches = matchVisiblePanels(name, context.visibleWidgets)
 
-    // Generic ambiguous phrase with matches → force clarification instead of auto-open or error
-    if (isGenericInput && panelMatches.length >= 1) {
-      return {
-        success: true,
-        action: 'select',
-        options: panelMatches.map((w) => ({
-          type: 'panel_drawer' as const,
-          id: w.id,
-          label: w.title,
-          sublabel: w.type,
-          data: { panelId: w.id, panelTitle: w.title, semanticPanelId: name.toLowerCase() },
-        })),
-        message: `Which panel did you mean?`,
+    // Generic ambiguous phrase → stem-bounded clarification instead of narrow matchVisiblePanels
+    if (isGenericInput) {
+      const bnCandidates = buildStemBoundedCandidates(context.rawUserMessage!, context.visibleWidgets ?? [])
+      if (bnCandidates.length > 0) {
+        return {
+          success: true,
+          action: 'select',
+          options: bnCandidates.map((w) => ({
+            type: 'panel_drawer' as const,
+            id: w.id,
+            label: w.title,
+            sublabel: w.type,
+            data: { panelId: w.id, panelTitle: w.title, semanticPanelId: name.toLowerCase() },
+          })),
+          message: `Which panel did you mean?`,
+        }
       }
     }
 
@@ -2550,6 +2563,13 @@ async function resolvePanelIntent(
   context: ResolutionContext
 ): Promise<IntentResolutionResult> {
   const { panelId, intentName, params } = intent.args
+  console.log('[intent-resolver] resolvePanelIntent called:', { panelId, intentName, rawUserMessage: context.rawUserMessage?.slice(0, 50) })
+
+  void debugLog({
+    component: 'IntentResolver',
+    action: 'resolvePanelIntent_entry',
+    metadata: { panelId, intentName, rawUserMessage: context.rawUserMessage?.slice(0, 50) },
+  })
 
   if (!panelId || !intentName) {
     return {
@@ -2618,6 +2638,7 @@ async function resolvePanelIntent(
     | { status: 'not_found' }
 
   const resolveDrawerPanelTarget = async (): Promise<DrawerResolutionResult> => {
+    console.log('[intent-resolver] resolveDrawerPanelTarget called:', { panelId, rawUserMessage: context.rawUserMessage?.slice(0, 50) })
     if (!context.currentEntryId) return { status: 'not_found' }
 
     const dashboardResult = await serverPool.query(
@@ -2798,27 +2819,20 @@ async function resolvePanelIntent(
     // Shared generic-phrase guard: bare generic phrases must not auto-execute.
     // Uses the same isGenericAmbiguousPanelPhrase() as grounding paths.
     // Design doc lines 569-589: shared across all execution lanes.
+    console.log('[intent-resolver] resolveDrawerPanelTarget guard check:', {
+      rawUserMessage: context.rawUserMessage,
+      isGeneric: context.rawUserMessage ? isGenericAmbiguousPanelPhrase(context.rawUserMessage) : 'no-raw-msg',
+      panelId,
+      visibleWidgetCount: context.visibleWidgets?.length ?? 0,
+    })
     if (context.rawUserMessage && isGenericAmbiguousPanelPhrase(context.rawUserMessage)) {
-      const contentTokens = extractContentTokens(context.rawUserMessage)
-      // Collect title-matched visible widgets as bounded candidates for clarification
-      const matchedWidgets = (context.visibleWidgets ?? []).filter((w: { title: string }) =>
-        contentTokens.some(t => w.title.toLowerCase().includes(t))
-      )
-      if (matchedWidgets.length > 0) {
+      // Stem-bounded candidate set — never falls back to all visible widgets.
+      const stemMatched = buildStemBoundedCandidates(context.rawUserMessage, context.visibleWidgets ?? [])
+      if (stemMatched.length > 0) {
         return {
           status: 'multiple' as const,
-          panels: matchedWidgets.map((w: { id: string; title: string; type?: string }) => ({
-            id: w.id, title: w.title, panel_type: (w as any).type ?? '',
-          })),
-        }
-      }
-      // No title-matched widgets but phrase is still generic —
-      // clarify with all visible widgets rather than falling through
-      if (context.visibleWidgets && context.visibleWidgets.length > 0) {
-        return {
-          status: 'multiple' as const,
-          panels: context.visibleWidgets.map((w: { id: string; title: string; type?: string }) => ({
-            id: w.id, title: w.title, panel_type: (w as any).type ?? '',
+          panels: stemMatched.map((w) => ({
+            id: w.id, title: w.title, panel_type: w.type ?? '',
           })),
         }
       }
@@ -2977,6 +2991,41 @@ async function resolvePanelIntent(
     const drawerResult = await resolveDrawerPanelTarget()
 
     if (drawerResult.status === 'found') {
+      // Shared guard: generic ambiguous phrases must not auto-open a panel.
+      // "open entries" → should clarify, not auto-open the Entries panel.
+      // This guard covers ALL resolution paths inside resolveDrawerPanelTarget
+      // (known patterns, duplicate-family, visibleWidgets, DB lookup).
+      if (context.rawUserMessage && isGenericAmbiguousPanelPhrase(context.rawUserMessage)) {
+        console.log('[intent-resolver] shouldOpenDrawer guard: blocking generic phrase auto-open', {
+          rawUserMessage: context.rawUserMessage,
+          panelId: drawerResult.panelId,
+          panelTitle: drawerResult.panelTitle,
+        })
+        // Stem-bounded candidate set: "entries" → ["entries","entry"] → Entries, Entry Navigator, etc.
+        // Returns as-is even if only 1 match — never falls back to all visible widgets.
+        const stemCandidates = buildStemBoundedCandidates(context.rawUserMessage, context.visibleWidgets ?? [])
+        if (stemCandidates.length > 0) {
+          return {
+            success: true,
+            action: 'select',
+            options: stemCandidates.map((w) => ({
+              type: 'panel_drawer' as const,
+              id: w.id,
+              label: w.title,
+              data: { panelId: w.id, panelTitle: w.title, panelType: w.type ?? '' },
+            })),
+            message: `Which panel did you mean?`,
+          }
+        }
+        // Zero stem candidates but phrase is still generic — block auto-execute.
+        // Do not fall through to panel registry which could auto-open.
+        return {
+          success: true,
+          action: 'inform',
+          message: `I'm not sure which panel you mean. Could you be more specific?`,
+        }
+      }
+      // Non-generic phrase → auto-open is safe
       return {
         success: true,
         action: 'open_panel_drawer',
@@ -3116,7 +3165,9 @@ async function resolvePanelIntent(
   // Handle open_panel_drawer responses from panel handlers (e.g., open-drawer handler).
   // Without this, panels that fall through resolveDrawerPanelTarget() and reach
   // executePanelIntent → open-drawer handler would silently become action: 'inform'.
-  if ((result as any).action === 'open_panel_drawer' && (result as any).panelId) {
+  // Guard: generic ambiguous panel phrases must not pass through to auto-open.
+  if ((result as any).action === 'open_panel_drawer' && (result as any).panelId
+      && !(context.rawUserMessage && isGenericAmbiguousPanelPhrase(context.rawUserMessage))) {
     return {
       success: true,
       action: 'open_panel_drawer',
@@ -3125,6 +3176,29 @@ async function resolvePanelIntent(
       semanticPanelId: (result as any).semanticPanelId || panelId,
       message: result.message || `Opening ${(result as any).panelTitle || panelId}...`,
       executionMeta: classifyExecutionMeta({ matchKind: 'exact', candidateCount: 1, resolverPath: 'executeAction' }),
+    }
+  } else if ((result as any).action === 'open_panel_drawer' && (result as any).panelId
+      && context.rawUserMessage && isGenericAmbiguousPanelPhrase(context.rawUserMessage)) {
+    // Generic ambiguous phrase → stem-bounded clarification instead of auto-open
+    const ptCandidates = buildStemBoundedCandidates(context.rawUserMessage, context.visibleWidgets ?? [])
+    if (ptCandidates.length > 0) {
+      return {
+        success: true,
+        action: 'select',
+        options: ptCandidates.map((w) => ({
+          type: 'panel_drawer' as const,
+          id: w.id,
+          label: w.title,
+          data: { panelId: w.id, panelTitle: w.title, panelType: w.type ?? '' },
+        })),
+        message: 'Which panel did you mean?',
+      }
+    }
+    // No matches → return the open as informational instead of executable
+    return {
+      success: true,
+      action: 'inform',
+      message: result.message || `Multiple panels match. Please be more specific.`,
     }
   }
 
