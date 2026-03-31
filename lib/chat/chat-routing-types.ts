@@ -36,7 +36,7 @@ import type { ScopeCueResult } from '@/lib/chat/input-classifiers'
 export type PreferredCandidateHint = {
   id: string
   label: string
-  source: 'badge' | 'polite_wrapper' | 'continuity' | 'ordinal_embedded'
+  source: 'badge' | 'polite_wrapper' | 'continuity' | 'ordinal_embedded' | 'label_match'
 } | null
 
 // =============================================================================

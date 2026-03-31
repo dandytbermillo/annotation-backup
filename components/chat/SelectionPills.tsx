@@ -34,7 +34,7 @@ export function SelectionPills({ options, onSelect, disabled = false }: Selectio
     <div className="flex flex-col gap-1.5 mt-2 max-w-[90%]">
       {options.map((option, index) => (
         <button
-          key={option.id}
+          key={`${option.id}-${index}`}
           onClick={() => onSelect(option)}
           disabled={disabled}
           className={cn(

@@ -5702,6 +5702,7 @@ async function dispatchRoutingInner(
                   classifierLatencyMs,
                   classifierError,
                   isFollowUp,
+                  _devProvenanceHint: 'bounded_clarification' as const,
                 }
               }
               // Chat option found but missing type/data — resolve via widget snapshots
@@ -6694,7 +6695,9 @@ async function dispatchRoutingInner(
                     classifierLatencyMs,
                     classifierError,
                     isFollowUp,
-                    _devProvenanceHint: 'llm_executed' as const,
+                    _devProvenanceHint: (ctx.pendingOptions.length > 0 || !!ctx.lastClarification)
+                      ? 'bounded_clarification' as const
+                      : 'llm_executed' as const,
                     groundingAction: {
                       type: 'execute_referent',
                       syntheticMessage,

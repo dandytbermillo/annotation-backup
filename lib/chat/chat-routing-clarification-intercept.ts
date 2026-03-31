@@ -1532,10 +1532,25 @@ export async function handleClarificationIntercept(
         matchLabels: matchingOptions.map(o => o.label),
       })
 
-      // Only auto-select if EXACTLY ONE option matches AND it's high-confidence.
+      // Only auto-select if EXACTLY ONE option matches AND it's ordinal AND high-confidence.
+      // Per clarification-vs-active-surface-priority-plan.md:201-207:
+      // - Ordinal/pill replies ("the first one", "2") → deterministic execution
+      // - Label/name replies ("entries", "open entries") → NOT deterministic, fall through to bounded LLM
       // If multiple match (e.g., "links panel" matches both D and E), fall through to re-show.
-      // Universal deterministic confidence gate: soft matches fall through to unresolved hook.
-      if (matchingOptions.length === 1) {
+      const isOrdinalInput = isSelectionOnly(
+        trimmedInput, lastClarification.options.length,
+        lastClarification.options.map(o => o.label), 'embedded'
+      ).isSelection
+      // Non-ordinal single match → pass as advisory hint to bounded LLM
+      if (matchingOptions.length === 1 && !isOrdinalInput) {
+        preferredCandidateHint = preferredCandidateHint ?? {
+          id: matchingOptions[0].id,
+          label: matchingOptions[0].label,
+          source: 'label_match' as const,
+        }
+      }
+
+      if (matchingOptions.length === 1 && isOrdinalInput) {
         const matchedOption = matchingOptions[0]
 
         // Route through shared gate — same contract as Sites 1-3 in routing-dispatcher.ts
@@ -1836,11 +1851,12 @@ export async function handleClarificationIntercept(
             },
           })
           // Fall through to downstream tiers
-        } else if (llmResult.autoExecute && llmResult.suggestedId
-            && !isGenericAmbiguousPanelPhrase(trimmedInput)) {
+        } else if (llmResult.autoExecute && llmResult.suggestedId) {
           // ===== Phase C: LLM high-confidence auto-execute =====
           // All 3 gates passed in tryLLMLastChance (kill switch + confidence + allowlisted reason).
-          // Veto: generic ambiguous panel phrases must not auto-execute from old clarification context.
+          // Note: generic-phrase veto removed for this path. During active clarification,
+          // the bounded LLM selects from the SAME option set the user sees — "entries"
+          // matching "Entries" is a valid bounded selection, not an unsafe auto-execute.
           const selectedOption = lastClarification.options.find(o => o.id === llmResult.suggestedId)
           if (selectedOption) {
             const fullOption = pendingOptions.find(opt => opt.id === selectedOption.id)
@@ -1871,7 +1887,7 @@ export async function handleClarificationIntercept(
             }
             setIsLoading(false)
             handleSelectOption(optionToSelect)
-            return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'llm_executed' }
+            return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'bounded_clarification' }
           }
           // suggestedId not found in options → fall through to safe clarifier
         } else {
@@ -2013,7 +2029,12 @@ export async function handleClarificationIntercept(
             pendingClarifierType: 'selection_disambiguation',
           })
           setIsLoading(false)
-          return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected, _devProvenanceHint: (llmResult.suggestedId || preferredCandidateHint) ? 'llm_influenced' : 'safe_clarifier' as const }
+          // Provenance: only llm_influenced when LLM actually attempted + suggested.
+          // Local hint alone (preferredCandidateHint without LLM attempt) → safe_clarifier.
+          const reShowProvenance = (llmResult.attempted && llmResult.suggestedId)
+            ? 'llm_influenced' as const
+            : 'safe_clarifier' as const
+          return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected, _devProvenanceHint: reShowProvenance }
         }
       }
       // ordinal → skip hook, Tier 1b.3a handles it

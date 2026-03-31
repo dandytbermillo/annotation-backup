@@ -102,6 +102,17 @@ export function isReferentialFollowUp(input: string): boolean {
   return REFERENTIAL_PATTERN.test(input)
 }
 
+/**
+ * Check if input is an ordinal/pill selection (deterministic during active clarification).
+ * Only these forms are deterministic: "1", "2", "first", "second", "the first one", "option 1".
+ * Label/name matches ("entries", "open entries") are NOT ordinal.
+ */
+const ORDINAL_PATTERN = /^\s*(first|second|third|fourth|fifth|last|[1-9]|option\s*[1-9]|the\s+(first|second|third|fourth|fifth|last)\s+(one|option)?|first\s+option|second\s+option|third\s+option)\s*$/i
+
+function isOrdinalSelection(input: string, _optionCount: number): boolean {
+  return ORDINAL_PATTERN.test(input.trim())
+}
+
 // =============================================================================
 // Source Validation
 // =============================================================================
@@ -161,8 +172,13 @@ export function resolveContextDecision(
     return { mode: 'none' } // explicit scope cue → escape to normal routing
   }
 
-  // Explicit specific target (not generic) → escape clarification
-  if (!isGenericAmbiguousPanelPhrase(rawInput)) {
+  // Explicit specific target (not generic) → escape clarification.
+  // BUT: when clarification is active (pendingOptions exist), do NOT escape just because
+  // the input has >1 content token. The user may be trying to select from the active options
+  // (e.g., "that entry navigatpr" → typo for "Entry Navigator"). The escape is only for
+  // truly unrelated specific commands when NO clarification is active.
+  const hasClarificationContext = ctx.pendingOptions.length > 0
+  if (!isGenericAmbiguousPanelPhrase(rawInput) && !hasClarificationContext) {
     return { mode: 'none' }
   }
 
@@ -209,19 +225,27 @@ export function resolveContextDecision(
     }
   }
 
-  // Try matching against each source in precedence order
+  // Try matching against each source in precedence order.
+  // Per governing plan: only ordinals produce deterministic 'clarification_selection'.
+  // Label/name matches return 'none' — they fall through to the bounded LLM in the intercept.
   for (const source of sources) {
     const matches = findMatchingOptions(rawInput, source.options)
 
     if (matches.length === 1) {
-      return {
-        mode: 'clarification_selection',
-        optionId: matches[0].id,
-        optionLabel: matches[0].label,
-        confidence: 'high',
-        sourceUsed: source.name,
-        destinationConstraint,
+      // Only ordinals are deterministic during active clarification.
+      // "entries" matching "Entries" is NOT deterministic — bounded LLM handles it.
+      if (isOrdinalSelection(rawInput, source.options.length)) {
+        return {
+          mode: 'clarification_selection',
+          optionId: matches[0].id,
+          optionLabel: matches[0].label,
+          confidence: 'high',
+          sourceUsed: source.name,
+          destinationConstraint,
+        }
       }
+      // Non-ordinal label match → do NOT return clarification_selection.
+      // Fall through to 'none' so the intercept's bounded LLM handles it.
     }
 
     if (matches.length > 1) {

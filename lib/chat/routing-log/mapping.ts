@@ -52,6 +52,7 @@ export function provenanceToDecisionSource(hint: string | undefined): DecisionSo
     case 'deterministic': return 'deterministic'
     case 'deterministic_surface': return 'deterministic'
     case 'llm_executed': return 'llm'
+    case 'bounded_clarification': return 'llm'
     case 'llm_influenced': return 'llm'
     case 'llm_clarifier': return 'clarifier'
     case 'safe_clarifier': return 'clarifier'
@@ -89,6 +90,7 @@ export function deriveResultStatus(
 
   // LLM-confirmed execute
   if (provenanceHint === 'llm_executed') return 'executed'
+  if (provenanceHint === 'bounded_clarification') return 'executed'
 
   // Stage 6 enforced execute
   if (provenanceHint === 's6_enforced') return 'executed'

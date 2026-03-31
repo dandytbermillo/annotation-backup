@@ -304,6 +304,51 @@ Ownership rule:
 
 No lane may invent a separate ad hoc visible-entity pool when a family-specific bounded candidate builder already exists.
 
+### 5. Visible provenance must reflect bounded live-context selection
+
+User-facing provenance must answer:
+
+- what bounded live context grounded the visible result
+
+It must not simply mirror the lowest-level internal lane that happened to win.
+
+Important distinction:
+
+- internal telemetry may still record:
+  - `routing_lane='B1'`
+  - `decision_source='memory_exact'`
+  - or other internal replay / routing details
+- but the visible assistant badge must reflect the product meaning of the turn
+
+Required rule:
+
+- if an active clarification, active option set, or validated active widget/panel context is what actually grounds the selected target,
+  the visible badge must be `🎯 Bounded-Selection`
+- this remains true even when replay / memory-assisted lookup helps recover or identify the target internally
+
+Examples:
+
+- active clarification shows panel options
+- active panel/widget also contains a validated target
+- user says `open budget100`
+- if the turn is resolved against that bounded live context, the visible result must be `🎯 Bounded-Selection`, not `Memory-Exact`
+
+- active clarification is present
+- user says `that entry navigator c`
+- bounded LLM selects from the active clarification option set
+- visible result must be `🎯 Bounded-Selection`
+
+Plain replay rule:
+
+- if no active clarification and no validated active bounded surface context exists,
+  plain replay may keep its internal replay provenance
+- if `Memory-Exact` remains visible anywhere, it must be limited to those plain replay cases only
+
+No user-facing replay dominance:
+
+- replay / memory provenance must not visually outrank the active bounded context that made the current turn interpretable
+- the user-facing badge should prefer current bounded context over internal replay mechanics
+
 Example:
 
 - active panel is `Recent`
@@ -693,6 +738,11 @@ The new work should unify these, not duplicate them.
 - expect: clarification is paused and the specific active-panel target escapes clarification routing
 
 - active clarification exists
+- active widget/panel context validates `budget100`
+- internal replay or memory assistance helps identify the target
+- expect: visible badge is still `🎯 Bounded-Selection`, not `Memory-Exact`
+
+- active clarification exists
 - user turn is plausibly both a clarification reply and a different specific target
 - expect: conflict clarification, not silent escape and not silent selection
 
@@ -718,6 +768,30 @@ The new work should unify these, not duplicate them.
 - same unresolved low-information reply repeated after one clarifier
 - expect: escalate to a more explicit bounded prompt with explicit escape guidance such as "or did you mean something else?"
 - do not loop indefinitely
+
+### Visible-provenance tests
+
+- active clarification exists
+- user says `entries`
+- bounded LLM selects from the active clarification option set
+- expect: visible badge `🎯 Bounded-Selection`
+
+- active clarification exists
+- user says `the first one`
+- expect: visible badge `Deterministic`
+
+- active clarification exists
+- active panel/widget validates `budget100`
+- user says `open budget100`
+- internal replay assists resolution
+- expect:
+  - action succeeds
+  - internal telemetry may still record replay / memory assistance
+  - visible badge is `🎯 Bounded-Selection`
+
+- no active clarification and no validated active bounded surface context
+- plain replay resolves the turn
+- expect: replay-specific visible badge only if the product still chooses to expose replay at all
 
 ### Telemetry tests
 

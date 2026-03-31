@@ -918,8 +918,8 @@ function ChatNavigationPanelContent({
           // Clear any stale pre-existing clarificationSnapshot from prior non-panel_drawer interactions
           clearClarificationSnapshot()
           // Proactive latch: set focus latch before panel opens
-          const panelData = option.data as { panelId?: string; panelTitle?: string }
-          if (panelData.panelId) {
+          const panelData = (option.data ?? {}) as { panelId?: string; panelTitle?: string }
+          if (panelData?.panelId) {
             const allSnapshots = getAllVisibleSnapshots()
             const existing = allSnapshots.find(s => s.panelId === panelData.panelId)
             if (existing) {
@@ -1884,15 +1884,21 @@ function ChatNavigationPanelContent({
           if (result && (result as { success?: boolean }).success !== false) {
             replaySucceeded = true
             // Execution confirmed — add success message and fire memory logs
+            // Context-aware badge remap: if active clarification or active bounded context
+            // is present, show Bounded-Selection instead of Memory-Exact. The resolver logic
+            // is the same (B1 replay validated against live state), but the user-facing badge
+            // should reflect that the turn was grounded by active bounded context.
+            const hasActiveBoundedContext = !!lastClarification || pendingOptions.length > 0
+            const visibleProvenance = hasActiveBoundedContext ? 'bounded_clarification' as const : 'memory_exact' as const
             const replayMsg: ChatMessage = {
               id: `assistant-${Date.now()}`,
               role: 'assistant',
               content: replayResolution.message ?? 'Navigating...',
               timestamp: new Date(),
               isError: false,
-              provenance: 'memory_exact',
+              provenance: visibleProvenance,
             }
-            addMessage(replayMsg, { tierLabel: routingResult.tierLabel, provenance: 'memory_exact' })
+            addMessage(replayMsg, { tierLabel: routingResult.tierLabel, provenance: visibleProvenance })
 
             // Fire pending memory log (same contract as existing memory-served execution)
             if (routingResult._pendingMemoryLog) {
@@ -1923,9 +1929,13 @@ function ChatNavigationPanelContent({
           addMessage(errorMsg)
         }
 
-        // Only tag memory_exact provenance on confirmed replay success
+        // Only tag provenance on confirmed replay success.
+        // Context-aware remap: active bounded context → Bounded-Selection.
         if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current && replaySucceeded) {
-          setProvenance(lastAddedAssistantIdRef.current, 'memory_exact')
+          const replayBadge = (lastClarification || pendingOptions.length > 0)
+            ? 'bounded_clarification' as const
+            : 'memory_exact' as const
+          setProvenance(lastAddedAssistantIdRef.current, replayBadge)
         }
         setIsLoading(false)
         return
@@ -2691,8 +2701,12 @@ function ChatNavigationPanelContent({
           }
 
           // Dev provenance: tag before early return (LLM select_option)
+          // Preserve bounded_clarification provenance from the intercept if present.
           if (isProvenanceDebugEnabled() && lastAddedAssistantIdRef.current) {
-            setProvenance(lastAddedAssistantIdRef.current, 'llm_executed')
+            const provenanceToUse = routingResult?._devProvenanceHint === 'bounded_clarification'
+              ? 'bounded_clarification' as const
+              : 'llm_executed' as const
+            setProvenance(lastAddedAssistantIdRef.current, provenanceToUse)
           }
           // Bug #3 (6b): Outcome log for select_option matched
           if (!outcomeLogFired && routingResult?._routingLogPayload) {
@@ -3199,6 +3213,9 @@ function ChatNavigationPanelContent({
         // Recognized-intent errors (go_home → "already on Home", etc.) are structured
         // responses, not generic clarifiers. Tag them as llm_influenced.
         const isRecognizedIntentError = act === 'error' && intentName !== 'unsupported'
+        // Context-aware remap: active bounded context → Bounded-Selection for executed actions.
+        const hasActiveBoundedContext = !!lastClarification || pendingOptions.length > 0
+        const executedProvenance = hasActiveBoundedContext ? 'bounded_clarification' as const : 'llm_executed' as const
         const prov = isRecognizedIntentError
           ? 'llm_influenced'
           : CLARIFIER_ACTIONS.has(act)
@@ -3207,7 +3224,7 @@ function ChatNavigationPanelContent({
               ? 'llm_influenced'
               : OPTION_PROMPT_ACTIONS.has(act)
                 ? 'llm_clarifier'
-                : 'llm_executed'
+                : executedProvenance
         setProvenance(lastAddedAssistantIdRef.current, prov)
       }
 
