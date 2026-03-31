@@ -161,6 +161,16 @@ These must outrank both clarification context and active surface context:
 
 If the user supplies a clear, explicit target or explicit scope cue, route accordingly.
 
+Explicit-target escape rule:
+
+- an active clarification does not trap turns that clearly name a different specific target
+- if the user names a specific target that is not part of the active clarification option set, that target may escape the clarification and route normally
+- this escape is allowed only when the target is validated by a bounded candidate source, not by free-text specificity alone
+- this includes:
+  - a concrete note / item / entry target such as `open budget100`
+  - a concrete active-panel clickable / shorthand target such as `link panel b`
+- but if the same turn is also plausibly selecting from the active clarification, treat it as a conflict and clarify rather than silently escaping
+
 Required distinction:
 
 - explicit scope cue:
@@ -174,28 +184,28 @@ If a destination cue conflicts with the leading candidate, that candidate must n
 
 When an active clarification exists, check it before explicit-command bypass clears state.
 
-Treat the input as a clarification-follow-up only when there is **strong selection evidence**, such as:
+Treat the input as a clarification-follow-up only when there is **strong selection evidence** that stays within the active option set, such as:
 
 - clarification is still within TTL
 - options are still active or safely recoverable
 - ordinal or pill mapping
-- strong overlap with one shown option label
-- clear option-shaped reply
-- repeated phrasing that closely matches a shown option
+- clear option-shaped reply that is ordinal-only
 
 Examples:
 
-- `entries`
-- `open entries`
 - `the first one`
 - `option 1`
-- `entry navigator c`
+- `first`
+- `2`
 
 Important rule:
 
-- a reply like `open entries` after a clarifier that already showed `Entries` should usually be treated as selecting or confirming that option
-- it must not be blindly treated as a fresh command just because `open` is an explicit verb
-- but it also must not auto-execute from weak overlap alone if the option match is not actually strong enough
+- ordinal or pill-style replies may resolve deterministically against the active clarification
+- label or component-name replies like `entries`, `entry`, `home`, or `recent` must not resolve deterministically, even when they overlap a shown option
+- command-shaped label replies like `open entries` must not resolve deterministically from label overlap alone
+- if deterministic ordinal selection fails, the router must stay inside the same bounded clarification and call bounded LLM next
+- if bounded LLM still cannot resolve uniquely, re-show the same bounded clarification with explicit escape guidance rather than falling through to general routing
+- the re-shown clarifier may add a prompt such as "Did you mean one of these options, or something else?" and may include an explicit escape affordance like `Something else`
 
 Operational threshold requirement:
 
@@ -204,6 +214,7 @@ Before implementation, the router must define these terms concretely in one shar
 - `strong overlap`
 - `clear option-shaped reply`
 - `clearly unrelated new specific command`
+- `ordinal-only deterministic reply`
 
 Those thresholds must not be left to lane-specific interpretation.
 
@@ -220,8 +231,12 @@ type ContextThresholds = {
   strongOptionOverlap: { unique: boolean; minConfidenceBand: 'high' | 'medium' }
   clearOptionShapedReply: {
     ordinal: boolean
-    exactLabelLike: boolean
-    conciseConfirmationLike: boolean
+    pillIndexed: boolean
+    conciseOrdinalLike: boolean
+  }
+  ordinalOnlyDeterministic: {
+    allowed: boolean
+    reason: 'ordinal' | 'pill_index' | 'not_allowed_label'
   }
   clearlyUnrelatedNewSpecificCommand: {
     explicitTargetPresent: boolean
@@ -236,6 +251,7 @@ Uniqueness rule:
 - if label overlap is strong with more than one shown option
 - do **not** treat the reply as a resolved selection
 - clarify again from the same bounded option set
+- do not just repeat the same pills silently; add explicit escape guidance so the user can either choose from the shown set or clearly break out of it
 
 Example:
 
@@ -266,6 +282,7 @@ If clarification context and active-surface context both produce plausible but d
 
 - do not execute
 - reuse the bounded candidate set and return a tighter bounded clarifier
+- when possible, add explicit escape guidance instead of a bare repeat so the user can say they meant something else without being trapped in a loop
 
 Candidate-set discipline:
 
@@ -273,6 +290,7 @@ Candidate-set discipline:
 - only use validated bounded candidates derived from:
   - the active clarification option set
   - the active-surface-compatible bounded candidate set
+- specific-target escape is allowed only when the escaping target is validated by one of those bounded sources or another family-specific bounded candidate builder
 - if neither set is trustworthy enough, clarify explicitly rather than inventing a new mixed pool
 
 Ownership rule:
@@ -315,6 +333,13 @@ But if the system cannot confidently decide:
 - a selection from that clarification was successfully executed
 - the user explicitly dismisses or resets the clarification
 
+Concrete examples of a clearly unrelated new specific command:
+
+- active clarification is showing panel options, but the user says `open budget100`
+- active clarification is showing panel options, but the user says `link panel b` and that target belongs to the active panel/widget rather than the shown clarification options
+
+In those cases, the clarification may be paused and routing may follow the new specific target, unless the same turn also has a strong competing clarification match.
+
 Default TTLs:
 
 - active clarification:
@@ -338,11 +363,18 @@ Required rule:
 
 - before Tier 2a explicit-command bypass clears active clarification state
 - check whether the current input strongly matches one of the approved recoverable clarification sources:
-  - `pendingOptions`
-  - active option set
-  - approved clarification snapshot / last-options source
+- `pendingOptions`
+- active option set
+- approved clarification snapshot / last-options source
 - check whether the current input strongly matches one of the active clarification options
 - if yes, treat it as a clarification-follow-up instead of a fresh command
+
+Deterministic execution rule inside the bridge:
+
+- deterministic selection is limited to ordinal / pill-style replies only
+- direct label or component-name replies are not deterministic in this bridge
+- after a deterministic miss, the next step is bounded LLM over the same active clarification options
+- the bridge must not fall through to unrelated routing lanes before that bounded LLM step finishes
 
 Recoverable-source whitelist:
 
@@ -650,6 +682,20 @@ The new work should unify these, not duplicate them.
 - example: `from chat list it in the chat option 1`
 - expect: shared helper applies all three constraints consistently without lane drift
 
+- active clarification exists
+- user says `open budget100`
+- `budget100` is not one of the active clarification options but is a clear specific target validated by a bounded candidate source
+- expect: clarification is paused and the explicit specific target escapes clarification routing
+
+- active clarification exists
+- user says `link panel b`
+- `link panel b` is a valid active-panel clickable target from a bounded active-surface candidate set, not one of the active clarification options
+- expect: clarification is paused and the specific active-panel target escapes clarification routing
+
+- active clarification exists
+- user turn is plausibly both a clarification reply and a different specific target
+- expect: conflict clarification, not silent escape and not silent selection
+
 - explicit scope cue and explicit destination cue are both present
 - expect: scope and destination are applied as separate bounded constraints, not collapsed into one ambiguous override
 
@@ -670,7 +716,7 @@ The new work should unify these, not duplicate them.
 ### Anti-loop tests
 
 - same unresolved low-information reply repeated after one clarifier
-- expect: escalate to a more explicit bounded prompt
+- expect: escalate to a more explicit bounded prompt with explicit escape guidance such as "or did you mean something else?"
 - do not loop indefinitely
 
 ### Telemetry tests

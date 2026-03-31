@@ -199,6 +199,12 @@ export async function handleClarificationIntercept(
     resetSelectionContinuity,
   } = ctx
 
+  console.log('[intercept] TOP:', {
+    input: trimmedInput,
+    hasLastClarification: !!lastClarification,
+    lastClarificationOptionsCount: lastClarification?.options?.length ?? 0,
+    pendingOptionsCount: pendingOptions.length,
+  })
   void debugLog({
     component: 'ChatNavigation',
     action: 'intercept_entry',
@@ -1349,6 +1355,12 @@ export async function handleClarificationIntercept(
         isNewQuestionOrCommandDetected,
       }
     } else if (lastClarification?.options && lastClarification.options.length > 0) {
+      console.log('[intercept] entering label matching branch:', {
+        input: trimmedInput,
+        commandBypassesLabelMatching: false,
+        optionCount: lastClarification.options.length,
+        pendingOptionsCount: pendingOptions.length,
+      })
       void debugLog({
         component: 'ChatNavigation',
         action: 'clarification_selection_allowed_selection_like',
@@ -1513,6 +1525,12 @@ export async function handleClarificationIntercept(
       // Find ALL matching options using shared findMatchingOptions helper.
       // Per raw-strict-exact contract Rule 1: raw input only, no verb-stripped union.
       const matchingOptions = findMatchingOptions(normalizedInput, lastClarification.options)
+      console.log('[intercept] label matching:', {
+        normalizedInput,
+        optionLabels: lastClarification.options.map(o => o.label),
+        matchCount: matchingOptions.length,
+        matchLabels: matchingOptions.map(o => o.label),
+      })
 
       // Only auto-select if EXACTLY ONE option matches AND it's high-confidence.
       // If multiple match (e.g., "links panel" matches both D and E), fall through to re-show.

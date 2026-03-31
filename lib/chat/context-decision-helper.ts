@@ -175,28 +175,38 @@ export function resolveContextDecision(
       : undefined
 
   // --- Priority 2: Latest active clarification (source precedence order) ---
-  // Check each recoverable source in order of freshness/reliability
+  // Check each recoverable source in order of freshness/reliability.
+  //
+  // Generic ambiguous phrases (e.g., "open entries") may ONLY match from live pendingOptions.
+  // Recoverable sources (lastOptionsShown, snapshot) should not auto-select for generic phrases
+  // because the clarification cycle is "spent" once options are consumed — a fresh generic query
+  // should start a new clarification cycle, not replay the old one.
+  const isGeneric = isGenericAmbiguousPanelPhrase(rawInput)
   type SourceName = 'pendingOptions' | 'lastClarification' | 'lastOptionsShown' | 'clarificationSnapshot'
   const sources: Array<{ name: SourceName; options: ClarificationOption[] }> = []
 
-  // Source 1: Live pendingOptions (always valid)
+  // Source 1: Live pendingOptions (always valid, even for generic phrases)
   if (ctx.pendingOptions.length > 0) {
     sources.push({ name: 'pendingOptions', options: ctx.pendingOptions })
   }
 
-  // Source 2: lastClarification (valid if fresh + aligned to lineage)
-  if (isSourceValid(ctx.lastClarification, SOURCE_TTL.lastClarification, ctx.activeOptionSetId)) {
-    sources.push({ name: 'lastClarification', options: ctx.lastClarification!.options })
-  }
+  // Sources 2-4: Recoverable sources — only for non-generic/specific follow-ups.
+  // Generic phrases must not auto-select from spent/stale sources.
+  if (!isGeneric) {
+    // Source 2: lastClarification (valid if fresh + aligned to lineage)
+    if (isSourceValid(ctx.lastClarification, SOURCE_TTL.lastClarification, ctx.activeOptionSetId)) {
+      sources.push({ name: 'lastClarification', options: ctx.lastClarification!.options })
+    }
 
-  // Source 3: lastOptionsShown (valid if within TTL + same lineage)
-  if (isSourceValid(ctx.lastOptionsShown, SOURCE_TTL.lastOptionsShown, ctx.activeOptionSetId)) {
-    sources.push({ name: 'lastOptionsShown', options: ctx.lastOptionsShown!.options })
-  }
+    // Source 3: lastOptionsShown (valid if within TTL + same lineage)
+    if (isSourceValid(ctx.lastOptionsShown, SOURCE_TTL.lastOptionsShown, ctx.activeOptionSetId)) {
+      sources.push({ name: 'lastOptionsShown', options: ctx.lastOptionsShown!.options })
+    }
 
-  // Source 4: clarificationSnapshot (valid if within TTL + not invalidated + aligned)
-  if (isSourceValid(ctx.clarificationSnapshot, SOURCE_TTL.clarificationSnapshot, ctx.activeOptionSetId)) {
-    sources.push({ name: 'clarificationSnapshot', options: ctx.clarificationSnapshot!.options })
+    // Source 4: clarificationSnapshot (valid if within TTL + not invalidated + aligned)
+    if (isSourceValid(ctx.clarificationSnapshot, SOURCE_TTL.clarificationSnapshot, ctx.activeOptionSetId)) {
+      sources.push({ name: 'clarificationSnapshot', options: ctx.clarificationSnapshot!.options })
+    }
   }
 
   // Try matching against each source in precedence order

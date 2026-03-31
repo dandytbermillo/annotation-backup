@@ -1411,8 +1411,10 @@ export async function dispatchRouting(
   // Stage 6 shadow must also keep the wrapper active — the content-intent block (6x.3)
   // lives in the wrapper region and would be bypassed without this check.
   if (!phase1Enabled && !memoryReadEnabled && !memoryWriteEnabled && !shadowEnabled) {
+    console.log('[dispatcher] FAST PATH (no instrumentation):', ctx.trimmedInput)
     return dispatchRoutingInner(ctx)
   }
+  console.log('[dispatcher] INSTRUMENTED PATH entry:', ctx.trimmedInput)
 
   const turnSnapshotForLog = buildTurnSnapshot({})
 
@@ -1479,6 +1481,7 @@ export async function dispatchRouting(
   })
 
 
+  console.log('[dispatcher] B1 gate:', { input: ctx.trimmedInput, memoryReadEnabled, shouldSkipB1ForSelection })
   if (memoryReadEnabled && !shouldSkipB1ForSelection) {
     try {
       // B1 uses the shared replay snapshot directly — no recomputation
@@ -1587,6 +1590,7 @@ export async function dispatchRouting(
 
               // Return with _memoryCandidate + _pendingMemoryLog + _pendingMemoryWrite attached
               // sendMessage() does commit-point revalidation (Gate 1) then fires log + write
+              console.log('[dispatcher] B1 EARLY RETURN:', { input: ctx.trimmedInput, action: memoryAction?.tierLabel })
               return memoryAction
             }
             // else: noteManifestRejected — fall through to normal tier chain
@@ -1598,6 +1602,7 @@ export async function dispatchRouting(
     }
   }
 
+  console.log('[dispatcher] past B1:', ctx.trimmedInput)
   // ---------------------------------------------------------------------------
   // Phase 3: Semantic memory lookup (Lane B2) — after B1 miss, before tier chain
   // IMPORTANT: B2 does NOT return handled=true. It attaches validated candidates
@@ -1785,6 +1790,7 @@ export async function dispatchRouting(
     // queries containing "show" can reach the resolver. The resolver has its
     // own validation (manifest, confidence bands, feature flag) and returns
     // null for queries it cannot handle.
+    console.log('[dispatcher] past content-intent, before surface resolver:', ctx.trimmedInput)
     let surfaceCandidateHintForArbiter: SurfaceCandidateHint | undefined
     let surfaceClarificationCandidates: SurfaceCandidateHint[] | undefined
     // S6 priority seam: surface resolver runs even if S6 matched, when the input
@@ -2248,7 +2254,10 @@ export async function dispatchRouting(
         return stateResult
 
       // ── Phase 4: panel_widget.state_info (migrated) ──
-      } else if (isMigrated && rawDecision!.intentFamily === 'state_info' && rawDecision!.surface === 'panel_widget') {
+      // Skip when pendingOptions/lastClarification are active — bare nouns like "entries"
+      // should reach the tier chain for label matching, not be answered as panel state queries.
+      } else if (isMigrated && rawDecision!.intentFamily === 'state_info' && rawDecision!.surface === 'panel_widget'
+          && !(ctx.pendingOptions.length > 0 || !!ctx.lastClarification)) {
         contentIntentMatchedThisTurn = true
 
         // Phase E: if a medium surface hint exists and the arbiter confirmed
@@ -2319,7 +2328,11 @@ export async function dispatchRouting(
         const surfaceResolverProducedNothing = !surfaceCandidateHintForArbiter
         const isGenericPanelQuestion = isPanelOpenQuery(ctx.trimmedInput)
           || isGenericPanelStateQuestion(ctx.trimmedInput)
-        if (surfaceResolverProducedNothing && !isGenericPanelQuestion) {
+        // Skip arbiter clarifier when pendingOptions are active — the user may be
+        // selecting from the active clarifier (e.g., "entries" matching "Entries" pill).
+        // Let the tier chain handle label matching first.
+        const hasPendingClarification = ctx.pendingOptions.length > 0 || !!ctx.lastClarification
+        if (surfaceResolverProducedNothing && !isGenericPanelQuestion && !hasPendingClarification) {
           // Anti-loop: check if previous assistant was already this clarifier
           const lastAssistant = ctx.messages.filter((m: { role: string }) => m.role === 'assistant').at(-1) as { content?: string } | undefined
           const isRepeat = lastAssistant?.content?.startsWith("I'm not sure which panel")
@@ -2630,8 +2643,15 @@ export async function dispatchRouting(
   // ---------------------------------------------------------------------------
   // Normal tier chain (skipped when Phase 5 override or near-tie clarifier is active)
   // ---------------------------------------------------------------------------
+  console.log('[dispatcher] tier-chain gate:', {
+    input: ctx.trimmedInput,
+    hasResult: !!result,
+    phase5SkippedTierChain,
+    hintScope,
+  })
   if (result) {
     // Near-tie clarifier already set result — skip tier chain
+    console.log('[dispatcher] SKIPPED tier chain: result already set')
   } else if (phase5SkippedTierChain) {
     // Phase 5 override: return handled=false so raw query reaches navigate API.
     // No tier chain runs → no addMessage side effects → no clarifier leakage.
@@ -3093,6 +3113,12 @@ async function dispatchRoutingInner(
   // (snapshot lifecycle, repair memory, stop suppression). The internal
   // order is: Tier 0 → Tier 1 → Tier 3, matching the plan.
   // =========================================================================
+  console.log('[dispatcher] BEFORE handleClarificationIntercept:', {
+    input: ctx.trimmedInput,
+    hasLastClarification: !!ctx.lastClarification,
+    lastClarificationOptionsCount: ctx.lastClarification?.options?.length ?? 0,
+    pendingOptionsCount: ctx.pendingOptions.length,
+  })
   const clarificationResult = await handleClarificationIntercept({
     trimmedInput: ctx.trimmedInput,
     lastClarification: ctx.lastClarification,
@@ -3328,6 +3354,14 @@ async function dispatchRoutingInner(
   // 1. live pendingOptions → 2. lastClarification → 3. lastOptionsShown → 4. snapshot
   // =========================================================================
   if (!clarificationResult.handled) {
+    console.log('[context-decision] dispatcher consumer checking:', {
+      input: ctx.trimmedInput,
+      hasPendingOptions: (preClearPendingOptions ?? ctx.pendingOptions).length > 0,
+      hasLastClarification: !!(preClearLastClarification ?? ctx.lastClarification),
+      hasLastOptionsShown: !!ctx.lastOptionsShown,
+      hasSnapshot: !!ctx.clarificationSnapshot,
+      clarificationCleared,
+    })
     const contextDecision = resolveContextDecision(ctx.trimmedInput, {
       // Clarification sources — use pre-clear state if clearing happened this turn
       pendingOptions: preClearPendingOptions
@@ -3355,6 +3389,11 @@ async function dispatchRoutingInner(
       isReferentialInput: isReferentialInput(ctx.trimmedInput),
     })
 
+    console.log('[context-decision] dispatcher result:', {
+      mode: contextDecision.mode,
+      ...(contextDecision.mode === 'clarification_selection' ? { optionId: contextDecision.optionId, sourceUsed: contextDecision.sourceUsed } : {}),
+    })
+
     if (contextDecision.mode === 'clarification_selection') {
       // Matched a recoverable option — resolve from the correct source.
       // The helper reports which source matched; look up the full option data there.
@@ -3362,23 +3401,41 @@ async function dispatchRoutingInner(
       const matchId = contextDecision.optionId
 
       if (contextDecision.sourceUsed === 'pendingOptions') {
+        // Live pending options have full data — use directly
         matchedPending = (preClearPendingOptions ?? ctx.pendingOptions).find(o => o.id === matchId)
-      } else if (contextDecision.sourceUsed === 'lastClarification') {
-        // lastClarification options are ClarificationOption (no data field).
-        // Build a minimal PendingOptionState from the matched clarification option.
-        const clarOpt = (preClearLastClarification ?? ctx.lastClarification)?.options?.find(o => o.id === matchId)
+      } else {
+        // Recoverable sources (lastClarification, lastOptionsShown, snapshot) are
+        // ClarificationOption — no data field. Reconstruct data from type + id + label.
+        let clarOpt: ClarificationOption | undefined
+        if (contextDecision.sourceUsed === 'lastClarification') {
+          clarOpt = (preClearLastClarification ?? ctx.lastClarification)?.options?.find(o => o.id === matchId)
+        } else if (contextDecision.sourceUsed === 'lastOptionsShown') {
+          clarOpt = ctx.lastOptionsShown?.options?.find(o => o.id === matchId)
+        } else if (contextDecision.sourceUsed === 'clarificationSnapshot') {
+          clarOpt = ctx.clarificationSnapshot?.options?.find(o => o.id === matchId)
+        }
         if (clarOpt) {
-          matchedPending = { index: 0, label: clarOpt.label, sublabel: clarOpt.sublabel, type: clarOpt.type, id: clarOpt.id, data: undefined }
-        }
-      } else if (contextDecision.sourceUsed === 'lastOptionsShown') {
-        const shownOpt = ctx.lastOptionsShown?.options?.find(o => o.id === matchId)
-        if (shownOpt) {
-          matchedPending = { index: 0, label: shownOpt.label, sublabel: shownOpt.sublabel, type: shownOpt.type, id: shownOpt.id, data: undefined }
-        }
-      } else if (contextDecision.sourceUsed === 'clarificationSnapshot') {
-        const snapOpt = ctx.clarificationSnapshot?.options?.find(o => o.id === matchId)
-        if (snapOpt) {
-          matchedPending = { index: 0, label: snapOpt.label, sublabel: snapOpt.sublabel, type: snapOpt.type, id: snapOpt.id, data: undefined }
+          // Reconstruct execution data from option type.
+          // panel_drawer needs { panelId, panelTitle } for openPanelDrawer.
+          // Other types (workspace, note, entry) need their own data shape,
+          // but the id is the primary key for all of them.
+          const reconstructedData = clarOpt.type === 'panel_drawer'
+            ? { panelId: clarOpt.id, panelTitle: clarOpt.label }
+            : clarOpt.type === 'workspace'
+              ? { id: clarOpt.id, name: clarOpt.label }
+              : clarOpt.type === 'note'
+                ? { id: clarOpt.id, title: clarOpt.label }
+                : clarOpt.type === 'entry'
+                  ? { id: clarOpt.id, name: clarOpt.label }
+                  : { id: clarOpt.id }
+          matchedPending = {
+            index: 0,
+            label: clarOpt.label,
+            sublabel: clarOpt.sublabel,
+            type: clarOpt.type,
+            id: clarOpt.id,
+            data: reconstructedData,
+          }
         }
       }
 
@@ -3402,6 +3459,11 @@ async function dispatchRoutingInner(
           data: matchedPending.data as SelectionOption['data'],
         }
         ctx.handleSelectOption(optionToSelect)
+        // Clear recoverable sources — this selection cycle is done.
+        // Without this, the next "open entries" would match the same stale options
+        // instead of showing a fresh clarifier.
+        ctx.clearLastOptionsShown?.()
+        if (ctx.clearClarificationSnapshot) ctx.clearClarificationSnapshot()
         ctx.setIsLoading(false)
         return {
           ...defaultResult,
@@ -6941,6 +7003,35 @@ async function dispatchRoutingInner(
                 })),
               }
               ctx.addMessage(clarifierMsg)
+
+              // Set pendingOptions + lastClarification so follow-up inputs (e.g., "entries")
+              // can match against the active clarifier options via the intercept.
+              // Without this, the intercept finds no lastClarification and bare-noun
+              // follow-ups escape to the arbiter instead of selecting from the visible pills.
+              const grndPendingOptions: PendingOptionState[] = boundOptions.map((opt, idx) => ({
+                index: idx + 1,
+                label: opt.label,
+                sublabel: opt.sublabel,
+                type: opt.type,
+                id: opt.id,
+                data: opt.data,
+              }))
+              ctx.setPendingOptions(grndPendingOptions)
+              ctx.setPendingOptionsMessageId(clarifierMsgId)
+              ctx.setPendingOptionsGraceCount(0)
+              ctx.setLastClarification({
+                type: 'option_selection',
+                originalIntent: ctx.trimmedInput,
+                messageId: clarifierMsgId,
+                timestamp: Date.now(),
+                clarificationQuestion: clarifierMsg.content,
+                options: boundOptions.map(opt => ({
+                  id: opt.id,
+                  label: opt.label,
+                  sublabel: opt.sublabel,
+                  type: opt.type,
+                })),
+              })
               ctx.setIsLoading(false)
 
               // Per incubation plan §Observability: LLM generated clarifier wording

@@ -124,18 +124,26 @@ export function findMatchingOptions(
 ): ClarificationOption[] {
   const normalizedCandidate = candidate.toLowerCase().trim()
   if (!normalizedCandidate) return []
+
+  // Priority 1: Exact label match (case-insensitive) — strongest signal.
+  // If an exact match exists, return ONLY that. Prevents substring containment
+  // false positives (e.g., "entries" matching both "Entries" and "entries Links Panel cc").
+  const exactMatches = options.filter(opt => opt.label.toLowerCase().trim() === normalizedCandidate)
+  if (exactMatches.length > 0) return exactMatches
+
+  // Priority 2: Canonical token exact match (singular/plural normalization)
+  const inputTokens = toCanonicalTokens(normalizedCandidate)
+  const tokenExactMatches = options.filter(opt => {
+    const labelTokens = toCanonicalTokens(opt.label.toLowerCase().trim())
+    return tokensMatch(inputTokens, labelTokens)
+  })
+  if (tokenExactMatches.length > 0) return tokenExactMatches
+
+  // Priority 3: Substring / word-boundary containment (weakest — only if no stronger match)
   return options.filter(opt => {
     const label = opt.label.toLowerCase().trim()
-    // 1. Exact / substring / word-boundary match
-    if (label === normalizedCandidate ||
-        label.includes(normalizedCandidate) ||
-        matchesWithWordBoundary(normalizedCandidate, label)) {
-      return true
-    }
-    // 2. Canonical token matching (handles singular/plural)
-    const inputTokens = toCanonicalTokens(normalizedCandidate)
-    const labelTokens = toCanonicalTokens(label)
-    return tokensMatch(inputTokens, labelTokens)
+    return label.includes(normalizedCandidate) ||
+        matchesWithWordBoundary(normalizedCandidate, label)
   })
 }
 

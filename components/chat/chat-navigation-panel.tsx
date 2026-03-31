@@ -1394,8 +1394,11 @@ function ChatNavigationPanelContent({
 
   const sendMessage = useCallback(async () => {
     const trimmedInput = input.trim()
-    console.log('[ChatPanel] sendMessage called with:', trimmedInput)
-    if (!trimmedInput || isLoading) return
+    console.log('[ChatPanel] sendMessage called with:', trimmedInput, 'isLoading:', isLoading)
+    if (!trimmedInput || isLoading) {
+      if (isLoading) console.log('[ChatPanel] BLOCKED by isLoading guard:', trimmedInput)
+      return
+    }
 
     // Add user message
     const userMessage: ChatMessage = {
