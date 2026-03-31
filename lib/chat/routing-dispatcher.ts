@@ -1987,7 +1987,10 @@ export async function dispatchRouting(
       const isHistoryInfo = detectHintScope(ctx.trimmedInput) === 'history_info'
       const HOME_NAV_BYPASS = /\b(go\s+(to\s+)?home|take\s+me\s+home|return\s+home|back\s+home)\b/i
       const isHomeNav = HOME_NAV_BYPASS.test(ctx.trimmedInput)
-      return hasSurfaceContext && !contentResult.isContentIntent && !isArbiterHardExcluded(ctx.trimmedInput) && !isActionNav && !isHistoryInfo && !isHomeNav
+      // Clarification owns the turn: skip arbiter entirely when clarification is active.
+      // Ordinals and bare nouns must reach the tier chain for deterministic/bounded-LLM handling.
+      const hasActiveClarification = ctx.pendingOptions.length > 0 || !!ctx.lastClarification
+      return hasSurfaceContext && !contentResult.isContentIntent && !isArbiterHardExcluded(ctx.trimmedInput) && !isActionNav && !isHistoryInfo && !isHomeNav && !hasActiveClarification
     })()) {
       // ── 6x.8 Phase 4: Cross-surface arbiter for uncertain turns across surfaces ──
       const NOTE_REFERENCE_PATTERN = /\b(this|that|the|my|which|what|any|a)\s+(note|document|page)\b/i
@@ -2254,10 +2257,7 @@ export async function dispatchRouting(
         return stateResult
 
       // ── Phase 4: panel_widget.state_info (migrated) ──
-      // Skip when pendingOptions/lastClarification are active — bare nouns like "entries"
-      // should reach the tier chain for label matching, not be answered as panel state queries.
-      } else if (isMigrated && rawDecision!.intentFamily === 'state_info' && rawDecision!.surface === 'panel_widget'
-          && !(ctx.pendingOptions.length > 0 || !!ctx.lastClarification)) {
+      } else if (isMigrated && rawDecision!.intentFamily === 'state_info' && rawDecision!.surface === 'panel_widget') {
         contentIntentMatchedThisTurn = true
 
         // Phase E: if a medium surface hint exists and the arbiter confirmed
@@ -2328,11 +2328,7 @@ export async function dispatchRouting(
         const surfaceResolverProducedNothing = !surfaceCandidateHintForArbiter
         const isGenericPanelQuestion = isPanelOpenQuery(ctx.trimmedInput)
           || isGenericPanelStateQuestion(ctx.trimmedInput)
-        // Skip arbiter clarifier when pendingOptions are active — the user may be
-        // selecting from the active clarifier (e.g., "entries" matching "Entries" pill).
-        // Let the tier chain handle label matching first.
-        const hasPendingClarification = ctx.pendingOptions.length > 0 || !!ctx.lastClarification
-        if (surfaceResolverProducedNothing && !isGenericPanelQuestion && !hasPendingClarification) {
+        if (surfaceResolverProducedNothing && !isGenericPanelQuestion) {
           // Anti-loop: check if previous assistant was already this clarifier
           const lastAssistant = ctx.messages.filter((m: { role: string }) => m.role === 'assistant').at(-1) as { content?: string } | undefined
           const isRepeat = lastAssistant?.content?.startsWith("I'm not sure which panel")
