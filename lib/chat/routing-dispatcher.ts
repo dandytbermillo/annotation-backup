@@ -84,6 +84,7 @@ import type { RoutingLogPayload } from '@/lib/chat/routing-log'
 import { buildMemoryWritePayload, buildNoteManifestWritePayload } from '@/lib/chat/routing-log/memory-write-payload'
 import { resolveSurfaceCommand, isSurfaceResolverError, isSurfaceCandidateHint, isResolvedSurfaceCommand, isSurfaceClarificationSet, hasSurfaceFamilyEvidence, type SurfaceCandidateHint, type SurfaceClarificationSet } from '@/lib/chat/surface-resolver'
 import { isGenericAmbiguousPanelPhrase, extractContentTokens } from '@/lib/chat/generic-phrase-guard'
+import { resolveContextDecision, isReferentialFollowUp as isReferentialInput } from '@/lib/chat/context-decision-helper'
 import { lookupExactMemory } from '@/lib/chat/routing-log/memory-reader'
 import { lookupSemanticMemory, type SemanticCandidate, type SemanticLookupResult } from '@/lib/chat/routing-log/memory-semantic-reader'
 import { validateMemoryCandidate } from '@/lib/chat/routing-log/memory-validator'
@@ -3305,11 +3306,163 @@ async function dispatchRoutingInner(
   // nullify stale ctx references so downstream tiers (esp. Tier 4.5 grounding) don't
   // inherit phantom options. React state setters are async — ctx still holds old values.
   // Direct field mutation only — setters are async and don't protect same-turn reads.
+  // Capture pre-clear state for the secondary context decision consumer.
+  const preClearLastClarification = clarificationCleared ? ctx.lastClarification : null
+  const preClearPendingOptions = clarificationCleared ? [...ctx.pendingOptions] : null
   if (clarificationCleared) {
     ctx.lastClarification = null
     ctx.pendingOptions = []
     ctx.activeOptionSetId = null
     ctx.setPendingOptionsGraceCount(0)
+  }
+
+  // =========================================================================
+  // SECONDARY CONTEXT DECISION CONSUMER
+  //
+  // Per clarification-vs-active-surface-priority-plan.md:
+  // If the Tier 0/1 bridge didn't handle this turn, consult the shared helper
+  // BEFORE grounding/API lanes. This catches inputs that escaped the bridge
+  // (e.g., non-command-shaped but matching a recoverable clarification option).
+  //
+  // The helper checks recoverable sources in precedence order:
+  // 1. live pendingOptions → 2. lastClarification → 3. lastOptionsShown → 4. snapshot
+  // =========================================================================
+  if (!clarificationResult.handled) {
+    const contextDecision = resolveContextDecision(ctx.trimmedInput, {
+      // Clarification sources — use pre-clear state if clearing happened this turn
+      pendingOptions: preClearPendingOptions
+        ? preClearPendingOptions.map(o => ({ id: o.id, label: o.label, sublabel: o.sublabel, type: o.type }))
+        : ctx.pendingOptions.map(o => ({ id: o.id, label: o.label, sublabel: o.sublabel, type: o.type })),
+      lastClarification: preClearLastClarification?.options
+        ? { options: preClearLastClarification.options, turnAge: 0, lineageId: preClearLastClarification.messageId }
+        : ctx.lastClarification?.options
+          ? { options: ctx.lastClarification.options, turnAge: 0, lineageId: ctx.lastClarification.messageId }
+          : null,
+      lastOptionsShown: ctx.lastOptionsShown
+        ? { options: ctx.lastOptionsShown.options, turnAge: ctx.lastOptionsShown.turnsSinceShown, lineageId: ctx.lastOptionsShown.messageId }
+        : null,
+      clarificationSnapshot: ctx.clarificationSnapshot
+        ? { options: ctx.clarificationSnapshot.options, turnAge: ctx.clarificationSnapshot.turnsSinceSet, lineageId: ctx.clarificationSnapshot.originalIntent, invalidated: ctx.clarificationSnapshot.paused === true && (ctx.clarificationSnapshot as any).pausedReason === 'stop' }
+        : null,
+      activeOptionSetId: ctx.activeOptionSetId,
+      // Active-surface sources
+      activeSurface: {
+        focusLatchWidgetId: ctx.focusLatch && !ctx.focusLatch.suspended ? (ctx.focusLatch as any).widgetId ?? null : null,
+        widgetSelectionContextId: ctx.widgetSelectionContext?.widgetId ?? null,
+        previousRoutingPanelId: null,  // PreviousRoutingMetadata has no panelId — active-surface wiring deferred to Slice D
+        suspended: ctx.focusLatch?.suspended ?? false,
+      },
+      isReferentialInput: isReferentialInput(ctx.trimmedInput),
+    })
+
+    if (contextDecision.mode === 'clarification_selection') {
+      // Matched a recoverable option — resolve from the correct source.
+      // The helper reports which source matched; look up the full option data there.
+      let matchedPending: PendingOptionState | undefined
+      const matchId = contextDecision.optionId
+
+      if (contextDecision.sourceUsed === 'pendingOptions') {
+        matchedPending = (preClearPendingOptions ?? ctx.pendingOptions).find(o => o.id === matchId)
+      } else if (contextDecision.sourceUsed === 'lastClarification') {
+        // lastClarification options are ClarificationOption (no data field).
+        // Build a minimal PendingOptionState from the matched clarification option.
+        const clarOpt = (preClearLastClarification ?? ctx.lastClarification)?.options?.find(o => o.id === matchId)
+        if (clarOpt) {
+          matchedPending = { index: 0, label: clarOpt.label, sublabel: clarOpt.sublabel, type: clarOpt.type, id: clarOpt.id, data: undefined }
+        }
+      } else if (contextDecision.sourceUsed === 'lastOptionsShown') {
+        const shownOpt = ctx.lastOptionsShown?.options?.find(o => o.id === matchId)
+        if (shownOpt) {
+          matchedPending = { index: 0, label: shownOpt.label, sublabel: shownOpt.sublabel, type: shownOpt.type, id: shownOpt.id, data: undefined }
+        }
+      } else if (contextDecision.sourceUsed === 'clarificationSnapshot') {
+        const snapOpt = ctx.clarificationSnapshot?.options?.find(o => o.id === matchId)
+        if (snapOpt) {
+          matchedPending = { index: 0, label: snapOpt.label, sublabel: snapOpt.sublabel, type: snapOpt.type, id: snapOpt.id, data: undefined }
+        }
+      }
+
+      if (matchedPending) {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'context_decision_dispatcher_selection',
+          metadata: {
+            input: ctx.trimmedInput,
+            optionId: contextDecision.optionId,
+            optionLabel: contextDecision.optionLabel,
+            sourceUsed: contextDecision.sourceUsed,
+            confidence: contextDecision.confidence,
+          },
+        })
+        const optionToSelect: SelectionOption = {
+          type: matchedPending.type as SelectionOption['type'],
+          id: matchedPending.id,
+          label: matchedPending.label,
+          sublabel: matchedPending.sublabel,
+          data: matchedPending.data as SelectionOption['data'],
+        }
+        ctx.handleSelectOption(optionToSelect)
+        ctx.setIsLoading(false)
+        return {
+          ...defaultResult,
+          handled: true,
+          handledByTier: 2,
+          tierLabel: 'context_decision_dispatcher',
+          clarificationCleared,
+          isNewQuestionOrCommandDetected,
+          classifierCalled: false,
+          classifierResult: undefined,
+          classifierTimeout: false,
+          classifierLatencyMs: undefined,
+          classifierError: false,
+          isFollowUp: false,
+          _devProvenanceHint: 'deterministic' as const,
+          _fromClarifiedSelection: true,
+        }
+      }
+    }
+
+    if (contextDecision.mode === 'conflict') {
+      // Both clarification and active-surface have plausible targets — re-show clarification.
+      // Do NOT fall through to grounding (governing plan: conflict must clarify, not execute).
+      const conflictOptions = contextDecision.clarificationOptions
+      const newPendingOptions: PendingOptionState[] = conflictOptions.map((o, i) => ({
+        index: i + 1,
+        label: o.label,
+        sublabel: o.sublabel,
+        type: o.type,
+        id: o.id,
+        data: undefined as unknown,
+      }))
+      const conflictMsg: ChatMessage = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: 'Which option did you mean?',
+        timestamp: new Date(),
+        isError: false,
+      }
+      ctx.addMessage(conflictMsg)
+      ctx.setPendingOptions(newPendingOptions)
+      ctx.setIsLoading(false)
+      return {
+        ...defaultResult,
+        handled: true,
+        handledByTier: 2,
+        tierLabel: 'context_decision_conflict',
+        clarificationCleared,
+        isNewQuestionOrCommandDetected,
+        classifierCalled: false,
+        classifierResult: undefined,
+        classifierTimeout: false,
+        classifierLatencyMs: undefined,
+        classifierError: false,
+        isFollowUp: false,
+        _devProvenanceHint: 'safe_clarifier' as const,
+      }
+    }
+
+    // mode: 'active_surface_followup' — let existing focus-latch/widget-selection paths handle it
+    // mode: 'none' → fall through to scope-cue signal and grounding
   }
 
   // =========================================================================

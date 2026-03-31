@@ -1257,8 +1257,17 @@ export async function handleClarificationIntercept(
     // treat it as a selection instead of a fresh command.
     if (commandBypassesLabelMatching && lastClarification?.options?.length) {
       const bridgeDecision = resolveContextDecision(trimmedInput, {
-        clarificationOptions: lastClarification.options,
-        hasPendingOptions: pendingOptions.length > 0,
+        pendingOptions: pendingOptions.map(o => ({ id: o.id, label: o.label, sublabel: o.sublabel, type: o.type })),
+        lastClarification: { options: lastClarification.options, turnAge: 0, lineageId: lastClarification.messageId },
+        lastOptionsShown: null,  // intercept is the first checkpoint — only live state matters
+        clarificationSnapshot: null,  // snapshot recovery is for the dispatcher consumer
+        activeOptionSetId: null,  // not available in intercept scope (only setActiveOptionSetId)
+        activeSurface: {
+          focusLatchWidgetId: null,  // intercept does not resolve active-surface
+          widgetSelectionContextId: null,
+          previousRoutingPanelId: null,
+          suspended: false,
+        },
         isReferentialInput: isReferentialFollowUp(trimmedInput),
       })
 

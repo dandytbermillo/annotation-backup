@@ -29,6 +29,7 @@ export type ContextDecision =
       optionId: string
       optionLabel: string
       confidence: 'high' | 'medium'
+      sourceUsed: 'pendingOptions' | 'lastClarification' | 'lastOptionsShown' | 'clarificationSnapshot'
       destinationConstraint?: 'chat' | 'surface'
     }
   | {
@@ -37,14 +38,44 @@ export type ContextDecision =
       confidence: 'high' | 'medium'
       destinationConstraint?: 'chat' | 'surface'
     }
-  | { mode: 'conflict' }
+  | {
+      mode: 'conflict'
+      clarificationOptions: ClarificationOption[]
+    }
   | { mode: 'none' }
 
+/** Recoverable clarification source with lifetime metadata */
+export interface RecoverableSource {
+  options: ClarificationOption[]
+  turnAge: number
+  /** Lineage ID for alignment checks (e.g., message ID that created the options) */
+  lineageId?: string
+  /** Whether the source has been invalidated (e.g., by unrelated command) */
+  invalidated?: boolean
+}
+
 export interface ContextDecisionInput {
-  clarificationOptions?: ClarificationOption[]
-  hasPendingOptions: boolean
-  activeSurfaceId?: string
-  activeSurfaceLabel?: string
+  // --- Clarification sources (in precedence order) ---
+  /** Live pending options (always valid, always wins) */
+  pendingOptions: ClarificationOption[]
+  /** Last clarification state (valid if fresh + aligned to current lineage) */
+  lastClarification: RecoverableSource | null
+  /** Last options shown in a message (valid if within TTL + same lineage) */
+  lastOptionsShown: RecoverableSource | null
+  /** Clarification snapshot for recovery (valid if within TTL + same lineage + not invalidated) */
+  clarificationSnapshot: RecoverableSource | null
+  /** Active option set ID for lineage alignment */
+  activeOptionSetId: string | null
+
+  // --- Active-surface sources ---
+  activeSurface: {
+    focusLatchWidgetId: string | null
+    widgetSelectionContextId: string | null
+    previousRoutingPanelId: string | null
+    suspended: boolean
+  }
+
+  // --- Input classification ---
   isReferentialInput: boolean  // "read it", "summarize that", etc.
 }
 
@@ -53,6 +84,13 @@ export interface ContextDecisionInput {
 // =============================================================================
 
 export const CONTEXT_THRESHOLDS_VERSION = '1.0'
+
+/** Source lifetime limits (in turns) */
+const SOURCE_TTL = {
+  lastClarification: 1,      // valid for current turn or 1 turn ago
+  lastOptionsShown: 2,       // valid for 2 turns
+  clarificationSnapshot: 3,  // valid for 3 turns
+} as const
 
 /**
  * Check if the input is referential (refers to a previous turn's target).
@@ -65,6 +103,36 @@ export function isReferentialFollowUp(input: string): boolean {
 }
 
 // =============================================================================
+// Source Validation
+// =============================================================================
+
+/**
+ * Check if a recoverable source is still valid based on its lifetime metadata.
+ * This is the sole owner of "is this source still valid?" decisions.
+ *
+ * Validates: existence, non-empty, turn TTL, invalidation flag, and lineage alignment.
+ * Lineage alignment ensures the source belongs to the same clarification cycle as
+ * the active option set. Without this, options from an unrelated earlier clarification
+ * could be matched against the user's current input.
+ */
+function isSourceValid(
+  source: RecoverableSource | null,
+  maxTurnAge: number,
+  activeOptionSetId?: string | null,
+): boolean {
+  if (!source) return false
+  if (source.options.length === 0) return false
+  if (source.turnAge > maxTurnAge) return false
+  if (source.invalidated) return false
+  // Lineage check: if activeOptionSetId is set and source has a lineageId,
+  // they must align. Skip check if either is missing (backwards-compatible).
+  if (activeOptionSetId && source.lineageId && source.lineageId !== activeOptionSetId) {
+    return false
+  }
+  return true
+}
+
+// =============================================================================
 // Main Decision Function
 // =============================================================================
 
@@ -72,19 +140,22 @@ export function isReferentialFollowUp(input: string): boolean {
  * Resolve which bounded context wins for the current turn.
  *
  * Priority order (per clarification-vs-active-surface-priority-plan.md):
- * 1. Explicit scope cue or explicit specific target
- * 2. Latest active clarification (if input matches an option)
+ * 1. Explicit scope cue or explicit specific target → escape to normal routing
+ * 2. Latest active clarification (checked in source precedence order)
  * 3. Active or just-opened surface (if input is referential)
  * 4. General routing (mode: 'none')
+ *
+ * Source precedence for clarification matching:
+ * 1. Live pendingOptions — always valid
+ * 2. lastClarification — valid if ≤1 turn + aligned to lineage
+ * 3. lastOptionsShown — valid if ≤2 turns + same lineage
+ * 4. clarificationSnapshot — valid if ≤3 turns + same lineage + not invalidated
  */
 export function resolveContextDecision(
   rawInput: string,
   ctx: ContextDecisionInput,
 ): ContextDecision {
-  const lower = rawInput.toLowerCase().trim()
-
   // --- Priority 1: Explicit scope cue or explicit specific target ---
-  // If user supplies a clearly specific target, let it escape clarification
   const scopeCue = resolveScopeCue(rawInput)
   if (scopeCue && scopeCue.scope !== 'none') {
     return { mode: 'none' } // explicit scope cue → escape to normal routing
@@ -92,12 +163,10 @@ export function resolveContextDecision(
 
   // Explicit specific target (not generic) → escape clarification
   if (!isGenericAmbiguousPanelPhrase(rawInput)) {
-    // Input is specific enough (e.g., "open entry navigator c", "open links panel cc")
-    // Let it escape clarification and route normally
     return { mode: 'none' }
   }
 
-  // Extract destination constraint (separate from scope)
+  // Extract destination constraint (separate from target choice)
   const deliveryState = extractDeliveryState(rawInput)
   const destinationConstraint = deliveryState.presentationTarget === 'chat'
     ? 'chat' as const
@@ -105,41 +174,73 @@ export function resolveContextDecision(
       ? 'surface' as const
       : undefined
 
-  // --- Priority 2: Latest active clarification ---
-  if (ctx.clarificationOptions?.length && ctx.hasPendingOptions) {
-    const matches = findMatchingOptions(rawInput, ctx.clarificationOptions)
+  // --- Priority 2: Latest active clarification (source precedence order) ---
+  // Check each recoverable source in order of freshness/reliability
+  type SourceName = 'pendingOptions' | 'lastClarification' | 'lastOptionsShown' | 'clarificationSnapshot'
+  const sources: Array<{ name: SourceName; options: ClarificationOption[] }> = []
+
+  // Source 1: Live pendingOptions (always valid)
+  if (ctx.pendingOptions.length > 0) {
+    sources.push({ name: 'pendingOptions', options: ctx.pendingOptions })
+  }
+
+  // Source 2: lastClarification (valid if fresh + aligned to lineage)
+  if (isSourceValid(ctx.lastClarification, SOURCE_TTL.lastClarification, ctx.activeOptionSetId)) {
+    sources.push({ name: 'lastClarification', options: ctx.lastClarification!.options })
+  }
+
+  // Source 3: lastOptionsShown (valid if within TTL + same lineage)
+  if (isSourceValid(ctx.lastOptionsShown, SOURCE_TTL.lastOptionsShown, ctx.activeOptionSetId)) {
+    sources.push({ name: 'lastOptionsShown', options: ctx.lastOptionsShown!.options })
+  }
+
+  // Source 4: clarificationSnapshot (valid if within TTL + not invalidated + aligned)
+  if (isSourceValid(ctx.clarificationSnapshot, SOURCE_TTL.clarificationSnapshot, ctx.activeOptionSetId)) {
+    sources.push({ name: 'clarificationSnapshot', options: ctx.clarificationSnapshot!.options })
+  }
+
+  // Try matching against each source in precedence order
+  for (const source of sources) {
+    const matches = findMatchingOptions(rawInput, source.options)
 
     if (matches.length === 1) {
-      // Unique strong match → clarification selection
       return {
         mode: 'clarification_selection',
         optionId: matches[0].id,
         optionLabel: matches[0].label,
         confidence: 'high',
+        sourceUsed: source.name,
         destinationConstraint,
       }
     }
 
     if (matches.length > 1) {
-      // Multiple matches → ambiguous, re-show clarification
-      return { mode: 'conflict' }
+      // Multiple matches in this source → ambiguous, re-show clarification
+      return { mode: 'conflict', clarificationOptions: source.options }
     }
 
-    // No match → check if it's a referential follow-up for active surface
+    // No match in this source → try next source
   }
 
+  // Collect all available clarification options for conflict detection
+  const allClarificationOptions = sources.length > 0 ? sources[0].options : []
+
   // --- Priority 3: Active or just-opened surface (referential follow-ups) ---
-  if (ctx.activeSurfaceId && ctx.isReferentialInput) {
-    // If there's also active clarification, check for conflict
-    if (ctx.clarificationOptions?.length && ctx.hasPendingOptions) {
-      // Both contexts active but clarification didn't match → conflict
-      // (active surface wants to claim, but clarification is still live)
-      return { mode: 'conflict' }
+  const activeSurfaceId = !ctx.activeSurface.suspended
+    ? (ctx.activeSurface.focusLatchWidgetId
+      ?? ctx.activeSurface.widgetSelectionContextId
+      ?? ctx.activeSurface.previousRoutingPanelId)
+    : null
+
+  if (activeSurfaceId && ctx.isReferentialInput) {
+    // If there are also valid clarification options, that's a conflict
+    if (allClarificationOptions.length > 0) {
+      return { mode: 'conflict', clarificationOptions: allClarificationOptions }
     }
 
     return {
       mode: 'active_surface_followup',
-      surfaceId: ctx.activeSurfaceId,
+      surfaceId: activeSurfaceId,
       confidence: 'high',
       destinationConstraint,
     }
