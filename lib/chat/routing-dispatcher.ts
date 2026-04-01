@@ -5069,6 +5069,7 @@ async function dispatchRoutingInner(
                 classifierLatencyMs: llmResult.latencyMs,
                 classifierError,
                 isFollowUp,
+                _devProvenanceHint: 'bounded_clarification' as const,
               }
             }
           }
@@ -6178,6 +6179,7 @@ async function dispatchRoutingInner(
             classifierLatencyMs,
             classifierError,
             isFollowUp,
+            _devProvenanceHint: 'bounded_clarification' as const,
           }
         }
 
@@ -6216,6 +6218,7 @@ async function dispatchRoutingInner(
             classifierLatencyMs,
             classifierError,
             isFollowUp,
+            _devProvenanceHint: 'bounded_clarification' as const,
           }
         }
       }

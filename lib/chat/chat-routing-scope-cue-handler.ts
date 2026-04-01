@@ -272,7 +272,7 @@ export async function handleScopeCuePhase(
         setActiveOptionSetId(null)
         setIsLoading(false)
         handleSelectOption(optionToSelect)
-        return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected }
+        return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'bounded_clarification' as const }
       }
 
       // --- Phase 2b: Label/shorthand matching against recovered chat options ---
