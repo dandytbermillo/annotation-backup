@@ -687,8 +687,26 @@ export async function handleScopeCuePhase(
       }
 
       // --- Phase 4: Standalone re-anchor (e.g., "from chat") ---
-      restoreFullChatState(recoverableOptions, originalMessageId)
-      return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected }
+      // Re-show the paused chat options as a visible clarifier message.
+      const reanchorMsgId = `assistant-${Date.now()}`
+      restoreFullChatState(recoverableOptions, reanchorMsgId)
+      const reanchorMsg: import('@/lib/chat').ChatMessage = {
+        id: reanchorMsgId,
+        role: 'assistant',
+        content: 'Here are the options from before. Which one would you like?',
+        timestamp: new Date(),
+        isError: false,
+        options: recoverableOptions.map((o, i) => ({
+          type: o.type as any,
+          id: o.id,
+          label: o.label,
+          sublabel: o.sublabel,
+          data: reconstructSnapshotData(o),
+        })),
+      }
+      addMessage(reanchorMsg)
+      setIsLoading(false)
+      return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected, _devProvenanceHint: 'bounded_clarification' as const }
     } else {
       // No recoverable options
       if (isNewQuestionOrCommandDetected) {
