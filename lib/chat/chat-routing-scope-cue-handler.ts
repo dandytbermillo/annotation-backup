@@ -467,6 +467,7 @@ export async function handleScopeCuePhase(
             scope: scopeCue.scope,
             enrichmentCallback: createEnrichmentCallback(scopeCue.scope, 'scope_cue_unresolved', ctx),
             preferredCandidateHint: scopeCuePreferredHint,
+            hasActiveClarification: !!lastClarification || recoverableOptions.length > 0,
           })
 
           // Scope-specific fallback (per context-enrichment-retry-loop-plan §Binding Hardening)

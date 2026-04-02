@@ -3058,7 +3058,10 @@ async function dispatchRoutingInner(
   // active clarification instead of answering from stale action history.
   // Keeps pendingOptions visible — no state mutation on this path.
   // =========================================================================
-  if (isSemanticQuestion && ctx.pendingOptions.length > 0) {
+  // Exception: selection-request-shaped inputs ("can open that entries") should not be
+  // blocked as semantic questions — they are bounded selection requests, not questions.
+  const hasSelectionVerb = /\b(open|show|select|pick|choose|use)\b/i.test(ctx.trimmedInput)
+  if (isSemanticQuestion && ctx.pendingOptions.length > 0 && !hasSelectionVerb) {
     const optionLabels = ctx.pendingOptions.map(o => o.label).join(', ')
     const assistantMessage: ChatMessage = {
       id: `assistant-${Date.now()}`,

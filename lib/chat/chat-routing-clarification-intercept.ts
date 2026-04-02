@@ -1822,6 +1822,7 @@ export async function handleClarificationIntercept(
           scope: scopeCue.scope,
           enrichmentCallback: createEnrichmentCallback(scopeCue.scope, 'tier1b3_unresolved', ctx),
           preferredCandidateHint,
+          hasActiveClarification: true,
         })
 
         // Scope-specific fallback (per context-enrichment-retry-loop-plan §Binding Hardening)

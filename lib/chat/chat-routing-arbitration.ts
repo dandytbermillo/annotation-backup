@@ -18,6 +18,7 @@ import {
   classifyArbitrationConfidence,
   canonicalizeCommandInput,
 } from '@/lib/chat/input-classifiers'
+import { findMatchingOptions } from '@/lib/chat/chat-routing-clarification-utils'
 import {
   callClarificationLLMClient,
   isLLMFallbackEnabledClient,
@@ -174,6 +175,7 @@ async function tryLLMLastChance(params: {
   exactMatchCount?: number  // exact match count (default 0)
   enrichedContext?: string  // Retry-only: enriched evidence from context-enrichment loop
   preferredCandidateHint?: PreferredCandidateHint  // Advisory hint from badge/polite/continuity/ordinal
+  hasActiveClarification?: boolean  // When true, relax question-intent gate for selection requests
 }): Promise<{
   attempted: boolean
   suggestedId: string | null
@@ -185,7 +187,7 @@ async function tryLLMLastChance(params: {
   const { trimmedInput, candidates, context, clarificationMessageId,
     inputIsExplicitCommand, isNewQuestionOrCommandDetected,
     matchCount = 0, exactMatchCount = 0, enrichedContext,
-    preferredCandidateHint } = params
+    preferredCandidateHint, hasActiveClarification } = params
 
   // --- Question-intent exclusion (hard exclusion per Rule G) ---
   // Strip trailing punctuation before check: "ope panel d pls?" is a polite command,
@@ -193,7 +195,25 @@ async function tryLLMLastChance(params: {
   // what/how/where/is/etc.), not by trailing '?' alone.
   const inputForQuestionCheck = trimmedInput.replace(/[?!.]+$/, '').trim()
   const isQuestion = hasQuestionIntent(inputForQuestionCheck) && !isPoliteImperativeRequest(trimmedInput)
-  if (isQuestion) {
+
+  // During active clarification, allow selection-request-shaped questions through.
+  // "can open that entries in the list" is a selection request, not a genuine question.
+  // Four conditions must ALL be true:
+  // a) active clarification is present
+  // b) action verb present (open/show/select/pick/choose/use)
+  // c) bounded-option evidence (label overlap OR demonstrative+one)
+  // d) NOT an explanation/help/meaning question
+  const EXPLANATION_INTENT = /\b(explain|what\s+is|what\s+are|which\s+one\s+is|why\b|how\s+to|help\s+me)\b/i
+  const hasActionVerb = /\b(open|show|select|pick|choose|use)\b/i.test(trimmedInput)
+  const hasBoundedEvidence = findMatchingOptions(trimmedInput, candidates as Array<{ id: string; label: string; sublabel?: string; type: string }>).length > 0
+    || /\b(that\s+one|this\s+one|the\s+one)\b/i.test(trimmedInput)
+  const isExplanation = EXPLANATION_INTENT.test(trimmedInput)
+  const isSelectionRequest = hasActiveClarification
+    && hasActionVerb
+    && hasBoundedEvidence
+    && !isExplanation
+
+  if (isQuestion && !isSelectionRequest) {
     return { attempted: false, suggestedId: null, fallbackReason: 'question_intent', autoExecute: false }
   }
 
@@ -384,11 +404,12 @@ export async function runBoundedArbitrationLoop(params: {
   scope: import('@/lib/chat/input-classifiers').ScopeCueResult['scope']
   enrichmentCallback: ContextEnrichmentCallback
   preferredCandidateHint?: PreferredCandidateHint  // Advisory hint from badge/polite/continuity/ordinal
+  hasActiveClarification?: boolean  // When true, relax question-intent gate for selection requests
 }): Promise<BoundedArbitrationResult> {
   const { trimmedInput, initialCandidates, context, clarificationMessageId,
     inputIsExplicitCommand, isNewQuestionOrCommandDetected,
     matchCount, exactMatchCount, scope, enrichmentCallback,
-    preferredCandidateHint } = params
+    preferredCandidateHint, hasActiveClarification } = params
 
   const loopStartTime = Date.now()
   const frozenCandidateIds = initialCandidates.map(c => c.id)
@@ -410,6 +431,7 @@ export async function runBoundedArbitrationLoop(params: {
     matchCount,
     exactMatchCount,
     preferredCandidateHint,
+    hasActiveClarification,
   })
 
   // --- Step 2: Handle attempt-1 result with explicit reason branching ---
@@ -579,6 +601,7 @@ export async function runBoundedArbitrationLoop(params: {
     exactMatchCount,
     enrichedContext: enrichedContextStr,  // Pass enriched evidence to retry LLM call
     preferredCandidateHint,
+    hasActiveClarification,
   })
 
   // Update loop guard with retry state.

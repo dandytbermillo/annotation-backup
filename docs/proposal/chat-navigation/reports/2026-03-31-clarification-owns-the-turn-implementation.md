@@ -82,6 +82,23 @@ Implemented the "clarification owns the turn" policy from the governing plan (`c
 - Badge styles (`ChatMessageList.tsx`): 🎯 Bounded-Selection, green
 - Routing log mapping (`routing-log/mapping.ts`): `decision_source: 'llm'`, `result_status: 'executed'`
 
+**All provenance sites covered:**
+
+| Lane | File | Status |
+|------|------|--------|
+| Intercept bounded LLM auto-execute | `chat-routing-clarification-intercept.ts:~1890` | `bounded_clarification` |
+| Tier 3.6 constrained-LLM select | `routing-dispatcher.ts:~5705` | `bounded_clarification` |
+| Selection typo LLM select | `routing-dispatcher.ts:~5072` | `bounded_clarification` |
+| Grounding deterministic select | `routing-dispatcher.ts:~6182` | `bounded_clarification` |
+| Grounding deterministic select (message fallback) | `routing-dispatcher.ts:~6221` | `bounded_clarification` |
+| Grounding referent-execute | `routing-dispatcher.ts:~6698` | context-aware remap |
+| Scope-cue ordinal select | `chat-routing-scope-cue-handler.ts:~275` | `bounded_clarification` |
+| B1 replay (message + badge setter) | `chat-navigation-panel.tsx:~1893, ~1934` | context-aware remap |
+| Navigate API fallthrough | `chat-navigation-panel.tsx:~3224` | context-aware remap |
+| Select-option handler | `chat-navigation-panel.tsx:~2695` | preserves from routing result |
+
+**No false positives observed:** "open recent" during active clarification correctly shows Deterministic-Surface.
+
 ---
 
 ## Clarification Escape Policy
