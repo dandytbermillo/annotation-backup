@@ -2187,55 +2187,10 @@ export async function handleClarificationIntercept(
     //   - it is NOT a question signal.
     // This prevents "widget manager" from being trapped by an unrelated list.
     // ==========================================================================
-    // Active clarification bounded arbiter: do not interrupt when live clarification exists.
-    // Known-noun evidence is collected in the dispatcher; the bounded arbiter decides escape.
-    // Guard: skip when pendingOptions are active (live clarifier owns the turn).
-    if (lastClarification?.options && lastClarification.options.length > 0 && !isNewQuestionOrCommandDetected && pendingOptions.length === 0) {
-      const knownNounMatch = matchKnownNoun(trimmedInput)
-      if (knownNounMatch && !hasQuestionIntent(trimmedInput)) {
-        // Check label overlap: tokenize input and all option labels
-        const inputTokens = toCanonicalTokens(trimmedInput)
-        const allOptionTokens = new Set<string>()
-        for (const opt of lastClarification.options) {
-          for (const t of toCanonicalTokens(opt.label)) {
-            allOptionTokens.add(t)
-          }
-        }
-        let hasOverlap = false
-        for (const t of inputTokens) {
-          if (allOptionTokens.has(t)) { hasOverlap = true; break }
-        }
-
-        if (!hasOverlap) {
-          // No overlap → treat as interrupt: pause active list and return
-          // unhandled so the dispatcher routes to Tier 4 (known-noun execution).
-          // We must return immediately BEFORE the response-fit classifier runs,
-          // otherwise the classifier consumes the input as ask_clarify.
-          void debugLog({
-            component: 'ChatNavigation',
-            action: 'known_noun_interrupt_active_list',
-            metadata: {
-              input: trimmedInput,
-              nounPanelId: knownNounMatch.panelId,
-              nounTitle: knownNounMatch.title,
-              activeListOptions: lastClarification.options.map(o => o.label),
-              tier: 2,
-            },
-          })
-          // Pause the active list (same as handleUnclear new-intent path)
-          if (lastClarification?.options && lastClarification.options.length > 0) {
-            saveClarificationSnapshot(lastClarification, true)
-          }
-          setLastClarification(null)
-          setPendingOptions([])
-          setPendingOptionsMessageId(null)
-          setPendingOptionsGraceCount(0)
-          isNewQuestionOrCommandDetected = true
-          // Return unhandled so dispatcher continues to Tier 4
-          return { handled: false, clarificationCleared: true, isNewQuestionOrCommandDetected }
-        }
-      }
-    }
+    // Active clarification bounded arbiter: the old known_noun_interrupt_active_list
+    // path has been removed. When any live clarification exists (pendingOptions > 0 OR
+    // lastClarification), the bounded arbiter owns the turn. Known-noun evidence is
+    // collected in the dispatcher via matchKnownNoun and consumed by the arbiter.
 
     // ==========================================================================
     // Response-Fit Classifier (per clarification-response-fit-plan.md)
