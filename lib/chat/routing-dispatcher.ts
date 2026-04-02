@@ -1825,6 +1825,7 @@ export async function dispatchRouting(
       }
 
       const surfaceResult = await resolveSurfaceCommand(ctx.trimmedInput, runtimeContext)
+      console.log('[dispatcher] surface resolver result:', { input: ctx.trimmedInput, hasResult: !!surfaceResult, isResolved: surfaceResult ? isResolvedSurfaceCommand(surfaceResult) : false, hasLiveClarification: ctx.pendingOptions.length > 0 || !!ctx.lastClarification })
 
       if (surfaceResult && isResolvedSurfaceCommand(surfaceResult)) {
         // Active clarification bounded arbiter: do not execute surface commands directly
@@ -3315,7 +3316,11 @@ async function dispatchRoutingInner(
       _selectedOptionId: defaultResult._selectedOptionId,
       // Clarification bridge: propagate flag so writeback can suppress ambiguous generic promotion
       _fromClarifiedSelection: clarificationResult._fromClarifiedSelection,
-    }
+      // Validated escape flags: propagate to outer wrapper for deferred execution
+      _b1EscapeAction: clarificationResult._b1EscapeAction,
+      _surfaceEscapeAction: clarificationResult._surfaceEscapeAction,
+      _knownNounEscapeAction: clarificationResult._knownNounEscapeAction,
+    } as any
   }
 
   // =========================================================================
