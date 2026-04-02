@@ -6750,7 +6750,9 @@ async function dispatchRoutingInner(
                     classifierLatencyMs,
                     classifierError,
                     isFollowUp,
-                    _devProvenanceHint: 'llm_executed' as const,
+                    _devProvenanceHint: (ctx.pendingOptions.length > 0 || !!ctx.lastClarification)
+                      ? 'bounded_clarification' as const
+                      : 'llm_executed' as const,
                   }
                 }
 
@@ -6943,7 +6945,9 @@ async function dispatchRoutingInner(
                     classifierLatencyMs,
                     classifierError,
                     isFollowUp,
-                    _devProvenanceHint: 'llm_executed' as const,
+                    _devProvenanceHint: (ctx.pendingOptions.length > 0 || !!ctx.lastClarification)
+                      ? 'bounded_clarification' as const
+                      : 'llm_executed' as const,
                     // Phase 5: pass panel identity for client-side navigation writeback
                     _groundingPanelOpen: { panelId: selected.id, panelTitle: selected.label },
                   }
