@@ -1834,8 +1834,10 @@ export async function handleClarificationIntercept(
             saveClarificationSnapshot(lastClarification, true, 'interrupt' as const)
             setLastClarification(null)
             setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+            // Return handled: true so grounding doesn't steal the turn.
+            // The outer wrapper reads escape evidence from the result and executes.
             return {
-              handled: false,
+              handled: true,
               clarificationCleared: true,
               isNewQuestionOrCommandDetected,
               _devProvenanceHint: 'bounded_clarification' as const,
