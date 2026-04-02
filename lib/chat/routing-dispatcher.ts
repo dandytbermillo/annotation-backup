@@ -1590,8 +1590,23 @@ export async function dispatchRouting(
 
               // Return with _memoryCandidate + _pendingMemoryLog + _pendingMemoryWrite attached
               // sendMessage() does commit-point revalidation (Gate 1) then fires log + write
-              console.log('[dispatcher] B1 EARLY RETURN:', { input: ctx.trimmedInput, action: memoryAction?.tierLabel })
-              return memoryAction
+              // Active clarification bounded arbiter: B1 may collect evidence but must not
+              // preempt the arbiter when live clarification exists. Attach as escape evidence.
+              if (ctx.pendingOptions.length > 0 || !!ctx.lastClarification) {
+                console.log('[dispatcher] B1 evidence collected (not preempting):', { input: ctx.trimmedInput, action: memoryAction?.tierLabel });
+                // Attach B1 match as validated escape evidence for the bounded arbiter.
+                // The intercept reads this at the unresolved hook to provide escape targets.
+                (ctx as any)._b1EscapeEvidence = {
+                  intentId: memoryAction?._memoryCandidate?.intent_id ?? null,
+                  targetIds: memoryAction?._memoryCandidate?.target_ids ?? [],
+                  slotsJson: memoryAction?._memoryCandidate?.slots_json ?? {},
+                  tierLabel: memoryAction?.tierLabel ?? null,
+                  action: memoryAction,
+                }
+              } else {
+                console.log('[dispatcher] B1 EARLY RETURN:', { input: ctx.trimmedInput, action: memoryAction?.tierLabel })
+                return memoryAction
+              }
             }
             // else: noteManifestRejected — fall through to normal tier chain
           }
@@ -1684,7 +1699,9 @@ export async function dispatchRouting(
   // 6x.7 Phase A: resolver telemetry hoisted to outer scope so common log path can merge it
   let resolverTelemetryForLog: Record<string, unknown> | null = null
 
-  if (process.env.NEXT_PUBLIC_STAGE6_SHADOW_ENABLED === 'true') {
+  // Active clarification bounded arbiter: skip content-intent classifier when live clarification exists.
+  const hasLiveClarificationForGate = ctx.pendingOptions.length > 0 || !!ctx.lastClarification
+  if (process.env.NEXT_PUBLIC_STAGE6_SHADOW_ENABLED === 'true' && !hasLiveClarificationForGate) {
     const activeNoteId = ctx.uiContext?.workspace?.activeNoteId ?? null
     const activeNote = activeNoteId
       ? ctx.uiContext?.workspace?.openNotes?.find(n => n.id === activeNoteId)
@@ -2628,7 +2645,8 @@ export async function dispatchRouting(
     return PHASE5_OVERRIDE_INTENTS.has(topHint.intent_id) && topHint.similarity_score >= similarityFloor
   })()
 
-  if (hintScope) {
+  // Active clarification bounded arbiter: do not skip tier chain when live clarification exists.
+  if (hintScope && !hasLiveClarificationForGate) {
     // Phase 5 scope detected — skip tier chain, let the navigate API's LLM handle it.
     // Near-tie metadata is preserved in telemetry but does NOT block the LLM fallback.
     // Genuine execution ambiguity (e.g., "budget100" vs "budget100 B") is handled by
@@ -2670,6 +2688,16 @@ export async function dispatchRouting(
       result = await dispatchRoutingInner(ctx, semanticCandidatesForLaneD, b2LookupStatus, contentIntentMatchedThisTurn)
     } catch (err) {
       routingError = err
+    }
+
+    // Active clarification bounded arbiter: if the intercept signaled a B1 validated escape,
+    // use the stored B1 action instead of falling through to the navigate API.
+    const b1Evidence = (ctx as any)._b1EscapeEvidence
+    if (!routingError && result && (result as any)._b1EscapeAction && b1Evidence?.action) {
+      result = {
+        ...b1Evidence.action,
+        _devProvenanceHint: 'bounded_clarification' as const,
+      }
     }
 
     // Phase 5: attach hint metadata to result for downstream consumption (non-override path)
@@ -3058,10 +3086,10 @@ async function dispatchRoutingInner(
   // active clarification instead of answering from stale action history.
   // Keeps pendingOptions visible — no state mutation on this path.
   // =========================================================================
-  // Exception: selection-request-shaped inputs ("can open that entries") should not be
-  // blocked as semantic questions — they are bounded selection requests, not questions.
-  const hasSelectionVerb = /\b(open|show|select|pick|choose|use)\b/i.test(ctx.trimmedInput)
-  if (isSemanticQuestion && ctx.pendingOptions.length > 0 && !hasSelectionVerb) {
+  // Active clarification bounded arbiter: when a live clarifier exists, skip the semantic-question
+  // guard entirely. The bounded LLM at the intercept's unresolved hook handles question vs selection.
+  const hasLiveClarification = ctx.pendingOptions.length > 0 || !!ctx.lastClarification
+  if (isSemanticQuestion && !hasLiveClarification) {
     const optionLabels = ctx.pendingOptions.map(o => o.label).join(', ')
     const assistantMessage: ChatMessage = {
       id: `assistant-${Date.now()}`,

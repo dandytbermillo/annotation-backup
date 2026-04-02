@@ -164,6 +164,8 @@ export interface ClarificationInterceptResult extends HandlerResult {
   /** Whether this result came from a clarification-first bridge selection.
    *  Used to prevent clarified ambiguous generic phrases from becoming Memory-Exact defaults. */
   _fromClarifiedSelection?: boolean
+  /** Signal from bounded arbiter: B1 validated escape should be used instead of fallthrough */
+  _b1EscapeAction?: boolean
 }
 
 export interface ClarificationInterceptContext {

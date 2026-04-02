@@ -419,7 +419,10 @@ export async function handleClarificationIntercept(
   // widget clarifier is active (e.g., "open panel d from chat" after a widget
   // LLM clarification created widgetSelectionContext for different items).
   // ==========================================================================
-  if (widgetSelectionContext !== null && scopeCue.scope !== 'chat' && scopeCue.scope !== 'widget' && !scopeCue.hasConflict) {
+  // Active clarification bounded arbiter: do not bypass intercept when live clarification exists.
+  // Widget context is secondary evidence, not a takeover signal.
+  const hasLiveClarificationForWidget = pendingOptions.length > 0 || !!lastClarification
+  if (widgetSelectionContext !== null && scopeCue.scope !== 'chat' && scopeCue.scope !== 'widget' && !scopeCue.hasConflict && !hasLiveClarificationForWidget) {
     void debugLog({
       component: 'ChatNavigation',
       action: 'clarification_bypass_widget_context',
@@ -1246,10 +1249,15 @@ export async function handleClarificationIntercept(
       return lastClarification.options.some(opt => isStrictExactMatch(trimmedInput, opt.label))
     })()
 
+    // Active clarification bounded arbiter: when live clarification exists, command-shaped
+    // inputs must NOT bypass label matching. They should reach the bounded LLM at the
+    // unresolved hook. Only allow bypass when no live clarification is present.
+    const hasLiveClarificationForBypass = pendingOptions.length > 0 || !!lastClarification
     let commandBypassesLabelMatching =
       (isNewQuestionOrCommandDetected || inputIsExplicitCommand)
       && !inputIsSelectionLike
       && !inputTargetsActiveOption  // ANY match keeps in selection flow
+      && !hasLiveClarificationForBypass  // bounded arbiter owns the turn
 
     // Tier 1b.3: Label matching for option selection (BEFORE new-intent escape)
     // Per pending-options-resilience-fix.md: "links panel e" should match "Links Panel E" option
@@ -1839,8 +1847,37 @@ export async function handleClarificationIntercept(
           return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected, _devProvenanceHint: 'safe_clarifier' as const }
         }
 
-        if (llmResult.fallbackReason === 'question_intent') {
-          // Question → fall through to downstream (hard exclusion per Rule G)
+        if (llmResult.fallbackReason === 'question_intent' || llmResult.fallbackReason === 'reroute') {
+          // Question or reroute → check for B1 validated escape evidence first.
+          // If B1 found a validated target during evidence collection, execute it as a
+          // validated escape (pause clarification, don't destroy it).
+          const b1Evidence = (ctx as any)._b1EscapeEvidence
+          if (b1Evidence?.action) {
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'clarification_b1_validated_escape',
+              metadata: {
+                input: trimmedInput,
+                intentId: b1Evidence.intentId,
+                targetIds: b1Evidence.targetIds,
+                tierLabel: b1Evidence.tierLabel,
+              },
+            })
+            // Pause clarification (don't destroy) — per plan escape state handling
+            saveClarificationSnapshot(lastClarification, true, 'interrupt' as const)
+            setLastClarification(null)
+            setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+            // Signal to the outer wrapper to use the B1 action
+            return {
+              handled: false,
+              clarificationCleared: true,
+              isNewQuestionOrCommandDetected,
+              _devProvenanceHint: 'bounded_clarification' as const,
+              _b1EscapeAction: true,
+            }
+          }
+
+          // No B1 evidence → genuine question, fall through to downstream
           void debugLog({
             component: 'ChatNavigation',
             action: 'clarification_unresolved_hook_question_escape',
