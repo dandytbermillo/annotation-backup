@@ -1869,77 +1869,31 @@ export async function handleClarificationIntercept(
         }
 
         if (llmResult.fallbackReason === 'question_intent' || llmResult.fallbackReason === 'reroute') {
-          // Check for validated escape evidence — ONLY on reroute (LLM explicitly said "different task").
-          // question_intent + escape evidence → inform, NOT execute (per plan).
-          const b1Evidence = (ctx as any)._b1EscapeEvidence
-          if (llmResult.fallbackReason === 'reroute' && b1Evidence?.action) {
-            void debugLog({
-              component: 'ChatNavigation',
-              action: 'clarification_b1_validated_escape',
-              metadata: {
-                input: trimmedInput,
-                intentId: b1Evidence.intentId,
-                targetIds: b1Evidence.targetIds,
-                tierLabel: b1Evidence.tierLabel,
-              },
-            })
-            // Pause clarification (don't destroy) — per plan escape state handling
-            saveClarificationSnapshot(lastClarification, true, 'interrupt' as const)
-            setLastClarification(null)
-            setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
-            // Signal to the outer wrapper to use the B1 action
-            return {
-              handled: false,
-              clarificationCleared: true,
-              isNewQuestionOrCommandDetected,
-              _devProvenanceHint: 'bounded_clarification' as const,
-              _b1EscapeAction: true,
-            }
-          }
-
-          // Check surface escape evidence (only on reroute, not question_intent — per plan)
-          const surfaceEvidence = (ctx as any)._surfaceEscapeEvidence
-          if (llmResult.fallbackReason === 'reroute' && surfaceEvidence?.surfaceResult) {
-            void debugLog({
-              component: 'ChatNavigation',
-              action: 'clarification_surface_validated_escape',
-              metadata: {
-                input: trimmedInput,
-                surfaceType: surfaceEvidence.surfaceType,
-                executionPolicy: surfaceEvidence.executionPolicy,
-              },
-            })
-            // Pause clarification (don't destroy)
-            saveClarificationSnapshot(lastClarification, true, 'interrupt' as const)
-            setLastClarification(null)
-            setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
-            // Signal to the outer wrapper to use the surface action
-            return {
-              handled: false,
-              clarificationCleared: true,
-              isNewQuestionOrCommandDetected,
-              _devProvenanceHint: 'bounded_clarification' as const,
-              _surfaceEscapeAction: true,
-            }
-          }
-
-          // Check known-noun escape evidence (only on reroute)
-          const knownNounEvidence = (ctx as any)._knownNounEscapeEvidence
-          if (llmResult.fallbackReason === 'reroute' && knownNounEvidence?.panelId) {
-            void debugLog({
-              component: 'ChatNavigation',
-              action: 'clarification_known_noun_validated_escape',
-              metadata: { input: trimmedInput, panelId: knownNounEvidence.panelId, title: knownNounEvidence.title },
-            })
-            saveClarificationSnapshot(lastClarification, true, 'interrupt' as const)
-            setLastClarification(null)
-            setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
-            return {
-              handled: false,
-              clarificationCleared: true,
-              isNewQuestionOrCommandDetected,
-              _devProvenanceHint: 'bounded_clarification' as const,
-              _knownNounEscapeAction: true,
+          // Check for validated escape evidence using typed ctx.escapeEvidence (not ad-hoc fields).
+          // ONLY on reroute — question_intent + escape evidence → inform, NOT execute.
+          const escapeEv = ctx.escapeEvidence
+          if (llmResult.fallbackReason === 'reroute' && escapeEv) {
+            const hasB1 = !!escapeEv.b1?.action
+            const hasSurface = !!escapeEv.surface?.surfaceResult
+            const hasKnownNoun = !!escapeEv.knownNoun?.panelId
+            if (hasB1 || hasSurface || hasKnownNoun) {
+              void debugLog({
+                component: 'ChatNavigation',
+                action: 'clarification_validated_escape_reroute',
+                metadata: { input: trimmedInput, hasB1, hasSurface, hasKnownNoun },
+              })
+              saveClarificationSnapshot(lastClarification, true, 'interrupt' as const)
+              setLastClarification(null)
+              setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+              return {
+                handled: false,
+                clarificationCleared: true,
+                isNewQuestionOrCommandDetected,
+                _devProvenanceHint: 'bounded_clarification' as const,
+                ...(hasB1 ? { _b1EscapeAction: true } : {}),
+                ...(hasSurface ? { _surfaceEscapeAction: true } : {}),
+                ...(hasKnownNoun ? { _knownNounEscapeAction: true } : {}),
+              }
             }
           }
 
