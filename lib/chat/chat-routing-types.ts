@@ -168,6 +168,8 @@ export interface ClarificationInterceptResult extends HandlerResult {
   _b1EscapeAction?: boolean
   /** Signal from bounded arbiter: surface resolver validated escape should be used */
   _surfaceEscapeAction?: boolean
+  /** Signal from bounded arbiter: known-noun validated escape should be used */
+  _knownNounEscapeAction?: boolean
 }
 
 export interface ClarificationInterceptContext {

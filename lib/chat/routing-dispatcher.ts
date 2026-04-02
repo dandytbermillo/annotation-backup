@@ -2730,6 +2730,39 @@ export async function dispatchRouting(
         classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
         _devProvenanceHint: 'bounded_clarification' as const,
       }
+    } else if (!routingError && result && (result as any)._knownNounEscapeAction) {
+      // Known-noun validated escape: the bounded arbiter chose escape, execute via known-noun routing.
+      // Re-run handleKnownNounRouting now that clarification is paused/cleared.
+      const knownNounEvidence = (ctx as any)._knownNounEscapeEvidence
+      if (knownNounEvidence) {
+        const escapeResult = handleKnownNounRouting({
+          trimmedInput: ctx.trimmedInput,
+          visibleWidgets: ctx.uiContext?.dashboard?.visibleWidgets,
+          addMessage: ctx.addMessage,
+          setIsLoading: ctx.setIsLoading,
+          openPanelDrawer: ctx.openPanelDrawer,
+          setPendingOptions: ctx.setPendingOptions,
+          setPendingOptionsMessageId: ctx.setPendingOptionsMessageId,
+          setPendingOptionsGraceCount: ctx.setPendingOptionsGraceCount,
+          setActiveOptionSetId: ctx.setActiveOptionSetId,
+          setLastClarification: ctx.setLastClarification,
+          handleSelectOption: (opt: SelectionOption) => { ctx.handleSelectOption(opt) },
+          hasActiveOptionSet: false,
+          saveLastOptionsShown: ctx.saveLastOptionsShown,
+          clearWidgetSelectionContext: ctx.clearWidgetSelectionContext,
+          clearLastOptionsShown: ctx.clearLastOptionsShown,
+          clearClarificationSnapshot: ctx.clearClarificationSnapshot,
+          clearFocusLatch: ctx.clearFocusLatch,
+        })
+        if (escapeResult.handled) {
+          result = {
+            handled: true, handledByTier: 4, tierLabel: 'known_noun',
+            clarificationCleared: true, isNewQuestionOrCommandDetected: false,
+            classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
+            _devProvenanceHint: 'bounded_clarification' as const,
+          }
+        }
+      }
     }
 
     // Phase 5: attach hint metadata to result for downstream consumption (non-override path)

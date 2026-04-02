@@ -1904,6 +1904,26 @@ export async function handleClarificationIntercept(
             }
           }
 
+          // Check known-noun escape evidence (only on reroute)
+          const knownNounEvidence = (ctx as any)._knownNounEscapeEvidence
+          if (llmResult.fallbackReason === 'reroute' && knownNounEvidence?.panelId) {
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'clarification_known_noun_validated_escape',
+              metadata: { input: trimmedInput, panelId: knownNounEvidence.panelId, title: knownNounEvidence.title },
+            })
+            saveClarificationSnapshot(lastClarification, true, 'interrupt' as const)
+            setLastClarification(null)
+            setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+            return {
+              handled: false,
+              clarificationCleared: true,
+              isNewQuestionOrCommandDetected,
+              _devProvenanceHint: 'bounded_clarification' as const,
+              _knownNounEscapeAction: true,
+            }
+          }
+
           // No escape evidence → genuine question or no validated target, fall through to downstream
           void debugLog({
             component: 'ChatNavigation',
@@ -2167,7 +2187,10 @@ export async function handleClarificationIntercept(
     //   - it is NOT a question signal.
     // This prevents "widget manager" from being trapped by an unrelated list.
     // ==========================================================================
-    if (lastClarification?.options && lastClarification.options.length > 0 && !isNewQuestionOrCommandDetected) {
+    // Active clarification bounded arbiter: do not interrupt when live clarification exists.
+    // Known-noun evidence is collected in the dispatcher; the bounded arbiter decides escape.
+    // Guard: skip when pendingOptions are active (live clarifier owns the turn).
+    if (lastClarification?.options && lastClarification.options.length > 0 && !isNewQuestionOrCommandDetected && pendingOptions.length === 0) {
       const knownNounMatch = matchKnownNoun(trimmedInput)
       if (knownNounMatch && !hasQuestionIntent(trimmedInput)) {
         // Check label overlap: tokenize input and all option labels
