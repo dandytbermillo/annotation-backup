@@ -7,7 +7,7 @@ Replace the current fragmented active-clarification routing with one bounded arb
 This plan keeps:
 
 - ordinal replies deterministic
-- explicit validated eaarescapes possible
+- explicit validated eaarewhscapes possible
 - cross-class target resolution available as bounded evidence
 
 This plan removes:

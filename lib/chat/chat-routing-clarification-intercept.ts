@@ -1820,9 +1820,28 @@ export async function handleClarificationIntercept(
         const tier1b3Candidates = lastClarification.options.map(o => ({
           id: o.id, label: o.label, sublabel: o.sublabel,
         }))
+
+        // Add validated escape targets as additional candidates so the LLM can select them.
+        // These are targets validated by upstream bounded sources (surface resolver, B1, known-noun).
+        const escapeEv = ctx.escapeEvidence
+        const escapeCandidates: Array<{ id: string; label: string; sublabel?: string }> = []
+        if (escapeEv?.surface?.surfaceType) {
+          const surfaceLabel = escapeEv.surface.surfaceType === 'recent' ? 'Recent' : escapeEv.surface.surfaceType
+          escapeCandidates.push({ id: `__escape_surface_${escapeEv.surface.surfaceType}`, label: surfaceLabel, sublabel: 'validated escape target (not in the shown options)' })
+        }
+        if (escapeEv?.knownNoun?.panelId) {
+          escapeCandidates.push({ id: `__escape_known_noun_${escapeEv.knownNoun.panelId}`, label: escapeEv.knownNoun.title, sublabel: 'validated escape target (not in the shown options)' })
+        }
+        if (escapeEv?.b1?.targetIds?.length) {
+          const b1Label = (escapeEv.b1.slotsJson as any)?.panelTitle ?? (escapeEv.b1.slotsJson as any)?.name ?? 'validated target'
+          escapeCandidates.push({ id: `__escape_b1_${escapeEv.b1.targetIds[0]}`, label: String(b1Label), sublabel: 'validated escape target (not in the shown options)' })
+        }
+
+        const allCandidates = [...tier1b3Candidates, ...escapeCandidates]
+
         const llmResult = await runBoundedArbitrationLoop({
           trimmedInput,
-          initialCandidates: tier1b3Candidates,
+          initialCandidates: allCandidates,
           context: 'tier1b3_unresolved',
           clarificationMessageId: lastClarification.messageId ?? '',
           inputIsExplicitCommand,
@@ -1938,10 +1957,24 @@ export async function handleClarificationIntercept(
           // Fall through to downstream tiers
         } else if (llmResult.autoExecute && llmResult.suggestedId) {
           // ===== Phase C: LLM high-confidence auto-execute =====
-          // All 3 gates passed in tryLLMLastChance (kill switch + confidence + allowlisted reason).
-          // Note: generic-phrase veto removed for this path. During active clarification,
-          // the bounded LLM selects from the SAME option set the user sees — "entries"
-          // matching "Entries" is a valid bounded selection, not an unsafe auto-execute.
+          // Check if LLM selected a validated escape candidate (ID starts with __escape_)
+          if (llmResult.suggestedId.startsWith('__escape_')) {
+            void debugLog({ component: 'ChatNavigation', action: 'clarification_llm_escape_select', metadata: { input: trimmedInput, escapeCandidateId: llmResult.suggestedId } })
+            saveClarificationSnapshot(lastClarification, true, 'interrupt' as const)
+            setLastClarification(null)
+            setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+            return {
+              handled: false,
+              clarificationCleared: true,
+              isNewQuestionOrCommandDetected,
+              _devProvenanceHint: 'bounded_clarification' as const,
+              ...(llmResult.suggestedId.includes('_surface_') ? { _surfaceEscapeAction: true } : {}),
+              ...(llmResult.suggestedId.includes('_b1_') ? { _b1EscapeAction: true } : {}),
+              ...(llmResult.suggestedId.includes('_known_noun_') ? { _knownNounEscapeAction: true } : {}),
+            }
+          }
+
+          // Normal clarifier option selected
           const selectedOption = lastClarification.options.find(o => o.id === llmResult.suggestedId)
           if (selectedOption) {
             const fullOption = pendingOptions.find(opt => opt.id === selectedOption.id)
@@ -1974,7 +2007,39 @@ export async function handleClarificationIntercept(
             handleSelectOption(optionToSelect)
             return { handled: true, clarificationCleared: true, isNewQuestionOrCommandDetected, _devProvenanceHint: 'bounded_clarification' }
           }
-          // suggestedId not found in options → fall through to safe clarifier
+          // suggestedId not found in options → check if it's an escape candidate
+          if (llmResult.suggestedId?.startsWith('__escape_')) {
+            void debugLog({ component: 'ChatNavigation', action: 'clarification_llm_escape_select_no_autoexec', metadata: { input: trimmedInput, escapeCandidateId: llmResult.suggestedId } })
+            saveClarificationSnapshot(lastClarification, true, 'interrupt' as const)
+            setLastClarification(null)
+            setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+            return {
+              handled: false,
+              clarificationCleared: true,
+              isNewQuestionOrCommandDetected,
+              _devProvenanceHint: 'bounded_clarification' as const,
+              ...(llmResult.suggestedId.includes('_surface_') ? { _surfaceEscapeAction: true } : {}),
+              ...(llmResult.suggestedId.includes('_b1_') ? { _b1EscapeAction: true } : {}),
+              ...(llmResult.suggestedId.includes('_known_noun_') ? { _knownNounEscapeAction: true } : {}),
+            }
+          }
+          // fall through to safe clarifier
+        } else if (llmResult.suggestedId?.startsWith('__escape_')) {
+          // LLM selected an escape candidate with lower confidence (autoExecute: false).
+          // Still honor it — the target is already validated by a bounded source.
+          void debugLog({ component: 'ChatNavigation', action: 'clarification_llm_escape_select_low_confidence', metadata: { input: trimmedInput, escapeCandidateId: llmResult.suggestedId } })
+          saveClarificationSnapshot(lastClarification, true, 'interrupt' as const)
+          setLastClarification(null)
+          setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+          return {
+            handled: false,
+            clarificationCleared: true,
+            isNewQuestionOrCommandDetected,
+            _devProvenanceHint: 'bounded_clarification' as const,
+            ...(llmResult.suggestedId.includes('_surface_') ? { _surfaceEscapeAction: true } : {}),
+            ...(llmResult.suggestedId.includes('_b1_') ? { _b1EscapeAction: true } : {}),
+            ...(llmResult.suggestedId.includes('_known_noun_') ? { _knownNounEscapeAction: true } : {}),
+          }
         } else {
           // --- need_more_info veto (Plan 20, Site 2: Tier 1b.3) ---
           if (isContinuityEnabledTier1b3 && llmResult.attempted && !llmResult.suggestedId) {

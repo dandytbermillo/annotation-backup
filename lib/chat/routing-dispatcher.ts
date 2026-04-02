@@ -3205,11 +3205,30 @@ async function dispatchRoutingInner(
   // (snapshot lifecycle, repair memory, stop suppression). The internal
   // order is: Tier 0 → Tier 1 → Tier 3, matching the plan.
   // =========================================================================
+  // Pre-intercept: collect known-noun evidence so the arbiter can see escape targets.
+  // (B1 and surface evidence are already collected in the outer wrapper.)
+  const hasLiveClarificationForPreNoun = ctx.pendingOptions.length > 0 || !!ctx.lastClarification
+  if (hasLiveClarificationForPreNoun && !(ctx as any)._knownNounEscapeEvidence) {
+    const preNounMatch = matchKnownNoun(ctx.trimmedInput)
+    if (preNounMatch) {
+      ;(ctx as any)._knownNounEscapeEvidence = { panelId: preNounMatch.panelId, title: preNounMatch.title }
+    }
+  }
+
+  // Build escape evidence for the intercept
+  const escapeEvidence: import('./chat-routing-types').EscapeEvidence = {
+    b1: (ctx as any)._b1EscapeEvidence ?? undefined,
+    surface: (ctx as any)._surfaceEscapeEvidence ?? undefined,
+    knownNoun: (ctx as any)._knownNounEscapeEvidence ?? undefined,
+  }
+  const hasEscapeEvidence = !!escapeEvidence.b1 || !!escapeEvidence.surface || !!escapeEvidence.knownNoun
+
   console.log('[dispatcher] BEFORE handleClarificationIntercept:', {
     input: ctx.trimmedInput,
     hasLastClarification: !!ctx.lastClarification,
     lastClarificationOptionsCount: ctx.lastClarification?.options?.length ?? 0,
     pendingOptionsCount: ctx.pendingOptions.length,
+    hasEscapeEvidence,
   })
   const clarificationResult = await handleClarificationIntercept({
     trimmedInput: ctx.trimmedInput,
@@ -3218,6 +3237,7 @@ async function dispatchRoutingInner(
     pendingOptions: ctx.pendingOptions,
     uiContext: ctx.uiContext,
     currentEntryId: ctx.currentEntryId,
+    escapeEvidence: hasEscapeEvidence ? escapeEvidence : undefined,
     addMessage: ctx.addMessage,
     setLastClarification: ctx.setLastClarification,
     setIsLoading: ctx.setIsLoading,

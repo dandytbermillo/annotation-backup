@@ -172,6 +172,13 @@ export interface ClarificationInterceptResult extends HandlerResult {
   _knownNounEscapeAction?: boolean
 }
 
+/** Validated escape evidence collected by upstream lanes (B1, surface resolver, known-noun) */
+export interface EscapeEvidence {
+  b1?: { intentId: string | null; targetIds: string[]; slotsJson: Record<string, unknown>; tierLabel: string | null; action: unknown }
+  surface?: { surfaceType: string; intentFamily: string; executionPolicy: string; targetSurfaceId?: string; surfaceResult: unknown }
+  knownNoun?: { panelId: string; title: string }
+}
+
 export interface ClarificationInterceptContext {
   // Input
   trimmedInput: string
@@ -182,6 +189,9 @@ export interface ClarificationInterceptContext {
   pendingOptions: PendingOptionState[]
   uiContext?: UIContext | null
   currentEntryId?: string
+
+  // Validated escape evidence (from upstream B1, surface resolver, known-noun)
+  escapeEvidence?: EscapeEvidence
 
   // Callbacks
   addMessage: (message: ChatMessage, routingMeta?: { tierLabel?: string; provenance?: import('./chat-navigation-context').ChatProvenance }) => void
