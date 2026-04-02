@@ -106,9 +106,36 @@ User input during active clarification
 
 ---
 
+## Runtime Verification Results
+
+| Scenario | Result | Badge |
+|----------|--------|-------|
+| Active clarifier + "the first one" | ✅ Opens Entries | Deterministic |
+| Active clarifier + "entries" | ✅ Opens Entries | 🎯 Bounded-Selection |
+| Active clarifier + "that entry navigator c" | ✅ Opens Entry Navigator C | 🎯 Bounded-Selection |
+| Active clarifier + "open recent" | ✅ Opens Recent, clarifier paused | 🎯 Bounded-Selection |
+| Active clarifier + "open links panel b" | ✅ Opens Links Panel B | 🎯 Bounded-Selection |
+| After escape + "open first option from chat" | ✅ Resumes paused clarifier, selects Entries | 🎯 Bounded-Selection |
+| Active clarifier + "open entries" | ✅ Opens Entries | 🎯 Bounded-Selection |
+| No active clarifier + "open recent" | ✅ Opens Recent | Deterministic-Surface |
+
+### Known Gap: Post-escape resume inconsistency
+
+After escaping from a live clarifier (e.g., "open recent"), resume works for command-shaped inputs but not verb-less forms:
+
+| Input | After escape | Result |
+|-------|-------------|--------|
+| `open first option from chat` | Paused clarifier | ✅ Resumes + selects |
+| `the first option from chat` | Paused clarifier | ❌ "I'm not sure what you're referring to" |
+| `from chat` | Paused clarifier | ❓ Not tested |
+
+The verb-less form falls through to the arbiter's ambiguous fallback instead of the scope-cue handler's recovery path. This is a pre-existing scope-cue limitation, not a regression from the arbiter changes.
+
+---
+
 ## Next Steps
 
-- [ ] Runtime verify all scenarios above
+- [ ] Fix post-escape resume consistency for verb-less "from chat" forms
 - [ ] Update stale automated tests
 - [ ] Implement truncated bounded context (arbiter input enrichment)
 - [ ] Implement repair mode (rejection/correction handling)
