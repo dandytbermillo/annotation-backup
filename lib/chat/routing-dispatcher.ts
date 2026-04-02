@@ -2019,7 +2019,8 @@ export async function dispatchRouting(
       const isHomeNav = HOME_NAV_BYPASS.test(ctx.trimmedInput)
       // Clarification owns the turn: skip arbiter entirely when clarification is active.
       // Ordinals and bare nouns must reach the tier chain for deterministic/bounded-LLM handling.
-      const hasActiveClarification = ctx.pendingOptions.length > 0 || !!ctx.lastClarification
+      // Include paused clarificationSnapshot — after escape, the user may be resuming
+      const hasActiveClarification = ctx.pendingOptions.length > 0 || !!ctx.lastClarification || !!ctx.clarificationSnapshot
       return hasSurfaceContext && !contentResult.isContentIntent && !isArbiterHardExcluded(ctx.trimmedInput) && !isActionNav && !isHistoryInfo && !isHomeNav && !hasActiveClarification
     })()) {
       // ── 6x.8 Phase 4: Cross-surface arbiter for uncertain turns across surfaces ──

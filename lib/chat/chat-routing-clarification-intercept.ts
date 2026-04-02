@@ -449,6 +449,7 @@ export async function handleClarificationIntercept(
   // NOTE: isLatchActive + scopeCue are hoisted above the widget bypass block.
   // ==========================================================================
 
+  console.log('[intercept] scope-cue check:', { input: trimmedInput, scope: scopeCue.scope, isLatchEnabled, hasSnapshot: !!clarificationSnapshot, snapshotOptionsCount: clarificationSnapshot?.options?.length ?? 0 })
   const scopeCueResult = await handleScopeCuePhase(ctx, {
     scopeCue,
     isLatchActive: !!isLatchActive,
