@@ -1814,6 +1814,38 @@ export async function handleClarificationIntercept(
         }
 
         // If we reach here, no match survived the gate (deterministic, badge, or polite-wrapper).
+
+        // Pre-LLM validated escape: when escape evidence exists AND input has NO overlap
+        // with clarifier options, execute the escape directly. The upstream validation
+        // (surface resolver, B1, known-noun) already proved the target is valid.
+        // The LLM is unreliable for reroute/escape decisions — the validation IS the decision.
+        const hasOptionOverlap = matchingOptions.length > 0
+        const preLlmEscapeEv = ctx.escapeEvidence
+        if (!hasOptionOverlap && preLlmEscapeEv) {
+          const hasB1 = !!preLlmEscapeEv.b1?.action
+          const hasSurface = !!preLlmEscapeEv.surface?.surfaceResult
+          const hasKnownNoun = !!preLlmEscapeEv.knownNoun?.panelId
+          if (hasB1 || hasSurface || hasKnownNoun) {
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'clarification_pre_llm_validated_escape',
+              metadata: { input: trimmedInput, hasB1, hasSurface, hasKnownNoun, hasOptionOverlap },
+            })
+            saveClarificationSnapshot(lastClarification, true, 'interrupt' as const)
+            setLastClarification(null)
+            setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+            return {
+              handled: false,
+              clarificationCleared: true,
+              isNewQuestionOrCommandDetected,
+              _devProvenanceHint: 'bounded_clarification' as const,
+              ...(hasB1 ? { _b1EscapeAction: true } : {}),
+              ...(hasSurface ? { _surfaceEscapeAction: true } : {}),
+              ...(hasKnownNoun ? { _knownNounEscapeAction: true } : {}),
+            }
+          }
+        }
+
         // Pass matchCount: 0 so the arbitration classifier treats this as "no viable deterministic match"
         // and routes to bounded LLM. Without this, matchCount=1 (a soft match the gate rejected)
         // causes classifier_not_eligible, preventing the LLM from ever being called.
