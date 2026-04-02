@@ -1816,38 +1816,8 @@ export async function handleClarificationIntercept(
 
         // If we reach here, no match survived the gate (deterministic, badge, or polite-wrapper).
 
-        // Pre-LLM validated escape: when escape evidence exists AND input has NO overlap
-        // with clarifier options, execute the escape directly. The upstream validation
-        // (surface resolver, B1, known-noun) already proved the target is valid.
-        // The LLM is unreliable for reroute/escape decisions — the validation IS the decision.
-        const hasOptionOverlap = matchingOptions.length > 0
-        const preLlmEscapeEv = ctx.escapeEvidence
-        if (!hasOptionOverlap && preLlmEscapeEv) {
-          const hasB1 = !!preLlmEscapeEv.b1?.action
-          const hasSurface = !!preLlmEscapeEv.surface?.surfaceResult
-          const hasKnownNoun = !!preLlmEscapeEv.knownNoun?.panelId
-          if (hasB1 || hasSurface || hasKnownNoun) {
-            void debugLog({
-              component: 'ChatNavigation',
-              action: 'clarification_pre_llm_validated_escape',
-              metadata: { input: trimmedInput, hasB1, hasSurface, hasKnownNoun, hasOptionOverlap },
-            })
-            saveClarificationSnapshot(lastClarification, true, 'interrupt' as const)
-            setLastClarification(null)
-            setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
-            // Return handled: true so grounding doesn't steal the turn.
-            // The outer wrapper reads escape evidence from the result and executes.
-            return {
-              handled: true,
-              clarificationCleared: true,
-              isNewQuestionOrCommandDetected,
-              _devProvenanceHint: 'bounded_clarification' as const,
-              ...(hasB1 ? { _b1EscapeAction: true } : {}),
-              ...(hasSurface ? { _surfaceEscapeAction: true } : {}),
-              ...(hasKnownNoun ? { _knownNounEscapeAction: true } : {}),
-            }
-          }
-        }
+        // Slice B2: ALL escape evidence goes through the bounded LLM arbiter.
+        // No pre-LLM direct escape — the arbiter is the sole decision point.
 
         // Pass matchCount: 0 so the arbitration classifier treats this as "no viable deterministic match"
         // and routes to bounded LLM. Without this, matchCount=1 (a soft match the gate rejected)
@@ -1870,6 +1840,22 @@ export async function handleClarificationIntercept(
         if (escapeEv?.b1?.targetIds?.length) {
           const b1Label = (escapeEv.b1.slotsJson as any)?.panelTitle ?? (escapeEv.b1.slotsJson as any)?.name ?? 'validated target'
           escapeCandidates.push({ id: `__escape_b1_${escapeEv.b1.targetIds[0]}`, label: String(b1Label), sublabel: 'validated escape target (not in the shown options)' })
+        }
+        // Slice B2: Add B2 semantic candidates as escape options (typo-tolerant, embedding-based)
+        // These are hints from learned/seeded rows — the LLM decides whether to select them.
+        if (escapeEv?.semantic?.candidates?.length) {
+          for (const sc of escapeEv.semantic.candidates) {
+            const semanticLabel = (sc.slots_json as any)?.panelTitle ?? (sc.slots_json as any)?.name ?? sc.intent_id
+            // Avoid duplicating candidates already added from other sources
+            const alreadyAdded = escapeCandidates.some(ec => ec.label.toLowerCase() === String(semanticLabel).toLowerCase())
+            if (!alreadyAdded) {
+              escapeCandidates.push({
+                id: `__escape_semantic_${sc.intent_id}_${sc.target_ids[0] ?? 'unknown'}`,
+                label: String(semanticLabel),
+                sublabel: `semantic match (similarity: ${sc.similarity_score.toFixed(2)})`,
+              })
+            }
+          }
         }
 
         const allCandidates = [...tier1b3Candidates, ...escapeCandidates]

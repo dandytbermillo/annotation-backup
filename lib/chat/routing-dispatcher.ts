@@ -1673,6 +1673,19 @@ export async function dispatchRouting(
 
         if (validatedCount > 0) {
           semanticCandidatesForLaneD = validatedCandidates
+          // Slice B2: store semantic candidates as escape evidence for live clarification
+          const hasLiveClarificationForSemantic = ctx.pendingOptions.length > 0 || !!ctx.lastClarification || !!ctx.clarificationSnapshot
+          if (hasLiveClarificationForSemantic) {
+            ;(ctx as any)._semanticEscapeEvidence = {
+              candidates: validatedCandidates.map(c => ({
+                intent_id: c.intent_id,
+                slots_json: c.slots_json,
+                similarity_score: c.similarity_score,
+                target_ids: c.target_ids,
+              })),
+              topScore: validatedCandidates[0]?.similarity_score,
+            }
+          }
         }
       } else if (lookupResult.status === 'empty') {
         b2Telemetry = { status: 'no_candidates', latencyMs: lookupResult.latencyMs }
@@ -3222,8 +3235,9 @@ async function dispatchRoutingInner(
     b1: (ctx as any)._b1EscapeEvidence ?? undefined,
     surface: (ctx as any)._surfaceEscapeEvidence ?? undefined,
     knownNoun: (ctx as any)._knownNounEscapeEvidence ?? undefined,
+    semantic: (ctx as any)._semanticEscapeEvidence ?? undefined,
   }
-  const hasEscapeEvidence = !!escapeEvidence.b1 || !!escapeEvidence.surface || !!escapeEvidence.knownNoun
+  const hasEscapeEvidence = !!escapeEvidence.b1 || !!escapeEvidence.surface || !!escapeEvidence.knownNoun || !!escapeEvidence.semantic
 
   console.log('[dispatcher] BEFORE handleClarificationIntercept:', {
     input: ctx.trimmedInput,

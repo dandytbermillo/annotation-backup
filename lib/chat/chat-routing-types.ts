@@ -177,6 +177,7 @@ export interface EscapeEvidence {
   b1?: { intentId: string | null; targetIds: string[]; slotsJson: Record<string, unknown>; tierLabel: string | null; action: unknown }
   surface?: { surfaceType: string; intentFamily: string; executionPolicy: string; targetSurfaceId?: string; surfaceResult: unknown }
   knownNoun?: { panelId: string; title: string }
+  semantic?: { candidates: Array<{ intent_id: string; slots_json: Record<string, unknown>; similarity_score: number; target_ids: string[] }>; topScore?: number }
 }
 
 export interface ClarificationInterceptContext {
