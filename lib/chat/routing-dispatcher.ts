@@ -62,7 +62,7 @@ import { reconstructSnapshotData } from '@/lib/chat/chat-routing-clarification-u
 import { handleCrossCorpusRetrieval } from '@/lib/chat/cross-corpus-handler'
 import { handleDocRetrieval } from '@/lib/chat/doc-routing'
 import { isAffirmationPhrase, isRejectionPhrase, matchesReshowPhrases, matchesShowAllHeuristic, hasGraceSkipActionVerb, hasQuestionIntent, ACTION_VERB_PATTERN, isCommandLike, isPoliteImperativeRequest } from '@/lib/chat/query-patterns'
-import { handleKnownNounRouting } from '@/lib/chat/known-noun-routing'
+import { handleKnownNounRouting, matchKnownNoun } from '@/lib/chat/known-noun-routing'
 import { callClarificationLLMClient, isLLMFallbackEnabledClient } from '@/lib/chat/clarification-llm-fallback'
 import { handleGroundingSetFallback, buildGroundingContext, checkSoftActiveWindow, isSelectionLike, validateGroundingCandidates, capAndTrimCandidates } from '@/lib/chat/grounding-set'
 import type { GroundingCandidate } from '@/lib/chat/grounding-set'
@@ -5871,12 +5871,19 @@ async function dispatchRoutingInner(
 
   // hasVisibleWidgetItems already computed with turnSnapshot above
 
-  // Active clarification bounded arbiter: skip known-noun direct execution when live
-  // clarification exists. The bounded arbiter at the unresolved hook handles all inputs.
+  // Active clarification bounded arbiter: known-noun routing must not execute directly
+  // when live clarification exists. Collect evidence only (pure match, no side effects).
   const hasLiveClarificationForKnownNoun = ctx.pendingOptions.length > 0 || !!ctx.lastClarification
   if (hasLiveClarificationForKnownNoun) {
-    void debugLog({ component: 'ChatNavigation', action: 'known_noun_skipped_live_clarification', metadata: { input: ctx.trimmedInput } })
-    // Fall through to grounding / bounded LLM
+    const knownNounMatch = matchKnownNoun(ctx.trimmedInput)
+    if (knownNounMatch) {
+      ;(ctx as any)._knownNounEscapeEvidence = {
+        panelId: knownNounMatch.panelId,
+        title: knownNounMatch.title,
+      }
+      void debugLog({ component: 'ChatNavigation', action: 'known_noun_evidence_collected', metadata: { input: ctx.trimmedInput, panelId: knownNounMatch.panelId, title: knownNounMatch.title } })
+    }
+    // Fall through to grounding / bounded LLM (don't execute)
   }
 
   const knownNounResult = hasLiveClarificationForKnownNoun ? { handled: false } : handleKnownNounRouting({
