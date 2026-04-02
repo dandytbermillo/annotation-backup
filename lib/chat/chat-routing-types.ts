@@ -166,6 +166,8 @@ export interface ClarificationInterceptResult extends HandlerResult {
   _fromClarifiedSelection?: boolean
   /** Signal from bounded arbiter: B1 validated escape should be used instead of fallthrough */
   _b1EscapeAction?: boolean
+  /** Signal from bounded arbiter: surface resolver validated escape should be used */
+  _surfaceEscapeAction?: boolean
 }
 
 export interface ClarificationInterceptContext {

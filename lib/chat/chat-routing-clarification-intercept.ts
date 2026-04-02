@@ -1412,7 +1412,9 @@ export async function handleClarificationIntercept(
         const knownCommandTargets = ['recent', 'panel', 'widget', 'demo', 'note', 'notes', 'doc', 'docs']
         const isKnownTarget = knownCommandTargets.some(target => restOfInput.includes(target))
 
-        if (!matchesCurrentOption && isKnownTarget) {
+        // Active clarification bounded arbiter: do not escape when live clarification exists.
+        // "open recent" during active clarifier should reach the bounded arbiter, not clear state.
+        if (!matchesCurrentOption && isKnownTarget && !hasLiveClarificationForBypass) {
           void debugLog({
             component: 'ChatNavigation',
             action: 'clarification_command_typo_escape',
@@ -1848,11 +1850,10 @@ export async function handleClarificationIntercept(
         }
 
         if (llmResult.fallbackReason === 'question_intent' || llmResult.fallbackReason === 'reroute') {
-          // Question or reroute → check for B1 validated escape evidence first.
-          // If B1 found a validated target during evidence collection, execute it as a
-          // validated escape (pause clarification, don't destroy it).
+          // Check for validated escape evidence — ONLY on reroute (LLM explicitly said "different task").
+          // question_intent + escape evidence → inform, NOT execute (per plan).
           const b1Evidence = (ctx as any)._b1EscapeEvidence
-          if (b1Evidence?.action) {
+          if (llmResult.fallbackReason === 'reroute' && b1Evidence?.action) {
             void debugLog({
               component: 'ChatNavigation',
               action: 'clarification_b1_validated_escape',
@@ -1877,7 +1878,33 @@ export async function handleClarificationIntercept(
             }
           }
 
-          // No B1 evidence → genuine question, fall through to downstream
+          // Check surface escape evidence (only on reroute, not question_intent — per plan)
+          const surfaceEvidence = (ctx as any)._surfaceEscapeEvidence
+          if (llmResult.fallbackReason === 'reroute' && surfaceEvidence?.surfaceResult) {
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'clarification_surface_validated_escape',
+              metadata: {
+                input: trimmedInput,
+                surfaceType: surfaceEvidence.surfaceType,
+                executionPolicy: surfaceEvidence.executionPolicy,
+              },
+            })
+            // Pause clarification (don't destroy)
+            saveClarificationSnapshot(lastClarification, true, 'interrupt' as const)
+            setLastClarification(null)
+            setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+            // Signal to the outer wrapper to use the surface action
+            return {
+              handled: false,
+              clarificationCleared: true,
+              isNewQuestionOrCommandDetected,
+              _devProvenanceHint: 'bounded_clarification' as const,
+              _surfaceEscapeAction: true,
+            }
+          }
+
+          // No escape evidence → genuine question or no validated target, fall through to downstream
           void debugLog({
             component: 'ChatNavigation',
             action: 'clarification_unresolved_hook_question_escape',

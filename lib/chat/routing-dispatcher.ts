@@ -1827,7 +1827,19 @@ export async function dispatchRouting(
       const surfaceResult = await resolveSurfaceCommand(ctx.trimmedInput, runtimeContext)
 
       if (surfaceResult && isResolvedSurfaceCommand(surfaceResult)) {
-        if (surfaceResult.executionPolicy === 'list_items') {
+        // Active clarification bounded arbiter: do not execute surface commands directly
+        // when live clarification exists. Store as escape evidence for the arbiter.
+        const hasLiveClarificationForSurface = ctx.pendingOptions.length > 0 || !!ctx.lastClarification
+        if (hasLiveClarificationForSurface) {
+          ;(ctx as any)._surfaceEscapeEvidence = {
+            surfaceType: surfaceResult.surfaceType,
+            intentFamily: surfaceResult.intentFamily,
+            executionPolicy: surfaceResult.executionPolicy,
+            targetSurfaceId: surfaceResult.targetSurfaceId,
+            surfaceResult,
+          }
+          // Fall through — let the tier chain / bounded arbiter handle it
+        } else if (surfaceResult.executionPolicy === 'list_items') {
           let answerContent = "I couldn't load that information right now. Try again in a moment."
           try {
             const apiRes = await fetch(`${typeof window !== 'undefined' ? '' : process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'}/api/panels/recent/list`, {
@@ -2690,12 +2702,32 @@ export async function dispatchRouting(
       routingError = err
     }
 
-    // Active clarification bounded arbiter: if the intercept signaled a B1 validated escape,
-    // use the stored B1 action instead of falling through to the navigate API.
+    // Active clarification bounded arbiter: if the intercept signaled a validated escape,
+    // use the stored evidence action instead of falling through to the navigate API.
     const b1Evidence = (ctx as any)._b1EscapeEvidence
+    const surfaceEvidence = (ctx as any)._surfaceEscapeEvidence
     if (!routingError && result && (result as any)._b1EscapeAction && b1Evidence?.action) {
       result = {
         ...b1Evidence.action,
+        _devProvenanceHint: 'bounded_clarification' as const,
+      }
+    } else if (!routingError && result && (result as any)._surfaceEscapeAction && surfaceEvidence?.surfaceResult) {
+      // Execute the surface command that was deferred during evidence collection
+      const sr = surfaceEvidence.surfaceResult
+      if (sr.executionPolicy === 'open_surface' && sr.targetSurfaceId && ctx.openPanelDrawer) {
+        ctx.openPanelDrawer(sr.targetSurfaceId)
+      }
+      const surfaceLabel = sr.surfaceType === 'recent' ? 'Recent' : sr.surfaceType
+      const surfaceMsg: ChatMessage = {
+        id: `assistant-${Date.now()}`, role: 'assistant',
+        content: `Opening ${surfaceLabel}...`, timestamp: new Date(), isError: false,
+      }
+      ctx.addMessage(surfaceMsg, { tierLabel: 'surface_command_resolve', provenance: 'bounded_clarification' })
+      ctx.setIsLoading(false)
+      result = {
+        handled: true, handledByTier: 4, tierLabel: 'surface_command_resolve',
+        clarificationCleared: true, isNewQuestionOrCommandDetected: false,
+        classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
         _devProvenanceHint: 'bounded_clarification' as const,
       }
     }
@@ -5839,7 +5871,15 @@ async function dispatchRoutingInner(
 
   // hasVisibleWidgetItems already computed with turnSnapshot above
 
-  const knownNounResult = handleKnownNounRouting({
+  // Active clarification bounded arbiter: skip known-noun direct execution when live
+  // clarification exists. The bounded arbiter at the unresolved hook handles all inputs.
+  const hasLiveClarificationForKnownNoun = ctx.pendingOptions.length > 0 || !!ctx.lastClarification
+  if (hasLiveClarificationForKnownNoun) {
+    void debugLog({ component: 'ChatNavigation', action: 'known_noun_skipped_live_clarification', metadata: { input: ctx.trimmedInput } })
+    // Fall through to grounding / bounded LLM
+  }
+
+  const knownNounResult = hasLiveClarificationForKnownNoun ? { handled: false } : handleKnownNounRouting({
     trimmedInput: ctx.trimmedInput,
     visibleWidgets: ctx.uiContext?.dashboard?.visibleWidgets,
     addMessage: ctx.addMessage,
