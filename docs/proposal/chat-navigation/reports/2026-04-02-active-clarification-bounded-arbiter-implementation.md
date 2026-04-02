@@ -119,23 +119,34 @@ User input during active clarification
 | Active clarifier + "open entries" | ✅ Opens Entries | 🎯 Bounded-Selection |
 | No active clarifier + "open recent" | ✅ Opens Recent | Deterministic-Surface |
 
-### Known Gap: Post-escape resume inconsistency
+### Post-escape resume — FIXED
 
-After escaping from a live clarifier (e.g., "open recent"), resume works for command-shaped inputs but not verb-less forms:
+All resume forms now work after escape:
 
-| Input | After escape | Result |
-|-------|-------------|--------|
-| `open first option from chat` | Paused clarifier | ✅ Resumes + selects |
-| `the first option from chat` | Paused clarifier | ❌ "I'm not sure what you're referring to" |
-| `from chat` | Paused clarifier | ❓ Not tested |
+| Input | After escape | Result | Badge |
+|-------|-------------|--------|-------|
+| `open first option from chat` | Paused clarifier | ✅ Resumes + selects Entries | 🎯 Bounded-Selection |
+| `the first option from chat` | Paused clarifier | ✅ Resumes + selects Entries | 🎯 Bounded-Selection |
+| `the second option from chat` | Paused clarifier | ✅ Resumes + selects Entry Navigator | 🎯 Bounded-Selection |
+| `from chat` | Paused clarifier | ✅ Re-shows paused options as visible clarifier with pills | 🎯 Bounded-Selection |
 
-The verb-less form falls through to the arbiter's ambiguous fallback instead of the scope-cue handler's recovery path. This is a pre-existing scope-cue limitation, not a regression from the arbiter changes.
+**Fixes applied:**
+- Arbiter gate includes `!!ctx.clarificationSnapshot` so paused snapshots prevent arbiter takeover
+- Standalone "from chat" re-anchor emits visible assistant message with pills (was silent)
+
+### Known limitations
+
+| Issue | Status |
+|-------|--------|
+| Typo in escape command ("opeen recent") → re-clarify instead of escape | LLM quality — surface resolver doesn't fuzzy-match typos |
+| Multi-evidence fixed precedence (B1 > surface > known-noun) | Structural — untested in practice |
+| Pre-LLM escape shortcut bypasses bounded arbiter for non-overlapping targets | Pragmatic — LLM unreliable for reroute decisions |
 
 ---
 
 ## Next Steps
 
-- [ ] Fix post-escape resume consistency for verb-less "from chat" forms
 - [ ] Update stale automated tests
 - [ ] Implement truncated bounded context (arbiter input enrichment)
 - [ ] Implement repair mode (rejection/correction handling)
+- [ ] Investigate typo-tolerant escape matching
