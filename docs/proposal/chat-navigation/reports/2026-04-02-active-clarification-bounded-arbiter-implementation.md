@@ -134,7 +134,7 @@ All resume forms now work after escape:
 - Arbiter gate includes `!!ctx.clarificationSnapshot` so paused snapshots prevent arbiter takeover
 - Standalone "from chat" re-anchor emits visible assistant message with pills (was silent)
 
-### Known limitations
+### Known limitations (pre-B2)
 
 | Issue | Status |
 |-------|--------|
@@ -144,9 +144,67 @@ All resume forms now work after escape:
 
 ---
 
+## Slice B2: Clean Implementation Pass (2026-04-02)
+
+Unified escape architecture: all escape evidence flows through the bounded LLM arbiter as the sole decision point. No pre-LLM shortcuts.
+
+### Changes (7 steps)
+
+| Step | Change | File(s) |
+|------|--------|---------|
+| 1. Fix Gate 3 nesting | `!hasLiveClarificationForGate` moved inside STAGE6 block to gate only content-intent classifier, not surface resolver/arbiter | `routing-dispatcher.ts` |
+| 2. Delete pre-LLM escape shortcut | Removed 30-line shortcut that bypassed arbiter for non-overlapping targets | `chat-routing-clarification-intercept.ts` |
+| 3. Unify semantic source | Legacy B2 `lookupSemanticMemory` no longer stores escape evidence; Phase 5 `lookupSemanticHints` is sole semantic escape source | `routing-dispatcher.ts` |
+| 4. Concrete escape payload | 4 boolean flags → `ConcreteEscapeAction` discriminated union with self-contained evidence | `chat-routing-types.ts`, `chat-routing-clarification-intercept.ts`, `routing-dispatcher.ts` |
+| 5. Symmetric `__escape_*` handling | `runBoundedArbitrationLoop` preserves `choiceId` for reroute decisions; `buildConcreteEscapeAction` helper | `chat-routing-arbitration.ts`, `chat-routing-clarification-intercept.ts` |
+| 6. Evidence-based provenance | `ExecutionSourceTag` type; 3 panel remap sites prefer `_executionSource` over ambient state | `chat-routing-types.ts`, `chat-navigation-panel.tsx` |
+| 7. Tests | 17 unit tests for escape builder, precedence, self-containment, contract | `bounded-arbiter-escape.test.ts` |
+
+### Additional fix: escape propagation
+
+Escape action paths returned `handled: false`, preventing `_escapeAction` from reaching the outer wrapper (only `handled: true` results propagate). Changed all 4 escape paths to `handled: true`. Without this fix, the navigate API handled "open recent" via LLM fallthrough instead of the bounded arbiter escape.
+
+### Slice B2 runtime verification
+
+| Scenario | Result | Badge |
+|----------|--------|-------|
+| Active clarifier + "open recent" | ✅ Opens Recent, clarifier paused | 🎯 Bounded-Selection |
+| Active clarifier + "openn recent" (typo) | ✅ Opens Recent, clarifier paused | 🎯 Bounded-Selection |
+| After escape + "open that option 1 from chat" | ✅ Resumes + selects Entries | 🎯 Bounded-Selection |
+| After escape + "open that option 2 from chat" | ✅ Resumes + selects Entry Navigator | 🎯 Bounded-Selection |
+| Active clarifier + "pls open recent widget" | ✅ Opens Recent | 🎯 Bounded-Selection |
+| After resume + "open entries" | ✅ Fresh clarifier | LLM-Clarifier |
+| No active clarifier + "open recent" | ✅ Opens Recent | Deterministic-Surface |
+
+### Known limitations (post-B2)
+
+| Issue | Status | Severity |
+|-------|--------|----------|
+| Semantic escape branch (`routing-dispatcher.ts:~2825`) falls through generically instead of replaying the concrete semantic target | Open implementation gap — `escapeAction.semanticEvidence` carries intent_id, slots_json, target_ids but the outer wrapper sets `handled: false` instead of executing | Medium |
+| Winning escape source for "openn recent" — **verified: surface** | Console log confirms: `{ source: 'surface', choiceId: '__escape_surface_recent' }`. Exact internal surface-resolver subpath (raw seed vs rewrite-assisted) not identified from this log alone. Semantic escape path was not the winning source for this input. | Resolved — semantic replay gap is untested (not disproven), non-blocking for surface-resolvable inputs |
+| Reroute precedence (B1 > surface > knownNoun > semantic) in `buildConcreteEscapeAction` is fixed, not LLM-driven | Only applies when LLM returns `reroute` without a specific `__escape_*` choiceId | Low — LLM usually selects a specific candidate |
+
+### Diagnostic: escape source for "openn recent" — VERIFIED
+
+Console output (2026-04-02 21:58):
+```
+[dispatcher] ESCAPE ACTION EXECUTING: {input: 'openn recent', source: 'surface', choiceId: '__escape_surface_recent'}
+```
+
+**Result:** Surface resolver wins. The log confirms `source: 'surface'` but does not identify which internal surface-resolver subpath handled the typo (raw seeded retrieval, rewrite-assisted retrieval, or another recovery path). The semantic escape path (Phase 5 `lookupSemanticHints`) was not the winning source for this input.
+
+**Implication:** The semantic escape branch's generic fallthrough (`routing-dispatcher.ts:~2825`) is a real open gap — untested, not disproven. It is not reachable for inputs that the surface resolver already handles. To trigger the semantic branch, an input would need to:
+1. Not match any surface resolver seed (surface evidence absent)
+2. Match a Phase 5 semantic hint (semantic evidence present)
+3. Have the bounded LLM select the `__escape_semantic_*` candidate
+
+No such test case has been demonstrated yet.
+
+---
+
 ## Next Steps
 
-- [ ] Update stale automated tests
+- [ ] Verify winning escape source for "openn recent" from console logs
+- [ ] Implement concrete semantic replay (semantic escape branch at `routing-dispatcher.ts:~2825`)
 - [ ] Implement truncated bounded context (arbiter input enrichment)
 - [ ] Implement repair mode (rejection/correction handling)
-- [ ] Investigate typo-tolerant escape matching

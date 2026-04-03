@@ -30,6 +30,8 @@ import type {
   PendingOptionState,
   ClarificationInterceptResult,
   ClarificationInterceptContext,
+  ConcreteEscapeAction,
+  EscapeEvidence,
 } from './chat-routing-types'
 import {
   runBoundedArbitrationLoop,
@@ -154,6 +156,52 @@ function correctScopeTriggerTypo(input: string): {
  *
  * Returns { handled: true } if input was processed here, false to continue routing.
  */
+
+/**
+ * Build a ConcreteEscapeAction from a suggestedId and escape evidence.
+ * For LLM-selected escapes: parses the __escape_* ID to find the source and matching evidence.
+ * For reroute without specific ID: picks the highest-precedence available evidence.
+ * Returns null if no concrete action can be built.
+ */
+export function buildConcreteEscapeAction(
+  suggestedId: string | null,
+  escapeEvidence: EscapeEvidence | undefined,
+): ConcreteEscapeAction | null {
+  if (!escapeEvidence) return null
+
+  // If the LLM selected a specific __escape_* candidate, use that source
+  if (suggestedId?.startsWith('__escape_')) {
+    if (suggestedId.includes('_b1_') && escapeEvidence.b1) {
+      return { source: 'b1', choiceId: suggestedId, b1Evidence: escapeEvidence.b1 }
+    }
+    if (suggestedId.includes('_surface_') && escapeEvidence.surface) {
+      return { source: 'surface', choiceId: suggestedId, surfaceEvidence: escapeEvidence.surface }
+    }
+    if (suggestedId.includes('_known_noun_') && escapeEvidence.knownNoun) {
+      return { source: 'knownNoun', choiceId: suggestedId, knownNounEvidence: escapeEvidence.knownNoun }
+    }
+    if (suggestedId.includes('_semantic_') && escapeEvidence.semantic) {
+      return { source: 'semantic', choiceId: suggestedId, semanticEvidence: escapeEvidence.semantic }
+    }
+  }
+
+  // No specific ID (reroute without selection) — pick highest-precedence evidence
+  if (escapeEvidence.b1?.action) {
+    return { source: 'b1', choiceId: `__reroute_b1_${escapeEvidence.b1.targetIds[0] ?? 'unknown'}`, b1Evidence: escapeEvidence.b1 }
+  }
+  if (escapeEvidence.surface?.surfaceResult) {
+    return { source: 'surface', choiceId: `__reroute_surface_${escapeEvidence.surface.surfaceType}`, surfaceEvidence: escapeEvidence.surface }
+  }
+  if (escapeEvidence.knownNoun?.panelId) {
+    return { source: 'knownNoun', choiceId: `__reroute_known_noun_${escapeEvidence.knownNoun.panelId}`, knownNounEvidence: escapeEvidence.knownNoun }
+  }
+  if (escapeEvidence.semantic?.candidates?.length) {
+    return { source: 'semantic', choiceId: `__reroute_semantic_${escapeEvidence.semantic.candidates[0].intent_id}`, semanticEvidence: escapeEvidence.semantic }
+  }
+
+  return null
+}
+
 export async function handleClarificationIntercept(
   ctx: ClarificationInterceptContext
 ): Promise<ClarificationInterceptResult> {
@@ -1815,38 +1863,8 @@ export async function handleClarificationIntercept(
         }
 
         // If we reach here, no match survived the gate (deterministic, badge, or polite-wrapper).
-
-        // Pre-LLM validated escape: when surface/B1/known-noun evidence exists AND input
-        // has NO overlap with clarifier options, execute the escape directly.
-        // The surface resolver already handles typos via rewrite-assisted retrieval.
-        // The bounded LLM and semantic hint pipelines can't reliably select escape
-        // candidates, so the surface validation IS the decision for non-overlapping targets.
-        const hasOptionOverlap = matchingOptions.length > 0
-        const preLlmEscapeEv = ctx.escapeEvidence
-        if (!hasOptionOverlap && preLlmEscapeEv) {
-          const hasB1 = !!preLlmEscapeEv.b1?.action
-          const hasSurface = !!preLlmEscapeEv.surface?.surfaceResult
-          const hasKnownNoun = !!preLlmEscapeEv.knownNoun?.panelId
-          if (hasB1 || hasSurface || hasKnownNoun) {
-            void debugLog({
-              component: 'ChatNavigation',
-              action: 'clarification_pre_llm_validated_escape',
-              metadata: { input: trimmedInput, hasB1, hasSurface, hasKnownNoun, hasOptionOverlap },
-            })
-            saveClarificationSnapshot(lastClarification, true, 'interrupt' as const)
-            setLastClarification(null)
-            setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
-            return {
-              handled: true,
-              clarificationCleared: true,
-              isNewQuestionOrCommandDetected,
-              _devProvenanceHint: 'bounded_clarification' as const,
-              ...(hasB1 ? { _b1EscapeAction: true } : {}),
-              ...(hasSurface ? { _surfaceEscapeAction: true } : {}),
-              ...(hasKnownNoun ? { _knownNounEscapeAction: true } : {}),
-            }
-          }
-        }
+        // All escape evidence (B1, surface, known-noun, semantic) goes through the bounded LLM arbiter.
+        // No pre-LLM shortcut — the arbiter is the sole decision point.
 
         // Pass matchCount: 0 so the arbitration classifier treats this as "no viable deterministic match"
         // and routes to bounded LLM. Without this, matchCount=1 (a soft match the gate rejected)
@@ -1923,28 +1941,24 @@ export async function handleClarificationIntercept(
           // ONLY on reroute — question_intent + escape evidence → inform, NOT execute.
           const escapeEv = ctx.escapeEvidence
           if (llmResult.fallbackReason === 'reroute' && escapeEv) {
-            const hasB1 = !!escapeEv.b1?.action
-            const hasSurface = !!escapeEv.surface?.surfaceResult
-            const hasKnownNoun = !!escapeEv.knownNoun?.panelId
-            const hasSemantic = !!escapeEv.semantic?.candidates?.length
-            if (hasB1 || hasSurface || hasKnownNoun || hasSemantic) {
+            // Build concrete escape action: uses LLM suggestedId if available, else precedence pick
+            const concreteEscape = buildConcreteEscapeAction(llmResult.suggestedId, escapeEv)
+            if (concreteEscape) {
               void debugLog({
                 component: 'ChatNavigation',
                 action: 'clarification_validated_escape_reroute',
-                metadata: { input: trimmedInput, hasB1, hasSurface, hasKnownNoun },
+                metadata: { input: trimmedInput, escapeSource: concreteEscape.source, choiceId: concreteEscape.choiceId },
               })
               saveClarificationSnapshot(lastClarification, true, 'interrupt' as const)
               setLastClarification(null)
               setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
               return {
-                handled: false,
+                handled: true,
                 clarificationCleared: true,
                 isNewQuestionOrCommandDetected,
                 _devProvenanceHint: 'bounded_clarification' as const,
-                ...(hasB1 ? { _b1EscapeAction: true } : {}),
-                ...(hasSurface ? { _surfaceEscapeAction: true } : {}),
-                ...(hasKnownNoun ? { _knownNounEscapeAction: true } : {}),
-                ...(hasSemantic ? { _semanticEscapeAction: true } : {}),
+                _escapeAction: concreteEscape,
+                _executionSource: 'bounded_arbiter',
               }
             }
           }
@@ -1965,19 +1979,18 @@ export async function handleClarificationIntercept(
           // ===== Phase C: LLM high-confidence auto-execute =====
           // Check if LLM selected a validated escape candidate (ID starts with __escape_)
           if (llmResult.suggestedId.startsWith('__escape_')) {
-            void debugLog({ component: 'ChatNavigation', action: 'clarification_llm_escape_select', metadata: { input: trimmedInput, escapeCandidateId: llmResult.suggestedId } })
+            const concreteEscape = buildConcreteEscapeAction(llmResult.suggestedId, ctx.escapeEvidence)
+            void debugLog({ component: 'ChatNavigation', action: 'clarification_llm_escape_select', metadata: { input: trimmedInput, escapeCandidateId: llmResult.suggestedId, escapeSource: concreteEscape?.source } })
             saveClarificationSnapshot(lastClarification, true, 'interrupt' as const)
             setLastClarification(null)
             setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
             return {
-              handled: false,
+              handled: true,
               clarificationCleared: true,
               isNewQuestionOrCommandDetected,
               _devProvenanceHint: 'bounded_clarification' as const,
-              ...(llmResult.suggestedId.includes('_surface_') ? { _surfaceEscapeAction: true } : {}),
-              ...(llmResult.suggestedId.includes('_b1_') ? { _b1EscapeAction: true } : {}),
-              ...(llmResult.suggestedId.includes('_known_noun_') ? { _knownNounEscapeAction: true } : {}),
-              ...(llmResult.suggestedId.includes('_semantic_') ? { _semanticEscapeAction: true } : {}),
+              _escapeAction: concreteEscape ?? undefined,
+              _executionSource: 'bounded_arbiter',
             }
           }
 
@@ -2016,38 +2029,36 @@ export async function handleClarificationIntercept(
           }
           // suggestedId not found in options → check if it's an escape candidate
           if (llmResult.suggestedId?.startsWith('__escape_')) {
-            void debugLog({ component: 'ChatNavigation', action: 'clarification_llm_escape_select_no_autoexec', metadata: { input: trimmedInput, escapeCandidateId: llmResult.suggestedId } })
+            const concreteEscape = buildConcreteEscapeAction(llmResult.suggestedId, ctx.escapeEvidence)
+            void debugLog({ component: 'ChatNavigation', action: 'clarification_llm_escape_select_no_autoexec', metadata: { input: trimmedInput, escapeCandidateId: llmResult.suggestedId, escapeSource: concreteEscape?.source } })
             saveClarificationSnapshot(lastClarification, true, 'interrupt' as const)
             setLastClarification(null)
             setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
             return {
-              handled: false,
+              handled: true,
               clarificationCleared: true,
               isNewQuestionOrCommandDetected,
               _devProvenanceHint: 'bounded_clarification' as const,
-              ...(llmResult.suggestedId.includes('_surface_') ? { _surfaceEscapeAction: true } : {}),
-              ...(llmResult.suggestedId.includes('_b1_') ? { _b1EscapeAction: true } : {}),
-              ...(llmResult.suggestedId.includes('_known_noun_') ? { _knownNounEscapeAction: true } : {}),
-              ...(llmResult.suggestedId.includes('_semantic_') ? { _semanticEscapeAction: true } : {}),
+              _escapeAction: concreteEscape ?? undefined,
+              _executionSource: 'bounded_arbiter',
             }
           }
           // fall through to safe clarifier
         } else if (llmResult.suggestedId?.startsWith('__escape_')) {
           // LLM selected an escape candidate with lower confidence (autoExecute: false).
           // Still honor it — the target is already validated by a bounded source.
-          void debugLog({ component: 'ChatNavigation', action: 'clarification_llm_escape_select_low_confidence', metadata: { input: trimmedInput, escapeCandidateId: llmResult.suggestedId } })
+          const concreteEscape = buildConcreteEscapeAction(llmResult.suggestedId, ctx.escapeEvidence)
+          void debugLog({ component: 'ChatNavigation', action: 'clarification_llm_escape_select_low_confidence', metadata: { input: trimmedInput, escapeCandidateId: llmResult.suggestedId, escapeSource: concreteEscape?.source } })
           saveClarificationSnapshot(lastClarification, true, 'interrupt' as const)
           setLastClarification(null)
           setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
           return {
-            handled: false,
+            handled: true,
             clarificationCleared: true,
             isNewQuestionOrCommandDetected,
             _devProvenanceHint: 'bounded_clarification' as const,
-            ...(llmResult.suggestedId.includes('_surface_') ? { _surfaceEscapeAction: true } : {}),
-            ...(llmResult.suggestedId.includes('_b1_') ? { _b1EscapeAction: true } : {}),
-            ...(llmResult.suggestedId.includes('_known_noun_') ? { _knownNounEscapeAction: true } : {}),
-            ...(llmResult.suggestedId.includes('_semantic_') ? { _semanticEscapeAction: true } : {}),
+            _escapeAction: concreteEscape ?? undefined,
+            _executionSource: 'bounded_arbiter',
           }
         } else {
           // --- need_more_info veto (Plan 20, Site 2: Tier 1b.3) ---

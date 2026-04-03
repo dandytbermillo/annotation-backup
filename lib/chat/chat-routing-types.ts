@@ -164,15 +164,38 @@ export interface ClarificationInterceptResult extends HandlerResult {
   /** Whether this result came from a clarification-first bridge selection.
    *  Used to prevent clarified ambiguous generic phrases from becoming Memory-Exact defaults. */
   _fromClarifiedSelection?: boolean
-  /** Signal from bounded arbiter: B1 validated escape should be used instead of fallthrough */
-  _b1EscapeAction?: boolean
-  /** Signal from bounded arbiter: surface resolver validated escape should be used */
-  _surfaceEscapeAction?: boolean
-  /** Signal from bounded arbiter: known-noun validated escape should be used */
-  _knownNounEscapeAction?: boolean
-  /** Signal from bounded arbiter: semantic (B2) validated escape — falls through to normal routing */
-  _semanticEscapeAction?: boolean
+  /** Concrete escape action from bounded arbiter. Self-contained payload for outer wrapper execution.
+   *  Replaces the old boolean _b1EscapeAction / _surfaceEscapeAction / _knownNounEscapeAction / _semanticEscapeAction flags. */
+  _escapeAction?: ConcreteEscapeAction
+  /** Evidence-based execution source. Badge follows this field, not ambient clarification state. */
+  _executionSource?: ExecutionSourceTag
 }
+
+// =============================================================================
+// Concrete Escape Action (Slice B2 step 4)
+// Self-contained payload: outer wrapper executes from this, not ctx evidence.
+// =============================================================================
+
+export type ConcreteEscapeAction =
+  | { source: 'b1'; choiceId: string; b1Evidence: NonNullable<EscapeEvidence['b1']> }
+  | { source: 'surface'; choiceId: string; surfaceEvidence: NonNullable<EscapeEvidence['surface']> }
+  | { source: 'knownNoun'; choiceId: string; knownNounEvidence: NonNullable<EscapeEvidence['knownNoun']> }
+  | { source: 'semantic'; choiceId: string; semanticEvidence: NonNullable<EscapeEvidence['semantic']> }
+
+// =============================================================================
+// Evidence-Based Execution Source (Slice B2 step 6)
+// Badge follows this tag, not ambient clarification state.
+// =============================================================================
+
+export type ExecutionSourceTag =
+  | 'bounded_arbiter'
+  | 'ordinal_deterministic'
+  | 'surface_resolver'
+  | 'memory_exact'
+  | 'known_noun'
+  | 'content_answered'
+  | 'llm_executed'
+  | 'safe_clarifier'
 
 /** Validated escape evidence collected by upstream lanes (B1, surface resolver, known-noun) */
 export interface EscapeEvidence {

@@ -363,7 +363,12 @@ async function tryLLMLastChance(params: {
       fallback_reason: fallbackReason,
     },
   })
-  return { attempted: true, suggestedId: null, fallbackReason, autoExecute: false }
+  // Preserve __escape_* choiceId for reroute decisions (bounded arbiter contract, Slice B2 step 5).
+  // The LLM may have selected a specific escape target while recommending reroute.
+  const escapeSuggestedId = fallbackReason === 'reroute' && llmResult.response?.choiceId?.startsWith('__escape_')
+    ? llmResult.response.choiceId
+    : null
+  return { attempted: true, suggestedId: escapeSuggestedId, fallbackReason, autoExecute: false }
 }
 
 // =============================================================================

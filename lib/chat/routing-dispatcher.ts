@@ -1675,19 +1675,8 @@ export async function dispatchRouting(
         console.log('[dispatcher] B2 semantic lookup:', { input: ctx.trimmedInput, rawCount, validatedCount, topScore: validatedCandidates[0]?.similarity_score, hasLiveClarification: ctx.pendingOptions.length > 0 || !!ctx.lastClarification || !!ctx.clarificationSnapshot })
         if (validatedCount > 0) {
           semanticCandidatesForLaneD = validatedCandidates
-          // Slice B2: store semantic candidates as escape evidence for live clarification
-          const hasLiveClarificationForSemantic = ctx.pendingOptions.length > 0 || !!ctx.lastClarification || !!ctx.clarificationSnapshot
-          if (hasLiveClarificationForSemantic) {
-            ;(ctx as any)._semanticEscapeEvidence = {
-              candidates: validatedCandidates.map(c => ({
-                intent_id: c.intent_id,
-                slots_json: c.slots_json,
-                similarity_score: c.similarity_score,
-                target_ids: c.target_ids,
-              })),
-              topScore: validatedCandidates[0]?.similarity_score,
-            }
-          }
+          // Semantic escape evidence for live clarification is collected ONLY from Phase 5
+          // lookupSemanticHints (below), NOT from legacy B2. Legacy B2 stays for no-clarifier routing.
         }
       } else if (lookupResult.status === 'empty') {
         b2Telemetry = { status: 'no_candidates', latencyMs: lookupResult.latencyMs }
@@ -1715,8 +1704,11 @@ export async function dispatchRouting(
   let resolverTelemetryForLog: Record<string, unknown> | null = null
 
   // Active clarification bounded arbiter: skip content-intent classifier when live clarification exists.
+  // The STAGE6_SHADOW_ENABLED block itself must NOT be gated by clarification state —
+  // only the content-intent classifier inside it is gated. Surface resolver and arbiter
+  // must run unconditionally so escape evidence can be collected during active clarification.
   const hasLiveClarificationForGate = ctx.pendingOptions.length > 0 || !!ctx.lastClarification || !!ctx.clarificationSnapshot
-  if (process.env.NEXT_PUBLIC_STAGE6_SHADOW_ENABLED === 'true' && !hasLiveClarificationForGate) {
+  if (process.env.NEXT_PUBLIC_STAGE6_SHADOW_ENABLED === 'true') {
     const activeNoteId = ctx.uiContext?.workspace?.activeNoteId ?? null
     const activeNote = activeNoteId
       ? ctx.uiContext?.workspace?.openNotes?.find(n => n.id === activeNoteId)
@@ -1726,8 +1718,10 @@ export async function dispatchRouting(
       activeNoteTitle: activeNote?.title ?? null,
     }
 
+    // Gate 3: Content-intent classifier runs but its result is only acted on
+    // when no live clarification exists. Surface resolver + arbiter below are NOT gated.
     const contentResult = classifyContentIntent(ctx.trimmedInput, noteAnchor)
-    if (contentResult.isContentIntent && contentResult.noteAnchor) {
+    if (!hasLiveClarificationForGate && contentResult.isContentIntent && contentResult.noteAnchor) {
       const s6SessionId = getRoutingLogSessionId()
       const s6TurnIndex = ctx.messages.filter(m => m.role === 'user').length
       const s6LastMsg = [...ctx.messages].reverse().find(m => m.role === 'user')
@@ -2771,38 +2765,36 @@ export async function dispatchRouting(
     }
 
     // Active clarification bounded arbiter: if the intercept signaled a validated escape,
-    // use the stored evidence action instead of falling through to the navigate API.
-    const b1Evidence = (ctx as any)._b1EscapeEvidence
-    const surfaceEvidence = (ctx as any)._surfaceEscapeEvidence
-    if (!routingError && result && (result as any)._b1EscapeAction && b1Evidence?.action) {
-      result = {
-        ...b1Evidence.action,
-        _devProvenanceHint: 'bounded_clarification' as const,
-      }
-    } else if (!routingError && result && (result as any)._surfaceEscapeAction && surfaceEvidence?.surfaceResult) {
-      // Execute the surface command that was deferred during evidence collection
-      const sr = surfaceEvidence.surfaceResult
-      if (sr.executionPolicy === 'open_surface' && sr.targetSurfaceId && ctx.openPanelDrawer) {
-        ctx.openPanelDrawer(sr.targetSurfaceId)
-      }
-      const surfaceLabel = sr.surfaceType === 'recent' ? 'Recent' : sr.surfaceType
-      const surfaceMsg: ChatMessage = {
-        id: `assistant-${Date.now()}`, role: 'assistant',
-        content: `Opening ${surfaceLabel}...`, timestamp: new Date(), isError: false,
-      }
-      ctx.addMessage(surfaceMsg, { tierLabel: 'surface_command_resolve', provenance: 'bounded_clarification' })
-      ctx.setIsLoading(false)
-      result = {
-        handled: true, handledByTier: 4, tierLabel: 'surface_command_resolve',
-        clarificationCleared: true, isNewQuestionOrCommandDetected: false,
-        classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
-        _devProvenanceHint: 'bounded_clarification' as const,
-      }
-    } else if (!routingError && result && (result as any)._knownNounEscapeAction) {
-      // Known-noun validated escape: the bounded arbiter chose escape, execute via known-noun routing.
-      // Re-run handleKnownNounRouting now that clarification is paused/cleared.
-      const knownNounEvidence = (ctx as any)._knownNounEscapeEvidence
-      if (knownNounEvidence) {
+    // execute the concrete escape action. Evidence is self-contained on the action payload.
+    const escapeAction = result && (result as any)._escapeAction as import('./chat-routing-types').ConcreteEscapeAction | undefined
+    if (!routingError && result && escapeAction) {
+      console.log('[dispatcher] ESCAPE ACTION EXECUTING:', { input: ctx.trimmedInput, source: escapeAction.source, choiceId: escapeAction.choiceId })
+      if (escapeAction.source === 'b1' && escapeAction.b1Evidence.action) {
+        result = {
+          ...escapeAction.b1Evidence.action as RoutingDispatcherResult,
+          _devProvenanceHint: 'bounded_clarification' as const,
+        }
+      } else if (escapeAction.source === 'surface') {
+        // Execute the surface command from self-contained evidence
+        const sr = escapeAction.surfaceEvidence.surfaceResult as any
+        if (sr.executionPolicy === 'open_surface' && sr.targetSurfaceId && ctx.openPanelDrawer) {
+          ctx.openPanelDrawer(sr.targetSurfaceId)
+        }
+        const surfaceLabel = sr.surfaceType === 'recent' ? 'Recent' : sr.surfaceType
+        const surfaceMsg: ChatMessage = {
+          id: `assistant-${Date.now()}`, role: 'assistant',
+          content: `Opening ${surfaceLabel}...`, timestamp: new Date(), isError: false,
+        }
+        ctx.addMessage(surfaceMsg, { tierLabel: 'surface_command_resolve', provenance: 'bounded_clarification' })
+        ctx.setIsLoading(false)
+        result = {
+          handled: true, handledByTier: 4, tierLabel: 'surface_command_resolve',
+          clarificationCleared: true, isNewQuestionOrCommandDetected: false,
+          classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
+          _devProvenanceHint: 'bounded_clarification' as const,
+        }
+      } else if (escapeAction.source === 'knownNoun') {
+        // Known-noun validated escape: re-run routing now that clarification is paused/cleared.
         const escapeResult = handleKnownNounRouting({
           trimmedInput: ctx.trimmedInput,
           visibleWidgets: ctx.uiContext?.dashboard?.visibleWidgets,
@@ -2830,15 +2822,13 @@ export async function dispatchRouting(
             _devProvenanceHint: 'bounded_clarification' as const,
           }
         }
-      }
-    } else if (!routingError && result && (result as any)._semanticEscapeAction) {
-      // Semantic escape: B2 semantic hint matched an escape target.
-      // The clarifier is already paused. Let normal routing handle execution.
-      // Mark result as handled: false so it falls through to the navigate API.
-      result = {
-        ...result,
-        handled: false,
-        _devProvenanceHint: 'bounded_clarification' as const,
+      } else if (escapeAction.source === 'semantic') {
+        // Semantic escape: let normal routing handle execution.
+        result = {
+          ...result,
+          handled: false,
+          _devProvenanceHint: 'bounded_clarification' as const,
+        }
       }
     }
 
@@ -3307,6 +3297,14 @@ async function dispatchRoutingInner(
     lastClarificationOptionsCount: ctx.lastClarification?.options?.length ?? 0,
     pendingOptionsCount: ctx.pendingOptions.length,
     hasEscapeEvidence,
+    escapeSources: {
+      b1: !!escapeEvidence.b1,
+      surface: !!escapeEvidence.surface,
+      knownNoun: !!escapeEvidence.knownNoun,
+      semantic: !!escapeEvidence.semantic,
+      semanticTopScore: escapeEvidence.semantic?.topScore,
+      semanticCandidateCount: escapeEvidence.semantic?.candidates?.length,
+    },
   })
   const clarificationResult = await handleClarificationIntercept({
     trimmedInput: ctx.trimmedInput,
@@ -3393,11 +3391,9 @@ async function dispatchRoutingInner(
       _selectedOptionId: defaultResult._selectedOptionId,
       // Clarification bridge: propagate flag so writeback can suppress ambiguous generic promotion
       _fromClarifiedSelection: clarificationResult._fromClarifiedSelection,
-      // Validated escape flags: propagate to outer wrapper for deferred execution
-      _b1EscapeAction: clarificationResult._b1EscapeAction,
-      _surfaceEscapeAction: clarificationResult._surfaceEscapeAction,
-      _knownNounEscapeAction: clarificationResult._knownNounEscapeAction,
-      _semanticEscapeAction: clarificationResult._semanticEscapeAction,
+      // Concrete escape action: propagate to outer wrapper for deferred execution
+      _escapeAction: clarificationResult._escapeAction,
+      _executionSource: clarificationResult._executionSource,
     } as any
   }
 
