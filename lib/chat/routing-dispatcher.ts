@@ -1592,7 +1592,7 @@ export async function dispatchRouting(
               // sendMessage() does commit-point revalidation (Gate 1) then fires log + write
               // Active clarification bounded arbiter: B1 may collect evidence but must not
               // preempt the arbiter when live clarification exists. Attach as escape evidence.
-              if (ctx.pendingOptions.length > 0 || !!ctx.lastClarification) {
+              if (ctx.pendingOptions.length > 0 || !!ctx.lastClarification || !!ctx.clarificationSnapshot) {
                 console.log('[dispatcher] B1 evidence collected (not preempting):', { input: ctx.trimmedInput, action: memoryAction?.tierLabel });
                 // Attach B1 match as validated escape evidence for the bounded arbiter.
                 // The intercept reads this at the unresolved hook to provide escape targets.
@@ -1653,6 +1653,7 @@ export async function dispatchRouting(
         raw_query_text: ctx.trimmedInput,
         context_snapshot: lookupSnapshot,
       })
+      console.log('[dispatcher] B2 raw lookup:', { input: ctx.trimmedInput, status: lookupResult.status, rawCandidateCount: lookupResult.candidates.length, topRawScore: lookupResult.candidates[0]?.similarity_score })
       b2LookupStatus = lookupResult.status
       b2CurrentContextFingerprint = lookupResult.currentContextFingerprint
 
@@ -1671,6 +1672,7 @@ export async function dispatchRouting(
 
         b2Telemetry = { status: 'candidates_found', rawCount, validatedCount, topScore, latencyMs: lookupResult.latencyMs }
 
+        console.log('[dispatcher] B2 semantic lookup:', { input: ctx.trimmedInput, rawCount, validatedCount, topScore: validatedCandidates[0]?.similarity_score, hasLiveClarification: ctx.pendingOptions.length > 0 || !!ctx.lastClarification || !!ctx.clarificationSnapshot })
         if (validatedCount > 0) {
           semanticCandidatesForLaneD = validatedCandidates
           // Slice B2: store semantic candidates as escape evidence for live clarification
@@ -1713,7 +1715,7 @@ export async function dispatchRouting(
   let resolverTelemetryForLog: Record<string, unknown> | null = null
 
   // Active clarification bounded arbiter: skip content-intent classifier when live clarification exists.
-  const hasLiveClarificationForGate = ctx.pendingOptions.length > 0 || !!ctx.lastClarification
+  const hasLiveClarificationForGate = ctx.pendingOptions.length > 0 || !!ctx.lastClarification || !!ctx.clarificationSnapshot
   if (process.env.NEXT_PUBLIC_STAGE6_SHADOW_ENABLED === 'true' && !hasLiveClarificationForGate) {
     const activeNoteId = ctx.uiContext?.workspace?.activeNoteId ?? null
     const activeNote = activeNoteId
@@ -1826,6 +1828,7 @@ export async function dispatchRouting(
     // S6 priority seam: surface resolver runs even if S6 matched, when the input
     // has surface-family evidence (design doc line 462). If the surface resolver
     // handles the turn, it pre-empts S6. If it declines, S6's result stands.
+    console.log('[dispatcher] surface resolver gate:', { input: ctx.trimmedInput, contentIntentMatched: contentIntentMatchedThisTurn, hasSurfaceEvidence: hasSurfaceFamilyEvidence(ctx.trimmedInput), willRun: !contentIntentMatchedThisTurn || hasSurfaceFamilyEvidence(ctx.trimmedInput) })
     if (!contentIntentMatchedThisTurn || hasSurfaceFamilyEvidence(ctx.trimmedInput)) {
       const containerType: import('./surface-manifest').SurfaceContainerType =
         ctx.uiContext?.mode === 'workspace' ? 'workspace' : 'dashboard'
@@ -1838,12 +1841,12 @@ export async function dispatchRouting(
       }
 
       const surfaceResult = await resolveSurfaceCommand(ctx.trimmedInput, runtimeContext)
-      console.log('[dispatcher] surface resolver result:', { input: ctx.trimmedInput, hasResult: !!surfaceResult, isResolved: surfaceResult ? isResolvedSurfaceCommand(surfaceResult) : false, hasLiveClarification: ctx.pendingOptions.length > 0 || !!ctx.lastClarification })
+      console.log('[dispatcher] surface resolver result:', { input: ctx.trimmedInput, hasResult: !!surfaceResult, isResolved: surfaceResult ? isResolvedSurfaceCommand(surfaceResult) : false, hasLiveClarification: ctx.pendingOptions.length > 0 || !!ctx.lastClarification || !!ctx.clarificationSnapshot, type: surfaceResult ? Object.keys(surfaceResult).join(',') : 'null' })
 
       if (surfaceResult && isResolvedSurfaceCommand(surfaceResult)) {
         // Active clarification bounded arbiter: do not execute surface commands directly
         // when live clarification exists. Store as escape evidence for the arbiter.
-        const hasLiveClarificationForSurface = ctx.pendingOptions.length > 0 || !!ctx.lastClarification
+        const hasLiveClarificationForSurface = ctx.pendingOptions.length > 0 || !!ctx.lastClarification || !!ctx.clarificationSnapshot
         if (hasLiveClarificationForSurface) {
           ;(ctx as any)._surfaceEscapeEvidence = {
             surfaceType: surfaceResult.surfaceType,
@@ -2672,6 +2675,56 @@ export async function dispatchRouting(
     return PHASE5_OVERRIDE_INTENTS.has(topHint.intent_id) && topHint.similarity_score >= similarityFloor
   })()
 
+  // Slice B2: when live clarification exists, run a separate semantic hint lookup
+  // for escape evidence. This runs regardless of hintScope detection (which fails on
+  // typos like "openn recent" because "openn" doesn't match the action verb pattern).
+  // Uses the same learned/seeded hint pipeline as Phase 5 — handles typos via
+  // rewrite-assisted retrieval. Context: always 'navigation' for escape candidates.
+  if (hasLiveClarificationForGate && hintReadEnabled && !(ctx as any)._semanticEscapeEvidence) {
+    try {
+      const escapeHintSnapshot = buildContextSnapshot({
+        openWidgetCount: turnSnapshotForLog.openWidgets?.length ?? 0,
+        pendingOptionsCount: ctx.pendingOptions?.length ?? 0,
+        activeOptionSetId: ctx.activeOptionSetId,
+        hasLastClarification: ctx.lastClarification !== null,
+        hasLastSuggestion: ctx.lastSuggestion !== null,
+        latchEnabled: process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1 === 'true',
+        messageCount: ctx.messages.length,
+      })
+      const escapeHintResult = await lookupSemanticHints({
+        raw_query_text: ctx.trimmedInput,
+        context_snapshot: escapeHintSnapshot,
+        intent_scope: 'navigation',
+      })
+      console.log('[dispatcher] Escape semantic hint lookup:', { input: ctx.trimmedInput, status: escapeHintResult.status, candidateCount: escapeHintResult.candidates.length, topScore: escapeHintResult.candidates[0]?.similarity_score })
+      if (escapeHintResult.status === 'ok' && escapeHintResult.candidates.length > 0) {
+        ;(ctx as any)._semanticEscapeEvidence = {
+          candidates: escapeHintResult.candidates.map(c => ({
+            intent_id: c.intent_id,
+            slots_json: c.slots_json,
+            similarity_score: c.similarity_score,
+            target_ids: c.target_ids,
+          })),
+          topScore: escapeHintResult.candidates[0].similarity_score,
+        }
+      }
+    } catch {
+      // Fail-open: escape hint lookup failed
+    }
+  }
+  // Also use Phase 5 results as escape evidence if available (exact-spelling case)
+  if (hasLiveClarificationForGate && phase5HintResult && phase5HintResult.candidates.length > 0 && !(ctx as any)._semanticEscapeEvidence) {
+    ;(ctx as any)._semanticEscapeEvidence = {
+      candidates: phase5HintResult.candidates.map(c => ({
+        intent_id: c.intent_id,
+        slots_json: c.slots_json,
+        similarity_score: c.similarity_score,
+        target_ids: c.target_ids,
+      })),
+      topScore: phase5HintResult.candidates[0].similarity_score,
+    }
+  }
+
   // Active clarification bounded arbiter: do not skip tier chain when live clarification exists.
   if (hintScope && !hasLiveClarificationForGate) {
     // Phase 5 scope detected — skip tier chain, let the navigate API's LLM handle it.
@@ -2777,6 +2830,15 @@ export async function dispatchRouting(
             _devProvenanceHint: 'bounded_clarification' as const,
           }
         }
+      }
+    } else if (!routingError && result && (result as any)._semanticEscapeAction) {
+      // Semantic escape: B2 semantic hint matched an escape target.
+      // The clarifier is already paused. Let normal routing handle execution.
+      // Mark result as handled: false so it falls through to the navigate API.
+      result = {
+        ...result,
+        handled: false,
+        _devProvenanceHint: 'bounded_clarification' as const,
       }
     }
 
@@ -3222,7 +3284,7 @@ async function dispatchRoutingInner(
   // =========================================================================
   // Pre-intercept: collect known-noun evidence so the arbiter can see escape targets.
   // (B1 and surface evidence are already collected in the outer wrapper.)
-  const hasLiveClarificationForPreNoun = ctx.pendingOptions.length > 0 || !!ctx.lastClarification
+  const hasLiveClarificationForPreNoun = ctx.pendingOptions.length > 0 || !!ctx.lastClarification || !!ctx.clarificationSnapshot
   if (hasLiveClarificationForPreNoun && !(ctx as any)._knownNounEscapeEvidence) {
     const preNounMatch = matchKnownNoun(ctx.trimmedInput)
     if (preNounMatch) {
@@ -3335,6 +3397,7 @@ async function dispatchRoutingInner(
       _b1EscapeAction: clarificationResult._b1EscapeAction,
       _surfaceEscapeAction: clarificationResult._surfaceEscapeAction,
       _knownNounEscapeAction: clarificationResult._knownNounEscapeAction,
+      _semanticEscapeAction: clarificationResult._semanticEscapeAction,
     } as any
   }
 
@@ -5946,7 +6009,7 @@ async function dispatchRoutingInner(
 
   // Active clarification bounded arbiter: known-noun routing must not execute directly
   // when live clarification exists. Collect evidence only (pure match, no side effects).
-  const hasLiveClarificationForKnownNoun = ctx.pendingOptions.length > 0 || !!ctx.lastClarification
+  const hasLiveClarificationForKnownNoun = ctx.pendingOptions.length > 0 || !!ctx.lastClarification || !!ctx.clarificationSnapshot
   if (hasLiveClarificationForKnownNoun) {
     const knownNounMatch = matchKnownNoun(ctx.trimmedInput)
     if (knownNounMatch) {

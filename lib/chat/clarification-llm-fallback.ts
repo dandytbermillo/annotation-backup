@@ -302,15 +302,22 @@ export async function callClarificationLLM(
     }
 
     // Enforce choiceId = null and choiceIndex = -1 for non-select decisions (per plan contract)
+    // Exception: preserve escape candidate IDs on reroute — they carry execution intent
     if (parsed.decision !== 'select') {
-      parsed.choiceId = null
-      parsed.choiceIndex = -1
+      const isEscapeReroute = parsed.decision === 'reroute' && parsed.choiceId?.startsWith('__escape_')
+      if (!isEscapeReroute) {
+        parsed.choiceId = null
+        parsed.choiceIndex = -1
+      }
     }
 
     // Apply confidence thresholds
     if (parsed.decision === 'select' && parsed.confidence < MIN_CONFIDENCE_SELECT) {
       parsed.decision = parsed.confidence >= MIN_CONFIDENCE_ASK ? 'ask_clarify' : 'none'
-      parsed.choiceId = null
+      // Preserve escape candidate IDs even at low confidence — the __escape_ handlers check these
+      if (!parsed.choiceId?.startsWith('__escape_')) {
+        parsed.choiceId = null
+      }
     }
 
     const latencyMs = Date.now() - startTime

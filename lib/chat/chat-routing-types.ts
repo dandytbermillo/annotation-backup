@@ -170,6 +170,8 @@ export interface ClarificationInterceptResult extends HandlerResult {
   _surfaceEscapeAction?: boolean
   /** Signal from bounded arbiter: known-noun validated escape should be used */
   _knownNounEscapeAction?: boolean
+  /** Signal from bounded arbiter: semantic (B2) validated escape — falls through to normal routing */
+  _semanticEscapeAction?: boolean
 }
 
 /** Validated escape evidence collected by upstream lanes (B1, surface resolver, known-noun) */

@@ -421,7 +421,7 @@ export async function handleClarificationIntercept(
   // ==========================================================================
   // Active clarification bounded arbiter: do not bypass intercept when live clarification exists.
   // Widget context is secondary evidence, not a takeover signal.
-  const hasLiveClarificationForWidget = pendingOptions.length > 0 || !!lastClarification
+  const hasLiveClarificationForWidget = pendingOptions.length > 0 || !!lastClarification || !!clarificationSnapshot
   if (widgetSelectionContext !== null && scopeCue.scope !== 'chat' && scopeCue.scope !== 'widget' && !scopeCue.hasConflict && !hasLiveClarificationForWidget) {
     void debugLog({
       component: 'ChatNavigation',
@@ -1253,7 +1253,7 @@ export async function handleClarificationIntercept(
     // Active clarification bounded arbiter: when live clarification exists, command-shaped
     // inputs must NOT bypass label matching. They should reach the bounded LLM at the
     // unresolved hook. Only allow bypass when no live clarification is present.
-    const hasLiveClarificationForBypass = pendingOptions.length > 0 || !!lastClarification
+    const hasLiveClarificationForBypass = pendingOptions.length > 0 || !!lastClarification || !!clarificationSnapshot
     let commandBypassesLabelMatching =
       (isNewQuestionOrCommandDetected || inputIsExplicitCommand)
       && !inputIsSelectionLike
@@ -1816,8 +1816,37 @@ export async function handleClarificationIntercept(
 
         // If we reach here, no match survived the gate (deterministic, badge, or polite-wrapper).
 
-        // Slice B2: ALL escape evidence goes through the bounded LLM arbiter.
-        // No pre-LLM direct escape — the arbiter is the sole decision point.
+        // Pre-LLM validated escape: when surface/B1/known-noun evidence exists AND input
+        // has NO overlap with clarifier options, execute the escape directly.
+        // The surface resolver already handles typos via rewrite-assisted retrieval.
+        // The bounded LLM and semantic hint pipelines can't reliably select escape
+        // candidates, so the surface validation IS the decision for non-overlapping targets.
+        const hasOptionOverlap = matchingOptions.length > 0
+        const preLlmEscapeEv = ctx.escapeEvidence
+        if (!hasOptionOverlap && preLlmEscapeEv) {
+          const hasB1 = !!preLlmEscapeEv.b1?.action
+          const hasSurface = !!preLlmEscapeEv.surface?.surfaceResult
+          const hasKnownNoun = !!preLlmEscapeEv.knownNoun?.panelId
+          if (hasB1 || hasSurface || hasKnownNoun) {
+            void debugLog({
+              component: 'ChatNavigation',
+              action: 'clarification_pre_llm_validated_escape',
+              metadata: { input: trimmedInput, hasB1, hasSurface, hasKnownNoun, hasOptionOverlap },
+            })
+            saveClarificationSnapshot(lastClarification, true, 'interrupt' as const)
+            setLastClarification(null)
+            setPendingOptions([]); setPendingOptionsMessageId(null); setPendingOptionsGraceCount(0)
+            return {
+              handled: true,
+              clarificationCleared: true,
+              isNewQuestionOrCommandDetected,
+              _devProvenanceHint: 'bounded_clarification' as const,
+              ...(hasB1 ? { _b1EscapeAction: true } : {}),
+              ...(hasSurface ? { _surfaceEscapeAction: true } : {}),
+              ...(hasKnownNoun ? { _knownNounEscapeAction: true } : {}),
+            }
+          }
+        }
 
         // Pass matchCount: 0 so the arbitration classifier treats this as "no viable deterministic match"
         // and routes to bounded LLM. Without this, matchCount=1 (a soft match the gate rejected)
@@ -1832,14 +1861,14 @@ export async function handleClarificationIntercept(
         const escapeCandidates: Array<{ id: string; label: string; sublabel?: string }> = []
         if (escapeEv?.surface?.surfaceType) {
           const surfaceLabel = escapeEv.surface.surfaceType === 'recent' ? 'Recent' : escapeEv.surface.surfaceType
-          escapeCandidates.push({ id: `__escape_surface_${escapeEv.surface.surfaceType}`, label: surfaceLabel, sublabel: 'validated escape target (not in the shown options)' })
+          escapeCandidates.push({ id: `__escape_surface_${escapeEv.surface.surfaceType}`, label: surfaceLabel, sublabel: 'another panel you can open instead' })
         }
         if (escapeEv?.knownNoun?.panelId) {
-          escapeCandidates.push({ id: `__escape_known_noun_${escapeEv.knownNoun.panelId}`, label: escapeEv.knownNoun.title, sublabel: 'validated escape target (not in the shown options)' })
+          escapeCandidates.push({ id: `__escape_known_noun_${escapeEv.knownNoun.panelId}`, label: escapeEv.knownNoun.title, sublabel: 'another panel you can open instead' })
         }
         if (escapeEv?.b1?.targetIds?.length) {
           const b1Label = (escapeEv.b1.slotsJson as any)?.panelTitle ?? (escapeEv.b1.slotsJson as any)?.name ?? 'validated target'
-          escapeCandidates.push({ id: `__escape_b1_${escapeEv.b1.targetIds[0]}`, label: String(b1Label), sublabel: 'validated escape target (not in the shown options)' })
+          escapeCandidates.push({ id: `__escape_b1_${escapeEv.b1.targetIds[0]}`, label: String(b1Label), sublabel: 'another panel you can open instead' })
         }
         // Slice B2: Add B2 semantic candidates as escape options (typo-tolerant, embedding-based)
         // These are hints from learned/seeded rows — the LLM decides whether to select them.
@@ -1897,7 +1926,8 @@ export async function handleClarificationIntercept(
             const hasB1 = !!escapeEv.b1?.action
             const hasSurface = !!escapeEv.surface?.surfaceResult
             const hasKnownNoun = !!escapeEv.knownNoun?.panelId
-            if (hasB1 || hasSurface || hasKnownNoun) {
+            const hasSemantic = !!escapeEv.semantic?.candidates?.length
+            if (hasB1 || hasSurface || hasKnownNoun || hasSemantic) {
               void debugLog({
                 component: 'ChatNavigation',
                 action: 'clarification_validated_escape_reroute',
@@ -1914,6 +1944,7 @@ export async function handleClarificationIntercept(
                 ...(hasB1 ? { _b1EscapeAction: true } : {}),
                 ...(hasSurface ? { _surfaceEscapeAction: true } : {}),
                 ...(hasKnownNoun ? { _knownNounEscapeAction: true } : {}),
+                ...(hasSemantic ? { _semanticEscapeAction: true } : {}),
               }
             }
           }
@@ -1946,6 +1977,7 @@ export async function handleClarificationIntercept(
               ...(llmResult.suggestedId.includes('_surface_') ? { _surfaceEscapeAction: true } : {}),
               ...(llmResult.suggestedId.includes('_b1_') ? { _b1EscapeAction: true } : {}),
               ...(llmResult.suggestedId.includes('_known_noun_') ? { _knownNounEscapeAction: true } : {}),
+              ...(llmResult.suggestedId.includes('_semantic_') ? { _semanticEscapeAction: true } : {}),
             }
           }
 
@@ -1996,6 +2028,7 @@ export async function handleClarificationIntercept(
               ...(llmResult.suggestedId.includes('_surface_') ? { _surfaceEscapeAction: true } : {}),
               ...(llmResult.suggestedId.includes('_b1_') ? { _b1EscapeAction: true } : {}),
               ...(llmResult.suggestedId.includes('_known_noun_') ? { _knownNounEscapeAction: true } : {}),
+              ...(llmResult.suggestedId.includes('_semantic_') ? { _semanticEscapeAction: true } : {}),
             }
           }
           // fall through to safe clarifier
@@ -2014,6 +2047,7 @@ export async function handleClarificationIntercept(
             ...(llmResult.suggestedId.includes('_surface_') ? { _surfaceEscapeAction: true } : {}),
             ...(llmResult.suggestedId.includes('_b1_') ? { _b1EscapeAction: true } : {}),
             ...(llmResult.suggestedId.includes('_known_noun_') ? { _knownNounEscapeAction: true } : {}),
+            ...(llmResult.suggestedId.includes('_semantic_') ? { _semanticEscapeAction: true } : {}),
           }
         } else {
           // --- need_more_info veto (Plan 20, Site 2: Tier 1b.3) ---
