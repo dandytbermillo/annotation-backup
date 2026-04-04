@@ -2907,6 +2907,64 @@ export async function dispatchRouting(
           console.log('[dispatcher] semantic escape could not resolve target:', { targetIds: selected.target_ids, surfaceType: manifest?.surfaceType, label })
           result = { ...result, handled: false, _devProvenanceHint: 'bounded_clarification' as const }
         }
+      } else if (escapeAction.source === 'active_panel_item') {
+        // Step 4c: execute validated active-panel item via execute_widget_item
+        const item = escapeAction.itemEvidence
+        console.log('[dispatcher] ACTIVE PANEL ITEM ESCAPE EXECUTING:', { itemId: item.itemId, itemLabel: item.itemLabel, widgetId: item.widgetId })
+        // The result carries the grounding action for the client to execute
+        result = {
+          handled: true,
+          handledByTier: 4,
+          tierLabel: 'active_panel_item_escape',
+          clarificationCleared: true,
+          isNewQuestionOrCommandDetected: false,
+          classifierCalled: false,
+          classifierTimeout: false,
+          classifierError: false,
+          isFollowUp: false,
+          _devProvenanceHint: 'bounded_clarification' as const,
+          groundingAction: {
+            type: 'execute_widget_item' as const,
+            widgetId: item.widgetId,
+            segmentId: item.segmentId,
+            itemId: item.itemId,
+            itemLabel: item.itemLabel,
+            action: 'open',
+          },
+        }
+      } else if (escapeAction.source === 'note_sibling') {
+        // Step 4d: note-sibling escape — replay through existing note contract
+        const note = escapeAction.noteEvidence
+        console.log('[dispatcher] NOTE SIBLING ESCAPE:', { noteTitle: note.noteTitle, intentFamily: note.intentFamily })
+
+        if (note.intentFamily === 'navigate') {
+          // Navigate: replay via _noteManifestNavigate with the stored resolvedCommand
+          result = {
+            ...result,
+            handled: false,
+            _devProvenanceHint: 'bounded_clarification' as const,
+            _noteManifestNavigate: { noteTitle: note.noteTitle },
+            _resolvedNoteCommand: note.resolvedCommand,
+          } as any
+        } else if (note.intentFamily === 'state_info') {
+          // State-info: replay the resolvedCommand directly (same as Tier 4.2 would do)
+          const stateAnswer = resolveNoteStateInfo(ctx.uiContext ?? {})
+          const stateMsg: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: stateAnswer,
+            timestamp: new Date(),
+            isError: false,
+          }
+          ctx.addMessage(stateMsg, { tierLabel: 'note_sibling_state_info_escape', provenance: 'bounded_clarification' })
+          ctx.setIsLoading(false)
+          result = {
+            handled: true, handledByTier: 4, tierLabel: 'note_sibling_state_info_escape',
+            clarificationCleared: true, isNewQuestionOrCommandDetected: false,
+            classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
+            _devProvenanceHint: 'bounded_clarification' as const,
+          }
+        }
       }
     }
 
@@ -3353,12 +3411,111 @@ async function dispatchRoutingInner(
   // Semantic-first model: known-noun no longer contributes escape evidence during active clarification.
   // Its product policies (duplicate-family, visibility, question guard) are applied as shared validation instead.
 
-  // Build escape evidence for the intercept (B1 + semantic only under semantic-first model)
+  // Active-panel item evidence collection (step 4c):
+  // When clarification is live, check if the user's input names an item in any visible widget.
+  // Only widgets whose surface manifest supports execute_item are eligible.
+  const hasLiveClarificationForItems = ctx.pendingOptions.length > 0 || !!ctx.lastClarification || !!ctx.clarificationSnapshot
+  let activePanelItemEvidence: import('./chat-routing-types').EscapeEvidence['activePanelItem'] = undefined
+  if (hasLiveClarificationForItems && turnSnapshot.openWidgets?.length) {
+    const { canonicalizeCommandInput } = await import('./input-classifiers')
+    const { findSurfaceCommand } = await import('./surface-manifest')
+    const { registerBuiltInSurfaceManifests } = await import('./surface-manifest-definitions')
+    registerBuiltInSurfaceManifests()
+    const strippedInput = canonicalizeCommandInput(ctx.trimmedInput).toLowerCase()
+    if (strippedInput.length >= 3) {
+      // Resolve panelType from visibleWidgets (which carries the real type field)
+      const containerType: import('./surface-manifest').SurfaceContainerType =
+        ctx.uiContext?.mode === 'workspace' ? 'workspace' : 'dashboard'
+      const visibleWidgets = ctx.uiContext?.dashboard?.visibleWidgets ?? []
+      const widgetTypeMap = new Map<string, { type: string; title: string; id: string }>()
+      for (const vw of visibleWidgets) {
+        widgetTypeMap.set(vw.id, { type: vw.type, title: vw.title, id: vw.id })
+      }
+
+      // Scoping resolution (per plan):
+      // 1. If explicit scope cue names a widget, only scan that widget
+      // 2. Else if widgetSelectionContext has a focused widget, prefer that
+      // 3. Else scan all widgets (ambiguity rules apply)
+      let scopedWidgetIds: Set<string> | null = null
+
+      // Check scope cue for explicit widget naming
+      const scopeCueForItem = isLatchEnabled ? resolveScopeCue(ctx.trimmedInput) : null
+      if (scopeCueForItem?.scope === 'widget' && scopeCueForItem.namedWidgetHint) {
+        // Explicit scope cue — find the named widget
+        const hint = scopeCueForItem.namedWidgetHint.toLowerCase()
+        const scopedWidget = turnSnapshot.openWidgets.find(w =>
+          w.label?.toLowerCase().includes(hint) || w.id.toLowerCase().includes(hint)
+        )
+        if (scopedWidget) {
+          scopedWidgetIds = new Set([scopedWidget.id])
+        }
+      } else if (ctx.widgetSelectionContext?.widgetId) {
+        // Active/focused widget from selection context
+        scopedWidgetIds = new Set([ctx.widgetSelectionContext.widgetId])
+      } else if (turnSnapshot.activeSnapshotWidgetId) {
+        // Active/focused widget from snapshot registry (last registered active widget)
+        scopedWidgetIds = new Set([turnSnapshot.activeSnapshotWidgetId])
+      }
+
+      type MatchedItem = { widgetId: string; panelId: string; segmentId?: string; itemId: string; itemLabel: string; panelType: string; panelTitle: string }
+      const matches: MatchedItem[] = []
+      for (const widget of turnSnapshot.openWidgets) {
+        if (!widget.options?.length) continue
+        // Apply scoping: if scoped, only scan the scoped widget
+        if (scopedWidgetIds && !scopedWidgetIds.has(widget.id)) continue
+
+        const resolved = widgetTypeMap.get(widget.panelId ?? '') ?? widgetTypeMap.get(widget.id)
+        const panelType = resolved?.type ?? ''
+        const panelTitle = resolved?.title ?? widget.label ?? widget.id
+
+        // Manifest check: only include widgets that support execute_item
+        if (panelType) {
+          const panelTypeSlug = panelType.replace(/-/g, '_')
+          const cmd = findSurfaceCommand(panelTypeSlug, containerType, 'navigate', 'open_item')
+            ?? findSurfaceCommand(panelTypeSlug, containerType, 'navigate', 'open_recent_item')
+          if (!cmd || cmd.executionPolicy !== 'execute_item') {
+            continue
+          }
+        } else {
+          continue
+        }
+
+        for (const opt of widget.options) {
+          if (opt.label.toLowerCase() === strippedInput || strippedInput.includes(opt.label.toLowerCase())) {
+            matches.push({
+              widgetId: widget.id,
+              panelId: widget.panelId ?? widget.id,
+              itemId: opt.id,
+              itemLabel: opt.label,
+              panelType,
+              panelTitle,
+            })
+          }
+        }
+      }
+
+      if (matches.length === 1) {
+        activePanelItemEvidence = matches[0]
+        console.log('[dispatcher] active-panel item evidence found:', { input: ctx.trimmedInput, itemLabel: matches[0].itemLabel, widgetId: matches[0].widgetId, panelType: matches[0].panelType, scoped: !!scopedWidgetIds })
+      } else if (matches.length > 1) {
+        const uniqueWidgets = new Set(matches.map(m => m.widgetId))
+        if (uniqueWidgets.size > 1) {
+          console.log('[dispatcher] active-panel item cross-widget ambiguity:', { matchCount: matches.length, widgetCount: uniqueWidgets.size })
+        } else {
+          console.log('[dispatcher] active-panel item within-widget duplicate labels:', { matchCount: matches.length, widgetId: matches[0].widgetId })
+        }
+      }
+    }
+  }
+
+  // Build escape evidence for the intercept
   const escapeEvidence: import('./chat-routing-types').EscapeEvidence = {
     b1: (ctx as any)._b1EscapeEvidence ?? undefined,
     semantic: (ctx as any)._semanticEscapeEvidence ?? undefined,
+    activePanelItem: activePanelItemEvidence,
+    noteSibling: (ctx as any)._noteEscapeEvidence ?? undefined,
   }
-  const hasEscapeEvidence = !!escapeEvidence.b1 || !!escapeEvidence.semantic
+  const hasEscapeEvidence = !!escapeEvidence.b1 || !!escapeEvidence.semantic || !!escapeEvidence.activePanelItem || !!escapeEvidence.noteSibling
 
   console.log('[dispatcher] BEFORE handleClarificationIntercept:', {
     input: ctx.trimmedInput,
@@ -6121,7 +6278,12 @@ async function dispatchRoutingInner(
   // Deterministic note state-info for "which note(s) is/are open?" forms.
   // Mirrors Tier 4.25 pattern but for state_info instead of navigate.
   // Without this, plural queries fall through to the arbiter/LLM path.
+  //
+  // Step 4d/4e: When note-sibling bounded mode is enabled and clarification
+  // is active, collect evidence instead of executing directly.
   // =========================================================================
+  const noteSiblingBoundedEnabled = process.env.NEXT_PUBLIC_NOTE_SIBLING_BOUNDED_ENABLED === 'true'
+  const hasLiveClarificationForNotes = ctx.pendingOptions.length > 0 || !!ctx.lastClarification || !!ctx.clarificationSnapshot
   {
     const noteStateCommand = resolveNoteCommand({
       userInput: ctx.trimmedInput,
@@ -6133,47 +6295,59 @@ async function dispatchRoutingInner(
     })
 
     if (noteStateCommand && noteStateCommand.intentFamily === 'state_info' && noteStateCommand.confidence === 'high') {
-      void debugLog({
-        component: 'ChatNavigation',
-        action: 'note_manifest_state_info_intercept',
-        metadata: {
-          manifestVersion: noteStateCommand.manifestVersion,
-          handlerId: noteStateCommand.handlerId,
-        },
-      })
+      // Step 4d: when note-sibling bounded mode is active, collect evidence instead of executing
+      if (noteSiblingBoundedEnabled && hasLiveClarificationForNotes) {
+        void debugLog({ component: 'ChatNavigation', action: 'note_state_info_evidence_collected', metadata: { noteTitle: 'active notes' } })
+        ;(ctx as any)._noteEscapeEvidence = {
+          noteTitle: 'active notes',
+          intentFamily: 'state_info' as const,
+          confidence: noteStateCommand.confidence,
+          resolvedCommand: noteStateCommand,
+        }
+        // Fall through — let the bounded arbiter handle it
+      } else {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'note_manifest_state_info_intercept',
+          metadata: {
+            manifestVersion: noteStateCommand.manifestVersion,
+            handlerId: noteStateCommand.handlerId,
+          },
+        })
 
-      const stateAnswer = resolveNoteStateInfo(ctx.uiContext ?? {})
-      const stateMsg: ChatMessage = {
-        id: `assistant-${Date.now()}`,
-        role: 'assistant',
-        content: stateAnswer,
-        timestamp: new Date(),
-        isError: false,
-      }
-      ctx.addMessage(stateMsg, { tierLabel: 'note_manifest_state_info', provenance: 'deterministic' })
-      ctx.setIsLoading(false)
+        const stateAnswer = resolveNoteStateInfo(ctx.uiContext ?? {})
+        const stateMsg: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: stateAnswer,
+          timestamp: new Date(),
+          isError: false,
+        }
+        ctx.addMessage(stateMsg, { tierLabel: 'note_manifest_state_info', provenance: 'deterministic' })
+        ctx.setIsLoading(false)
 
-      return {
-        ...defaultResult,
-        handled: true,
-        handledByTier: 4,
-        tierLabel: 'note_manifest_state_info',
-        clarificationCleared,
-        isNewQuestionOrCommandDetected,
-        classifierCalled: false,
-        classifierTimeout: false,
-        classifierError: false,
-        isFollowUp: false,
-        _devProvenanceHint: 'deterministic',
-        _resolvedNoteCommand: noteStateCommand,
-        _noteCommandTelemetry: {
-          note_command_manifest_version: noteStateCommand.manifestVersion,
-          note_command_handler_id: noteStateCommand.handlerId,
-          note_command_family: noteStateCommand.intentFamily,
-          note_command_subtype: noteStateCommand.intentSubtype,
-          note_command_confidence: noteStateCommand.confidence,
-          note_command_execution_policy: noteStateCommand.executionPolicy,
-        },
+        return {
+          ...defaultResult,
+          handled: true,
+          handledByTier: 4,
+          tierLabel: 'note_manifest_state_info',
+          clarificationCleared,
+          isNewQuestionOrCommandDetected,
+          classifierCalled: false,
+          classifierTimeout: false,
+          classifierError: false,
+          isFollowUp: false,
+          _devProvenanceHint: 'deterministic',
+          _resolvedNoteCommand: noteStateCommand,
+          _noteCommandTelemetry: {
+            note_command_manifest_version: noteStateCommand.manifestVersion,
+            note_command_handler_id: noteStateCommand.handlerId,
+            note_command_family: noteStateCommand.intentFamily,
+            note_command_subtype: noteStateCommand.intentSubtype,
+            note_command_confidence: noteStateCommand.confidence,
+            note_command_execution_policy: noteStateCommand.executionPolicy,
+          },
+        }
       }
     }
   }
@@ -6196,42 +6370,51 @@ async function dispatchRoutingInner(
 
     if (noteNavCommand && noteNavCommand.intentFamily === 'navigate' && noteNavCommand.confidence === 'high') {
       const noteTitle = noteNavCommand.arguments.noteTitle as string
-      void debugLog({
-        component: 'ChatNavigation',
-        action: 'note_manifest_navigate_intercept',
-        metadata: {
-          manifestVersion: noteNavCommand.manifestVersion,
-          handlerId: noteNavCommand.handlerId,
-          noteTitle,
-        },
-      })
 
-      // Return handled: false with _noteManifestNavigate hint.
-      // The client tries the navigate API first with the extracted noteTitle.
-      // If that fails, the normal LLM path runs (handled: false allows fallthrough).
-      return {
-        ...defaultResult,
-        handled: false,
-        tierLabel: 'note_manifest_navigate',
-        clarificationCleared,
-        isNewQuestionOrCommandDetected,
-        classifierCalled: false,
-        classifierTimeout: false,
-        classifierError: false,
-        isFollowUp: false,
-        _devProvenanceHint: 'deterministic' as const,
-        _noteManifestNavigate: { noteTitle },
-        // Durable telemetry — merged into routing log by wrapper
-        _noteCommandTelemetry: {
-          note_command_manifest_version: noteNavCommand.manifestVersion,
-          note_command_handler_id: noteNavCommand.handlerId,
-          note_command_family: noteNavCommand.intentFamily,
-          note_command_subtype: noteNavCommand.intentSubtype,
-          note_command_confidence: noteNavCommand.confidence,
-          note_command_execution_policy: noteNavCommand.executionPolicy,
-        },
-        // Phase 4: attach resolved command for outer wrapper to build write payload
-        _resolvedNoteCommand: noteNavCommand,
+      // Step 4d: when note-sibling bounded mode is active, collect evidence instead of executing
+      if (noteSiblingBoundedEnabled && hasLiveClarificationForNotes) {
+        void debugLog({ component: 'ChatNavigation', action: 'note_navigate_evidence_collected', metadata: { noteTitle } })
+        ;(ctx as any)._noteEscapeEvidence = {
+          noteTitle,
+          noteId: noteNavCommand.arguments.noteId as string | undefined,
+          intentFamily: 'navigate' as const,
+          confidence: noteNavCommand.confidence,
+          resolvedCommand: noteNavCommand,
+        }
+        // Fall through — let the bounded arbiter handle it
+      } else {
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'note_manifest_navigate_intercept',
+          metadata: {
+            manifestVersion: noteNavCommand.manifestVersion,
+            handlerId: noteNavCommand.handlerId,
+            noteTitle,
+          },
+        })
+
+        return {
+          ...defaultResult,
+          handled: false,
+          tierLabel: 'note_manifest_navigate',
+          clarificationCleared,
+          isNewQuestionOrCommandDetected,
+          classifierCalled: false,
+          classifierTimeout: false,
+          classifierError: false,
+          isFollowUp: false,
+          _devProvenanceHint: 'deterministic' as const,
+          _noteManifestNavigate: { noteTitle },
+          _noteCommandTelemetry: {
+            note_command_manifest_version: noteNavCommand.manifestVersion,
+            note_command_handler_id: noteNavCommand.handlerId,
+            note_command_family: noteNavCommand.intentFamily,
+            note_command_subtype: noteNavCommand.intentSubtype,
+            note_command_confidence: noteNavCommand.confidence,
+            note_command_execution_policy: noteNavCommand.executionPolicy,
+          },
+          _resolvedNoteCommand: noteNavCommand,
+        }
       }
     } else if (noteNavCommand && noteNavCommand.intentFamily === 'navigate') {
       // Shadow-mode: log but don't execute (low confidence or no callback)

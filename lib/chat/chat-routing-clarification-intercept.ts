@@ -170,29 +170,30 @@ export function buildConcreteEscapeAction(
 ): ConcreteEscapeAction | null {
   if (!escapeEvidence) return null
 
-  // Semantic-first model: only B1 + semantic escape sources during active clarification.
+  // Semantic-first model: B1 + semantic + active-panel item + note-sibling during active clarification.
   // If the LLM selected a specific __escape_* candidate, use that source.
   if (suggestedId?.startsWith('__escape_')) {
     if (suggestedId.includes('_b1_') && escapeEvidence.b1) {
       return { source: 'b1', choiceId: suggestedId, b1Evidence: escapeEvidence.b1 }
     }
     if (suggestedId.includes('_semantic_') && escapeEvidence.semantic) {
-      // Resolve selectedCandidate structurally: find the candidate matching the choiceId.
-      // choiceId format: __escape_semantic_{intent_id}_{target_id}
-      // Check target_ids first (more specific), then intent_id (broader).
       const candidates = escapeEvidence.semantic.candidates
       const selected = candidates.find(c =>
         c.target_ids[0] && suggestedId.includes(c.target_ids[0])
       ) ?? candidates.find(c =>
         suggestedId.includes(c.intent_id)
-      ) ?? candidates[0] // fallback to top candidate if ID parse doesn't match
+      ) ?? candidates[0]
       return { source: 'semantic', choiceId: suggestedId, semanticEvidence: escapeEvidence.semantic, selectedCandidate: selected }
+    }
+    if (suggestedId.includes('_active_panel_item_') && escapeEvidence.activePanelItem) {
+      return { source: 'active_panel_item', choiceId: suggestedId, itemEvidence: escapeEvidence.activePanelItem }
+    }
+    if (suggestedId.includes('_note_sibling_') && escapeEvidence.noteSibling) {
+      return { source: 'note_sibling', choiceId: suggestedId, noteEvidence: escapeEvidence.noteSibling }
     }
   }
 
   // No specific ID (reroute without selection) — error-handling fallback path.
-  // B1 > semantic is pragmatic (B1 is exact-memory, higher signal). Log a warning since
-  // the LLM should normally select a specific __escape_* candidate.
   if (escapeEvidence.b1?.action) {
     console.warn('[buildConcreteEscapeAction] reroute fallback to B1 (LLM did not select specific escape candidate)')
     return { source: 'b1', choiceId: `__reroute_b1_${escapeEvidence.b1.targetIds[0] ?? 'unknown'}`, b1Evidence: escapeEvidence.b1 }
@@ -206,6 +207,14 @@ export function buildConcreteEscapeAction(
       semanticEvidence: escapeEvidence.semantic,
       selectedCandidate: topCandidate,
     }
+  }
+  if (escapeEvidence.activePanelItem) {
+    console.warn('[buildConcreteEscapeAction] reroute fallback to active-panel item')
+    return { source: 'active_panel_item', choiceId: `__reroute_active_panel_item_${escapeEvidence.activePanelItem.itemId}`, itemEvidence: escapeEvidence.activePanelItem }
+  }
+  if (escapeEvidence.noteSibling) {
+    console.warn('[buildConcreteEscapeAction] reroute fallback to note-sibling')
+    return { source: 'note_sibling', choiceId: `__reroute_note_sibling_${escapeEvidence.noteSibling.noteId ?? 'unknown'}`, noteEvidence: escapeEvidence.noteSibling }
   }
 
   return null
@@ -1910,6 +1919,26 @@ export async function handleClarificationIntercept(
               })
             }
           }
+        }
+
+        // Active-panel item escape candidate (step 4c):
+        if (escapeEv?.activePanelItem) {
+          const item = escapeEv.activePanelItem
+          escapeCandidates.push({
+            id: `__escape_active_panel_item_${item.itemId}`,
+            label: item.itemLabel,
+            sublabel: `item in ${item.panelTitle}`,
+          })
+        }
+
+        // Note-sibling escape candidate (step 4d):
+        if (escapeEv?.noteSibling) {
+          const note = escapeEv.noteSibling
+          escapeCandidates.push({
+            id: `__escape_note_sibling_${note.noteId ?? 'unknown'}`,
+            label: note.noteTitle,
+            sublabel: 'note',
+          })
         }
 
         // Pre-arbiter shared validation (from known-noun policy migration):

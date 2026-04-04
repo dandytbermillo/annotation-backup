@@ -187,6 +187,8 @@ export interface SelectedSemanticCandidate {
 export type ConcreteEscapeAction =
   | { source: 'b1'; choiceId: string; b1Evidence: NonNullable<EscapeEvidence['b1']> }
   | { source: 'semantic'; choiceId: string; semanticEvidence: NonNullable<EscapeEvidence['semantic']>; selectedCandidate: SelectedSemanticCandidate }
+  | { source: 'active_panel_item'; choiceId: string; itemEvidence: NonNullable<EscapeEvidence['activePanelItem']> }
+  | { source: 'note_sibling'; choiceId: string; noteEvidence: NonNullable<EscapeEvidence['noteSibling']> }
 
 // =============================================================================
 // Evidence-Based Execution Source (Slice B2 step 6)
@@ -204,17 +206,33 @@ export type ExecutionSourceTag =
   | 'safe_clarifier'
 
 /** Validated escape evidence collected by upstream lanes.
- *  Semantic-first model: only B1 + semantic during active clarification.
+ *  Semantic-first model: B1 + semantic + active-panel item + note-sibling during active clarification.
  *  Surface and known-noun are no longer active-clarifier escape sources. */
 export interface EscapeEvidence {
   b1?: { intentId: string | null; targetIds: string[]; slotsJson: Record<string, unknown>; tierLabel: string | null; action: unknown }
   semantic?: {
     candidates: Array<{ intent_id: string; slots_json: Record<string, unknown>; similarity_score: number; target_ids: string[] }>
     topScore?: number
-    /** Whether these candidates came from raw query or rewrite-assisted re-query */
     retrievalSource?: 'raw' | 'rewritten'
-    /** The corrected text used for re-query (only when retrievalSource is 'rewritten') */
     rewrittenText?: string
+  }
+  /** Validated active-panel item: user explicitly named an item present in a visible widget */
+  activePanelItem?: {
+    widgetId: string
+    panelId: string
+    segmentId?: string
+    itemId: string
+    itemLabel: string
+    panelType: string
+    panelTitle: string
+  }
+  /** Note-sibling: note target validated by the note-specific resolver/manifest */
+  noteSibling?: {
+    noteTitle: string
+    noteId?: string
+    intentFamily: 'state_info' | 'navigate'
+    confidence: string
+    resolvedCommand: unknown
   }
 }
 
