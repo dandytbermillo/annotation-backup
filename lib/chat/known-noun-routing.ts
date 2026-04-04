@@ -205,6 +205,59 @@ function levenshteinDistance(a: string, b: string): number {
 }
 
 // =============================================================================
+// Shared Validation Helpers (exported for semantic-first active-clarifier model)
+// These are pure, stateless functions used by both no-clarifier Tier 4 routing
+// and active-clarifier shared candidate validation.
+// =============================================================================
+
+/** Visible widget type for validation functions */
+type VisibleWidget = { id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }
+
+/**
+ * Validate whether a panel target is visible on the current dashboard.
+ * Used by both known-noun routing (no-clarifier) and shared escape candidate validation (active-clarifier).
+ */
+export function validateVisibility(
+  panelId: string,
+  title: string,
+  visibleWidgets?: VisibleWidget[]
+): { valid: boolean; resolvedPanel?: { id: string; title: string; type: string }; reason?: string } {
+  const entry: KnownNounEntry = { panelId, title }
+  const resolved = resolveToVisiblePanel(entry, visibleWidgets)
+  if (resolved) {
+    return { valid: true, resolvedPanel: resolved }
+  }
+  return { valid: false, reason: 'panel_not_visible' }
+}
+
+/**
+ * Validate whether a panel target has duplicate-family ambiguity.
+ * Returns { valid: false } when multiple siblings of the same family are visible.
+ */
+export function validateDuplicateFamily(
+  panelId: string,
+  visibleWidgets?: VisibleWidget[]
+): { valid: boolean; siblingCount?: number } {
+  const family = getKnownNounFamily(panelId)
+  if (!family || !visibleWidgets) return { valid: true }
+  const siblings = visibleWidgets.filter(w => w.duplicateFamily === family)
+  if (siblings.length > 1) {
+    return { valid: false, siblingCount: siblings.length }
+  }
+  return { valid: true }
+}
+
+/**
+ * Detect question-shaped input guards.
+ * Returns 'full_question' for "what is X?", 'trailing_question' for "X?", 'none' otherwise.
+ */
+export function detectQuestionGuard(input: string): 'full_question' | 'trailing_question' | 'none' {
+  if (isFullQuestionAboutNoun(input)) return 'full_question'
+  if (isTrailingQuestionOnly(input)) return 'trailing_question'
+  return 'none'
+}
+
+// =============================================================================
 // Question Signal Detection
 // =============================================================================
 
@@ -313,7 +366,7 @@ export interface KnownNounRoutingResult {
  * but DashboardView's open-panel-drawer listener matches by panel.id (database UUID).
  * We must look up the real panel ID from visibleWidgets to open the drawer correctly.
  */
-function resolveToVisiblePanel(
+export function resolveToVisiblePanel(
   nounEntry: KnownNounEntry,
   visibleWidgets?: Array<{ id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }>
 ): { id: string; title: string; type: string } | null {

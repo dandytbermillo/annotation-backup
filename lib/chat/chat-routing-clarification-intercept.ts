@@ -33,6 +33,7 @@ import type {
   ConcreteEscapeAction,
   EscapeEvidence,
 } from './chat-routing-types'
+import { detectQuestionGuard, validateVisibility, validateDuplicateFamily } from './known-noun-routing'
 import {
   runBoundedArbitrationLoop,
   resetLLMArbitrationGuard,
@@ -169,34 +170,42 @@ export function buildConcreteEscapeAction(
 ): ConcreteEscapeAction | null {
   if (!escapeEvidence) return null
 
-  // If the LLM selected a specific __escape_* candidate, use that source
+  // Semantic-first model: only B1 + semantic escape sources during active clarification.
+  // If the LLM selected a specific __escape_* candidate, use that source.
   if (suggestedId?.startsWith('__escape_')) {
     if (suggestedId.includes('_b1_') && escapeEvidence.b1) {
       return { source: 'b1', choiceId: suggestedId, b1Evidence: escapeEvidence.b1 }
     }
-    if (suggestedId.includes('_surface_') && escapeEvidence.surface) {
-      return { source: 'surface', choiceId: suggestedId, surfaceEvidence: escapeEvidence.surface }
-    }
-    if (suggestedId.includes('_known_noun_') && escapeEvidence.knownNoun) {
-      return { source: 'knownNoun', choiceId: suggestedId, knownNounEvidence: escapeEvidence.knownNoun }
-    }
     if (suggestedId.includes('_semantic_') && escapeEvidence.semantic) {
-      return { source: 'semantic', choiceId: suggestedId, semanticEvidence: escapeEvidence.semantic }
+      // Resolve selectedCandidate structurally: find the candidate matching the choiceId.
+      // choiceId format: __escape_semantic_{intent_id}_{target_id}
+      // Check target_ids first (more specific), then intent_id (broader).
+      const candidates = escapeEvidence.semantic.candidates
+      const selected = candidates.find(c =>
+        c.target_ids[0] && suggestedId.includes(c.target_ids[0])
+      ) ?? candidates.find(c =>
+        suggestedId.includes(c.intent_id)
+      ) ?? candidates[0] // fallback to top candidate if ID parse doesn't match
+      return { source: 'semantic', choiceId: suggestedId, semanticEvidence: escapeEvidence.semantic, selectedCandidate: selected }
     }
   }
 
-  // No specific ID (reroute without selection) — pick highest-precedence evidence
+  // No specific ID (reroute without selection) — error-handling fallback path.
+  // B1 > semantic is pragmatic (B1 is exact-memory, higher signal). Log a warning since
+  // the LLM should normally select a specific __escape_* candidate.
   if (escapeEvidence.b1?.action) {
+    console.warn('[buildConcreteEscapeAction] reroute fallback to B1 (LLM did not select specific escape candidate)')
     return { source: 'b1', choiceId: `__reroute_b1_${escapeEvidence.b1.targetIds[0] ?? 'unknown'}`, b1Evidence: escapeEvidence.b1 }
   }
-  if (escapeEvidence.surface?.surfaceResult) {
-    return { source: 'surface', choiceId: `__reroute_surface_${escapeEvidence.surface.surfaceType}`, surfaceEvidence: escapeEvidence.surface }
-  }
-  if (escapeEvidence.knownNoun?.panelId) {
-    return { source: 'knownNoun', choiceId: `__reroute_known_noun_${escapeEvidence.knownNoun.panelId}`, knownNounEvidence: escapeEvidence.knownNoun }
-  }
   if (escapeEvidence.semantic?.candidates?.length) {
-    return { source: 'semantic', choiceId: `__reroute_semantic_${escapeEvidence.semantic.candidates[0].intent_id}`, semanticEvidence: escapeEvidence.semantic }
+    console.warn('[buildConcreteEscapeAction] reroute fallback to semantic (LLM did not select specific escape candidate)')
+    const topCandidate = escapeEvidence.semantic.candidates[0]
+    return {
+      source: 'semantic',
+      choiceId: `__reroute_semantic_${topCandidate.intent_id}`,
+      semanticEvidence: escapeEvidence.semantic,
+      selectedCandidate: topCandidate,
+    }
   }
 
   return null
@@ -1874,16 +1883,9 @@ export async function handleClarificationIntercept(
         }))
 
         // Add validated escape targets as additional candidates so the LLM can select them.
-        // These are targets validated by upstream bounded sources (surface resolver, B1, known-noun).
+        // Semantic-first model: only B1 + semantic escape candidates (no surface, no known-noun).
         const escapeEv = ctx.escapeEvidence
         const escapeCandidates: Array<{ id: string; label: string; sublabel?: string }> = []
-        if (escapeEv?.surface?.surfaceType) {
-          const surfaceLabel = escapeEv.surface.surfaceType === 'recent' ? 'Recent' : escapeEv.surface.surfaceType
-          escapeCandidates.push({ id: `__escape_surface_${escapeEv.surface.surfaceType}`, label: surfaceLabel, sublabel: 'another panel you can open instead' })
-        }
-        if (escapeEv?.knownNoun?.panelId) {
-          escapeCandidates.push({ id: `__escape_known_noun_${escapeEv.knownNoun.panelId}`, label: escapeEv.knownNoun.title, sublabel: 'another panel you can open instead' })
-        }
         if (escapeEv?.b1?.targetIds?.length) {
           const b1Label = (escapeEv.b1.slotsJson as any)?.panelTitle ?? (escapeEv.b1.slotsJson as any)?.name ?? 'validated target'
           escapeCandidates.push({ id: `__escape_b1_${escapeEv.b1.targetIds[0]}`, label: String(b1Label), sublabel: 'another panel you can open instead' })
@@ -1905,7 +1907,55 @@ export async function handleClarificationIntercept(
           }
         }
 
-        const allCandidates = [...tier1b3Candidates, ...escapeCandidates]
+        // Pre-arbiter shared validation (from known-noun policy migration):
+        // Remove/demote escape candidates that fail hard product checks before the LLM sees them.
+        const visibleWidgets = ctx.uiContext?.dashboard?.visibleWidgets
+        const questionGuard = detectQuestionGuard(trimmedInput)
+
+        const validatedEscapeCandidates = escapeCandidates.filter(ec => {
+          // Question guard: if input is a full question, remove all escape candidates
+          if (questionGuard === 'full_question') {
+            void debugLog({ component: 'ChatNavigation', action: 'pre_arbiter_question_guard_removed', metadata: { candidateId: ec.id, reason: 'full_question' } })
+            return false
+          }
+
+          // Extract panelId/title from candidate for validation
+          const isB1 = ec.id.startsWith('__escape_b1_')
+          const isSemantic = ec.id.startsWith('__escape_semantic_')
+          let panelId: string | undefined
+          let panelTitle: string | undefined
+
+          if (isB1 && escapeEv?.b1) {
+            panelId = escapeEv.b1.targetIds[0]
+            panelTitle = (escapeEv.b1.slotsJson as any)?.panelTitle ?? ec.label
+          } else if (isSemantic && escapeEv?.semantic) {
+            const match = escapeEv.semantic.candidates.find(c =>
+              c.target_ids[0] && ec.id.includes(c.target_ids[0])
+            )
+            panelId = match?.target_ids[0]
+            panelTitle = (match?.slots_json as any)?.panelTitle ?? ec.label
+          }
+
+          if (panelId) {
+            // Visibility check: remove candidates for panels not visible on current dashboard
+            const visResult = validateVisibility(panelId, panelTitle ?? ec.label, visibleWidgets)
+            if (!visResult.valid) {
+              void debugLog({ component: 'ChatNavigation', action: 'pre_arbiter_visibility_removed', metadata: { candidateId: ec.id, panelId, reason: visResult.reason } })
+              return false
+            }
+
+            // Duplicate-family check: remove candidates with ambiguous sibling count
+            const dupResult = validateDuplicateFamily(panelId, visibleWidgets)
+            if (!dupResult.valid) {
+              void debugLog({ component: 'ChatNavigation', action: 'pre_arbiter_duplicate_family_removed', metadata: { candidateId: ec.id, panelId, siblingCount: dupResult.siblingCount } })
+              return false
+            }
+          }
+
+          return true
+        })
+
+        const allCandidates = [...tier1b3Candidates, ...validatedEscapeCandidates]
 
         const llmResult = await runBoundedArbitrationLoop({
           trimmedInput,

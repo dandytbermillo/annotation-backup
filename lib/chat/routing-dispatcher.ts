@@ -1842,14 +1842,10 @@ export async function dispatchRouting(
         // when live clarification exists. Store as escape evidence for the arbiter.
         const hasLiveClarificationForSurface = ctx.pendingOptions.length > 0 || !!ctx.lastClarification || !!ctx.clarificationSnapshot
         if (hasLiveClarificationForSurface) {
-          ;(ctx as any)._surfaceEscapeEvidence = {
-            surfaceType: surfaceResult.surfaceType,
-            intentFamily: surfaceResult.intentFamily,
-            executionPolicy: surfaceResult.executionPolicy,
-            targetSurfaceId: surfaceResult.targetSurfaceId,
-            surfaceResult,
-          }
-          // Fall through — let the tier chain / bounded arbiter handle it
+          // Semantic-first model: surface does NOT contribute escape evidence during active clarification.
+          // Surface may still run for diagnostics, but must not become a bounded escape candidate.
+          console.log('[dispatcher] surface resolver skipped as escape evidence (semantic-first model):', { surfaceType: surfaceResult.surfaceType })
+          // Fall through — let the tier chain / bounded arbiter handle it via semantic/B1 candidates
         } else if (surfaceResult.executionPolicy === 'list_items') {
           let answerContent = "I couldn't load that information right now. Try again in a moment."
           try {
@@ -2774,60 +2770,41 @@ export async function dispatchRouting(
           ...escapeAction.b1Evidence.action as RoutingDispatcherResult,
           _devProvenanceHint: 'bounded_clarification' as const,
         }
-      } else if (escapeAction.source === 'surface') {
-        // Execute the surface command from self-contained evidence
-        const sr = escapeAction.surfaceEvidence.surfaceResult as any
-        if (sr.executionPolicy === 'open_surface' && sr.targetSurfaceId && ctx.openPanelDrawer) {
-          ctx.openPanelDrawer(sr.targetSurfaceId)
-        }
-        const surfaceLabel = sr.surfaceType === 'recent' ? 'Recent' : sr.surfaceType
-        const surfaceMsg: ChatMessage = {
-          id: `assistant-${Date.now()}`, role: 'assistant',
-          content: `Opening ${surfaceLabel}...`, timestamp: new Date(), isError: false,
-        }
-        ctx.addMessage(surfaceMsg, { tierLabel: 'surface_command_resolve', provenance: 'bounded_clarification' })
-        ctx.setIsLoading(false)
-        result = {
-          handled: true, handledByTier: 4, tierLabel: 'surface_command_resolve',
-          clarificationCleared: true, isNewQuestionOrCommandDetected: false,
-          classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
-          _devProvenanceHint: 'bounded_clarification' as const,
-        }
-      } else if (escapeAction.source === 'knownNoun') {
-        // Known-noun validated escape: re-run routing now that clarification is paused/cleared.
-        const escapeResult = handleKnownNounRouting({
-          trimmedInput: ctx.trimmedInput,
-          visibleWidgets: ctx.uiContext?.dashboard?.visibleWidgets,
-          addMessage: ctx.addMessage,
-          setIsLoading: ctx.setIsLoading,
-          openPanelDrawer: ctx.openPanelDrawer,
-          setPendingOptions: ctx.setPendingOptions,
-          setPendingOptionsMessageId: ctx.setPendingOptionsMessageId,
-          setPendingOptionsGraceCount: ctx.setPendingOptionsGraceCount,
-          setActiveOptionSetId: ctx.setActiveOptionSetId,
-          setLastClarification: ctx.setLastClarification,
-          handleSelectOption: (opt: SelectionOption) => { ctx.handleSelectOption(opt) },
-          hasActiveOptionSet: false,
-          saveLastOptionsShown: ctx.saveLastOptionsShown,
-          clearWidgetSelectionContext: ctx.clearWidgetSelectionContext,
-          clearLastOptionsShown: ctx.clearLastOptionsShown,
-          clearClarificationSnapshot: ctx.clearClarificationSnapshot,
-          clearFocusLatch: ctx.clearFocusLatch,
-        })
-        if (escapeResult.handled) {
-          result = {
-            handled: true, handledByTier: 4, tierLabel: 'known_noun',
-            clarificationCleared: true, isNewQuestionOrCommandDetected: false,
-            classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
-            _devProvenanceHint: 'bounded_clarification' as const,
-          }
-        }
       } else if (escapeAction.source === 'semantic') {
-        // Semantic escape: let normal routing handle execution.
-        result = {
-          ...result,
-          handled: false,
-          _devProvenanceHint: 'bounded_clarification' as const,
+        // Semantic-first model: concrete semantic execution using selectedCandidate.
+        const selected = escapeAction.selectedCandidate
+        const targetId = selected.target_ids[0]
+        const label = (selected.slots_json as any)?.panelTitle ?? (selected.slots_json as any)?.name ?? selected.intent_id
+
+        if (targetId && ctx.openPanelDrawer) {
+          // Post-selection visibility check
+          const visibleWidgets = ctx.uiContext?.dashboard?.visibleWidgets
+          const { validateVisibility: checkVis } = await import('./known-noun-routing')
+          const visResult = checkVis(targetId, String(label), visibleWidgets)
+
+          if (visResult.valid && visResult.resolvedPanel) {
+            ctx.openPanelDrawer(visResult.resolvedPanel.id)
+            const semanticMsg: ChatMessage = {
+              id: `assistant-${Date.now()}`, role: 'assistant',
+              content: `Opening ${visResult.resolvedPanel.title ?? label}...`, timestamp: new Date(), isError: false,
+            }
+            ctx.addMessage(semanticMsg, { tierLabel: 'semantic_escape_resolve', provenance: 'bounded_clarification' })
+            ctx.setIsLoading(false)
+            result = {
+              handled: true, handledByTier: 4, tierLabel: 'semantic_escape_resolve',
+              clarificationCleared: true, isNewQuestionOrCommandDetected: false,
+              classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
+              _devProvenanceHint: 'bounded_clarification' as const,
+            }
+          } else {
+            // Post-selection validation failed — target not visible, fall through to clarify
+            console.log('[dispatcher] semantic escape post-selection validation failed:', { targetId, label, reason: visResult.reason })
+            result = { ...result, handled: false, _devProvenanceHint: 'bounded_clarification' as const }
+          }
+        } else {
+          // No target_ids or no openPanelDrawer — fall through
+          console.log('[dispatcher] semantic escape missing target or drawer:', { targetId, label })
+          result = { ...result, handled: false, _devProvenanceHint: 'bounded_clarification' as const }
         }
       }
     }
@@ -3272,24 +3249,15 @@ async function dispatchRoutingInner(
   // (snapshot lifecycle, repair memory, stop suppression). The internal
   // order is: Tier 0 → Tier 1 → Tier 3, matching the plan.
   // =========================================================================
-  // Pre-intercept: collect known-noun evidence so the arbiter can see escape targets.
-  // (B1 and surface evidence are already collected in the outer wrapper.)
-  const hasLiveClarificationForPreNoun = ctx.pendingOptions.length > 0 || !!ctx.lastClarification || !!ctx.clarificationSnapshot
-  if (hasLiveClarificationForPreNoun && !(ctx as any)._knownNounEscapeEvidence) {
-    const preNounMatch = matchKnownNoun(ctx.trimmedInput)
-    if (preNounMatch) {
-      ;(ctx as any)._knownNounEscapeEvidence = { panelId: preNounMatch.panelId, title: preNounMatch.title }
-    }
-  }
+  // Semantic-first model: known-noun no longer contributes escape evidence during active clarification.
+  // Its product policies (duplicate-family, visibility, question guard) are applied as shared validation instead.
 
-  // Build escape evidence for the intercept
+  // Build escape evidence for the intercept (B1 + semantic only under semantic-first model)
   const escapeEvidence: import('./chat-routing-types').EscapeEvidence = {
     b1: (ctx as any)._b1EscapeEvidence ?? undefined,
-    surface: (ctx as any)._surfaceEscapeEvidence ?? undefined,
-    knownNoun: (ctx as any)._knownNounEscapeEvidence ?? undefined,
     semantic: (ctx as any)._semanticEscapeEvidence ?? undefined,
   }
-  const hasEscapeEvidence = !!escapeEvidence.b1 || !!escapeEvidence.surface || !!escapeEvidence.knownNoun || !!escapeEvidence.semantic
+  const hasEscapeEvidence = !!escapeEvidence.b1 || !!escapeEvidence.semantic
 
   console.log('[dispatcher] BEFORE handleClarificationIntercept:', {
     input: ctx.trimmedInput,
@@ -3299,8 +3267,6 @@ async function dispatchRoutingInner(
     hasEscapeEvidence,
     escapeSources: {
       b1: !!escapeEvidence.b1,
-      surface: !!escapeEvidence.surface,
-      knownNoun: !!escapeEvidence.knownNoun,
       semantic: !!escapeEvidence.semantic,
       semanticTopScore: escapeEvidence.semantic?.topScore,
       semanticCandidateCount: escapeEvidence.semantic?.candidates?.length,
@@ -6003,19 +5969,11 @@ async function dispatchRoutingInner(
 
   // hasVisibleWidgetItems already computed with turnSnapshot above
 
-  // Active clarification bounded arbiter: known-noun routing must not execute directly
-  // when live clarification exists. Collect evidence only (pure match, no side effects).
+  // Semantic-first model: known-noun no longer contributes escape evidence during active clarification.
+  // Known-noun policies are applied as shared candidate validation instead.
   const hasLiveClarificationForKnownNoun = ctx.pendingOptions.length > 0 || !!ctx.lastClarification || !!ctx.clarificationSnapshot
   if (hasLiveClarificationForKnownNoun) {
-    const knownNounMatch = matchKnownNoun(ctx.trimmedInput)
-    if (knownNounMatch) {
-      ;(ctx as any)._knownNounEscapeEvidence = {
-        panelId: knownNounMatch.panelId,
-        title: knownNounMatch.title,
-      }
-      void debugLog({ component: 'ChatNavigation', action: 'known_noun_evidence_collected', metadata: { input: ctx.trimmedInput, panelId: knownNounMatch.panelId, title: knownNounMatch.title } })
-    }
-    // Fall through to grounding / bounded LLM (don't execute)
+    // Fall through to grounding / bounded LLM (don't execute, don't collect known-noun evidence)
   }
 
   const knownNounResult = hasLiveClarificationForKnownNoun ? { handled: false } : handleKnownNounRouting({

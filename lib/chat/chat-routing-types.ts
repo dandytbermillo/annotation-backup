@@ -176,11 +176,17 @@ export interface ClarificationInterceptResult extends HandlerResult {
 // Self-contained payload: outer wrapper executes from this, not ctx evidence.
 // =============================================================================
 
+/** Semantic candidate identity — resolved structurally at build time, not parsed from choiceId strings */
+export interface SelectedSemanticCandidate {
+  intent_id: string
+  target_ids: string[]
+  slots_json: Record<string, unknown>
+  similarity_score: number
+}
+
 export type ConcreteEscapeAction =
   | { source: 'b1'; choiceId: string; b1Evidence: NonNullable<EscapeEvidence['b1']> }
-  | { source: 'surface'; choiceId: string; surfaceEvidence: NonNullable<EscapeEvidence['surface']> }
-  | { source: 'knownNoun'; choiceId: string; knownNounEvidence: NonNullable<EscapeEvidence['knownNoun']> }
-  | { source: 'semantic'; choiceId: string; semanticEvidence: NonNullable<EscapeEvidence['semantic']> }
+  | { source: 'semantic'; choiceId: string; semanticEvidence: NonNullable<EscapeEvidence['semantic']>; selectedCandidate: SelectedSemanticCandidate }
 
 // =============================================================================
 // Evidence-Based Execution Source (Slice B2 step 6)
@@ -197,11 +203,11 @@ export type ExecutionSourceTag =
   | 'llm_executed'
   | 'safe_clarifier'
 
-/** Validated escape evidence collected by upstream lanes (B1, surface resolver, known-noun) */
+/** Validated escape evidence collected by upstream lanes.
+ *  Semantic-first model: only B1 + semantic during active clarification.
+ *  Surface and known-noun are no longer active-clarifier escape sources. */
 export interface EscapeEvidence {
   b1?: { intentId: string | null; targetIds: string[]; slotsJson: Record<string, unknown>; tierLabel: string | null; action: unknown }
-  surface?: { surfaceType: string; intentFamily: string; executionPolicy: string; targetSurfaceId?: string; surfaceResult: unknown }
-  knownNoun?: { panelId: string; title: string }
   semantic?: { candidates: Array<{ intent_id: string; slots_json: Record<string, unknown>; similarity_score: number; target_ids: string[] }>; topScore?: number }
 }
 
