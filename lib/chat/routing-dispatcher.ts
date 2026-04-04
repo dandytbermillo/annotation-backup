@@ -3417,11 +3417,17 @@ async function dispatchRoutingInner(
   const hasLiveClarificationForItems = ctx.pendingOptions.length > 0 || !!ctx.lastClarification || !!ctx.clarificationSnapshot
   let activePanelItemEvidence: import('./chat-routing-types').EscapeEvidence['activePanelItem'] = undefined
   if (hasLiveClarificationForItems && turnSnapshot.openWidgets?.length) {
+    console.log('[dispatcher] 4c: scanning widgets for item match:', {
+      input: ctx.trimmedInput,
+      widgetCount: turnSnapshot.openWidgets.length,
+      widgets: turnSnapshot.openWidgets.map(w => ({ id: w.id, label: w.label, panelId: w.panelId, optionCount: w.options?.length ?? 0 })),
+    })
     const { canonicalizeCommandInput } = await import('./input-classifiers')
     const { findSurfaceCommand } = await import('./surface-manifest')
     const { registerBuiltInSurfaceManifests } = await import('./surface-manifest-definitions')
     registerBuiltInSurfaceManifests()
     const strippedInput = canonicalizeCommandInput(ctx.trimmedInput).toLowerCase()
+    console.log('[dispatcher] 4c: stripped input:', { raw: ctx.trimmedInput, stripped: strippedInput })
     if (strippedInput.length >= 3) {
       // Resolve panelType from visibleWidgets (which carries the real type field)
       const containerType: import('./surface-manifest').SurfaceContainerType =
@@ -3462,21 +3468,33 @@ async function dispatchRoutingInner(
       for (const widget of turnSnapshot.openWidgets) {
         if (!widget.options?.length) continue
         // Apply scoping: if scoped, only scan the scoped widget
-        if (scopedWidgetIds && !scopedWidgetIds.has(widget.id)) continue
+        if (scopedWidgetIds && !scopedWidgetIds.has(widget.id)) {
+          console.log('[dispatcher] 4c: widget skipped (scoped out):', { widgetId: widget.id, scopedWidgetIds: scopedWidgetIds ? [...scopedWidgetIds] : null })
+          continue
+        }
 
         const resolved = widgetTypeMap.get(widget.panelId ?? '') ?? widgetTypeMap.get(widget.id)
         const panelType = resolved?.type ?? ''
         const panelTitle = resolved?.title ?? widget.label ?? widget.id
 
         // Manifest check: only include widgets that support execute_item
+        // Map DB panel_type to manifest surfaceType (DB uses 'links_note_tiptap', manifest uses 'links_panel')
+        const DB_TO_MANIFEST_TYPE: Record<string, string> = {
+          'links_note': 'links_panel',
+          'links_note_tiptap': 'links_panel',
+          'recent': 'recent',
+        }
         if (panelType) {
           const panelTypeSlug = panelType.replace(/-/g, '_')
-          const cmd = findSurfaceCommand(panelTypeSlug, containerType, 'navigate', 'open_item')
-            ?? findSurfaceCommand(panelTypeSlug, containerType, 'navigate', 'open_recent_item')
+          const manifestType = DB_TO_MANIFEST_TYPE[panelTypeSlug] ?? panelTypeSlug
+          const cmd = findSurfaceCommand(manifestType, containerType, 'navigate', 'open_item')
+            ?? findSurfaceCommand(manifestType, containerType, 'navigate', 'open_recent_item')
+          console.log('[dispatcher] 4c: manifest check:', { widgetId: widget.id, panelType, manifestType, containerType, hasCmd: !!cmd, executionPolicy: cmd?.executionPolicy })
           if (!cmd || cmd.executionPolicy !== 'execute_item') {
             continue
           }
         } else {
+          console.log('[dispatcher] 4c: widget skipped (no panelType):', { widgetId: widget.id, panelId: widget.panelId, resolved })
           continue
         }
 
