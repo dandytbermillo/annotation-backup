@@ -1894,7 +1894,12 @@ export async function handleClarificationIntercept(
         // These are hints from learned/seeded rows — the LLM decides whether to select them.
         if (escapeEv?.semantic?.candidates?.length) {
           for (const sc of escapeEv.semantic.candidates) {
-            const semanticLabel = (sc.slots_json as any)?.panelTitle ?? (sc.slots_json as any)?.name ?? sc.intent_id
+            // Derive human-readable label: panelTitle > surface_manifest.surfaceType > name > intent_id
+            const manifest = (sc.slots_json as any)?.surface_manifest as Record<string, string> | undefined
+            const surfaceLabel = manifest?.surfaceType
+              ? manifest.surfaceType.charAt(0).toUpperCase() + manifest.surfaceType.slice(1)
+              : undefined
+            const semanticLabel = (sc.slots_json as any)?.panelTitle ?? surfaceLabel ?? (sc.slots_json as any)?.name ?? sc.intent_id
             // Avoid duplicating candidates already added from other sources
             const alreadyAdded = escapeCandidates.some(ec => ec.label.toLowerCase() === String(semanticLabel).toLowerCase())
             if (!alreadyAdded) {

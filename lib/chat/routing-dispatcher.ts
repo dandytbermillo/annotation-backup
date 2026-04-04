@@ -2665,11 +2665,9 @@ export async function dispatchRouting(
     return PHASE5_OVERRIDE_INTENTS.has(topHint.intent_id) && topHint.similarity_score >= similarityFloor
   })()
 
-  // Slice B2: when live clarification exists, run a separate semantic hint lookup
-  // for escape evidence. This runs regardless of hintScope detection (which fails on
-  // typos like "openn recent" because "openn" doesn't match the action verb pattern).
-  // Uses the same learned/seeded hint pipeline as Phase 5 — handles typos via
-  // rewrite-assisted retrieval. Context: always 'navigation' for escape candidates.
+  // Semantic-first escape evidence: two-pass retrieval with rewrite-assisted re-query.
+  // Pass 1: raw query. Pass 2 (if pass 1 empty): rewrite typos via LLM, then re-query.
+  // At most one rewrite pass per turn. Context: always 'navigation' for escape candidates.
   if (hasLiveClarificationForGate && hintReadEnabled && !(ctx as any)._semanticEscapeEvidence) {
     try {
       const escapeHintSnapshot = buildContextSnapshot({
@@ -2681,12 +2679,22 @@ export async function dispatchRouting(
         latchEnabled: process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1 === 'true',
         messageCount: ctx.messages.length,
       })
+
+      // Pass 1: raw query
       const escapeHintResult = await lookupSemanticHints({
         raw_query_text: ctx.trimmedInput,
         context_snapshot: escapeHintSnapshot,
         intent_scope: 'navigation',
       })
-      console.log('[dispatcher] Escape semantic hint lookup:', { input: ctx.trimmedInput, status: escapeHintResult.status, candidateCount: escapeHintResult.candidates.length, topScore: escapeHintResult.candidates[0]?.similarity_score })
+      console.log('[dispatcher] Escape semantic hint lookup (pass 1 raw):', { input: ctx.trimmedInput, status: escapeHintResult.status, candidateCount: escapeHintResult.candidates.length, topScore: escapeHintResult.candidates[0]?.similarity_score })
+
+      const DIRECT_EXECUTE_THRESHOLD = 0.88
+      const NEAR_TIE_MARGIN = 0.03
+      const pass1TopScore = escapeHintResult.candidates[0]?.similarity_score ?? 0
+      const pass1SecondScore = escapeHintResult.candidates[1]?.similarity_score ?? 0
+      const pass1IsNearTie = escapeHintResult.candidates.length >= 2 && (pass1TopScore - pass1SecondScore) < NEAR_TIE_MARGIN
+      const pass1HasStrongCandidate = pass1TopScore >= DIRECT_EXECUTE_THRESHOLD && !pass1IsNearTie
+
       if (escapeHintResult.status === 'ok' && escapeHintResult.candidates.length > 0) {
         ;(ctx as any)._semanticEscapeEvidence = {
           candidates: escapeHintResult.candidates.map(c => ({
@@ -2695,7 +2703,68 @@ export async function dispatchRouting(
             similarity_score: c.similarity_score,
             target_ids: c.target_ids,
           })),
-          topScore: escapeHintResult.candidates[0].similarity_score,
+          topScore: pass1TopScore,
+          retrievalSource: 'raw' as const,
+        }
+      }
+
+      // Pass 2: rewrite-assisted re-query
+      // Triggers when: no candidates, OR top candidate below direct-execute threshold, OR near-tie
+      // Skips when: a strong candidate already exists above 0.88 with no near-tie
+      const needsRewrite = !(ctx as any)._semanticEscapeEvidence || !pass1HasStrongCandidate
+      if (needsRewrite) {
+        const REWRITE_TIMEOUT_MS = 1500
+        const REWRITE_ENDPOINT = '/api/chat/surface-command/rewrite'
+
+        let rewriteTimer: ReturnType<typeof setTimeout> | undefined
+        try {
+          const rewrittenText = await Promise.race([
+            fetch(`${typeof window !== 'undefined' ? '' : process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'}${REWRITE_ENDPOINT}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ raw_query_text: ctx.trimmedInput }),
+            }).then(async (res) => {
+              clearTimeout(rewriteTimer)
+              if (!res.ok) return null
+              const data = await res.json()
+              return (data.rewritten_text as string) ?? null
+            }),
+            new Promise<null>((resolve) => {
+              rewriteTimer = setTimeout(() => resolve(null), REWRITE_TIMEOUT_MS)
+            }),
+          ])
+
+          if (rewrittenText && rewrittenText !== ctx.trimmedInput) {
+            console.log('[dispatcher] Escape rewrite-assisted re-query:', { original: ctx.trimmedInput, rewritten: rewrittenText })
+
+            const rewriteHintResult = await lookupSemanticHints({
+              raw_query_text: rewrittenText,
+              context_snapshot: escapeHintSnapshot,
+              intent_scope: 'navigation',
+            })
+            console.log('[dispatcher] Escape semantic hint lookup (pass 2 rewritten):', { input: rewrittenText, status: rewriteHintResult.status, candidateCount: rewriteHintResult.candidates.length, topScore: rewriteHintResult.candidates[0]?.similarity_score })
+
+            if (rewriteHintResult.status === 'ok' && rewriteHintResult.candidates.length > 0) {
+              const rewriteTopScore = rewriteHintResult.candidates[0].similarity_score
+              // Replace pass 1 evidence only if rewrite produced a better or first result
+              if (!pass1HasStrongCandidate || rewriteTopScore > pass1TopScore) {
+                ;(ctx as any)._semanticEscapeEvidence = {
+                  candidates: rewriteHintResult.candidates.map(c => ({
+                    intent_id: c.intent_id,
+                    slots_json: c.slots_json,
+                    similarity_score: c.similarity_score,
+                    target_ids: c.target_ids,
+                  })),
+                  topScore: rewriteTopScore,
+                  retrievalSource: 'rewritten' as const,
+                  rewrittenText,
+                }
+              }
+            }
+          }
+        } catch {
+          clearTimeout(rewriteTimer)
+          // Fail-open: rewrite failed, continue with no semantic evidence
         }
       }
     } catch {
@@ -2773,37 +2842,69 @@ export async function dispatchRouting(
       } else if (escapeAction.source === 'semantic') {
         // Semantic-first model: concrete semantic execution using selectedCandidate.
         const selected = escapeAction.selectedCandidate
-        const targetId = selected.target_ids[0]
-        const label = (selected.slots_json as any)?.panelTitle ?? (selected.slots_json as any)?.name ?? selected.intent_id
+        const visibleWidgets = ctx.uiContext?.dashboard?.visibleWidgets
+        let resolvedPanel: { id: string; title: string; type: string } | null = null
 
-        if (targetId && ctx.openPanelDrawer) {
-          // Post-selection visibility check
-          const visibleWidgets = ctx.uiContext?.dashboard?.visibleWidgets
+        // Resolution priority:
+        // 1. Concrete target_ids[0] → validate visibility
+        // 2. Manifest-backed surfaceType → find matching visible panel
+        const manifest = (selected.slots_json as any)?.surface_manifest as Record<string, string> | undefined
+        const label = (selected.slots_json as any)?.panelTitle ?? manifest?.surfaceType ?? (selected.slots_json as any)?.name ?? selected.intent_id
+
+        if (selected.target_ids[0] && visibleWidgets) {
+          // Path 1: concrete targetId from learned row or B1
           const { validateVisibility: checkVis } = await import('./known-noun-routing')
-          const visResult = checkVis(targetId, String(label), visibleWidgets)
-
+          const visResult = checkVis(selected.target_ids[0], String(label), visibleWidgets)
           if (visResult.valid && visResult.resolvedPanel) {
-            ctx.openPanelDrawer(visResult.resolvedPanel.id)
-            const semanticMsg: ChatMessage = {
-              id: `assistant-${Date.now()}`, role: 'assistant',
-              content: `Opening ${visResult.resolvedPanel.title ?? label}...`, timestamp: new Date(), isError: false,
+            resolvedPanel = visResult.resolvedPanel
+          }
+        }
+
+        if (!resolvedPanel && manifest?.surfaceType && visibleWidgets) {
+          // Path 2: curated seed — resolve from surface_manifest.surfaceType
+          // Apply the same shared validation as concrete targetId path:
+          // duplicate-family check, container compatibility, visibility
+          const surfaceType = manifest.surfaceType
+          const panelTypeSlug = surfaceType.replace(/-/g, '_')
+          const matchingWidgets = (visibleWidgets as Array<{ id: string; title: string; type: string; duplicateFamily?: string }>).filter(
+            w => w.type === panelTypeSlug || w.type === surfaceType
+          )
+
+          if (matchingWidgets.length === 1) {
+            // Unambiguous single match
+            resolvedPanel = matchingWidgets[0]
+            console.log('[dispatcher] semantic escape resolved from surface_manifest:', { surfaceType, resolvedId: resolvedPanel.id, title: resolvedPanel.title })
+          } else if (matchingWidgets.length > 1) {
+            // Duplicate-family ambiguity — multiple panels of same type visible. Do not guess.
+            console.log('[dispatcher] semantic escape manifest-resolve blocked: duplicate-family ambiguity:', { surfaceType, matchCount: matchingWidgets.length })
+            // resolvedPanel stays null → falls through to clarify
+          }
+          // Container compatibility: manifest.containerType vs current mode
+          if (resolvedPanel && manifest.containerType) {
+            const currentContainer = ctx.uiContext?.mode === 'workspace' ? 'workspace' : 'dashboard'
+            if (manifest.containerType !== currentContainer) {
+              console.log('[dispatcher] semantic escape manifest-resolve blocked: container mismatch:', { expected: manifest.containerType, actual: currentContainer })
+              resolvedPanel = null
             }
-            ctx.addMessage(semanticMsg, { tierLabel: 'semantic_escape_resolve', provenance: 'bounded_clarification' })
-            ctx.setIsLoading(false)
-            result = {
-              handled: true, handledByTier: 4, tierLabel: 'semantic_escape_resolve',
-              clarificationCleared: true, isNewQuestionOrCommandDetected: false,
-              classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
-              _devProvenanceHint: 'bounded_clarification' as const,
-            }
-          } else {
-            // Post-selection validation failed — target not visible, fall through to clarify
-            console.log('[dispatcher] semantic escape post-selection validation failed:', { targetId, label, reason: visResult.reason })
-            result = { ...result, handled: false, _devProvenanceHint: 'bounded_clarification' as const }
+          }
+        }
+
+        if (resolvedPanel && ctx.openPanelDrawer) {
+          ctx.openPanelDrawer(resolvedPanel.id)
+          const semanticMsg: ChatMessage = {
+            id: `assistant-${Date.now()}`, role: 'assistant',
+            content: `Opening ${resolvedPanel.title ?? label}...`, timestamp: new Date(), isError: false,
+          }
+          ctx.addMessage(semanticMsg, { tierLabel: 'semantic_escape_resolve', provenance: 'bounded_clarification' })
+          ctx.setIsLoading(false)
+          result = {
+            handled: true, handledByTier: 4, tierLabel: 'semantic_escape_resolve',
+            clarificationCleared: true, isNewQuestionOrCommandDetected: false,
+            classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
+            _devProvenanceHint: 'bounded_clarification' as const,
           }
         } else {
-          // No target_ids or no openPanelDrawer — fall through
-          console.log('[dispatcher] semantic escape missing target or drawer:', { targetId, label })
+          console.log('[dispatcher] semantic escape could not resolve target:', { targetIds: selected.target_ids, surfaceType: manifest?.surfaceType, label })
           result = { ...result, handled: false, _devProvenanceHint: 'bounded_clarification' as const }
         }
       }
