@@ -49,8 +49,8 @@ interface MinimalRoutingResult {
 /**
  * Reconstruct a RoutingDispatcherResult from a validated memory entry.
  *
- * Gate 2: Uses 'memory_exact' provenance — distinct from 'deterministic'.
- * Gate 1: Attaches _memoryCandidate for commit-point revalidation in sendMessage.
+ * Uses 'memory_semantic' provenance (B1 memory_exact removed in Slice B3).
+ * Attaches _memoryCandidate for commit-point revalidation in sendMessage.
  *
  * Returns null for unknown action types.
  */
@@ -85,8 +85,8 @@ export function buildResultFromMemory(
       ...defaultResult,
       handled: true,
       handledByTier: undefined,
-      tierLabel: `memory_exact:${candidate.intent_id}`,
-      _devProvenanceHint: 'memory_exact',
+      tierLabel: `memory_semantic:${candidate.intent_id}`,
+      _devProvenanceHint: 'memory_semantic',
       _memoryCandidate: candidate,
       navigationReplayAction: {
         type: 'open_entry' as const,
@@ -100,8 +100,8 @@ export function buildResultFromMemory(
       ...defaultResult,
       handled: true,
       handledByTier: undefined,
-      tierLabel: `memory_exact:${candidate.intent_id}`,
-      _devProvenanceHint: 'memory_exact',
+      tierLabel: `memory_semantic:${candidate.intent_id}`,
+      _devProvenanceHint: 'memory_semantic',
       _memoryCandidate: candidate,
       navigationReplayAction: {
         type: 'open_workspace' as const,
@@ -117,8 +117,8 @@ export function buildResultFromMemory(
       ...defaultResult,
       handled: true,
       handledByTier: undefined,
-      tierLabel: `memory_exact:${candidate.intent_id}`,
-      _devProvenanceHint: 'memory_exact',
+      tierLabel: `memory_semantic:${candidate.intent_id}`,
+      _devProvenanceHint: 'memory_semantic',
       _memoryCandidate: candidate,
       navigationReplayAction: { type: 'go_home' as const },
     }
@@ -127,8 +127,8 @@ export function buildResultFromMemory(
       ...defaultResult,
       handled: true,
       handledByTier: undefined,
-      tierLabel: `memory_exact:${candidate.intent_id}`,
-      _devProvenanceHint: 'memory_exact',
+      tierLabel: `memory_semantic:${candidate.intent_id}`,
+      _devProvenanceHint: 'memory_semantic',
       _memoryCandidate: candidate,
       navigationReplayAction: {
         type: 'open_panel' as const,
@@ -144,8 +144,8 @@ export function buildResultFromMemory(
       ...defaultResult,
       handled: true,
       handledByTier: undefined,
-      tierLabel: `memory_exact:${candidate.intent_id}`,
-      _devProvenanceHint: 'memory_exact',
+      tierLabel: `memory_semantic:${candidate.intent_id}`,
+      _devProvenanceHint: 'memory_semantic',
       _memoryCandidate: candidate,
       _resolvedNoteCommand: {
         surface: 'note' as const,
@@ -171,8 +171,8 @@ export function buildResultFromMemory(
     ...defaultResult,
     handled: true,
     handledByTier: undefined, // Memory lane, not a tier
-    tierLabel: `memory_exact:${candidate.intent_id}`,
-    _devProvenanceHint: 'memory_exact',
+    tierLabel: `memory_semantic:${candidate.intent_id}`,
+    _devProvenanceHint: 'memory_semantic',
     _memoryCandidate: candidate,
     groundingAction,
   }
