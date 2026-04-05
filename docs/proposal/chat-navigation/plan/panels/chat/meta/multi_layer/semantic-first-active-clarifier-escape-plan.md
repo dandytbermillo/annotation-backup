@@ -13,7 +13,7 @@ Define an implementation plan for active-clarifier turns where the user is not a
 
 This plan changes the active-clarifier command-routing model from competing surface/known-command lanes to a generic bounded retrieval model that reuses:
 
-- B1 exact memory
+- semantic learned/seeded rows (replaces B1 exact memory)
 - semantic seeded/learned rows
 
 The goal is to support many command families through one architecture rather than handling each family with its own competing router.
@@ -35,9 +35,8 @@ In particular:
 
 When clarification is active:
 
-- reuse the existing B1 + semantic retrieval approach
-- make semantic retrieval the primary fuzzy/typo/paraphrase lane
-- keep B1 as the strongest exact-memory lane
+- use semantic retrieval as the single retrieval system (rich metadata covers both exact and fuzzy cases)
+- do not include B1 / memory-exact as a separate retrieval lane (semantic metadata subsumes it)
 - do not include surface as a competing active-clarifier escape lane
 - do not include known-command / known-noun as separate competing winner lanes
 
@@ -58,7 +57,7 @@ What is removed under active clarification:
 What must remain available:
 
 - semantic learned/seeded retrieval
-- B1 exact-memory retrieval
+- semantic retrieval (rich metadata covers exact-memory cases previously handled by B1)
 - rewrite-assisted re-retrieval for weak/low-threshold queries
 - surface-manifest execution/replay/clarification policy
 - surface-manifest container/visibility/runtime validation
@@ -84,7 +83,7 @@ Preserve / replace details:
 
 - preserve delivery-state shaping as shared preprocessing / candidate shaping
 - preserve or explicitly replace family-ownership guards so generic inputs are not stolen by a matched family seed
-- define explicit merge/dedupe behavior for B1 + semantic collisions
+- define explicit merge/dedupe behavior for semantic candidate collisions (B1 removed)
 - define explicit threshold / near-tie rules for direct execution, rewrite trigger, and arbiter-only eligibility
 - explicitly decide whether manifest-fallback hints survive as bounded helpers or are intentionally dropped
 - preserve selected-candidate provenance detail
@@ -133,7 +132,7 @@ What this means:
 This plan should therefore avoid assuming that active-clarifier command turns should be owned by family-specific routers.
 Instead, it should steer implementation toward one bounded model where:
 
-- B1 exact-memory candidates
+- semantic learned/seeded candidates
 - semantic seeded/learned candidates
 - non-note active-panel item candidates (for explicit named item actions)
 - note-sibling candidates (validated by the note-specific contract)
@@ -150,14 +149,14 @@ The bounded arbiter remains the sole decision point.
 The active-clarifier candidate set should be:
 
 1. Active clarifier options
-2. B1 exact replay candidates
-3. Learned/seeded semantic candidates
-4. Non-note validated active-panel item candidates for explicit named item actions
-5. Note-sibling candidates validated by the note-specific contract
-6. Active widget/panel context as secondary evidence otherwise
+2. Learned/seeded semantic candidates (single retrieval system — replaces both B1 and legacy semantic)
+3. Non-note validated active-panel item candidates for explicit named item actions
+4. Note-sibling candidates validated by the note-specific contract
+5. Active widget/panel context as secondary evidence otherwise
 
 Explicitly excluded from the active-clarifier candidate set:
 
+- B1 / memory-exact as a separate retrieval lane (semantic metadata subsumes it)
 - surface escape candidates
 - known-noun as a separate winner lane
 
@@ -227,12 +226,12 @@ Active clarification:
    - do not grant direct execution authority
    - preserve shared rewrite-assisted re-retrieval
    - preserve delivery-state shaping or move it into shared preprocessing / candidate shaping
-   - define merge/dedupe for B1 + semantic candidate collisions using canonical identity: `(targetId, intentId, normalizedSlotsKey)` when concrete `targetId` exists, otherwise `(panelTypeOrFamily, intentId, normalizedSlotsKey)`. Different concrete `targetId`s must remain separate candidates.
+   - define merge/dedupe for semantic candidate collisions using canonical identity: `(targetId, intentId, normalizedSlotsKey)` when concrete `targetId` exists, otherwise `(panelTypeOrFamily, intentId, normalizedSlotsKey)`. Different concrete `targetId`s must remain separate candidates.
    - define threshold / near-tie behavior explicitly
 
 5. Assemble one bounded arbiter input from:
    - active clarifier options
-   - B1 exact replay candidates
+   - semantic learned/seeded candidates
    - semantic learned/seeded candidates
    - non-note validated active-panel item candidates for explicit named item actions
    - note-sibling candidates validated by the note-specific contract
@@ -277,7 +276,7 @@ Active clarification:
 For active clarification:
 
 - semantic learned/seeded candidates are the primary fuzzy lane across command families
-- B1 exact replay remains the strongest exact candidate lane
+- semantic retrieval with rich metadata handles both exact and fuzzy cases (B1 removed as separate lane)
 - surface is not part of the active-clarifier escape competition
 - known-command / known-noun are not separate competing lanes
 
@@ -287,7 +286,7 @@ This means:
 - exact active-clarifier command families must not depend on surface as the owner lane
 - those exact active-clarifier commands should be satisfied by:
   - semantic seeds/hints, or
-  - a stronger exact B1 candidate when one exists
+  - a strong semantic candidate with high similarity
 
 ## Known-Noun Migration Rule
 
@@ -298,7 +297,7 @@ That does **not** mean dropping the product rules currently enforced there.
 Any hard policy/validation logic currently implemented in the known-noun path must be preserved and migrated into:
 
 - thin deterministic/product guards, or
-- shared candidate validation applied to B1 and semantic candidates before execution
+- shared candidate validation applied to semantic candidates before execution
 
 Examples of logic that must survive the lane removal:
 
@@ -341,9 +340,9 @@ Validation split required by this proposal:
    - do not fall back to legacy semantic lookup for this slice
    - ensure seeded semantic coverage exists for the supported command families in this slice
    - preserve one rewrite-assisted re-query pass when trigger conditions are met
-   - preserve bounded manifest-fallback hints as helper candidates only when semantic and B1 produce no usable candidate above the medium floor
+   - preserve bounded manifest-fallback hints as helper candidates only when semantic produces no usable candidate above the medium floor
    - if semantic is disabled, times out, or returns empty for a migrated family:
-     - B1 exact may still win if present
+     - semantic may still resolve if present
      - otherwise clarify
      - do not fall back to removed surface/known-command owner lanes
 
@@ -369,7 +368,7 @@ Validation split required by this proposal:
 
 6. Keep arbiter authority intact.
    - no pre-LLM direct escape shortcut
-   - no fixed precedence between B1 and semantic candidates
+   - no fixed precedence between semantic candidates from different sources
 
 7. Preserve evidence-based provenance.
    - bounded arbiter escape/select must surface bounded execution provenance in the executed result
@@ -377,10 +376,10 @@ Validation split required by this proposal:
 8. Gate rollout per command family.
    - removal of active-clarifier surface/known-command ownership must be controlled by an explicit family-level rollout mechanism
    - only families with:
-     - semantic seed or B1 coverage
+     - semantic seed coverage
      - migrated validation rules
      - regression coverage
-     - explicit family-key verification and at least one validated seed/B1 path in test or fixture coverage
+     - explicit family-key verification and at least one validated seed path in test or fixture coverage
      may switch to the new active-clarifier model
 
 9. Preserve capability while removing the lane.
@@ -397,7 +396,7 @@ Validation split required by this proposal:
 
 11. Add minimal active-panel item guard.
    - non-note active-panel item candidates are allowed only for explicit named item actions validated in the active panel/widget
-   - if the item is not validated, do not guess; continue with B1/semantic/clarify
+   - if the item is not validated, do not guess; continue with semantic/clarify
 
 12. Add note-sibling bounded candidate guard.
    - notes remain on the note-command-manifest sibling contract
@@ -475,7 +474,7 @@ Validation split required by this proposal:
    - semantic disabled
    - semantic timeout
    - semantic empty result
-   - B1 exact still allowed
+   - semantic may still resolve
    - otherwise clarify, with no fallback to removed owner lanes
 
 9. Family-gated rollout
@@ -495,8 +494,8 @@ Must pass:
 - live clarifier -> `can you please open the recent widget` -> `Recent` opens with bounded provenance
 - live clarifier -> `hi there. i want you to open the recent widget` -> `Recent` opens with bounded provenance
 - live clarifier -> `hmm can you open the recent widget?` -> `Recent` opens with bounded provenance and must not fall back to `Auto-Executed`
-- live clarifier -> `open links panel b` -> correct bounded semantic/B1 candidate resolves without surface ownership
-- live clarifier -> `open widget manager` -> correct bounded semantic/B1 candidate resolves without surface ownership
+- live clarifier -> `open links panel b` -> correct bounded semantic candidate resolves without surface ownership
+- live clarifier -> `open widget manager` -> correct bounded semantic candidate resolves without surface ownership
 - live clarifier -> `open entries` -> clarifier option executes, not semantic escape
 - live clarifier -> semantic-vs-option overlap case -> arbiter chooses correctly, no fixed precedence bug
 - live clarifier -> clarifier option + validated active-panel item candidate overlap -> bounded arbitration, not direct execution
@@ -509,7 +508,7 @@ Must pass:
   - current-state compatibility validation
 - post-escape resume flows still work
 - no-clarifier `open recent` / `openn recent` deterministic-surface behavior remains unchanged
-- semantic disabled/timeout/empty for a migrated family -> B1 exact still allowed, otherwise clarify
+- semantic disabled/timeout/empty for a migrated family -> semantic may still resolve, otherwise clarify
 - non-migrated family -> old owner-lane behavior remains until that family is explicitly enabled
 
 Must not happen:
@@ -540,7 +539,7 @@ This plan does not:
 - implement repair mode
 
 It also does not promise blanket support for every product command family immediately.
-Each command family removed from active-clarifier surface/known-command ownership must have semantic seed or B1 coverage plus migrated validation before that removal is considered complete.
+Each command family removed from active-clarifier surface/known-command ownership must have semantic seed coverage plus migrated validation before that removal is considered complete.
 
 ## Anti-Pattern Applicability
 

@@ -288,7 +288,7 @@ Non-note active-panel item behavior:
 
 - uses the normal family gate keyed by panel family / `panel_type`
 - only enabled when that family has:
-  - semantic seed or B1 coverage
+  - semantic seed or semantic-backed fixture/test coverage
   - migrated validation
   - regression coverage
 
@@ -410,7 +410,6 @@ Decision:
 - preserve manifest-fallback hints as a bounded helper
 - allow them only when:
   - semantic retrieval returned no usable candidate above the medium floor
-  - B1 returned no usable exact-memory candidate
   - runtime/manifest overlap is strong
   - the family is low-risk and enabled for this behavior
 - manifest-fallback hints must never directly execute from retrieval alone
@@ -439,7 +438,7 @@ Default threshold contract:
 
 These defaults may later become bounded config, but the migration plan should implement these values first unless a family-specific override is approved.
 
-#### B1 + Semantic Merge / Dedupe
+#### Semantic Candidate Merge / Dedupe
 
 The unified pipeline says merge/dedupe, but this needs an explicit rule.
 
@@ -498,7 +497,7 @@ Required treatment:
 Winning-candidate provenance should record:
 
 - retrieval source(s): raw, rewritten, agreement
-- lane contribution: semantic, B1, or merged
+- lane contribution: semantic or merged semantic/helper path
 - whether rewrite was used
 - whether near-tie demotion occurred
 - whether the candidate came from exact hit, ranked semantic hit, or fallback hint
@@ -537,7 +536,7 @@ The unified pipeline should produce a bounded candidate shape that separates ret
 
 ```ts
 type CommandCandidate = {
-  source: 'semantic' | 'b1' | 'active_panel_item' | 'note_sibling'
+  source: 'semantic' | 'active_panel_item' | 'note_sibling'
   intentId: string
   targetIds: string[]
   slotsJson: Record<string, unknown>
@@ -603,7 +602,7 @@ Move toward one shared retrieval core:
 
 #### Pre-Removal Gate For B1 / Memory-Exact
 
-If the target architecture is to remove `B1` / `memory_exact` and let semantic hints
+Because the target architecture removes `B1` / `memory_exact` and lets semantic hints
 be the only retrieval system, do not remove `B1` first and hope semantic parity
 exists afterward.
 

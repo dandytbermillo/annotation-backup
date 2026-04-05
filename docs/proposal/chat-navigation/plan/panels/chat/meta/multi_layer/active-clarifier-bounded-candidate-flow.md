@@ -30,7 +30,7 @@ The bounded decision surface for active clarification should include:
    - The current options shown to the user.
 
 2. Bounded retrieval candidates
-   - B1 exact replay candidates
+   - semantic learned/seeded candidates
    - learned/seeded semantic candidates
    - non-note active-panel item candidates for explicit validated item actions
    - note-sibling candidates validated by the note-specific contract
@@ -47,7 +47,7 @@ Explicitly excluded from the active-clarifier candidate set:
 The current scope commits to:
 
 - active clarifier options
-- B1 exact replay candidates
+- semantic learned/seeded candidates
 - learned/seeded semantic candidates
 - non-note active-panel item candidates for explicit validated item actions
 - note-sibling candidates validated by the note-specific contract
@@ -78,7 +78,7 @@ That broader model is not part of the current contract. The current narrow activ
 
 3. Evidence/candidates are assembled into one bounded surface:
    - active clarifier options
-   - B1 exact replay candidates
+   - semantic learned/seeded candidates
    - learned/seeded semantic candidates
    - non-note active-panel item candidates
    - note-sibling candidates
@@ -91,7 +91,7 @@ That broader model is not part of the current contract. The current narrow activ
 
 5. The bounded LLM/arbiter chooses among that closed set.
    - select clarifier option
-   - select B1 or semantic candidate
+   - select semantic candidate
    - ask to clarify if unresolved
 
 6. Code executes only after the decision.
@@ -119,7 +119,7 @@ Exact active-clarifier command families must not depend on surface as the owner 
 Those exact commands should be satisfied by:
 
 - semantic seeds/hints, or
-- a stronger exact B1 candidate when one exists
+- a strong semantic candidate with high similarity
 
 ## No-Clarifier Contrast
 
@@ -138,7 +138,7 @@ The active-clarifier path is stricter:
    - If multiple bounded sources produce candidates, all go to the arbiter.
 
 2. No direct execution from retrieval.
-   - B1 and semantic candidates are bounded inputs until selected and validated.
+   - semantic candidates are bounded inputs until selected and validated.
 
 3. Surface and known-command do not remain owner lanes during active clarification.
    - Their useful product rules survive as shared validation/guards.
@@ -152,20 +152,20 @@ The active-clarifier path is stricter:
    - Candidate generation is separate from execution.
 
 6. Family-gated rollout is required.
-   - A family should not lose surface/known-command ownership until it has semantic seed or B1 coverage, migrated validation, and regression coverage.
+   - A family should not lose surface/known-command ownership until it has semantic seed coverage, migrated validation, and regression coverage.
    - Non-note active-panel item behavior uses this normal family gate.
    - Note-sibling bounded behavior must be gated separately from generic non-note `panel_type` families.
 
 7. Semantic-unavailable fallback is explicit.
    - If semantic is disabled, times out, or is empty for a migrated family:
-   - B1 exact may still win if present.
+   - semantic may still resolve if present.
    - Otherwise clarify.
    - Do not silently fall back to removed owner lanes.
 
 ## Practical Decision Ladder
 
 1. Collect active clarifier options.
-2. Collect B1 exact replay candidates.
+2. Collect semantic learned/seeded candidates.
 3. Collect learned/seeded semantic candidates.
 4. Collect non-note active-panel item candidates for explicit validated item actions.
 5. Collect note-sibling candidates validated by the note-specific contract.
@@ -208,7 +208,7 @@ This model prevents the system from failing on turns that are clearly not clarif
 It also matches the desired architecture:
 
 - use one bounded retrieval stage during active clarification
-- let B1 serve as the strongest exact-memory signal
+- let semantic serve as the single retrieval system (rich metadata covers exact and fuzzy cases)
 - let semantic serve as the primary fuzzy/typo/paraphrase signal
 - use LLM help when thresholds are low or candidates compete
 - re-show the clarifier only when nothing resolves cleanly
@@ -216,7 +216,7 @@ It also matches the desired architecture:
 The current scope applies that architecture to:
 
 - active clarifier options
-- B1 exact replay candidates
+- semantic learned/seeded candidates
 - learned/seeded semantic candidates
 - widget/panel context as secondary evidence
 
