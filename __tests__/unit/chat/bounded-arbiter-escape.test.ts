@@ -403,3 +403,91 @@ describe('note-sibling candidates (4d)', () => {
     })
   })
 })
+
+// =============================================================================
+// Semantic execution family coverage (open_entry, open_workspace, go_home)
+// =============================================================================
+
+describe('semantic execution family coverage', () => {
+  test('open_entry candidate carries required metadata for replay', () => {
+    const result = buildConcreteEscapeAction('__escape_semantic_open_entry_entry-1', {
+      semantic: {
+        candidates: [{
+          intent_id: 'open_entry',
+          slots_json: { action_type: 'open_entry', entryId: 'entry-1', entryName: 'My Project', dashboardWorkspaceId: 'ws-1' },
+          similarity_score: 0.95,
+          target_ids: ['entry-1'],
+        }],
+        topScore: 0.95,
+      },
+    })
+    expect(result).not.toBeNull()
+    expect(result!.source).toBe('semantic')
+    const action = result as { source: 'semantic'; selectedCandidate: any }
+    expect(action.selectedCandidate.slots_json.action_type).toBe('open_entry')
+    expect(action.selectedCandidate.slots_json.entryId).toBe('entry-1')
+    expect(action.selectedCandidate.slots_json.entryName).toBe('My Project')
+    expect(action.selectedCandidate.slots_json.dashboardWorkspaceId).toBe('ws-1')
+  })
+
+  test('open_entry without dashboardWorkspaceId should NOT be handled (falls through)', () => {
+    // The execution branch requires all three: entryId, entryName, dashboardWorkspaceId
+    // Missing dashboardWorkspaceId → should not produce a handled result
+    const result = buildConcreteEscapeAction('__escape_semantic_open_entry_entry-1', {
+      semantic: {
+        candidates: [{
+          intent_id: 'open_entry',
+          slots_json: { action_type: 'open_entry', entryId: 'entry-1', entryName: 'My Project' },
+          similarity_score: 0.95,
+          target_ids: ['entry-1'],
+        }],
+        topScore: 0.95,
+      },
+    })
+    // buildConcreteEscapeAction still builds the action (it doesn't check execution metadata)
+    // The execution guard is in the outer wrapper at routing-dispatcher.ts
+    expect(result).not.toBeNull()
+    expect(result!.source).toBe('semantic')
+    // The selectedCandidate will have no dashboardWorkspaceId — outer wrapper will not handle it
+    const action = result as { source: 'semantic'; selectedCandidate: any }
+    expect(action.selectedCandidate.slots_json.dashboardWorkspaceId).toBeUndefined()
+  })
+
+  test('open_workspace candidate carries required metadata for replay', () => {
+    const result = buildConcreteEscapeAction('__escape_semantic_open_workspace_ws-1', {
+      semantic: {
+        candidates: [{
+          intent_id: 'open_workspace',
+          slots_json: { action_type: 'open_workspace', workspaceId: 'ws-1', workspaceName: 'Budget', entryId: 'entry-1', entryName: 'My Project' },
+          similarity_score: 0.92,
+          target_ids: ['ws-1'],
+        }],
+        topScore: 0.92,
+      },
+    })
+    expect(result).not.toBeNull()
+    expect(result!.source).toBe('semantic')
+    const action = result as { source: 'semantic'; selectedCandidate: any }
+    expect(action.selectedCandidate.slots_json.action_type).toBe('open_workspace')
+    expect(action.selectedCandidate.slots_json.workspaceId).toBe('ws-1')
+    expect(action.selectedCandidate.slots_json.workspaceName).toBe('Budget')
+  })
+
+  test('go_home candidate requires no extra metadata', () => {
+    const result = buildConcreteEscapeAction('__escape_semantic_go_home_x', {
+      semantic: {
+        candidates: [{
+          intent_id: 'go_home',
+          slots_json: { action_type: 'go_home' },
+          similarity_score: 0.98,
+          target_ids: [],
+        }],
+        topScore: 0.98,
+      },
+    })
+    expect(result).not.toBeNull()
+    expect(result!.source).toBe('semantic')
+    const action = result as { source: 'semantic'; selectedCandidate: any }
+    expect(action.selectedCandidate.slots_json.action_type).toBe('go_home')
+  })
+})

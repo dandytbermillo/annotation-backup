@@ -2840,72 +2840,123 @@ export async function dispatchRouting(
           _devProvenanceHint: 'bounded_clarification' as const,
         }
       } else if (escapeAction.source === 'semantic') {
-        // Semantic-first model: concrete semantic execution using selectedCandidate.
+        // Semantic-only model: concrete semantic execution using selectedCandidate.
+        // Dispatch by action_type for full family coverage.
         const selected = escapeAction.selectedCandidate
+        const actionType = (selected.slots_json as any)?.action_type as string | undefined
         const visibleWidgets = ctx.uiContext?.dashboard?.visibleWidgets
-        let resolvedPanel: { id: string; title: string; type: string } | null = null
-
-        // Resolution priority:
-        // 1. Concrete target_ids[0] → validate visibility
-        // 2. Manifest-backed surfaceType → find matching visible panel
         const manifest = (selected.slots_json as any)?.surface_manifest as Record<string, string> | undefined
-        const label = (selected.slots_json as any)?.panelTitle ?? manifest?.surfaceType ?? (selected.slots_json as any)?.name ?? selected.intent_id
+        const label = (selected.slots_json as any)?.panelTitle ?? (selected.slots_json as any)?.entryName ?? (selected.slots_json as any)?.workspaceName ?? manifest?.surfaceType ?? (selected.slots_json as any)?.name ?? selected.intent_id
+        let semanticHandled = false
 
-        if (selected.target_ids[0] && visibleWidgets) {
-          // Path 1: concrete targetId from learned row or B1
-          const { validateVisibility: checkVis } = await import('./known-noun-routing')
-          const visResult = checkVis(selected.target_ids[0], String(label), visibleWidgets)
-          if (visResult.valid && visResult.resolvedPanel) {
-            resolvedPanel = visResult.resolvedPanel
-          }
-        }
+        // --- Family-specific execution paths ---
 
-        if (!resolvedPanel && manifest?.surfaceType && visibleWidgets) {
-          // Path 2: curated seed — resolve from surface_manifest.surfaceType
-          // Apply the same shared validation as concrete targetId path:
-          // duplicate-family check, container compatibility, visibility
-          const surfaceType = manifest.surfaceType
-          const panelTypeSlug = surfaceType.replace(/-/g, '_')
-          const matchingWidgets = (visibleWidgets as Array<{ id: string; title: string; type: string; duplicateFamily?: string }>).filter(
-            w => w.type === panelTypeSlug || w.type === surfaceType
-          )
-
-          if (matchingWidgets.length === 1) {
-            // Unambiguous single match
-            resolvedPanel = matchingWidgets[0]
-            console.log('[dispatcher] semantic escape resolved from surface_manifest:', { surfaceType, resolvedId: resolvedPanel.id, title: resolvedPanel.title })
-          } else if (matchingWidgets.length > 1) {
-            // Duplicate-family ambiguity — multiple panels of same type visible. Do not guess.
-            console.log('[dispatcher] semantic escape manifest-resolve blocked: duplicate-family ambiguity:', { surfaceType, matchCount: matchingWidgets.length })
-            // resolvedPanel stays null → falls through to clarify
+        if (actionType === 'open_entry') {
+          // Entry open: navigate to entry using stored metadata
+          // All three fields required — dashboardWorkspaceId is needed for replay execution
+          const entryId = (selected.slots_json as any)?.entryId as string | undefined
+          const entryName = (selected.slots_json as any)?.entryName as string | undefined
+          const dashboardWorkspaceId = (selected.slots_json as any)?.dashboardWorkspaceId as string | undefined
+          if (entryId && entryName && dashboardWorkspaceId) {
+            console.log('[dispatcher] semantic escape: open_entry:', { entryId, entryName })
+            result = {
+              handled: true, handledByTier: 4, tierLabel: 'semantic_escape_resolve',
+              clarificationCleared: true, isNewQuestionOrCommandDetected: false,
+              classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
+              _devProvenanceHint: 'bounded_clarification' as const,
+              navigationReplayAction: { type: 'open_entry' as const, entryId, entryName, dashboardWorkspaceId },
+            } as any
+            semanticHandled = true
           }
-          // Container compatibility: manifest.containerType vs current mode
-          if (resolvedPanel && manifest.containerType) {
-            const currentContainer = ctx.uiContext?.mode === 'workspace' ? 'workspace' : 'dashboard'
-            if (manifest.containerType !== currentContainer) {
-              console.log('[dispatcher] semantic escape manifest-resolve blocked: container mismatch:', { expected: manifest.containerType, actual: currentContainer })
-              resolvedPanel = null
-            }
+        } else if (actionType === 'open_workspace') {
+          // Workspace open: navigate to workspace using stored metadata
+          const workspaceId = (selected.slots_json as any)?.workspaceId as string | undefined
+          const workspaceName = (selected.slots_json as any)?.workspaceName as string | undefined
+          const entryId = (selected.slots_json as any)?.entryId as string | undefined
+          const entryName = (selected.slots_json as any)?.entryName as string | undefined
+          if (workspaceId && workspaceName) {
+            console.log('[dispatcher] semantic escape: open_workspace:', { workspaceId, workspaceName })
+            result = {
+              handled: true, handledByTier: 4, tierLabel: 'semantic_escape_resolve',
+              clarificationCleared: true, isNewQuestionOrCommandDetected: false,
+              classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
+              _devProvenanceHint: 'bounded_clarification' as const,
+              navigationReplayAction: {
+                type: 'open_workspace' as const,
+                workspaceId, workspaceName,
+                entryId: entryId ?? '', entryName: entryName ?? '',
+                isDefault: (selected.slots_json as any)?.isDefault ?? false,
+              },
+            } as any
+            semanticHandled = true
           }
-        }
-
-        if (resolvedPanel && ctx.openPanelDrawer) {
-          ctx.openPanelDrawer(resolvedPanel.id)
-          const semanticMsg: ChatMessage = {
-            id: `assistant-${Date.now()}`, role: 'assistant',
-            content: `Opening ${resolvedPanel.title ?? label}...`, timestamp: new Date(), isError: false,
-          }
-          ctx.addMessage(semanticMsg, { tierLabel: 'semantic_escape_resolve', provenance: 'bounded_clarification' })
-          ctx.setIsLoading(false)
+        } else if (actionType === 'go_home') {
+          // Go home: simple navigation action
+          console.log('[dispatcher] semantic escape: go_home')
           result = {
             handled: true, handledByTier: 4, tierLabel: 'semantic_escape_resolve',
             clarificationCleared: true, isNewQuestionOrCommandDetected: false,
             classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
             _devProvenanceHint: 'bounded_clarification' as const,
+            navigationReplayAction: { type: 'go_home' as const },
+          } as any
+          semanticHandled = true
+        }
+
+        // --- Panel/surface execution (default for surface_manifest_execute and open_panel) ---
+        if (!semanticHandled) {
+          let resolvedPanel: { id: string; title: string; type: string } | null = null
+
+          if (selected.target_ids[0] && visibleWidgets) {
+            const { validateVisibility: checkVis } = await import('./known-noun-routing')
+            const visResult = checkVis(selected.target_ids[0], String(label), visibleWidgets)
+            if (visResult.valid && visResult.resolvedPanel) {
+              resolvedPanel = visResult.resolvedPanel
+            }
           }
-        } else {
-          console.log('[dispatcher] semantic escape could not resolve target:', { targetIds: selected.target_ids, surfaceType: manifest?.surfaceType, label })
-          result = { ...result, handled: false, _devProvenanceHint: 'bounded_clarification' as const }
+
+          if (!resolvedPanel && manifest?.surfaceType && visibleWidgets) {
+            const surfaceType = manifest.surfaceType
+            const panelTypeSlug = surfaceType.replace(/-/g, '_')
+            const matchingWidgets = (visibleWidgets as Array<{ id: string; title: string; type: string; duplicateFamily?: string }>).filter(
+              w => w.type === panelTypeSlug || w.type === surfaceType
+            )
+            if (matchingWidgets.length === 1) {
+              resolvedPanel = matchingWidgets[0]
+              console.log('[dispatcher] semantic escape resolved from surface_manifest:', { surfaceType, resolvedId: resolvedPanel.id, title: resolvedPanel.title })
+            } else if (matchingWidgets.length > 1) {
+              console.log('[dispatcher] semantic escape manifest-resolve blocked: duplicate-family ambiguity:', { surfaceType, matchCount: matchingWidgets.length })
+            }
+            if (resolvedPanel && manifest.containerType) {
+              const currentContainer = ctx.uiContext?.mode === 'workspace' ? 'workspace' : 'dashboard'
+              if (manifest.containerType !== currentContainer) {
+                console.log('[dispatcher] semantic escape manifest-resolve blocked: container mismatch:', { expected: manifest.containerType, actual: currentContainer })
+                resolvedPanel = null
+              }
+            }
+          }
+
+          if (resolvedPanel && ctx.openPanelDrawer) {
+            ctx.openPanelDrawer(resolvedPanel.id)
+            const semanticMsg: ChatMessage = {
+              id: `assistant-${Date.now()}`, role: 'assistant',
+              content: `Opening ${resolvedPanel.title ?? label}...`, timestamp: new Date(), isError: false,
+            }
+            ctx.addMessage(semanticMsg, { tierLabel: 'semantic_escape_resolve', provenance: 'bounded_clarification' })
+            ctx.setIsLoading(false)
+            result = {
+              handled: true, handledByTier: 4, tierLabel: 'semantic_escape_resolve',
+              clarificationCleared: true, isNewQuestionOrCommandDetected: false,
+              classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
+              _devProvenanceHint: 'bounded_clarification' as const,
+            }
+            semanticHandled = true
+          }
+        }
+
+        if (!semanticHandled) {
+          console.log('[dispatcher] semantic escape could not resolve target:', { actionType, targetIds: selected.target_ids, surfaceType: manifest?.surfaceType, label })
+          // Fall through — let downstream handle it
         }
       } else if (escapeAction.source === 'active_panel_item') {
         // Step 4c: execute validated active-panel item via execute_widget_item
