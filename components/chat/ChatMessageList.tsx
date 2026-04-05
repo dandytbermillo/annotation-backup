@@ -39,7 +39,8 @@ const PROVENANCE_STYLES: Record<ChatProvenance, { emoji: string; label: string; 
 }
 
 function ProvenanceBadge({ provenance }: { provenance: ChatProvenance }) {
-  const style = PROVENANCE_STYLES[provenance]
+  const style = PROVENANCE_STYLES[provenance as keyof typeof PROVENANCE_STYLES]
+  if (!style) return null // Unknown/removed provenance (e.g., legacy memory_exact from older sessions)
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono border ${style.className} mt-1`}>
       {style.emoji} {style.label}
