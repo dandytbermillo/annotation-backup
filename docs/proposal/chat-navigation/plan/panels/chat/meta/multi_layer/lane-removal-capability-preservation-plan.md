@@ -88,17 +88,22 @@ Semantic hints do **not** by themselves replace:
 
 ### B1 Exact Memory
 
-B1 provides exact-memory retrieval capability:
+B1 is the legacy exact-memory path.
+
+It currently still provides:
 
 - exact or near-exact remembered match
-- bounded candidate metadata
-- strong exact-memory signal
-- no direct execution authority during active clarification
+- some exact-memory signal for low-ambiguity replay cases
 
-B1 is strong at:
+But B1 is **not** the desired end-state retrieval contract.
+The target direction is semantic retrieval with rich metadata strong enough to
+cover both fuzzy retrieval and the exact-replay cases B1 currently serves.
 
-- exact replay
-- low-ambiguity exact-memory matches
+So B1 should be read as:
+
+- transitional legacy capability
+- kept only until semantic parity is proven
+- then removed together with `memory_exact` badges, provenance, and execution paths
 
 ### Surface Resolver
 
@@ -163,7 +168,6 @@ Both modes use the same shared core:
 2. if initial retrieval is weak or below the useful threshold, run rewrite-assisted retrieval and re-query
 3. retrieve candidates from:
    - semantic hints
-   - B1 exact memory
 4. merge / dedupe candidates
 5. enrich and validate against:
    - surface manifest
@@ -326,20 +330,18 @@ These go away as separate routing authorities:
 These capabilities must stay:
 
 1. semantic retrieval
-2. B1 exact-memory retrieval
-3. rewrite-assisted retrieval / re-query support
-4. surface-manifest-backed execution policy
-5. surface-manifest-backed container/visibility/runtime validation
-6. known-command safety/policy rules
-7. narrow validated active-panel item candidate support for explicit item actions
-8. note-sibling bounded candidate support through the note-specific contract
+2. rewrite-assisted retrieval / re-query support
+3. surface-manifest-backed execution policy
+4. surface-manifest-backed container/visibility/runtime validation
+5. known-command safety/policy rules
+6. narrow validated active-panel item candidate support for explicit item actions
+7. note-sibling bounded candidate support through the note-specific contract
 
 ## Explicit Mapping
 
 ### Keep As Retrieval
 
 - `lookupSemanticHints(...)`
-- B1 exact-memory lookup
 
 ### Keep As Validation / Policy
 
@@ -593,12 +595,33 @@ Extract or centralize the following so they are not tied to lane ownership:
 Move toward one shared retrieval core:
 
 - semantic hints as the primary retrieval engine
-- B1 as exact-memory retrieval
 - rewrite-assisted re-retrieval from old surface logic
 - explicit merge/dedupe contract
 - explicit threshold / near-tie contract
 - explicit multi-intent detector contract
 - preserved bounded manifest-fallback helper contract
+
+#### Pre-Removal Gate For B1 / Memory-Exact
+
+If the target architecture is to remove `B1` / `memory_exact` and let semantic hints
+be the only retrieval system, do not remove `B1` first and hope semantic parity
+exists afterward.
+
+Removal is allowed only after semantic hints are verified to cover the exact-replay
+cases that `B1` currently serves, including:
+
+- note-manifest flows
+- panel-open replay
+- entry/workspace reopen flows
+- any current exact-memory path that depends on structured execution metadata
+
+The intended migration order is:
+
+1. prove semantic parity on the current exact-replay cases
+2. then remove `B1` / `memory_exact` from both active-clarifier and no-clarifier modes
+3. then remove stale badges, provenance, and plan language tied to exact-memory
+
+This prevents an architectural cleanup from causing silent behavior regressions.
 
 ### Phase 4: Mode-Specific Execution Policy
 
@@ -644,7 +667,6 @@ The correct rule is:
 
 - remove duplicated routing ownership
 - preserve manifest-backed product knowledge
-- preserve exact-memory retrieval
 - preserve semantic retrieval
 
 The dangerous misread is:
