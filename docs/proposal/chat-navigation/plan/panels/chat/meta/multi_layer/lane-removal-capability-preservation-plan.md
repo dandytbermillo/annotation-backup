@@ -168,6 +168,8 @@ Both modes use the same shared core:
 2. if initial retrieval is weak or below the useful threshold, run rewrite-assisted retrieval and re-query
 3. retrieve candidates from:
    - semantic hints
+   - validated active-panel item evidence
+   - validated note-sibling evidence
 4. merge / dedupe candidates
 5. enrich and validate against:
    - surface manifest
@@ -184,8 +186,15 @@ What changes by mode is execution policy after retrieval and validation, not whe
 After shared retrieval + validation:
 
 1. if one candidate is strong and valid, execute directly
-2. otherwise bounded LLM may assist
-3. if still unresolved, clarify
+2. otherwise bounded LLM may arbitrate among the shared candidates
+3. if bounded LLM still does not yield one safe winner, create a new clarification
+
+No-clarifier mode does not have pre-existing clarifier options.
+Its candidate set comes from the shared core only:
+
+- semantic retrieval
+- validated active-panel item evidence
+- validated note-sibling evidence
 
 ### Active Clarification
 
@@ -195,6 +204,8 @@ After shared retrieval + validation:
 2. pass validated candidates plus active clarifier options to bounded arbitration
 3. execute only the exact selected candidate
 4. if unresolved, keep / show clarification
+
+Current clarifier options are active-clarifier-only.
 
 ### Minimal Multi-Intent Safety Rule
 
@@ -412,6 +423,7 @@ Decision:
   - semantic retrieval returned no usable candidate above the medium floor
   - runtime/manifest overlap is strong
   - the family is low-risk and enabled for this behavior
+- manifest-fallback is not a separate candidate `source`; it may only enrich or synthesize a semantic candidate whose provenance records a merged semantic/helper path or fallback hint
 - manifest-fallback hints must never directly execute from retrieval alone
 - manifest-fallback hints may enter:
   - bounded LLM / clarification flow in no-clarifier mode
@@ -554,6 +566,9 @@ type ValidatedCommandCandidate = CommandCandidate & {
   validationErrors: string[]
 }
 ```
+
+Manifest-fallback remains a bounded helper, not an independent `source`.
+When it contributes, the resulting candidate still uses `source: 'semantic'` and records the helper contribution in provenance.
 
 Important:
 
