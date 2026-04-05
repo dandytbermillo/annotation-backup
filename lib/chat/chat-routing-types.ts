@@ -185,7 +185,6 @@ export interface SelectedSemanticCandidate {
 }
 
 export type ConcreteEscapeAction =
-  | { source: 'b1'; choiceId: string; b1Evidence: NonNullable<EscapeEvidence['b1']> }
   | { source: 'semantic'; choiceId: string; semanticEvidence: NonNullable<EscapeEvidence['semantic']>; selectedCandidate: SelectedSemanticCandidate }
   | { source: 'active_panel_item'; choiceId: string; itemEvidence: NonNullable<EscapeEvidence['activePanelItem']> }
   | { source: 'note_sibling'; choiceId: string; noteEvidence: NonNullable<EscapeEvidence['noteSibling']> }
@@ -199,7 +198,7 @@ export type ExecutionSourceTag =
   | 'bounded_arbiter'
   | 'ordinal_deterministic'
   | 'surface_resolver'
-  | 'memory_exact'
+  // memory_exact removed (Slice B3)
   | 'known_noun'
   | 'content_answered'
   | 'llm_executed'
@@ -209,7 +208,7 @@ export type ExecutionSourceTag =
  *  Semantic-first model: B1 + semantic + active-panel item + note-sibling during active clarification.
  *  Surface and known-noun are no longer active-clarifier escape sources. */
 export interface EscapeEvidence {
-  b1?: { intentId: string | null; targetIds: string[]; slotsJson: Record<string, unknown>; tierLabel: string | null; action: unknown }
+  // B1 removed (Slice B3) — semantic metadata subsumes exact-memory
   semantic?: {
     candidates: Array<{ intent_id: string; slots_json: Record<string, unknown>; similarity_score: number; target_ids: string[] }>
     topScore?: number

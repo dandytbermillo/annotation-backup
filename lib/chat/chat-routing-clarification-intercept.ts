@@ -173,9 +173,7 @@ export function buildConcreteEscapeAction(
   // Semantic-first model: B1 + semantic + active-panel item + note-sibling during active clarification.
   // If the LLM selected a specific __escape_* candidate, use that source.
   if (suggestedId?.startsWith('__escape_')) {
-    if (suggestedId.includes('_b1_') && escapeEvidence.b1) {
-      return { source: 'b1', choiceId: suggestedId, b1Evidence: escapeEvidence.b1 }
-    }
+    // B1 removed (Slice B3) — semantic is the single retrieval system
     if (suggestedId.includes('_semantic_') && escapeEvidence.semantic) {
       const candidates = escapeEvidence.semantic.candidates
       const selected = candidates.find(c =>
@@ -194,10 +192,7 @@ export function buildConcreteEscapeAction(
   }
 
   // No specific ID (reroute without selection) — error-handling fallback path.
-  if (escapeEvidence.b1?.action) {
-    console.warn('[buildConcreteEscapeAction] reroute fallback to B1 (LLM did not select specific escape candidate)')
-    return { source: 'b1', choiceId: `__reroute_b1_${escapeEvidence.b1.targetIds[0] ?? 'unknown'}`, b1Evidence: escapeEvidence.b1 }
-  }
+  // B1 reroute removed (Slice B3)
   if (escapeEvidence.semantic?.candidates?.length) {
     console.warn('[buildConcreteEscapeAction] reroute fallback to semantic (LLM did not select specific escape candidate)')
     const topCandidate = escapeEvidence.semantic.candidates[0]
@@ -1892,14 +1887,11 @@ export async function handleClarificationIntercept(
         }))
 
         // Add validated escape targets as additional candidates so the LLM can select them.
-        // Semantic-first model: only B1 + semantic escape candidates (no surface, no known-noun).
+        // Semantic-only model: semantic + active-panel item + note-sibling escape candidates.
+        // B1 removed (Slice B3).
         const escapeEv = ctx.escapeEvidence
         const escapeCandidates: Array<{ id: string; label: string; sublabel?: string }> = []
-        if (escapeEv?.b1?.targetIds?.length) {
-          const b1Label = (escapeEv.b1.slotsJson as any)?.panelTitle ?? (escapeEv.b1.slotsJson as any)?.name ?? 'validated target'
-          escapeCandidates.push({ id: `__escape_b1_${escapeEv.b1.targetIds[0]}`, label: String(b1Label), sublabel: 'another panel you can open instead' })
-        }
-        // Slice B2: Add B2 semantic candidates as escape options (typo-tolerant, embedding-based)
+        // Semantic candidates as escape options (typo-tolerant, embedding-based)
         // These are hints from learned/seeded rows — the LLM decides whether to select them.
         if (escapeEv?.semantic?.candidates?.length) {
           for (const sc of escapeEv.semantic.candidates) {
@@ -1954,15 +1946,11 @@ export async function handleClarificationIntercept(
           }
 
           // Extract panelId/title from candidate for validation
-          const isB1 = ec.id.startsWith('__escape_b1_')
           const isSemantic = ec.id.startsWith('__escape_semantic_')
           let panelId: string | undefined
           let panelTitle: string | undefined
 
-          if (isB1 && escapeEv?.b1) {
-            panelId = escapeEv.b1.targetIds[0]
-            panelTitle = (escapeEv.b1.slotsJson as any)?.panelTitle ?? ec.label
-          } else if (isSemantic && escapeEv?.semantic) {
+          if (isSemantic && escapeEv?.semantic) {
             const match = escapeEv.semantic.candidates.find(c =>
               c.target_ids[0] && ec.id.includes(c.target_ids[0])
             )

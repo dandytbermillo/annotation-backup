@@ -85,7 +85,7 @@ import { buildMemoryWritePayload, buildNoteManifestWritePayload } from '@/lib/ch
 import { resolveSurfaceCommand, isSurfaceResolverError, isSurfaceCandidateHint, isResolvedSurfaceCommand, isSurfaceClarificationSet, hasSurfaceFamilyEvidence, type SurfaceCandidateHint, type SurfaceClarificationSet } from '@/lib/chat/surface-resolver'
 import { isGenericAmbiguousPanelPhrase, extractContentTokens } from '@/lib/chat/generic-phrase-guard'
 import { resolveContextDecision, isReferentialFollowUp as isReferentialInput } from '@/lib/chat/context-decision-helper'
-import { lookupExactMemory } from '@/lib/chat/routing-log/memory-reader'
+// B1 memory-reader removed (Slice B3) — semantic retrieval replaces exact-memory lookup
 import { lookupSemanticMemory, type SemanticCandidate, type SemanticLookupResult } from '@/lib/chat/routing-log/memory-semantic-reader'
 import { validateMemoryCandidate } from '@/lib/chat/routing-log/memory-validator'
 import { buildResultFromMemory } from '@/lib/chat/routing-log/memory-action-builder'
@@ -204,46 +204,8 @@ function buildFailedRoutingLogPayload(
 }
 
 /**
- * Build a routing log payload for memory-served decisions (Phase 2b).
- * Used by the dispatcher to attach as _pendingMemoryLog on memory-served results.
- * Sets routing_lane='B1', decision_source='memory_exact'.
- */
-function buildRoutingLogPayloadFromMemory(
-  ctx: RoutingDispatcherContext,
-  memoryResult: RoutingDispatcherResult,
-  turnSnapshot: ReturnType<typeof buildTurnSnapshot>,
-): RoutingLogPayload {
-  const isLatchEnabled = process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1 === 'true'
-  const lastUserMessage = [...ctx.messages].reverse().find(m => m.role === 'user')
-  const turnIndex = ctx.messages.filter(m => m.role === 'user').length
-  const sessionId = getRoutingLogSessionId()
-  const interactionId = lastUserMessage?.id ?? deriveFallbackInteractionId(sessionId, turnIndex, ctx.trimmedInput)
-
-  const snapshot = buildContextSnapshot({
-    openWidgetCount: turnSnapshot.openWidgets.length,
-    pendingOptionsCount: ctx.pendingOptions.length,
-    activeOptionSetId: ctx.activeOptionSetId,
-    hasLastClarification: ctx.lastClarification !== null,
-    hasLastSuggestion: ctx.lastSuggestion !== null,
-    latchEnabled: isLatchEnabled,
-    messageCount: ctx.messages.length,
-  })
-
-  return {
-    raw_query_text: ctx.trimmedInput,
-    context_snapshot: snapshot,
-    session_id: sessionId,
-    interaction_id: interactionId,
-    turn_index: turnIndex,
-    routing_lane: 'B1',
-    decision_source: 'memory_exact',
-    risk_tier: memoryResult._memoryCandidate?.risk_tier ?? 'medium',
-    provenance: memoryResult.tierLabel ?? 'memory_exact',
-    result_status: 'executed',
-    tier_label: memoryResult.tierLabel,
-    handled_by_tier: undefined,
-  }
-}
+// buildRoutingLogPayloadFromMemory removed (Slice B3) — B1 routing lane deleted.
+// Stage 5 semantic replay uses buildRoutingLogPayloadFromSemanticMemory below.
 
 /**
  * Build a routing log payload for Stage 5 semantic memory replay (Slice 2).
@@ -1481,143 +1443,10 @@ export async function dispatchRouting(
   })
 
 
-  console.log('[dispatcher] B1 gate:', { input: ctx.trimmedInput, memoryReadEnabled, shouldSkipB1ForSelection })
-  if (memoryReadEnabled && !shouldSkipB1ForSelection) {
-    try {
-      // B1 uses the shared replay snapshot directly — no recomputation
-      const lookupSnapshot = phase5ReplaySnapshot
-
-      // Phase 5: use navigation-specific minimal fingerprint for action commands and home imperatives
-      const HOME_NAV_FOR_B1 = /\b(go\s+(to\s+)?home|take\s+me\s+home|return\s+home|back\s+home)\b/i
-      const isNavReplayMode = isActionNavigationCommand(ctx.trimmedInput) || HOME_NAV_FOR_B1.test(ctx.trimmedInput)
-
-      const memoryResult = await lookupExactMemory({
-        raw_query_text: ctx.trimmedInput,
-        context_snapshot: lookupSnapshot,
-        navigation_replay_mode: isNavReplayMode || undefined,
-      })
-
-      if (memoryResult) {
-        // First validation: reject obviously stale candidates early (concrete ID checks)
-        const validation = validateMemoryCandidate(memoryResult, turnSnapshotForLog, ctx.uiContext?.dashboard?.visibleWidgets)
-        if (validation.valid) {
-          const defaultResult: RoutingDispatcherResult = {
-            handled: false,
-            clarificationCleared: false,
-            isNewQuestionOrCommandDetected: false,
-            classifierCalled: false,
-            classifierTimeout: false,
-            classifierError: false,
-            isFollowUp: false,
-          }
-          const memoryAction = buildResultFromMemory(memoryResult, defaultResult) as RoutingDispatcherResult | null
-          if (memoryAction) {
-            let noteManifestRejected = false
-
-            // Phase 4: note manifest cache hit — generic dispatch by executionPolicy
-            if (memoryAction._resolvedNoteCommand) {
-              const cmd = memoryAction._resolvedNoteCommand
-
-              if (cmd.executionPolicy === 'live_state_resolve') {
-                // Re-resolve live state (never return cached answer text)
-                const stateAnswer = resolveNoteStateInfo(ctx.uiContext ?? {})
-                const stateMsg: ChatMessage = {
-                  id: `assistant-${Date.now()}`, role: 'assistant',
-                  content: stateAnswer, timestamp: new Date(), isError: false,
-                }
-                ctx.addMessage(stateMsg, {
-                  tierLabel: memoryAction.tierLabel ?? 'memory_exact',
-                  provenance: 'memory_exact',
-                })
-                ctx.setIsLoading(false)
-                memoryAction._noteCommandTelemetry = {
-                  note_command_manifest_version: cmd.manifestVersion,
-                  note_command_handler_id: cmd.handlerId,
-                  note_command_family: cmd.intentFamily,
-                  note_command_subtype: cmd.intentSubtype,
-                  note_command_confidence: cmd.confidence,
-                  note_command_execution_policy: cmd.executionPolicy,
-                }
-
-              } else if (cmd.executionPolicy === 'open_note_in_current_workspace') {
-                // Convert to navigate hint — client Block F handles live re-resolution
-                memoryAction.handled = false
-                memoryAction._noteManifestNavigate = {
-                  noteTitle: (cmd.arguments as Record<string, unknown>).noteTitle as string,
-                }
-                memoryAction._noteCommandTelemetry = {
-                  note_command_manifest_version: cmd.manifestVersion,
-                  note_command_handler_id: cmd.handlerId,
-                  note_command_family: cmd.intentFamily,
-                  note_command_subtype: cmd.intentSubtype,
-                  note_command_confidence: cmd.confidence,
-                  note_command_execution_policy: cmd.executionPolicy,
-                }
-
-              } else {
-                // Unknown/unsupported policy — reject cache hit entirely.
-                noteManifestRejected = true
-              }
-
-              // Build writeback for success_count increment (only if not rejected)
-              if (!noteManifestRejected && memoryWriteEnabled) {
-                try {
-                  memoryAction._pendingMemoryWrite = buildNoteManifestWritePayload({
-                    rawQueryText: ctx.trimmedInput,
-                    resolvedCommand: cmd,
-                    contextSnapshot: phase5ReplaySnapshot,
-                  })
-                } catch { /* fail-open */ }
-              }
-            }
-
-            if (!noteManifestRejected) {
-              // Gate 6: Defer durable log — attach as pending, sendMessage fires after commit-point
-              try {
-                memoryAction._pendingMemoryLog = buildRoutingLogPayloadFromMemory(ctx, memoryAction, turnSnapshotForLog)
-                // Phase 4: merge note-command telemetry into the memory log payload
-                if (memoryAction._noteCommandTelemetry && memoryAction._pendingMemoryLog) {
-                  Object.assign(memoryAction._pendingMemoryLog, memoryAction._noteCommandTelemetry)
-                }
-              } catch { /* fail-open */ }
-
-              // Gate 8: Build writeback payload for success_count increment (non-manifest actions)
-              if (memoryWriteEnabled && !memoryAction._pendingMemoryWrite) {
-                try {
-                  memoryAction._pendingMemoryWrite = buildMemoryWritePayload(ctx, memoryAction, turnSnapshotForLog) ?? undefined
-                } catch { /* fail-open */ }
-              }
-
-              // Return with _memoryCandidate + _pendingMemoryLog + _pendingMemoryWrite attached
-              // sendMessage() does commit-point revalidation (Gate 1) then fires log + write
-              // Active clarification bounded arbiter: B1 may collect evidence but must not
-              // preempt the arbiter when live clarification exists. Attach as escape evidence.
-              if (ctx.pendingOptions.length > 0 || !!ctx.lastClarification || !!ctx.clarificationSnapshot) {
-                console.log('[dispatcher] B1 evidence collected (not preempting):', { input: ctx.trimmedInput, action: memoryAction?.tierLabel });
-                // Attach B1 match as validated escape evidence for the bounded arbiter.
-                // The intercept reads this at the unresolved hook to provide escape targets.
-                (ctx as any)._b1EscapeEvidence = {
-                  intentId: memoryAction?._memoryCandidate?.intent_id ?? null,
-                  targetIds: memoryAction?._memoryCandidate?.target_ids ?? [],
-                  slotsJson: memoryAction?._memoryCandidate?.slots_json ?? {},
-                  tierLabel: memoryAction?.tierLabel ?? null,
-                  action: memoryAction,
-                }
-              } else {
-                console.log('[dispatcher] B1 EARLY RETURN:', { input: ctx.trimmedInput, action: memoryAction?.tierLabel })
-                return memoryAction
-              }
-            }
-            // else: noteManifestRejected — fall through to normal tier chain
-          }
-        }
-      }
-    } catch {
-      // Memory lookup failed: fall through to normal tier chain (fail-open)
-    }
-  }
-
-  console.log('[dispatcher] past B1:', ctx.trimmedInput)
+  // B1 exact-memory lookup removed (Slice B3).
+  // Semantic retrieval (Phase 5 lookupSemanticHints) is now the single retrieval system.
+  // All replay families (open_entry, open_workspace, go_home, open_panel, note_manifest, widget_item)
+  // are covered by semantic learned/seeded rows with rich metadata.
   // ---------------------------------------------------------------------------
   // Phase 3: Semantic memory lookup (Lane B2) — after B1 miss, before tier chain
   // IMPORTANT: B2 does NOT return handled=true. It attaches validated candidates
@@ -2834,12 +2663,8 @@ export async function dispatchRouting(
     const escapeAction = result && (result as any)._escapeAction as import('./chat-routing-types').ConcreteEscapeAction | undefined
     if (!routingError && result && escapeAction) {
       console.log('[dispatcher] ESCAPE ACTION EXECUTING:', { input: ctx.trimmedInput, source: escapeAction.source, choiceId: escapeAction.choiceId })
-      if (escapeAction.source === 'b1' && escapeAction.b1Evidence.action) {
-        result = {
-          ...escapeAction.b1Evidence.action as RoutingDispatcherResult,
-          _devProvenanceHint: 'bounded_clarification' as const,
-        }
-      } else if (escapeAction.source === 'semantic') {
+      // B1 escape handler removed (Slice B3)
+      if (escapeAction.source === 'semantic') {
         // Semantic-only model: concrete semantic execution using selectedCandidate.
         // Dispatch by action_type for full family coverage.
         const selected = escapeAction.selectedCandidate
@@ -3579,12 +3404,12 @@ async function dispatchRoutingInner(
 
   // Build escape evidence for the intercept
   const escapeEvidence: import('./chat-routing-types').EscapeEvidence = {
-    b1: (ctx as any)._b1EscapeEvidence ?? undefined,
+    // B1 removed (Slice B3)
     semantic: (ctx as any)._semanticEscapeEvidence ?? undefined,
     activePanelItem: activePanelItemEvidence,
     noteSibling: (ctx as any)._noteEscapeEvidence ?? undefined,
   }
-  const hasEscapeEvidence = !!escapeEvidence.b1 || !!escapeEvidence.semantic || !!escapeEvidence.activePanelItem || !!escapeEvidence.noteSibling
+  const hasEscapeEvidence = !!escapeEvidence.semantic || !!escapeEvidence.activePanelItem || !!escapeEvidence.noteSibling
 
   console.log('[dispatcher] BEFORE handleClarificationIntercept:', {
     input: ctx.trimmedInput,
@@ -3593,7 +3418,7 @@ async function dispatchRoutingInner(
     pendingOptionsCount: ctx.pendingOptions.length,
     hasEscapeEvidence,
     escapeSources: {
-      b1: !!escapeEvidence.b1,
+      // B1 removed (Slice B3)
       semantic: !!escapeEvidence.semantic,
       semanticTopScore: escapeEvidence.semantic?.topScore,
       semanticCandidateCount: escapeEvidence.semantic?.candidates?.length,

@@ -12,13 +12,7 @@ import { validateVisibility, validateDuplicateFamily, detectQuestionGuard } from
 // =============================================================================
 
 describe('buildConcreteEscapeAction', () => {
-  const mockB1Evidence: NonNullable<EscapeEvidence['b1']> = {
-    intentId: 'open_panel',
-    targetIds: ['panel-abc'],
-    slotsJson: { panelTitle: 'Budget' },
-    tierLabel: 'memory_exact',
-    action: { handled: true, handledByTier: 1 },
-  }
+  // B1 evidence removed (Slice B3) — semantic is the single retrieval system
 
   const mockSemanticEvidence: NonNullable<EscapeEvidence['semantic']> = {
     candidates: [
@@ -39,15 +33,7 @@ describe('buildConcreteEscapeAction', () => {
   })
 
   describe('LLM-selected escape (specific __escape_* ID)', () => {
-    test('B1 escape: parses __escape_b1_* ID', () => {
-      const result = buildConcreteEscapeAction('__escape_b1_panel-abc', {
-        b1: mockB1Evidence,
-      })
-      expect(result).not.toBeNull()
-      expect(result!.source).toBe('b1')
-      expect(result!.choiceId).toBe('__escape_b1_panel-abc')
-      expect((result as any).b1Evidence).toEqual(mockB1Evidence)
-    })
+    // B1 escape test removed (Slice B3)
 
     test('semantic escape: parses __escape_semantic_* ID and resolves selectedCandidate', () => {
       const result = buildConcreteEscapeAction('__escape_semantic_open_panel_recent-1', {
@@ -75,13 +61,11 @@ describe('buildConcreteEscapeAction', () => {
       expect(semanticAction.selectedCandidate.slots_json.panelTitle).toBe('Navigator')
     })
 
-    test('surface ID is no longer a valid escape source', () => {
-      const result = buildConcreteEscapeAction('__escape_surface_recent', {
-        b1: mockB1Evidence,
-      })
-      // Falls through to reroute fallback → B1 wins (surface excluded)
-      expect(result).not.toBeNull()
-      expect(result!.source).toBe('b1')
+    test('surface and B1 IDs are no longer valid escape sources', () => {
+      const result = buildConcreteEscapeAction('__escape_surface_recent', {})
+      expect(result).toBeNull()
+      const b1Result = buildConcreteEscapeAction('__escape_b1_panel-abc', {})
+      expect(b1Result).toBeNull()
     })
 
     test('known-noun ID is no longer a valid escape source', () => {
@@ -95,14 +79,13 @@ describe('buildConcreteEscapeAction', () => {
   })
 
   describe('reroute fallback (error-handling path)', () => {
-    test('null suggestedId with B1 + semantic: picks B1 (error-handling fallback)', () => {
+    test('null suggestedId with semantic: picks semantic (error-handling fallback)', () => {
       const result = buildConcreteEscapeAction(null, {
-        b1: mockB1Evidence,
         semantic: mockSemanticEvidence,
       })
       expect(result).not.toBeNull()
-      expect(result!.source).toBe('b1')
-      expect(result!.choiceId).toContain('__reroute_b1_')
+      expect(result!.source).toBe('semantic')
+      expect(result!.choiceId).toContain('__reroute_semantic_')
     })
 
     test('null suggestedId with only semantic: picks semantic', () => {
@@ -141,15 +124,7 @@ describe('buildConcreteEscapeAction', () => {
       expect(action.semanticEvidence.candidates).toHaveLength(2)
     })
 
-    test('B1 action carries action payload for outer wrapper spread', () => {
-      const result = buildConcreteEscapeAction('__escape_b1_panel-abc', {
-        b1: mockB1Evidence,
-      })
-      expect(result!.source).toBe('b1')
-      const b1Action = result as { source: 'b1'; b1Evidence: typeof mockB1Evidence }
-      expect(b1Action.b1Evidence.action).toEqual({ handled: true, handledByTier: 1 })
-      expect(b1Action.b1Evidence.targetIds).toEqual(['panel-abc'])
-    })
+    // B1 action test removed (Slice B3)
   })
 })
 
@@ -243,17 +218,7 @@ describe('semantic-first escape contracts', () => {
     expect(result).toBeNull()
   })
 
-  test('ConcreteEscapeAction discriminated union includes all four sources', () => {
-    const b1Result = buildConcreteEscapeAction('__escape_b1_panel-abc', {
-      b1: {
-        intentId: 'open_panel', targetIds: ['panel-abc'],
-        slotsJson: { panelTitle: 'Test' }, tierLabel: 'memory_exact', action: {},
-      },
-    })
-    if (b1Result && b1Result.source === 'b1') {
-      expect(b1Result.b1Evidence).toBeDefined()
-    }
-
+  test('ConcreteEscapeAction discriminated union includes semantic + active_panel_item + note_sibling', () => {
     const semResult = buildConcreteEscapeAction('__escape_semantic_open_panel_x', {
       semantic: {
         candidates: [{ intent_id: 'open_panel', slots_json: { panelTitle: 'X' }, similarity_score: 0.9, target_ids: ['x-1'] }],
@@ -303,17 +268,16 @@ describe('active-panel item candidates (4c)', () => {
     expect(result!.choiceId).toContain('__reroute_active_panel_item_')
   })
 
-  test('B1 and semantic take precedence over active_panel_item in reroute fallback', () => {
+  test('semantic takes precedence over active_panel_item in reroute fallback', () => {
     const result = buildConcreteEscapeAction(null, {
-      b1: {
-        intentId: 'open_panel', targetIds: ['panel-abc'],
-        slotsJson: { panelTitle: 'Budget' }, tierLabel: 'memory_exact',
-        action: { handled: true },
+      semantic: {
+        candidates: [{ intent_id: 'open_panel', slots_json: { panelTitle: 'Recent' }, similarity_score: 0.9, target_ids: ['r-1'] }],
+        topScore: 0.9,
       },
       activePanelItem: mockActivePanelItemEvidence,
     })
     expect(result).not.toBeNull()
-    expect(result!.source).toBe('b1') // B1 wins over active_panel_item
+    expect(result!.source).toBe('semantic') // semantic wins over active_panel_item
   })
 
   test('active_panel_item evidence carries execution-ready data', () => {

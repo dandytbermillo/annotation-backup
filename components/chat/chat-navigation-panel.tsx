@@ -1891,7 +1891,7 @@ function ChatNavigationPanelContent({
               ? 'bounded_clarification' as const
               : (!!lastClarification || pendingOptions.length > 0)
                 ? 'bounded_clarification' as const
-                : 'memory_exact' as const
+                : 'memory_semantic' as const
             const replayMsg: ChatMessage = {
               id: `assistant-${Date.now()}`,
               role: 'assistant',
@@ -1938,7 +1938,7 @@ function ChatNavigationPanelContent({
             ? 'bounded_clarification' as const
             : (lastClarification || pendingOptions.length > 0)
               ? 'bounded_clarification' as const
-              : 'memory_exact' as const
+              : 'memory_semantic' as const
           setProvenance(lastAddedAssistantIdRef.current, replayBadge)
         }
         setIsLoading(false)
