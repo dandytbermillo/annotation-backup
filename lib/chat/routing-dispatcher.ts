@@ -2350,7 +2350,10 @@ export async function dispatchRouting(
 
   if (unifiedReplayCandidates.length > 0 && !shouldSkipB1ForSelection && !contentIntentMatchedThisTurn) {
     try {
-      s5Telemetry = evaluateStage5Replay(unifiedReplayCandidates, turnSnapshotForLog, b2CurrentContextFingerprint, ctx.uiContext?.dashboard?.visibleWidgets)
+      // Pass both fingerprints: broad (B2) for non-navigation candidates,
+      // navigation-specific (Phase 5) for navigation action types.
+      const phase5NavFingerprint = phase5HintResult?.currentContextFingerprint
+      s5Telemetry = evaluateStage5Replay(unifiedReplayCandidates, turnSnapshotForLog, b2CurrentContextFingerprint, ctx.uiContext?.dashboard?.visibleWidgets, phase5NavFingerprint)
 
       // Slice 2: enforcement — actually replay when eligible and flag is on
       const s5EnforcementEnabled = process.env.NEXT_PUBLIC_STAGE5_RESOLUTION_REUSE_ENABLED === 'true'

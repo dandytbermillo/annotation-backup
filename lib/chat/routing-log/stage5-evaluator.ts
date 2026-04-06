@@ -73,11 +73,16 @@ export interface S5EvaluationResult {
  *        When provided, candidates whose stored context_fingerprint doesn't match are rejected.
  * @returns Evaluation result with shadow telemetry fields
  */
+// Navigation action types use a minimal fingerprint (version + latch_enabled only).
+// Matches the write route at app/api/chat/routing-memory/route.ts:105-108.
+const NAVIGATION_ACTION_TYPES = new Set(['open_panel', 'open_entry', 'open_workspace', 'go_home'])
+
 export function evaluateStage5Replay(
   candidates: SemanticCandidate[],
   turnSnapshot: MinimalTurnSnapshot,
   currentContextFingerprint?: string,
   visibleWidgets?: Array<{ id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }>,
+  navigationContextFingerprint?: string,
 ): S5EvaluationResult {
   const candidateCount = candidates.length
   const topSimilarity = candidateCount > 0
@@ -97,9 +102,15 @@ export function evaluateStage5Replay(
     const actionType = c.slots_json.action_type as string | undefined
 
     // Gate 0: context fingerprint match (Fix B — strict context check)
-    // Curated seeds bypass Gate 0 — they are context-independent by design
+    // Curated seeds bypass Gate 0 — they are context-independent by design.
+    // Navigation action types use the navigation fingerprint (minimal: version + latch_enabled).
+    // Non-navigation action types use the broad fingerprint (includes panel count, clarification state).
     const isCuratedSeed = (c as any).from_curated_seed === true
-    if (!isCuratedSeed && currentContextFingerprint && c.context_fingerprint !== currentContextFingerprint) {
+    const isNavAction = actionType ? NAVIGATION_ACTION_TYPES.has(actionType) : false
+    const gate0Fingerprint = isNavAction && navigationContextFingerprint
+      ? navigationContextFingerprint
+      : currentContextFingerprint
+    if (!isCuratedSeed && gate0Fingerprint && c.context_fingerprint !== gate0Fingerprint) {
       console.log('[stage5] Gate 0 REJECT (context mismatch):', { intentId: c.intent_id, actionType })
       rejContextMismatch++
       continue

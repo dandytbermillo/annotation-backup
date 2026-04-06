@@ -297,7 +297,7 @@ describe('Stage 5 Shadow Telemetry: evaluateStage5Replay', () => {
   // ---------------------------------------------------------------------------
 
   describe('rejected_ambiguous', () => {
-    it('2 candidates both pass all gates → rejected_ambiguous', () => {
+    it('2 candidates both pass all gates with near-tie scores → rejected_ambiguous', () => {
       const result = evaluateStage5Replay(
         [
           makeCandidate({ itemId: 'item-1', similarity_score: 0.96 }),
@@ -306,7 +306,8 @@ describe('Stage 5 Shadow Telemetry: evaluateStage5Replay', () => {
         SNAPSHOT_WITH_WIDGET,
       )
       expect(result.validationResult).toBe('rejected_ambiguous')
-      expect(result.fallbackReason).toBe('2_passed_all_gates')
+      // Near-tie: margin 0.02 < 0.03 threshold
+      expect(result.fallbackReason).toMatch(/^near_tie_2_survivors_margin_/)
       expect(result.candidateCount).toBe(2)
       expect(result.replayedIntentId).toBeUndefined()
       expect(result.replayedTargetId).toBeUndefined()

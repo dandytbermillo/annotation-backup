@@ -257,7 +257,7 @@ export function buildPhase5NavigationWritePayload(params: {
     intent_class: 'action_intent',
     slots_json: slotsJson,
     target_ids: targetIds,
-    risk_tier: 'medium', // LLM-mediated fallback writes
+    risk_tier: 'low', // Navigation writebacks are replay-safe: target was resolved, validated, and executed
     schema_version: MEMORY_SCHEMA_VERSION,
     tool_version: MEMORY_TOOL_VERSION,
   }

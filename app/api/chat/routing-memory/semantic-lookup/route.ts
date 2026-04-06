@@ -9,7 +9,7 @@ import {
   ROUTING_MEMORY_CURATED_SEED_USER_ID,
 } from '@/lib/chat/routing-log/types'
 import { computeEmbedding } from '@/lib/chat/routing-log/embedding-service'
-import { canonicalJsonSerialize, stripVolatileFields } from '@/lib/chat/routing-log/context-snapshot'
+import { canonicalJsonSerialize, stripVolatileFields, stripVolatileFieldsForNavigation } from '@/lib/chat/routing-log/context-snapshot'
 import type { ContextSnapshotV1 } from '@/lib/chat/routing-log/context-snapshot'
 
 /**
@@ -238,9 +238,17 @@ export async function POST(request: NextRequest) {
     // Normalize query text and compute fingerprint
     const normalizedText = normalizeForStorage(payload.raw_query_text)
 
-    // Compute current context fingerprint
+    // Compute current context fingerprint.
+    // Navigation-scoped lookups use the same minimal fingerprint as the write route
+    // (stripVolatileFieldsForNavigation — version + latch_enabled only).
+    // Non-navigation lookups use the broader stripVolatileFields.
+    const isNavigationScope = payload.intent_scope === 'navigation'
     const currentContextFingerprint = sha256Hex(
-      canonicalJsonSerialize(stripVolatileFields(payload.context_snapshot))
+      canonicalJsonSerialize(
+        isNavigationScope
+          ? stripVolatileFieldsForNavigation(payload.context_snapshot)
+          : stripVolatileFields(payload.context_snapshot)
+      )
     )
 
     // Phase 5 addendum: retrieval normalization + exact-hit shortcut
