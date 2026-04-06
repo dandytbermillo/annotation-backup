@@ -1,22 +1,20 @@
 /**
- * Stage 5 Evaluator — Semantic Resolution Reuse (Shadow Mode)
+ * Stage 5 Evaluator — Unified Semantic Replay Arbitration
  *
- * Pure function that evaluates B2 semantic candidates for replay eligibility.
- * Slice 1: shadow-only — logs what would happen, never executes.
+ * Evaluates the unified candidate pool (B2 learned + Phase 5 curated seeds)
+ * for replay eligibility using the shared strong-winner / near-tie contract.
  *
  * Pipeline per candidate:
- * 0. Context fingerprint match (Fix B — rejects cross-context replays, fail-open if unavailable)
- * 1. Action type allowlist (execute_widget_item, execute_referent)
+ * 0. Context fingerprint match (curated seeds bypass — context-independent)
+ * 1. Action type allowlist (execute_widget_item, execute_referent, surface_manifest_execute, open_panel, open_entry, open_workspace, go_home)
  * 2. Risk tier gate (low only)
- * 3. Target exists + visible (reuses validateMemoryCandidate from memory-validator)
+ * 3. Target exists + visible (reuses validateMemoryCandidate with visibleWidgets)
  *
- * Outcome:
- * - Exactly 1 survivor → shadow_replay_eligible
+ * Outcome (shared strong-winner / near-tie arbitration):
+ * - Top candidate >= 0.88 AND margin over runner-up >= 0.03 → shadow_replay_eligible
+ * - Near-tie (margin < 0.03) → rejected_ambiguous
+ * - Below threshold → rejected_ambiguous
  * - 0 survivors → rejection reason (closest-to-passing priority)
- * - >1 survivors → rejected_ambiguous (silent fall-through)
- *
- * Does NOT threshold on similarity_score — B2 SQL pre-thresholds at >= 0.92.
- * Does NOT check schema/tool version — single-deployment, deferred to Slice 2.
  *
  * Client-safe: no crypto, no DB imports.
  */
@@ -134,33 +132,51 @@ export function evaluateStage5Replay(
     survivors.push(c)
   }
 
-  // --- Determine outcome ---
+  // --- Determine outcome using shared strong-winner / near-tie arbitration ---
+  // Replaces the old crude "exactly 1 survivor" rule with the plan's threshold contract:
+  // - top candidate >= 0.88, margin over runner-up >= 0.03, validation passes → execute
+  // - otherwise → clarify (rejected_ambiguous)
 
-  if (survivors.length === 1) {
-    const winner = survivors[0]
-    const at = winner.slots_json.action_type as string
-    const targetId = at === 'execute_widget_item'
-      ? (winner.slots_json.itemId as string)
-      : (winner.slots_json.candidateId as string)
+  const DIRECT_EXECUTE_THRESHOLD = 0.88
+  const NEAR_TIE_MARGIN = 0.03
 
-    return {
-      attempted: true,
-      candidateCount,
-      topSimilarity,
-      validationResult: 'shadow_replay_eligible',
-      replayedIntentId: winner.intent_id,
-      replayedTargetId: targetId,
-      winnerCandidate: winner,
+  if (survivors.length >= 1) {
+    // Sort by score descending
+    survivors.sort((a, b) => b.similarity_score - a.similarity_score)
+    const top = survivors[0]
+    const runnerUpScore = survivors.length >= 2 ? survivors[1].similarity_score : 0
+    const margin = top.similarity_score - runnerUpScore
+    const isNearTie = survivors.length >= 2 && margin < NEAR_TIE_MARGIN
+    const isStrongWinner = top.similarity_score >= DIRECT_EXECUTE_THRESHOLD && !isNearTie
+
+    if (isStrongWinner) {
+      const at = top.slots_json.action_type as string
+      const targetId = at === 'execute_widget_item'
+        ? (top.slots_json.itemId as string)
+        : at === 'execute_referent'
+          ? (top.slots_json.candidateId as string)
+          : (top.target_ids[0] ?? '')
+
+      return {
+        attempted: true,
+        candidateCount,
+        topSimilarity,
+        validationResult: 'shadow_replay_eligible',
+        replayedIntentId: top.intent_id,
+        replayedTargetId: targetId,
+        winnerCandidate: top,
+      }
     }
-  }
 
-  if (survivors.length > 1) {
+    // Multiple survivors with no clear strong winner → ambiguous
     return {
       attempted: true,
       candidateCount,
       topSimilarity,
       validationResult: 'rejected_ambiguous',
-      fallbackReason: `${survivors.length}_passed_all_gates`,
+      fallbackReason: isNearTie
+        ? `near_tie_${survivors.length}_survivors_margin_${margin.toFixed(3)}`
+        : `below_threshold_${top.similarity_score.toFixed(3)}`,
     }
   }
 

@@ -2560,113 +2560,29 @@ export async function dispatchRouting(
     return PHASE5_OVERRIDE_INTENTS.has(topHint.intent_id) && topHint.similarity_score >= similarityFloor
   })()
 
-  // Semantic-first escape evidence: two-pass retrieval with rewrite-assisted re-query.
-  // Pass 1: raw query. Pass 2 (if pass 1 empty): rewrite typos via LLM, then re-query.
-  // At most one rewrite pass per turn. Context: always 'navigation' for escape candidates.
-  if (hasLiveClarificationForGate && hintReadEnabled && !(ctx as any)._semanticEscapeEvidence) {
-    try {
-      const escapeHintSnapshot = buildContextSnapshot({
-        openWidgetCount: turnSnapshotForLog.openWidgets?.length ?? 0,
-        pendingOptionsCount: ctx.pendingOptions?.length ?? 0,
-        activeOptionSetId: ctx.activeOptionSetId,
-        hasLastClarification: ctx.lastClarification !== null,
-        hasLastSuggestion: ctx.lastSuggestion !== null,
-        latchEnabled: process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1 === 'true',
-        messageCount: ctx.messages.length,
-      })
-
-      // Pass 1: raw query
-      const escapeHintResult = await lookupSemanticHints({
-        raw_query_text: ctx.trimmedInput,
-        context_snapshot: escapeHintSnapshot,
-        intent_scope: 'navigation',
-      })
-      console.log('[dispatcher] Escape semantic hint lookup (pass 1 raw):', { input: ctx.trimmedInput, status: escapeHintResult.status, candidateCount: escapeHintResult.candidates.length, topScore: escapeHintResult.candidates[0]?.similarity_score })
-
-      const DIRECT_EXECUTE_THRESHOLD = 0.88
-      const NEAR_TIE_MARGIN = 0.03
-      const pass1TopScore = escapeHintResult.candidates[0]?.similarity_score ?? 0
-      const pass1SecondScore = escapeHintResult.candidates[1]?.similarity_score ?? 0
-      const pass1IsNearTie = escapeHintResult.candidates.length >= 2 && (pass1TopScore - pass1SecondScore) < NEAR_TIE_MARGIN
-      const pass1HasStrongCandidate = pass1TopScore >= DIRECT_EXECUTE_THRESHOLD && !pass1IsNearTie
-
-      if (escapeHintResult.status === 'ok' && escapeHintResult.candidates.length > 0) {
-        ;(ctx as any)._semanticEscapeEvidence = {
-          candidates: escapeHintResult.candidates.map(c => ({
-            intent_id: c.intent_id,
-            slots_json: c.slots_json,
-            similarity_score: c.similarity_score,
-            target_ids: c.target_ids,
-          })),
-          topScore: pass1TopScore,
-          retrievalSource: 'raw' as const,
-        }
-      }
-
-      // Pass 2: rewrite-assisted re-query
-      // Triggers when: no candidates, OR top candidate below direct-execute threshold, OR near-tie
-      // Skips when: a strong candidate already exists above 0.88 with no near-tie
-      const needsRewrite = !(ctx as any)._semanticEscapeEvidence || !pass1HasStrongCandidate
-      if (needsRewrite) {
-        const REWRITE_TIMEOUT_MS = 1500
-        const REWRITE_ENDPOINT = '/api/chat/surface-command/rewrite'
-
-        let rewriteTimer: ReturnType<typeof setTimeout> | undefined
-        try {
-          const rewrittenText = await Promise.race([
-            fetch(`${typeof window !== 'undefined' ? '' : process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'}${REWRITE_ENDPOINT}`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ raw_query_text: ctx.trimmedInput }),
-            }).then(async (res) => {
-              clearTimeout(rewriteTimer)
-              if (!res.ok) return null
-              const data = await res.json()
-              return (data.rewritten_text as string) ?? null
-            }),
-            new Promise<null>((resolve) => {
-              rewriteTimer = setTimeout(() => resolve(null), REWRITE_TIMEOUT_MS)
-            }),
-          ])
-
-          if (rewrittenText && rewrittenText !== ctx.trimmedInput) {
-            console.log('[dispatcher] Escape rewrite-assisted re-query:', { original: ctx.trimmedInput, rewritten: rewrittenText })
-
-            const rewriteHintResult = await lookupSemanticHints({
-              raw_query_text: rewrittenText,
-              context_snapshot: escapeHintSnapshot,
-              intent_scope: 'navigation',
-            })
-            console.log('[dispatcher] Escape semantic hint lookup (pass 2 rewritten):', { input: rewrittenText, status: rewriteHintResult.status, candidateCount: rewriteHintResult.candidates.length, topScore: rewriteHintResult.candidates[0]?.similarity_score })
-
-            if (rewriteHintResult.status === 'ok' && rewriteHintResult.candidates.length > 0) {
-              const rewriteTopScore = rewriteHintResult.candidates[0].similarity_score
-              // Replace pass 1 evidence only if rewrite produced a better or first result
-              if (!pass1HasStrongCandidate || rewriteTopScore > pass1TopScore) {
-                ;(ctx as any)._semanticEscapeEvidence = {
-                  candidates: rewriteHintResult.candidates.map(c => ({
-                    intent_id: c.intent_id,
-                    slots_json: c.slots_json,
-                    similarity_score: c.similarity_score,
-                    target_ids: c.target_ids,
-                  })),
-                  topScore: rewriteTopScore,
-                  retrievalSource: 'rewritten' as const,
-                  rewrittenText,
-                }
-              }
-            }
-          }
-        } catch {
-          clearTimeout(rewriteTimer)
-          // Fail-open: rewrite failed, continue with no semantic evidence
-        }
-      }
-    } catch {
-      // Fail-open: escape hint lookup failed
+  // Step 1d: Active-clarifier escape uses the unified replay pool (same as no-clarifier).
+  // This replaces the old separate Phase 5 lookupSemanticHints call for escape evidence.
+  // The unified pool already has B2 learned rows + Phase 5 curated seeds.
+  if (hasLiveClarificationForGate && unifiedReplayCandidates.length > 0 && !(ctx as any)._semanticEscapeEvidence) {
+    ;(ctx as any)._semanticEscapeEvidence = {
+      candidates: unifiedReplayCandidates.map(c => ({
+        intent_id: c.intent_id,
+        slots_json: c.slots_json,
+        similarity_score: c.similarity_score,
+        target_ids: c.target_ids,
+        from_curated_seed: (c as any).from_curated_seed ?? false,
+      })),
+      topScore: unifiedReplayCandidates[0]?.similarity_score,
     }
+    console.log('[dispatcher] active-clarifier escape evidence from unified pool:', {
+      input: ctx.trimmedInput,
+      candidateCount: unifiedReplayCandidates.length,
+      topScore: unifiedReplayCandidates[0]?.similarity_score,
+      topIntent: unifiedReplayCandidates[0]?.intent_id,
+      isLearned: !(unifiedReplayCandidates[0] as any)?.from_curated_seed,
+    })
   }
-  // Also use Phase 5 results as escape evidence if available (exact-spelling case)
+  // Fallback: use Phase 5 results if unified pool was empty but Phase 5 has candidates
   if (hasLiveClarificationForGate && phase5HintResult && phase5HintResult.candidates.length > 0 && !(ctx as any)._semanticEscapeEvidence) {
     ;(ctx as any)._semanticEscapeEvidence = {
       candidates: phase5HintResult.candidates.map(c => ({
@@ -2674,6 +2590,7 @@ export async function dispatchRouting(
         slots_json: c.slots_json,
         similarity_score: c.similarity_score,
         target_ids: c.target_ids,
+        from_curated_seed: c.from_curated_seed,
       })),
       topScore: phase5HintResult.candidates[0].similarity_score,
     }

@@ -2278,7 +2278,7 @@ describe('dispatchRouting: active-clarifier semantic escape execution', () => {
     })
 
     const ctx = createMockDispatchContext({
-      trimmedInput: 'open my project',
+      trimmedInput: 'open my entry',
       lastClarification: {
         type: 'option_selection',
         originalIntent: 'open entries',
