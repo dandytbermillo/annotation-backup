@@ -2197,6 +2197,64 @@ export async function handleClarificationIntercept(
             }
           }
 
+          // Step 1c: when validated escape candidates exist, replace the re-shown clarifier
+          // with ONLY the escape candidates (the user is asking for something different, not
+          // answering the original clarifier). Same UX as no-clarifier clarification-first.
+          const escapeOnlyOptions = validatedEscapeCandidates
+            .filter(ec => ec.id.startsWith('__escape_'))
+          if (escapeOnlyOptions.length > 0) {
+            // Derive proper labels from escape evidence
+            const escapeEv = ctx.escapeEvidence
+            const escapeOptionsRebuilt = escapeOnlyOptions.map((ec, idx) => {
+              // Try to get a human-readable label from the evidence
+              let properLabel = ec.label
+              if (ec.id.startsWith('__escape_semantic_') && escapeEv?.semantic?.candidates) {
+                const matchedCandidate = escapeEv.semantic.candidates.find(c =>
+                  c.target_ids[0] && ec.id.includes(c.target_ids[0])
+                ) ?? escapeEv.semantic.candidates.find(c =>
+                  ec.id.includes(c.intent_id)
+                )
+                if (matchedCandidate) {
+                  const manifest = (matchedCandidate.slots_json as any)?.surface_manifest as Record<string, string> | undefined
+                  properLabel = (matchedCandidate.slots_json as any)?.panelTitle
+                    ?? (matchedCandidate.slots_json as any)?.target_name
+                    ?? manifest?.surfaceType
+                    ?? ec.label
+                }
+              }
+              return {
+                id: ec.id, label: String(properLabel),
+                sublabel: ec.sublabel, type: 'panel_drawer' as const,
+              }
+            })
+
+            const escapeMsgId = `assistant-${Date.now()}`
+            const escapeMsg: ChatMessage = {
+              id: escapeMsgId, role: 'assistant',
+              content: escapeOptionsRebuilt.length === 1
+                ? `Did you mean ${escapeOptionsRebuilt[0].label}?`
+                : 'Which one did you mean?',
+              timestamp: new Date(), isError: false,
+              options: escapeOptionsRebuilt.map(o => ({
+                type: o.type as SelectionOption['type'], id: o.id,
+                label: o.label, sublabel: o.sublabel,
+                data: { panelId: '', panelTitle: o.label, panelType: 'escape' },
+              })),
+            }
+            // Pause current clarification (preserve for resume)
+            saveClarificationSnapshot(lastClarification, true, 'interrupt' as const)
+            setLastClarification(null)
+            addMessage(escapeMsg)
+            setPendingOptions(escapeOptionsRebuilt.map((o, idx) => ({
+              index: idx + 1, id: o.id, label: o.label, sublabel: o.sublabel, type: o.type,
+              data: { panelId: '', panelTitle: o.label, panelType: 'escape' },
+            })))
+            setPendingOptionsMessageId(escapeMsgId)
+            setPendingOptionsGraceCount(0)
+            setIsLoading(false)
+            return { handled: true, clarificationCleared: false, isNewQuestionOrCommandDetected, _devProvenanceHint: 'safe_clarifier' as const }
+          }
+
           // Safe clarifier — reorder if LLM suggested or hint available (Rules C, D, F)
           const reorderHintId = llmResult.suggestedId ?? preferredCandidateHint?.id ?? null
           const reorderSource = reorderHintId

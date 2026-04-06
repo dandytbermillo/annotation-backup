@@ -2700,21 +2700,86 @@ export async function dispatchRouting(
     // Near-tie clarifier already set result — skip tier chain
     console.log('[dispatcher] SKIPPED tier chain: result already set')
   } else if (phase5SkippedTierChain) {
-    // Phase 5 override: return handled=false so raw query reaches navigate API.
-    // No tier chain runs → no addMessage side effects → no clarifier leakage.
-    // Attach hints when available; scope always attached for LLM fallback telemetry.
-    const topHint = phase5HintResult?.candidates?.[0]
-    result = {
-      handled: false,
-      clarificationCleared: false,
-      isNewQuestionOrCommandDetected: false,
-      classifierCalled: false,
-      classifierTimeout: false,
-      classifierError: false,
-      isFollowUp: false,
-      _phase5HintIntent: topHint?.intent_id,
-      _phase5HintScope: hintScope ?? undefined,
-      _phase5HintFromSeed: topHint?.from_curated_seed,
+    // No-clarifier clarification-first rule (Step 1b):
+    // If the unified replay pool has candidates but Stage 5 didn't find a safe winner,
+    // generate clarification from those candidates instead of falling through to the navigate API.
+    if (unifiedReplayCandidates.length > 0) {
+      // Build clarification options from unified candidates
+      const clarifyOptions: SelectionOption[] = unifiedReplayCandidates
+        .slice(0, 5) // Limit to top 5
+        .map((c, idx) => {
+          const manifest = (c.slots_json as any)?.surface_manifest as Record<string, string> | undefined
+          const label = (c.slots_json as any)?.panelTitle
+            ?? (c.slots_json as any)?.target_name
+            ?? manifest?.surfaceType
+            ?? (c.slots_json as any)?.name
+            ?? c.intent_id
+          return {
+            type: 'panel_drawer' as const,
+            id: `semantic_clarify_${idx}`,
+            label: String(label),
+            sublabel: `${c.intent_id} (${(c.similarity_score * 100).toFixed(0)}% match)`,
+            data: { panelId: (c.slots_json as any)?.panelId ?? '', panelTitle: String(label), panelType: manifest?.surfaceType ?? c.intent_id },
+          }
+        })
+
+      if (clarifyOptions.length > 0) {
+        const clarifyMsgId = `assistant-${Date.now()}`
+        const clarifyMsg: ChatMessage = {
+          id: clarifyMsgId,
+          role: 'assistant',
+          content: clarifyOptions.length === 1
+            ? `Did you mean ${clarifyOptions[0].label}?`
+            : 'Which one did you mean?',
+          timestamp: new Date(),
+          isError: false,
+          options: clarifyOptions,
+        }
+        ctx.addMessage(clarifyMsg)
+        ctx.setPendingOptions(clarifyOptions.map((opt, idx) => ({
+          index: idx + 1,
+          label: opt.label,
+          sublabel: opt.sublabel,
+          type: opt.type,
+          id: opt.id,
+          data: opt.data,
+        })))
+        ctx.setPendingOptionsMessageId(clarifyMsgId)
+        ctx.setLastClarification({
+          type: 'option_selection',
+          originalIntent: ctx.trimmedInput,
+          messageId: clarifyMsgId,
+          timestamp: Date.now(),
+          clarificationQuestion: clarifyOptions.length === 1 ? `Did you mean ${clarifyOptions[0].label}?` : 'Which one did you mean?',
+          options: clarifyOptions.map(opt => ({ id: opt.id, label: opt.label, sublabel: opt.sublabel, type: opt.type })),
+          metaCount: 0,
+        })
+        ctx.setIsLoading(false)
+        console.log('[dispatcher] no-clarifier clarification-first: generating clarification from shared candidates:', { candidateCount: clarifyOptions.length, input: ctx.trimmedInput })
+        result = {
+          handled: true, handledByTier: 4, tierLabel: 'semantic_candidate_clarification',
+          clarificationCleared: false, isNewQuestionOrCommandDetected: false,
+          classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
+          _devProvenanceHint: 'safe_clarifier',
+        }
+      }
+    }
+
+    if (!result) {
+      // Empty shared candidate set — fall through to downstream navigate API.
+      const topHint = phase5HintResult?.candidates?.[0]
+      result = {
+        handled: false,
+        clarificationCleared: false,
+        isNewQuestionOrCommandDetected: false,
+        classifierCalled: false,
+        classifierTimeout: false,
+        classifierError: false,
+        isFollowUp: false,
+        _phase5HintIntent: topHint?.intent_id,
+        _phase5HintScope: earlyHintScope ?? undefined,
+        _phase5HintFromSeed: topHint?.from_curated_seed,
+      }
     }
   } else {
     try {
