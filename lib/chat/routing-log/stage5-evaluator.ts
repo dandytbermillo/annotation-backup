@@ -34,7 +34,8 @@ interface MinimalTurnSnapshot {
 }
 
 // Action types eligible for Stage 5 replay
-const S5_ACTION_ALLOWLIST = new Set(['execute_widget_item', 'execute_referent'])
+// No-clarifier convergence: surface_manifest_execute added for list_items/open_surface semantic replay
+const S5_ACTION_ALLOWLIST = new Set(['execute_widget_item', 'execute_referent', 'surface_manifest_execute', 'open_panel', 'open_entry', 'open_workspace', 'go_home'])
 
 /**
  * Validation result — mutually exclusive, final.
@@ -78,6 +79,7 @@ export function evaluateStage5Replay(
   candidates: SemanticCandidate[],
   turnSnapshot: MinimalTurnSnapshot,
   currentContextFingerprint?: string,
+  visibleWidgets?: Array<{ id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }>,
 ): S5EvaluationResult {
   const candidateCount = candidates.length
   const topSimilarity = candidateCount > 0
@@ -94,35 +96,41 @@ export function evaluateStage5Replay(
   const survivors: SemanticCandidate[] = []
 
   for (const c of candidates) {
+    const actionType = c.slots_json.action_type as string | undefined
+
     // Gate 0: context fingerprint match (Fix B — strict context check)
-    // Candidates stored in a different UI context must not replay cross-context.
-    // When currentContextFingerprint is not available (e.g., server error), skip this gate (fail-open).
-    if (currentContextFingerprint && c.context_fingerprint !== currentContextFingerprint) {
+    // Curated seeds bypass Gate 0 — they are context-independent by design
+    const isCuratedSeed = (c as any).from_curated_seed === true
+    if (!isCuratedSeed && currentContextFingerprint && c.context_fingerprint !== currentContextFingerprint) {
+      console.log('[stage5] Gate 0 REJECT (context mismatch):', { intentId: c.intent_id, actionType })
       rejContextMismatch++
       continue
     }
 
     // Gate 1: action type allowlist
-    const actionType = c.slots_json.action_type as string | undefined
     if (!actionType || !S5_ACTION_ALLOWLIST.has(actionType)) {
+      console.log('[stage5] Gate 1 REJECT (action type):', { intentId: c.intent_id, actionType })
       rejActionType++
       continue
     }
 
-    // Gate 2: risk tier (low only — B2 SQL returns low + medium, Stage 5 narrows to low)
+    // Gate 2: risk tier (low only)
     if (c.risk_tier !== 'low') {
+      console.log('[stage5] Gate 2 REJECT (risk tier):', { intentId: c.intent_id, actionType, riskTier: c.risk_tier })
       rejRiskTier++
       continue
     }
 
-    // Gate 3: target exists + visible (reuse memory-validator)
-    const v = validateMemoryCandidate(c, turnSnapshot)
+    // Gate 3: target exists + visible (reuse memory-validator with visibleWidgets for open_panel checks)
+    const v = validateMemoryCandidate(c, turnSnapshot, visibleWidgets)
     if (!v.valid) {
+      console.log('[stage5] Gate 3 REJECT (validation):', { intentId: c.intent_id, actionType, reason: v.reason })
       rejTarget++
       lastTargetReason = v.reason
       continue
     }
 
+    console.log('[stage5] SURVIVOR:', { intentId: c.intent_id, actionType, riskTier: c.risk_tier, score: c.similarity_score })
     survivors.push(c)
   }
 

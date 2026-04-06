@@ -188,6 +188,13 @@ export function validateMemoryCandidate(
     return { valid: true }
   }
 
+  // No-clarifier convergence: surface_manifest_execute actions (list_items, open_surface)
+  // are now routed through semantic retrieval. Light validation — final target resolution
+  // happens at execution time via manifest surfaceType matching against visible widgets.
+  if (actionType === 'surface_manifest_execute') {
+    return { valid: true }
+  }
+
   // Unknown action type
   return { valid: false, reason: 'unknown_action_type' }
 }

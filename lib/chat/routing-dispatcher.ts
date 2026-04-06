@@ -632,7 +632,7 @@ function detectHintScope(input: string): 'history_info' | 'navigation' | null {
   // V2: Broad known navigation — requires BOTH an action cue AND known target-family evidence.
   // "open something for me" fails (no target-family). "open budget100" passes (budget\w* matches).
   const BROAD_NAV_ACTION = /\b(open|show|go\s+to|switch\s+to)\b/i
-  const TARGET_FAMILY = /\b(panel|workspace|entry|budget\w*|links\s+panel|navigator|quick\s+capture)\b/i
+  const TARGET_FAMILY = /\b(panel|workspace|entry|budget\w*|links\s+panel|navigator|quick\s+capture|recent|widget\s+manager|demo)\b/i
   if (BROAD_NAV_ACTION.test(input) && TARGET_FAMILY.test(input)) return 'navigation'
   return null
 }
@@ -1667,92 +1667,10 @@ export async function dispatchRouting(
       console.log('[dispatcher] surface resolver result:', { input: ctx.trimmedInput, hasResult: !!surfaceResult, isResolved: surfaceResult ? isResolvedSurfaceCommand(surfaceResult) : false, hasLiveClarification: ctx.pendingOptions.length > 0 || !!ctx.lastClarification || !!ctx.clarificationSnapshot, type: surfaceResult ? Object.keys(surfaceResult).join(',') : 'null' })
 
       if (surfaceResult && isResolvedSurfaceCommand(surfaceResult)) {
-        // Active clarification bounded arbiter: do not execute surface commands directly
-        // when live clarification exists. Store as escape evidence for the arbiter.
-        const hasLiveClarificationForSurface = ctx.pendingOptions.length > 0 || !!ctx.lastClarification || !!ctx.clarificationSnapshot
-        if (hasLiveClarificationForSurface) {
-          // Semantic-first model: surface does NOT contribute escape evidence during active clarification.
-          // Surface may still run for diagnostics, but must not become a bounded escape candidate.
-          console.log('[dispatcher] surface resolver skipped as escape evidence (semantic-first model):', { surfaceType: surfaceResult.surfaceType })
-          // Fall through — let the tier chain / bounded arbiter handle it via semantic/B1 candidates
-        } else if (surfaceResult.executionPolicy === 'list_items') {
-          let answerContent = "I couldn't load that information right now. Try again in a moment."
-          try {
-            const apiRes = await fetch(`${typeof window !== 'undefined' ? '' : process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'}/api/panels/recent/list`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ params: { limit: 5 } }),
-            })
-            if (apiRes.ok) {
-              const data = await apiRes.json()
-              const items = data.items as Array<{ name?: string; title?: string; type?: string; subtitle?: string }> | undefined
-              if (items && items.length > 0) {
-                const lines = items.map((item, i) => {
-                  const label = item.title ?? item.name ?? 'Untitled'
-                  const detail = item.subtitle ? ` — ${item.subtitle}` : ''
-                  const kind = item.type ? ` (${item.type})` : ''
-                  return `${i + 1}. ${label}${detail}${kind}`
-                }).join('\n')
-                answerContent = `Recently visited:\n${lines}`
-              } else {
-                answerContent = 'No recently visited items found.'
-              }
-            }
-          } catch { /* bounded error */ }
-
-          const answerMsg: ChatMessage = {
-            id: `assistant-${Date.now()}`, role: 'assistant',
-            content: answerContent, timestamp: new Date(), isError: false,
-          }
-          ctx.addMessage(answerMsg, { tierLabel: 'surface_command_resolve', provenance: 'deterministic_surface' })
-          ctx.setIsLoading(false)
-          void debugLog({ component: 'ChatNavigation', action: 'surface_command_resolve', metadata: {
-            surfaceType: surfaceResult.surfaceType, intentFamily: surfaceResult.intentFamily, intentSubtype: surfaceResult.intentSubtype,
-            retrievalSource: surfaceResult.retrievalSource,
-          }})
-
-          const surfaceRouteResult: RoutingDispatcherResult = {
-            handled: true, handledByTier: 4, tierLabel: 'surface_command_resolve',
-            clarificationCleared: false, isNewQuestionOrCommandDetected: false,
-            classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
-            _devProvenanceHint: 'deterministic_surface',
-          }
-          const surfacePayload = buildRoutingLogPayload(ctx, surfaceRouteResult, turnSnapshotForLog)
-          if (surfaceResult.retrievalSource) {
-            surfacePayload.surface_resolver_retrieval_source = surfaceResult.retrievalSource
-          }
-          void recordRoutingLog(surfacePayload)
-          return surfaceRouteResult
-        } else if (surfaceResult.executionPolicy === 'open_surface') {
-          const targetId = surfaceResult.targetSurfaceId
-          if (targetId && ctx.openPanelDrawer) {
-            ctx.openPanelDrawer(targetId)
-          }
-          const surfaceLabel = surfaceResult.surfaceType === 'recent' ? 'Recent' : surfaceResult.surfaceType
-          const drawerMsg: ChatMessage = {
-            id: `assistant-${Date.now()}`, role: 'assistant',
-            content: `Opening ${surfaceLabel}...`, timestamp: new Date(), isError: false,
-          }
-          ctx.addMessage(drawerMsg, { tierLabel: 'surface_command_resolve', provenance: 'deterministic_surface' })
-          ctx.setIsLoading(false)
-          void debugLog({ component: 'ChatNavigation', action: 'surface_command_resolve_drawer', metadata: {
-            surfaceType: surfaceResult.surfaceType, intentFamily: surfaceResult.intentFamily, intentSubtype: surfaceResult.intentSubtype,
-            retrievalSource: surfaceResult.retrievalSource,
-          }})
-
-          const drawerRouteResult: RoutingDispatcherResult = {
-            handled: true, handledByTier: 4, tierLabel: 'surface_command_resolve',
-            clarificationCleared: false, isNewQuestionOrCommandDetected: false,
-            classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
-            _devProvenanceHint: 'deterministic_surface',
-          }
-          const drawerPayload = buildRoutingLogPayload(ctx, drawerRouteResult, turnSnapshotForLog)
-          if (surfaceResult.retrievalSource) {
-            drawerPayload.surface_resolver_retrieval_source = surfaceResult.retrievalSource
-          }
-          void recordRoutingLog(drawerPayload)
-          return drawerRouteResult
-        }
+        // No-clarifier convergence (Phase 1): surface resolver no longer executes directly.
+        // Semantic retrieval handles all commands via Stage 5 replay.
+        // Surface result logged for diagnostics only — fall through to semantic pipeline.
+        console.log('[dispatcher] surface resolver no longer executes (convergence):', { surfaceType: surfaceResult.surfaceType, executionPolicy: surfaceResult.executionPolicy })
       } else if (surfaceResult && isSurfaceResolverError(surfaceResult)) {
         const errorMsg: ChatMessage = {
           id: `assistant-${Date.now()}`, role: 'assistant',
@@ -2360,23 +2278,79 @@ export async function dispatchRouting(
   }
 
   // ---------------------------------------------------------------------------
-  // Stage 5: Semantic resolution reuse
-  // Runs after B2 lookup, before tier chain. Evaluates whether B2 candidates
-  // qualify for auto-replay.
-  // - Shadow mode (default): log what would happen, always fall through
-  // - Enforcement mode (NEXT_PUBLIC_STAGE5_RESOLUTION_REUSE_ENABLED): actually replay
-  //
-  // Guard: skip Stage 5 when active selection context + selection-like input.
-  // Same protection as B1 (line 1302). Ordinals like "2" are context-sensitive
-  // and must not replay cross-context semantic matches.
-  // Also skip when content-intent matched (6x.3) — navigation replay must not
-  // hijack content queries.
+  // Phase 5 hint lookup (moved before Stage 5 for unified candidate pool)
+  // ---------------------------------------------------------------------------
+  let phase5HintResult: SemanticHintLookupResult | null = null
+  const earlyHintScope = hintReadEnabled ? detectHintScope(ctx.trimmedInput) : null
+  if (hintReadEnabled && earlyHintScope) {
+      try {
+        const lookupSnapshot = buildContextSnapshot({
+          openWidgetCount: turnSnapshotForLog.openWidgets?.length ?? 0,
+          pendingOptionsCount: ctx.pendingOptions?.length ?? 0,
+          activeOptionSetId: ctx.activeOptionSetId,
+          hasLastClarification: ctx.lastClarification !== null,
+          hasLastSuggestion: ctx.lastSuggestion !== null,
+          latchEnabled: process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1 === 'true',
+          messageCount: ctx.messages.length,
+        })
+        phase5HintResult = await lookupSemanticHints({
+          raw_query_text: ctx.trimmedInput,
+          context_snapshot: lookupSnapshot,
+          intent_scope: earlyHintScope,
+        })
+      } catch {
+        // Fail-open: hint retrieval failed
+      }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Build unified replay candidate pool from B2 + Phase 5
+  // B2 provides learned rows, Phase 5 provides curated seeds.
+  // Dedupe by (intentId, targetId). Prefer learned row when both exist.
+  // ---------------------------------------------------------------------------
+  type UnifiedReplayCandidate = SemanticCandidate & { from_curated_seed?: boolean }
+  const unifiedReplayCandidates: UnifiedReplayCandidate[] = []
+  const seenIdentities = new Set<string>()
+
+  // Add B2 learned candidates first (preferred)
+  if (semanticCandidatesForLaneD) {
+    for (const c of semanticCandidatesForLaneD) {
+      const identity = `${c.intent_id}:${c.target_ids[0] ?? 'none'}`
+      if (!seenIdentities.has(identity)) {
+        seenIdentities.add(identity)
+        unifiedReplayCandidates.push({ ...c, from_curated_seed: false })
+      }
+    }
+  }
+
+  // Add replay-eligible Phase 5 curated seeds (only if not already covered by learned)
+  if (phase5HintResult?.candidates?.length) {
+    for (const hint of phase5HintResult.candidates) {
+      const actionType = (hint.slots_json as any)?.action_type as string | undefined
+      // Only replay-eligible hints enter the pool (must match Stage 5 allowlist)
+      const REPLAY_ELIGIBLE_ACTIONS = new Set(['execute_widget_item', 'execute_referent', 'surface_manifest_execute', 'open_panel', 'open_entry', 'open_workspace', 'go_home'])
+      if (!actionType || !REPLAY_ELIGIBLE_ACTIONS.has(actionType)) continue
+      if (hint.similarity_score < 0.85) continue
+
+      const identity = `${hint.intent_id}:${hint.target_ids[0] ?? 'none'}`
+      if (!seenIdentities.has(identity)) {
+        seenIdentities.add(identity)
+        unifiedReplayCandidates.push({ ...hint, from_curated_seed: hint.from_curated_seed })
+      }
+    }
+  }
+
+  console.log('[dispatcher] unified replay pool:', { b2Count: semanticCandidatesForLaneD?.length ?? 0, phase5Count: phase5HintResult?.candidates?.length ?? 0, unifiedCount: unifiedReplayCandidates.length })
+
+  // ---------------------------------------------------------------------------
+  // Stage 5: Semantic resolution reuse (unified pool)
+  // Evaluates the unified B2 + Phase 5 candidate pool for auto-replay.
   // ---------------------------------------------------------------------------
   let s5Telemetry: import('./routing-log/stage5-evaluator').S5EvaluationResult | undefined
 
-  if (semanticCandidatesForLaneD && semanticCandidatesForLaneD.length > 0 && !shouldSkipB1ForSelection && !contentIntentMatchedThisTurn) {
+  if (unifiedReplayCandidates.length > 0 && !shouldSkipB1ForSelection && !contentIntentMatchedThisTurn) {
     try {
-      s5Telemetry = evaluateStage5Replay(semanticCandidatesForLaneD, turnSnapshotForLog, b2CurrentContextFingerprint)
+      s5Telemetry = evaluateStage5Replay(unifiedReplayCandidates, turnSnapshotForLog, b2CurrentContextFingerprint, ctx.uiContext?.dashboard?.visibleWidgets)
 
       // Slice 2: enforcement — actually replay when eligible and flag is on
       const s5EnforcementEnabled = process.env.NEXT_PUBLIC_STAGE5_RESOLUTION_REUSE_ENABLED === 'true'
@@ -2392,9 +2366,128 @@ export async function dispatchRouting(
         }
         const replayResult = buildResultFromMemory(s5Telemetry.winnerCandidate, s5DefaultResult) as RoutingDispatcherResult | null
         if (replayResult) {
-          // Override provenance for semantic memory (distinct from B1 memory_exact)
+          // Override provenance for semantic memory
           replayResult.tierLabel = `memory_semantic:${s5Telemetry.winnerCandidate.intent_id}`
           replayResult._devProvenanceHint = 'memory_semantic'
+
+          // No-clarifier convergence: handle surface-manifest-backed actions (list_items, open_surface)
+          const manifestAction = (replayResult as any)._surfaceManifestAction as { executionPolicy: string; surfaceType: string } | undefined
+          if (manifestAction) {
+            if (manifestAction.executionPolicy === 'list_items') {
+              // Fetch and format recent items as chat answer
+              let answerContent = "I couldn't load that information right now. Try again in a moment."
+              try {
+                const apiRes = await fetch(`${typeof window !== 'undefined' ? '' : process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'}/api/panels/recent/list`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ params: { limit: 5 } }),
+                })
+                if (apiRes.ok) {
+                  const data = await apiRes.json()
+                  const items = data.items as Array<{ name?: string; title?: string; type?: string; subtitle?: string }> | undefined
+                  if (items && items.length > 0) {
+                    const lines = items.map((item, i) => {
+                      const label = item.title ?? item.name ?? 'Untitled'
+                      const detail = item.subtitle ? ` — ${item.subtitle}` : ''
+                      const kind = item.type ? ` (${item.type})` : ''
+                      return `${i + 1}. ${label}${detail}${kind}`
+                    }).join('\n')
+                    answerContent = `Recently visited:\n${lines}`
+                  } else {
+                    answerContent = 'No recently visited items found.'
+                  }
+                }
+              } catch { /* bounded error */ }
+              const listMsg: ChatMessage = {
+                id: `assistant-${Date.now()}`, role: 'assistant',
+                content: answerContent, timestamp: new Date(), isError: false,
+              }
+              ctx.addMessage(listMsg, { tierLabel: replayResult.tierLabel, provenance: 'memory_semantic' })
+              ctx.setIsLoading(false)
+            } else if (manifestAction.executionPolicy === 'open_surface') {
+              // Open panel drawer via manifest surfaceType
+              const visibleWidgets = ctx.uiContext?.dashboard?.visibleWidgets ?? []
+              const surfaceType = manifestAction.surfaceType
+              const panelTypeSlug = surfaceType.replace(/-/g, '_')
+              const matched = (visibleWidgets as Array<{ id: string; title: string; type: string }>).find(
+                w => w.type === panelTypeSlug || w.type === surfaceType
+              )
+              if (matched && ctx.openPanelDrawer) {
+                ctx.openPanelDrawer(matched.id)
+                const drawerMsg: ChatMessage = {
+                  id: `assistant-${Date.now()}`, role: 'assistant',
+                  content: `Opening ${matched.title ?? surfaceType}...`, timestamp: new Date(), isError: false,
+                }
+                ctx.addMessage(drawerMsg, { tierLabel: replayResult.tierLabel, provenance: 'memory_semantic' })
+                ctx.setIsLoading(false)
+              }
+            }
+          }
+
+          // Live re-resolution for open_panel: stored panelId may be stale.
+          // Re-resolve using selector metadata against current visible widgets.
+          const navAction = (replayResult as any).navigationReplayAction
+          if (navAction?.type === 'open_panel' && ctx.uiContext?.dashboard?.visibleWidgets) {
+            const storedPanelId = navAction.panelId as string | undefined
+            const storedPanelTitle = (navAction.panelTitle ?? s5Telemetry?.winnerCandidate?.slots_json?.target_name ?? '') as string
+            const candidate = s5Telemetry?.winnerCandidate
+            const storedFamily = candidate?.slots_json?.duplicateFamily as string | undefined
+            const storedInstanceLabel = candidate?.slots_json?.instanceLabel as string | undefined
+            const visWidgets = ctx.uiContext.dashboard.visibleWidgets as Array<{ id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }>
+
+            // Check if stored panelId is still valid (curated seeds may not have a panelId)
+            const stillValid = storedPanelId ? visWidgets.some(w => w.id === storedPanelId) : false
+            if (!stillValid) {
+              let resolved: { id: string; title: string } | null = null
+
+              // Priority 1: selector metadata — duplicateFamily + instanceLabel
+              if (storedFamily && storedInstanceLabel) {
+                const selectorMatch = visWidgets.find(w =>
+                  w.duplicateFamily === storedFamily && w.instanceLabel === storedInstanceLabel
+                )
+                if (selectorMatch) {
+                  resolved = selectorMatch
+                  console.log('[dispatcher] open_panel re-resolved by selector:', { family: storedFamily, label: storedInstanceLabel, newId: selectorMatch.id })
+                }
+              }
+
+              // Priority 2: duplicateFamily only (singleton in that family)
+              if (!resolved && storedFamily) {
+                const familyMatches = visWidgets.filter(w => w.duplicateFamily === storedFamily)
+                if (familyMatches.length === 1) {
+                  resolved = familyMatches[0]
+                  console.log('[dispatcher] open_panel re-resolved by singleton family:', { family: storedFamily, newId: familyMatches[0].id })
+                }
+              }
+
+              // Priority 3: exact title match
+              if (!resolved) {
+                const titleMatch = visWidgets.find(w => w.title.toLowerCase() === storedPanelTitle.toLowerCase())
+                if (titleMatch) {
+                  resolved = titleMatch
+                  console.log('[dispatcher] open_panel re-resolved by title:', { title: storedPanelTitle, newId: titleMatch.id })
+                }
+              }
+
+              if (resolved) {
+                // Safety: verify the resolved panel title is consistent with the user's input.
+                // Prevents "open links panel a" from replaying as "links panel b" when the wrong seed wins.
+                const inputLower = ctx.trimmedInput.toLowerCase()
+                const resolvedTitleLower = resolved.title.toLowerCase()
+                const titleTokensInInput = resolvedTitleLower.split(/\s+/).every(token => inputLower.includes(token))
+                if (titleTokensInInput) {
+                  navAction.panelId = resolved.id
+                  navAction.panelTitle = resolved.title
+                } else {
+                  console.log('[dispatcher] open_panel re-resolution rejected: resolved title does not match input:', { input: ctx.trimmedInput, resolvedTitle: resolved.title })
+                  resolved = null
+                }
+              }
+              if (!resolved) {
+                console.log('[dispatcher] open_panel re-resolution failed:', { storedPanelId, storedPanelTitle, storedFamily, storedInstanceLabel })
+              }
+            }
+          }
 
           // Update telemetry to reflect actual execution
           s5Telemetry = { ...s5Telemetry, validationResult: 'replay_executed' }
@@ -2441,35 +2534,8 @@ export async function dispatchRouting(
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Phase 5: Retrieval-backed semantic hinting
-  // Runs AFTER Stage 5 replay did not resolve (if it did, we returned early above).
-  // Passes hint candidates to bounded LLM via the normal tier chain.
-  // ---------------------------------------------------------------------------
-  let phase5HintResult: SemanticHintLookupResult | null = null
-  if (hintReadEnabled) {
-    const hintScope = detectHintScope(ctx.trimmedInput)
-    if (hintScope) {
-      try {
-        const lookupSnapshot = buildContextSnapshot({
-          openWidgetCount: turnSnapshotForLog.openWidgets?.length ?? 0,
-          pendingOptionsCount: ctx.pendingOptions?.length ?? 0,
-          activeOptionSetId: ctx.activeOptionSetId,
-          hasLastClarification: ctx.lastClarification !== null,
-          hasLastSuggestion: ctx.lastSuggestion !== null,
-          latchEnabled: process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1 === 'true',
-          messageCount: ctx.messages.length,
-        })
-        phase5HintResult = await lookupSemanticHints({
-          raw_query_text: ctx.trimmedInput,
-          context_snapshot: lookupSnapshot,
-          intent_scope: hintScope,
-        })
-      } catch {
-        // Fail-open: hint retrieval failed, continue without hints
-      }
-    }
-  }
+  // Phase 5 lookup already ran before Stage 5 (unified candidate pool).
+  // phase5HintResult is available from the earlier lookup.
 
   // ---------------------------------------------------------------------------
   // Phase 5: pre-tier-chain override for confident v1 hints
@@ -2613,12 +2679,11 @@ export async function dispatchRouting(
     }
   }
 
-  // Active clarification bounded arbiter: do not skip tier chain when live clarification exists.
-  if (hintScope && !hasLiveClarificationForGate) {
-    // Phase 5 scope detected — skip tier chain, let the navigate API's LLM handle it.
-    // Near-tie metadata is preserved in telemetry but does NOT block the LLM fallback.
-    // Genuine execution ambiguity (e.g., "budget100" vs "budget100 B") is handled by
-    // the resolver/clarifier downstream, not by retrieval-level similarity score proximity.
+  // No-clarifier convergence: phase5SkippedTierChain only fires after unified replay
+  // found no winner AND hintScope is present. If Stage 5 replay already returned early
+  // above, we never reach here.
+  // earlyHintScope was computed before Stage 5; reuse it here.
+  if (earlyHintScope && !hasLiveClarificationForGate) {
     phase5SkippedTierChain = true
   }
 

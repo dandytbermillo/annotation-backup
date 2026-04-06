@@ -52,8 +52,12 @@ const CURATED_SEEDS: CuratedSeed[] = [
   { query: 'take me home', intent_id: 'go_home', intent_class: 'action_intent', slots_json: { action_type: 'go_home' } },
   { query: 'return home', intent_id: 'go_home', intent_class: 'action_intent', slots_json: { action_type: 'go_home' } },
   // Stable panel command families only — no user-specific targets
+  { query: 'open links panel a', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel a' } },
   { query: 'open links panel b', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel b' } },
+  { query: 'open links panel c', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel c' } },
+  { query: 'open links panel d', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel d' } },
   { query: 'open navigator', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'navigator' } },
+  { query: 'open widget manager', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'widget manager' } },
   // Surface manifest seeds (Phase E) — dedicated surface resolver
   // Contract (surface-command-resolver-design.md:644-651):
   //   show recent / show recent widget / show recent widget entries → drawer/display

@@ -186,8 +186,10 @@ What changes by mode is execution policy after retrieval and validation, not whe
 After shared retrieval + validation:
 
 1. if one candidate is strong and valid, execute directly
-2. otherwise bounded LLM may arbitrate among the shared candidates
-3. if bounded LLM still does not yield one safe winner, create a new clarification
+2. if the shared candidate set is useful but not execution-safe, prefer clarification from that set before any generic downstream execution
+3. bounded LLM in no-clarifier mode is constrained to the shared candidates: it may arbitrate among them or decide that a new clarification is needed
+4. if bounded LLM still does not yield one safe winner, create a new clarification
+5. if the shared candidate set is empty and any downstream fallback still does not yield a safe winner, the final outcome must also be clarification
 
 No-clarifier mode does not have pre-existing clarifier options.
 Its candidate set comes from the shared core only:

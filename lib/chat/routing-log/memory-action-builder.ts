@@ -162,6 +162,26 @@ export function buildResultFromMemory(
         confidence: candidate.slots_json.confidence as ResolvedNoteCommand['confidence'],
       },
     }
+  } else if (actionType === 'surface_manifest_execute') {
+    // No-clarifier convergence: surface-manifest-backed actions (list_items, open_surface)
+    // now routed through semantic retrieval instead of independent surface resolver.
+    const manifest = candidate.slots_json.surface_manifest as Record<string, unknown> | undefined
+    const executionPolicy = manifest?.executionPolicy as string | undefined
+    return {
+      ...defaultResult,
+      handled: true,
+      handledByTier: undefined,
+      tierLabel: `memory_semantic:${candidate.intent_id}`,
+      _devProvenanceHint: 'memory_semantic',
+      _memoryCandidate: candidate,
+      _surfaceManifestAction: {
+        executionPolicy: executionPolicy ?? 'unknown',
+        surfaceType: (manifest?.surfaceType as string) ?? 'unknown',
+        intentFamily: (manifest?.intentFamily as string) ?? 'unknown',
+        intentSubtype: (manifest?.intentSubtype as string) ?? 'unknown',
+        handlerId: (manifest?.handlerId as string) ?? 'unknown',
+      },
+    } as MinimalRoutingResult
   } else {
     // Unknown action type — cannot reconstruct, fall through
     return null
