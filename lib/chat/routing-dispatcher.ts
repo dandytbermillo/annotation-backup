@@ -62,7 +62,7 @@ import { reconstructSnapshotData } from '@/lib/chat/chat-routing-clarification-u
 import { handleCrossCorpusRetrieval } from '@/lib/chat/cross-corpus-handler'
 import { handleDocRetrieval } from '@/lib/chat/doc-routing'
 import { isAffirmationPhrase, isRejectionPhrase, matchesReshowPhrases, matchesShowAllHeuristic, hasGraceSkipActionVerb, hasQuestionIntent, ACTION_VERB_PATTERN, isCommandLike, isPoliteImperativeRequest } from '@/lib/chat/query-patterns'
-import { handleKnownNounRouting, matchKnownNoun } from '@/lib/chat/known-noun-routing'
+import { handleKnownNounRouting, matchKnownNoun, detectQuestionGuard, validateVisibility, validateDuplicateFamily } from '@/lib/chat/known-noun-routing'
 import { callClarificationLLMClient, isLLMFallbackEnabledClient } from '@/lib/chat/clarification-llm-fallback'
 import { handleGroundingSetFallback, buildGroundingContext, checkSoftActiveWindow, isSelectionLike, validateGroundingCandidates, capAndTrimCandidates } from '@/lib/chat/grounding-set'
 import type { GroundingCandidate } from '@/lib/chat/grounding-set'
@@ -634,6 +634,15 @@ function detectHintScope(input: string): 'history_info' | 'navigation' | null {
   const BROAD_NAV_ACTION = /\b(open|show|go\s+to|switch\s+to)\b/i
   const TARGET_FAMILY = /\b(panel|workspace|entry|budget\w*|links\s+panel|navigator|quick\s+capture|recent|widget\s+manager|demo)\b/i
   if (BROAD_NAV_ACTION.test(input) && TARGET_FAMILY.test(input)) return 'navigation'
+  // Phase 2: Bare-noun gate — known-noun forms that have curated semantic seeds.
+  // Narrower than TARGET_FAMILY: only matches seeded known nouns, not generic category words.
+  // Must stay in sync with seed set in seed-phase5-curated-exemplars.ts.
+  const KNOWN_NOUN_FORMS = new Set([
+    'recent', 'widget manager', 'navigator',
+    'links panel a', 'links panel b', 'links panel c', 'links panel d',
+  ])
+  const bareInput = input.replace(/[?!.]+$/, '').trim().toLowerCase()
+  if (KNOWN_NOUN_FORMS.has(bareInput)) return 'navigation'
   return null
 }
 
@@ -2525,8 +2534,46 @@ export async function dispatchRouting(
             } catch { /* fail-open */ }
           }
 
-          // Early return — sendMessage() handles commit-point revalidation + log + write
-          return replayResult
+          // Phase 2: Shared post-retrieval validation before execution
+          // Question-policy: don't auto-execute if the input is a question about the target
+          const questionGuard = detectQuestionGuard(ctx.trimmedInput)
+          if (questionGuard === 'full_question') {
+            // Skip execution, let downstream docs/info path handle it
+            console.log('[dispatcher] Stage 5 question-policy: full_question, skipping replay:', { input: ctx.trimmedInput })
+            s5Telemetry = { ...s5Telemetry, validationResult: 'replay_build_failed', fallbackReason: 'full_question_guard' }
+          } else if (questionGuard === 'trailing_question') {
+            // Show open-vs-docs prompt instead of executing
+            const winnerLabel = (s5Telemetry.winnerCandidate?.slots_json as any)?.target_name ?? (s5Telemetry.winnerCandidate?.slots_json as any)?.panelTitle ?? 'this panel'
+            const winnerId = s5Telemetry.winnerCandidate?.target_ids?.[0] ?? ''
+            const docsMsgId = `assistant-${Date.now()}`
+            const docsOptions: import('@/lib/chat').SelectionOption[] = [
+              { type: 'panel_drawer', id: `open-${winnerId}`, label: `Open ${winnerLabel}`, sublabel: `Open the ${winnerLabel} panel`, data: { panelId: winnerId, panelTitle: String(winnerLabel), panelType: 'known_noun' } },
+              { type: 'doc' as any, id: `docs-${winnerId}`, label: `Read docs about ${winnerLabel}`, sublabel: `Learn what ${winnerLabel} does`, data: { docSlug: ctx.trimmedInput.replace(/[?]+$/, '').trim(), originalQuery: ctx.trimmedInput } },
+            ]
+            const docsMsg: ChatMessage = { id: docsMsgId, role: 'assistant', content: `Open ${winnerLabel}, or read docs about it?`, timestamp: new Date(), isError: false, options: docsOptions }
+            ctx.addMessage(docsMsg)
+            ctx.setPendingOptions(docsOptions.map((opt, idx) => ({ index: idx + 1, label: opt.label, sublabel: opt.sublabel, type: opt.type, id: opt.id, data: opt.data })))
+            ctx.setPendingOptionsMessageId(docsMsgId)
+            ctx.setIsLoading(false)
+            console.log('[dispatcher] Stage 5 question-policy: trailing_question, showing open-vs-docs:', { input: ctx.trimmedInput, target: winnerLabel })
+            return { handled: true, handledByTier: 4, tierLabel: 'semantic_question_policy', clarificationCleared: false, isNewQuestionOrCommandDetected: false, classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false, _devProvenanceHint: 'safe_clarifier' }
+          } else {
+            // Duplicate-family check: don't auto-execute if multiple siblings exist
+            const navAction = (replayResult as any).navigationReplayAction
+            if (navAction?.type === 'open_panel' && navAction.panelId && ctx.uiContext?.dashboard?.visibleWidgets) {
+              const dupCheck = validateDuplicateFamily(navAction.panelId, ctx.uiContext.dashboard.visibleWidgets as Array<{ id: string; title: string; type: string }>)
+              if (!dupCheck.valid) {
+                console.log('[dispatcher] Stage 5 duplicate-family: multiple siblings, skipping replay:', { input: ctx.trimmedInput, panelId: navAction.panelId, siblingCount: dupCheck.siblingCount })
+                s5Telemetry = { ...s5Telemetry, validationResult: 'replay_build_failed', fallbackReason: `duplicate_family_${dupCheck.siblingCount}_siblings` }
+              } else {
+                // Early return — sendMessage() handles commit-point revalidation + log + write
+                return replayResult
+              }
+            } else {
+              // Early return — sendMessage() handles commit-point revalidation + log + write
+              return replayResult
+            }
+          }
         } else {
           // buildResultFromMemory returned null — downgrade telemetry (safety net)
           s5Telemetry = { ...s5Telemetry, validationResult: 'replay_build_failed', fallbackReason: 'buildResultFromMemory_returned_null' }
@@ -6178,27 +6225,10 @@ async function dispatchRoutingInner(
     // Fall through to grounding / bounded LLM (don't execute, don't collect known-noun evidence)
   }
 
-  const knownNounResult = hasLiveClarificationForKnownNoun ? { handled: false } : handleKnownNounRouting({
-    trimmedInput: ctx.trimmedInput,
-    visibleWidgets: ctx.uiContext?.dashboard?.visibleWidgets,
-    addMessage: ctx.addMessage,
-    setIsLoading: ctx.setIsLoading,
-    openPanelDrawer: ctx.openPanelDrawer,
-    setPendingOptions: ctx.setPendingOptions,
-    setPendingOptionsMessageId: ctx.setPendingOptionsMessageId,
-    setPendingOptionsGraceCount: ctx.setPendingOptionsGraceCount,
-    setActiveOptionSetId: ctx.setActiveOptionSetId,
-    setLastClarification: ctx.setLastClarification,
-    handleSelectOption: wrappedHandleSelectOption,
-    hasActiveOptionSet: ctx.pendingOptions.length > 0 && ctx.activeOptionSetId !== null,
-    hasSoftActiveSelectionLike,
-    hasVisibleWidgetList: hasVisibleWidgetItems,
-    saveLastOptionsShown: ctx.saveLastOptionsShown,
-    clearWidgetSelectionContext: ctx.clearWidgetSelectionContext,
-    clearLastOptionsShown: ctx.clearLastOptionsShown,
-    clearClarificationSnapshot: ctx.clearClarificationSnapshot,
-    clearFocusLatch: isLatchEnabled ? ctx.clearFocusLatch : undefined,
-  })
+  // Phase 2: Known-noun convergence — semantic-first, no separate Tier 4 execution.
+  // Known-noun policies (question guard, dup-family, visibility) are applied as shared
+  // validation in Stage 5 enforcement (Step 3/4 above). This lane no longer executes.
+  const knownNounResult = { handled: false }
   if (knownNounResult.handled) {
     return {
       ...defaultResult,

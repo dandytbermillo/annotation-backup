@@ -58,6 +58,14 @@ const CURATED_SEEDS: CuratedSeed[] = [
   { query: 'open links panel d', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel d' } },
   { query: 'open navigator', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'navigator' } },
   { query: 'open widget manager', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'widget manager' } },
+  // Phase 2: Bare-noun seeds — noun-only forms for semantic-first known-noun convergence
+  { query: 'recent', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'recent' } },
+  { query: 'widget manager', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'widget manager' } },
+  { query: 'navigator', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'navigator' } },
+  { query: 'links panel a', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel a' } },
+  { query: 'links panel b', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel b' } },
+  { query: 'links panel c', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel c' } },
+  { query: 'links panel d', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel d' } },
   // Surface manifest seeds (Phase E) — dedicated surface resolver
   // Contract (surface-command-resolver-design.md:644-651):
   //   show recent / show recent widget / show recent widget entries → drawer/display
