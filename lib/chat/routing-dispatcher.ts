@@ -26,7 +26,8 @@
  * Tier 2 is split: interrupt detection in handleClarificationIntercept(),
  *   explicit command bypass + panel disambiguation + preview shortcut here.
  * Tiers 3a/3b/3c are post-clarification guards handled here.
- * Tier 4 is handleKnownNounRouting() from known-noun-routing.ts.
+ * Tier 4 was handleKnownNounRouting() — removed in Phase 2 (semantic-first known-noun convergence).
+ * Known-noun policies now run as shared validation in Stage 5 / clarification-first.
  * Tier 5 is handleDocRetrieval().
  *
  * After all tiers, unhandled input falls through to the LLM API (caller's
@@ -62,7 +63,7 @@ import { reconstructSnapshotData } from '@/lib/chat/chat-routing-clarification-u
 import { handleCrossCorpusRetrieval } from '@/lib/chat/cross-corpus-handler'
 import { handleDocRetrieval } from '@/lib/chat/doc-routing'
 import { isAffirmationPhrase, isRejectionPhrase, matchesReshowPhrases, matchesShowAllHeuristic, hasGraceSkipActionVerb, hasQuestionIntent, ACTION_VERB_PATTERN, isCommandLike, isPoliteImperativeRequest } from '@/lib/chat/query-patterns'
-import { handleKnownNounRouting, matchKnownNoun, detectQuestionGuard, validateVisibility, validateDuplicateFamily } from '@/lib/chat/known-noun-routing'
+import { matchKnownNoun, detectQuestionGuard, validateVisibility, validateDuplicateFamily, resolveToVisiblePanel } from '@/lib/chat/known-noun-routing'
 import { callClarificationLLMClient, isLLMFallbackEnabledClient } from '@/lib/chat/clarification-llm-fallback'
 import { handleGroundingSetFallback, buildGroundingContext, checkSoftActiveWindow, isSelectionLike, validateGroundingCandidates, capAndTrimCandidates } from '@/lib/chat/grounding-set'
 import type { GroundingCandidate } from '@/lib/chat/grounding-set'
@@ -640,6 +641,10 @@ function detectHintScope(input: string): 'history_info' | 'navigation' | null {
   const KNOWN_NOUN_FORMS = new Set([
     'recent', 'widget manager', 'navigator',
     'links panel a', 'links panel b', 'links panel c', 'links panel d',
+    // Generic family nouns — enter semantic pipeline for Phase 5 lookup.
+    // links panel/navigator/quick links: Phase 5 finds near-tie instance seeds → clarification-first shows them.
+    // entries: isGenericAmbiguousPanelPhrase guard prevents phase5SkippedTierChain → tier chain handles correctly.
+    'links panel', 'quick links', 'entries', 'entry navigator',
   ])
   const bareInput = input.replace(/[?!.]+$/, '').trim().toLowerCase()
   if (KNOWN_NOUN_FORMS.has(bareInput)) return 'navigation'
@@ -1779,11 +1784,24 @@ export async function dispatchRouting(
       const isHistoryInfo = detectHintScope(ctx.trimmedInput) === 'history_info'
       const HOME_NAV_BYPASS = /\b(go\s+(to\s+)?home|take\s+me\s+home|return\s+home|back\s+home)\b/i
       const isHomeNav = HOME_NAV_BYPASS.test(ctx.trimmedInput)
+      // Phase 2: Bare known nouns and their question-shaped forms bypass the arbiter
+      // so they enter the semantic-first Phase 5 pipeline instead of getting panel-items clarifiers.
+      // Uses the same KNOWN_NOUN_FORMS allowlist as detectHintScope (line ~640).
+      const KNOWN_NOUN_BYPASS = new Set([
+        'recent', 'widget manager', 'navigator',
+        'links panel a', 'links panel b', 'links panel c', 'links panel d',
+        // Generic family nouns bypass arbiter so they reach the semantic/tier-chain path
+        'links panel', 'quick links', 'entries', 'entry navigator',
+      ])
+      const bareForBypass = ctx.trimmedInput.replace(/[?!.]+$/, '').trim().toLowerCase()
+      // Also match question-prefixed forms: "what is links panel?", "what is recent?"
+      const questionStripped = bareForBypass.replace(/^(?:what\s+is|what\s+are|what's)\s+/i, '').trim()
+      const isKnownNoun = KNOWN_NOUN_BYPASS.has(bareForBypass) || KNOWN_NOUN_BYPASS.has(questionStripped)
       // Clarification owns the turn: skip arbiter entirely when clarification is active.
       // Ordinals and bare nouns must reach the tier chain for deterministic/bounded-LLM handling.
       // Include paused clarificationSnapshot — after escape, the user may be resuming
       const hasActiveClarification = ctx.pendingOptions.length > 0 || !!ctx.lastClarification || !!ctx.clarificationSnapshot
-      return hasSurfaceContext && !contentResult.isContentIntent && !isArbiterHardExcluded(ctx.trimmedInput) && !isActionNav && !isHistoryInfo && !isHomeNav && !hasActiveClarification
+      return hasSurfaceContext && !contentResult.isContentIntent && !isArbiterHardExcluded(ctx.trimmedInput) && !isActionNav && !isHistoryInfo && !isHomeNav && !isKnownNoun && !hasActiveClarification
     })()) {
       // ── 6x.8 Phase 4: Cross-surface arbiter for uncertain turns across surfaces ──
       const NOTE_REFERENCE_PATTERN = /\b(this|that|the|my|which|what|any|a)\s+(note|document|page)\b/i
@@ -2542,21 +2560,35 @@ export async function dispatchRouting(
             console.log('[dispatcher] Stage 5 question-policy: full_question, skipping replay:', { input: ctx.trimmedInput })
             s5Telemetry = { ...s5Telemetry, validationResult: 'replay_build_failed', fallbackReason: 'full_question_guard' }
           } else if (questionGuard === 'trailing_question') {
-            // Show open-vs-docs prompt instead of executing
+            // Show open-vs-docs prompt — only when target is valid and visible
             const winnerLabel = (s5Telemetry.winnerCandidate?.slots_json as any)?.target_name ?? (s5Telemetry.winnerCandidate?.slots_json as any)?.panelTitle ?? 'this panel'
-            const winnerId = s5Telemetry.winnerCandidate?.target_ids?.[0] ?? ''
-            const docsMsgId = `assistant-${Date.now()}`
-            const docsOptions: import('@/lib/chat').SelectionOption[] = [
-              { type: 'panel_drawer', id: `open-${winnerId}`, label: `Open ${winnerLabel}`, sublabel: `Open the ${winnerLabel} panel`, data: { panelId: winnerId, panelTitle: String(winnerLabel), panelType: 'known_noun' } },
-              { type: 'doc' as any, id: `docs-${winnerId}`, label: `Read docs about ${winnerLabel}`, sublabel: `Learn what ${winnerLabel} does`, data: { docSlug: ctx.trimmedInput.replace(/[?]+$/, '').trim(), originalQuery: ctx.trimmedInput } },
-            ]
-            const docsMsg: ChatMessage = { id: docsMsgId, role: 'assistant', content: `Open ${winnerLabel}, or read docs about it?`, timestamp: new Date(), isError: false, options: docsOptions }
-            ctx.addMessage(docsMsg)
-            ctx.setPendingOptions(docsOptions.map((opt, idx) => ({ index: idx + 1, label: opt.label, sublabel: opt.sublabel, type: opt.type, id: opt.id, data: opt.data })))
-            ctx.setPendingOptionsMessageId(docsMsgId)
-            ctx.setIsLoading(false)
-            console.log('[dispatcher] Stage 5 question-policy: trailing_question, showing open-vs-docs:', { input: ctx.trimmedInput, target: winnerLabel })
-            return { handled: true, handledByTier: 4, tierLabel: 'semantic_question_policy', clarificationCleared: false, isNewQuestionOrCommandDetected: false, classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false, _devProvenanceHint: 'safe_clarifier' }
+            let winnerId = s5Telemetry.winnerCandidate?.target_ids?.[0]
+            // Curated seeds may have empty target_ids — resolve from visible widgets at runtime
+            if (!winnerId && winnerLabel && ctx.uiContext?.dashboard?.visibleWidgets) {
+              const strippedInput = ctx.trimmedInput.replace(/[?!.]+$/, '').trim()
+              const nounMatch = matchKnownNoun(strippedInput)
+              if (nounMatch) {
+                const resolved = resolveToVisiblePanel(nounMatch, ctx.uiContext.dashboard.visibleWidgets as Array<{ id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }>)
+                if (resolved) winnerId = resolved.id
+              }
+            }
+            if (winnerId) {
+              const docsMsgId = `assistant-${Date.now()}`
+              const docsOptions: import('@/lib/chat').SelectionOption[] = [
+                { type: 'panel_drawer', id: `open-${winnerId}`, label: `Open ${winnerLabel}`, sublabel: `Open the ${winnerLabel} panel`, data: { panelId: winnerId, panelTitle: String(winnerLabel), panelType: 'known_noun' } },
+                { type: 'doc' as any, id: `docs-${winnerId}`, label: `Read docs about ${winnerLabel}`, sublabel: `Learn what ${winnerLabel} does`, data: { docSlug: ctx.trimmedInput.replace(/[?]+$/, '').trim(), originalQuery: ctx.trimmedInput } },
+              ]
+              const docsMsg: ChatMessage = { id: docsMsgId, role: 'assistant', content: `Open ${winnerLabel}, or read docs about it?`, timestamp: new Date(), isError: false, options: docsOptions }
+              ctx.addMessage(docsMsg)
+              ctx.setPendingOptions(docsOptions.map((opt, idx) => ({ index: idx + 1, label: opt.label, sublabel: opt.sublabel, type: opt.type, id: opt.id, data: opt.data })))
+              ctx.setPendingOptionsMessageId(docsMsgId)
+              ctx.setIsLoading(false)
+              console.log('[dispatcher] Stage 5 question-policy: trailing_question, showing open-vs-docs:', { input: ctx.trimmedInput, target: winnerLabel })
+              return { handled: true, handledByTier: 4, tierLabel: 'semantic_question_policy', clarificationCleared: false, isNewQuestionOrCommandDetected: false, classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false, _devProvenanceHint: 'safe_clarifier' }
+            }
+            // No concrete target — fall through to downstream (docs/info path will handle)
+            console.log('[dispatcher] Stage 5 question-policy: trailing_question but no concrete target, falling through:', { input: ctx.trimmedInput })
+            s5Telemetry = { ...s5Telemetry, validationResult: 'replay_build_failed', fallbackReason: 'trailing_question_no_target' }
           } else {
             // Duplicate-family check: don't auto-execute if multiple siblings exist
             const navAction = (replayResult as any).navigationReplayAction
@@ -2650,7 +2682,11 @@ export async function dispatchRouting(
   // found no winner AND hintScope is present. If Stage 5 replay already returned early
   // above, we never reach here.
   // earlyHintScope was computed before Stage 5; reuse it here.
-  if (earlyHintScope && !hasLiveClarificationForGate) {
+  // Generic ambiguous panel phrases ("open entries", "show entries", "entries") should NOT
+  // use clarification-first from semantic candidates — they need the tier chain where
+  // buildStemBoundedCandidates produces the correct family-level clarifier (Entries, Entry Navigator, etc.)
+  const isGenericFamilyPhrase = isGenericAmbiguousPanelPhrase(ctx.trimmedInput)
+  if (earlyHintScope && !hasLiveClarificationForGate && !isGenericFamilyPhrase) {
     phase5SkippedTierChain = true
   }
 
@@ -2670,7 +2706,48 @@ export async function dispatchRouting(
     // No-clarifier clarification-first rule (Step 1b):
     // If the unified replay pool has candidates but Stage 5 didn't find a safe winner,
     // generate clarification from those candidates instead of falling through to the navigate API.
-    if (unifiedReplayCandidates.length > 0) {
+    // Phase 2: Question-policy on clarification-first path
+    const clarifyQuestionGuard = detectQuestionGuard(ctx.trimmedInput)
+    if (clarifyQuestionGuard === 'full_question') {
+      // Full question — don't clarify from panel candidates, let docs/info handle
+      console.log('[dispatcher] clarification-first question-policy: full_question, skipping to downstream:', { input: ctx.trimmedInput })
+      // Fall through to downstream (result stays unset → tier chain runs)
+    } else if (clarifyQuestionGuard === 'trailing_question' && unifiedReplayCandidates.length > 0) {
+      // Trailing question with candidates — try to show open-vs-docs for the top candidate
+      const topCandidate = unifiedReplayCandidates[0]
+      const topLabel = (topCandidate.slots_json as any)?.target_name ?? (topCandidate.slots_json as any)?.panelTitle ?? 'this panel'
+      let topId = topCandidate.target_ids?.[0]
+      // Resolve from visible widgets if curated seed has no concrete target
+      if (!topId && ctx.uiContext?.dashboard?.visibleWidgets) {
+        const strippedInput = ctx.trimmedInput.replace(/[?!.]+$/, '').trim()
+        const nounMatch = matchKnownNoun(strippedInput)
+        if (nounMatch) {
+          const resolved = resolveToVisiblePanel(nounMatch, ctx.uiContext.dashboard.visibleWidgets as Array<{ id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }>)
+          if (resolved) topId = resolved.id
+        }
+      }
+      if (topId) {
+        // Check duplicate-family before showing open-vs-docs
+        const dupCheck = validateDuplicateFamily(topId, ctx.uiContext?.dashboard?.visibleWidgets as Array<{ id: string; title: string; type: string }> | undefined)
+        if (dupCheck.valid) {
+          const docsMsgId = `assistant-${Date.now()}`
+          const docsOptions: SelectionOption[] = [
+            { type: 'panel_drawer', id: `open-${topId}`, label: `Open ${topLabel}`, sublabel: `Open the ${topLabel} panel`, data: { panelId: topId, panelTitle: String(topLabel), panelType: 'known_noun' } },
+            { type: 'doc' as any, id: `docs-${topId}`, label: `Read docs about ${topLabel}`, sublabel: `Learn what ${topLabel} does`, data: { docSlug: ctx.trimmedInput.replace(/[?]+$/, '').trim(), originalQuery: ctx.trimmedInput } },
+          ]
+          const docsMsg: ChatMessage = { id: docsMsgId, role: 'assistant', content: `Open ${topLabel}, or read docs about it?`, timestamp: new Date(), isError: false, options: docsOptions }
+          ctx.addMessage(docsMsg)
+          ctx.setPendingOptions(docsOptions.map((opt, idx) => ({ index: idx + 1, label: opt.label, sublabel: opt.sublabel, type: opt.type, id: opt.id, data: opt.data })))
+          ctx.setPendingOptionsMessageId(docsMsgId)
+          ctx.setIsLoading(false)
+          console.log('[dispatcher] clarification-first question-policy: trailing_question open-vs-docs:', { input: ctx.trimmedInput, target: topLabel })
+          result = { handled: true, handledByTier: 4, tierLabel: 'semantic_question_policy', clarificationCleared: false, isNewQuestionOrCommandDetected: false, classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false, _devProvenanceHint: 'safe_clarifier' }
+        }
+        // If dup-family invalid → fall through to generic clarification below
+      }
+      // If no topId or dup-family invalid → fall through to generic clarification below
+    }
+    if (!result && clarifyQuestionGuard !== 'full_question' && unifiedReplayCandidates.length > 0) {
       // Build clarification options from unified candidates
       const clarifyOptions: SelectionOption[] = unifiedReplayCandidates
         .slice(0, 5) // Limit to top 5
@@ -2958,6 +3035,31 @@ export async function dispatchRouting(
   // Stage 5: attach shadow telemetry to result
   if (!routingError && result && s5Telemetry) {
     result._s5Telemetry = s5Telemetry
+  }
+
+  // Phase 2, Step 6: Temporary unknown-noun fallback.
+  // When both semantic + downstream failed for a bare-noun input, show clarification-style
+  // message instead of letting it fall to a generic LLM response.
+  // Only fires when: bare noun matched KNOWN_NOUN_FORMS, semantic had no safe winner,
+  // and downstream also did not handle.
+  if (!routingError && result && !result.handled && earlyHintScope === 'navigation') {
+    const bareInput = ctx.trimmedInput.replace(/[?!.]+$/, '').trim().toLowerCase()
+    const KNOWN_NOUN_FORMS_FALLBACK = new Set([
+      'recent', 'widget manager', 'navigator',
+      'links panel a', 'links panel b', 'links panel c', 'links panel d',
+      'links panel', 'quick links', 'entries', 'entry navigator',
+    ])
+    if (KNOWN_NOUN_FORMS_FALLBACK.has(bareInput) && !result.handled) {
+      const fallbackMsg: ChatMessage = {
+        id: `assistant-${Date.now()}`, role: 'assistant',
+        content: `I'm not sure what "${ctx.trimmedInput}" refers to in this context. Could you try again or give more detail?`,
+        timestamp: new Date(), isError: false,
+      }
+      ctx.addMessage(fallbackMsg, { tierLabel: 'unknown_noun_fallback', provenance: 'safe_clarifier' })
+      ctx.setIsLoading(false)
+      result = { ...result, handled: true, handledByTier: 4, tierLabel: 'unknown_noun_fallback', _devProvenanceHint: 'safe_clarifier' }
+      console.log('[dispatcher] Phase 2 unknown-noun fallback:', { input: ctx.trimmedInput })
+    }
   }
 
   // Phase 3c: expose B2 lookup status for server-side clarifier telemetry in sendMessage

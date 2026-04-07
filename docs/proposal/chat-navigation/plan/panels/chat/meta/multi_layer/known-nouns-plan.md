@@ -151,7 +151,8 @@ Add or verify curated rows for noun-only known-noun forms and close variants in:
 
 Requirements:
 
-- noun-only forms map to the same target identities already used by verb-form commands
+- noun-only forms map to the same family identity and policy contract already used by verb-form commands
+- singleton nouns may share the same concrete target identity as verb-form commands, but generic duplicate-capable family nouns must preserve family-level metadata rather than preselecting a concrete winner
 - metadata should be replay-safe and consistent with existing semantic execution families
 - duplicate-family targets should keep enough metadata for shared ambiguity handling
 
