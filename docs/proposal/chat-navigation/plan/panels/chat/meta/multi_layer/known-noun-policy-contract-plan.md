@@ -41,11 +41,30 @@ So the intended split is:
 
 This avoids treating covered noun-questions as a separate proposal track while still keeping their memory/writeback policy bounded.
 
+## Proposal Status
+
+At the proposal level, this contract is implementation-ready for the widget/panel known-noun slice.
+
+That includes:
+
+- `recent`
+- `widget manager`
+- `links panel` / `open links panel`
+- `navigator` / `open navigator`
+
+The remaining work for that slice is implementation planning, coding, and verification.
+
+Important scope note:
+
+- content/container concepts such as `entries` and `workspaces` may still require a separate follow-up contract if product semantics differ from widget/panel noun routing
+- they should not block implementation of the duplicate-capable widget/panel family contract defined here
+
 ## Simple Mental Model
 
-- known noun by itself means "open it" only when runtime validation proves one safe visible target
+- known noun by itself means "open it" only when runtime validation proves one safe visible or resolvable target
 - explicit question-shaped known noun means "tell me about it"
 - duplicate-capable family noun means "ask which one" when multiple visible siblings exist
+- duplicate-capable family noun behaves the same with or without the verb `open`
 
 This model applies inside the shared semantic pipeline, not through separate routing systems.
 
@@ -92,7 +111,6 @@ It exists to make explicit:
 | Widget Manager | `widget manager`, `open widget manager` | `widget manager` surface | No, unless product changes later | Valid visible or resolvable target -> execute |
 | Navigator family | `navigator`, `open navigator` | navigator-family surface | Yes | One valid instance -> execute; multiple -> clarify; none -> safe fallback |
 | Links Panel family | `links panel`, `open links panel`, `quick links`, `open quick links`, `links panel a/b/c/d` | links-panel family surface; `quick links` is an in-family alias, not a separate family | Yes | Specific instance with one valid target -> execute; generic family with multiple -> clarify |
-| Entries via navigator family | `entries`, `open entries` | navigator-family surface for entry navigation | Yes | One valid navigator-family instance -> execute; multiple -> clarify; none -> safe fallback |
 | Question-shaped covered nouns | `recent?`, `links panel?`, `what is recent?`, `what is links panel?` | same family as base noun | Depends on base family | Do not auto-execute; open-vs-docs or docs/info per question policy |
 
 Notes:
@@ -101,6 +119,9 @@ Notes:
 - it does **not** mean every row has one fixed outcome
 - per-turn execute vs clarify still depends on runtime target validity and family cardinality
 - unsupported nouns outside this cohort remain out of scope for Phase 2 unless intentionally added later
+- `links panel` and `open links panel` share the same duplicate-capable family policy
+- `navigator` and `open navigator` share the same duplicate-capable family policy
+- content/container concepts such as `entries` and `workspaces` are intentionally excluded from this widget/panel cohort and should follow a separate contract if admitted later
 
 ## Selection Ownership Rules
 
@@ -115,16 +136,16 @@ Examples:
 - `1`
 - `2`
 - `recent`
-- `entries`
+- `links panel a`
 - `the first one`
 - `open the second option from chat`
 
-If `Entries` is an offered option, replying `entries` is treated as a selection reply, not as a fresh ambiguous family noun.
+If `Links Panel A` is an offered option, replying `links panel a` is treated as a selection reply, not as a fresh ambiguous family noun.
 
 Observed runtime example:
 
-- after `open entries` shows a live clarification list containing `Entries`
-- replying `entries` resolves as selection and opens `Entries`
+- after `open links panel` shows a live clarification list containing `Links Panel A`
+- replying `links panel a` resolves as selection and opens `Links Panel A`
 - this is the intended behavior for ambiguous family labels inside a live selection context
 
 ### 2. Breakout wins when the reply is a fresh command or question
@@ -153,8 +174,8 @@ That means:
 Exception:
 
 - recoverable recent options should **not** automatically own generic ambiguous family phrases such as:
-  - `entries`
   - `links panel`
+  - `navigator`
   - `quick links`
 - those generic ambiguous phrases should only be treated as selection replies when the option set is still **live** (for example, active pending options), not when it is merely recoverable
 
@@ -178,7 +199,7 @@ The normal ambiguous-family rule:
 
 - `links panel`
 - `quick links`
-- `entries`
+- `navigator`
 
 clarify as fresh turns.
 
@@ -251,7 +272,6 @@ Examples:
 
 - `links panel`
 - `quick links`
-- `entries`
 - `navigator` when multiple navigator-family siblings are visible
 
 Policy:
@@ -260,12 +280,13 @@ Policy:
 - if multiple valid siblings/family members exist, clarify
 - do not deterministically pick one sibling from a family noun
 
-Special note for `entries`:
+Important duplicate-capable family rule:
 
-- `entries` is not just a standalone widget label
-- it is a navigation surface that depends on the navigator-family widget
-- dashboard and workspace entry navigation is exposed through that navigator-family surface
-- so `entries` should be validated against available navigator-family instances, not treated as an unrelated singleton widget noun
+- the presence or absence of the verb `open` must not change the family-level policy
+- `links panel` and `open links panel` must share the same runtime family rule
+- `navigator` and `open navigator` must share the same runtime family rule
+- if current `open links panel` behavior clarifies correctly with multiple siblings, bare `links panel` must do the same under the same runtime state
+- if `open navigator` and `navigator` differ under the same runtime sibling state, that difference is a bug, not a feature
 
 ## Retrieval Model
 
@@ -286,6 +307,12 @@ Instead:
 
 - different surface forms map into the same candidate universe
 - policy decides the correct user-facing outcome
+
+For generic duplicate-capable family nouns specifically:
+
+- semantic retrieval should identify family identity first, not only a concrete panel winner
+- runtime sibling/cardinality inspection should run before concrete instance resolution
+- concrete instance resolution should only happen after runtime policy has decided execution is safe
 
 For covered noun-question forms specifically:
 
@@ -378,7 +405,110 @@ So the intended split is:
 - runtime registry says how many valid targets currently exist
 - policy decides execute vs clarify vs fallback
 
-This avoids treating nouns like `navigator` or `entries` as permanently fixed behavior buckets when the real outcome depends on current visible or resolvable instances.
+For duplicate-capable panel/widget nouns this means:
+
+- generic `links panel` / `open links panel` must be treated as the Links Panel family first
+- generic `navigator` / `open navigator` must be treated as the Navigator family first
+- explicit instance forms such as `links panel b` or `navigator b` may still resolve directly
+
+This avoids treating widget nouns like `navigator` or `links panel` as permanently fixed behavior buckets when the real outcome depends on current visible or resolvable instances.
+
+## Capability-Based Generalization
+
+The current implementation slice is still anchored on concrete examples such as:
+
+- `links panel`
+- `open links panel`
+- `navigator`
+- `open navigator`
+
+But the governing rule should be capability-based, not name-based.
+
+That means the long-term contract is:
+
+- any duplicate-capable widget family that supports generic noun routing uses family-first routing
+- any singleton-safe widget family that supports generic noun routing may use direct validated open
+- any selector-specific instance form may resolve directly when valid
+- question-shaped forms remain governed by question-policy rather than auto-execution
+
+So the distinction is:
+
+- duplicate-capable vs singleton-safe
+- generic family form vs explicit instance form
+
+not:
+
+- built-in widget A vs built-in widget B vs future widget C
+
+### Automatic Coverage Rule
+
+A future widget family is automatically covered by this contract only if it declares the metadata needed for routing.
+
+This applies equally to:
+
+- future built-in dashboard widgets
+- third-party widgets
+
+The router should not special-case origin. It should special-case capability and routing metadata.
+
+### Required Routing Metadata
+
+At minimum, an automatically covered widget family should expose:
+
+- `family_id`
+- canonical display name
+- aliases or retrieval labels
+- `duplicate_capable: true | false`
+- selector semantics or `selector_mode`
+- `supports_generic_noun_routing: true | false`
+- `supports_question_policy: true | false`
+- runtime visible or resolvable instances grouped by `family_id`
+
+If that metadata is missing, the family should not be auto-covered by generic noun routing.
+
+### Alias Collision And Precedence
+
+Automatic coverage must also define collision safety for display labels and aliases.
+
+If two or more widget families claim the same canonical noun, alias, or retrieval label:
+
+- automatic generic noun routing must not silently pick one family
+- the router must apply a deterministic precedence rule or reject automatic coverage for the colliding alias
+- built-in versus third-party origin alone is not enough; the precedence rule must be reviewable and explicit
+
+Minimum safe behavior:
+
+- exact alias collision with no explicit precedence -> no automatic generic noun routing on that alias
+- safe fallback, explicit clarification, or narrower selector-only routing instead
+- only non-colliding aliases may participate in automatic generic noun routing by default
+
+### Resulting Contract
+
+If the metadata is present:
+
+- duplicate-capable family + generic noun -> family-first routing
+- singleton-safe family + generic noun -> direct validated open
+- explicit instance form -> direct instance resolution
+- question-shaped form -> question-policy
+
+If the metadata is absent:
+
+- no automatic generic noun routing
+- safe fallback or narrower explicit routing only
+
+### Phase 2 Implementation Scope vs Long-Term Rule
+
+Phase 2 implementation still targets the currently active duplicate-capable families:
+
+- Links Panel family
+- Navigator family
+
+But they are examples of the rule, not the final closed set.
+
+So the intended evolution is:
+
+1. implement the family-first contract for the currently active duplicate-capable families
+2. generalize automatic coverage to any built-in or third-party widget family that exposes the required metadata
 
 ## Seed Guidance
 
@@ -404,6 +534,13 @@ These can be separate seed rows, but they should share:
 - action family
 - target metadata
 - validation expectations
+
+For duplicate-capable panel/widget nouns:
+
+- bare noun and `open` verb forms are separate exemplars of the same family-level request
+- they must not diverge into separate routing policies
+- generic duplicate-capable seeds should behave as family-level candidates first
+- explicit instance seeds may remain concrete and selector-specific
 
 This improves:
 
@@ -439,6 +576,20 @@ Rule:
 - duplicate-capable family noun + multiple valid visible/resolvable siblings -> clarify
 - no valid visible or resolvable target -> safe fallback
 
+Ordering rule:
+
+1. identify the family
+2. inspect runtime sibling count
+3. decide execute vs clarify vs fallback
+4. only if execution is safe, resolve a concrete instance
+
+This is the intended behavior for:
+
+- `links panel`
+- `open links panel`
+- `navigator`
+- `open navigator`
+
 This means:
 
 - keep an authoritative family/capability map
@@ -456,17 +607,12 @@ Important caution:
 - selection ownership and question-policy still sit above this default execute behavior
 - some nouns may still be true product invariants because their families are genuinely non-duplicable, but that should come from family/capability metadata, not ad hoc noun bucketing
 
-For `entries` specifically:
-
-- if one valid navigator-family instance is available, `entries` may execute through that surface
-- if multiple valid navigator-family instances are available or resolvable, `entries` should clarify
-- if no valid navigator-family surface is available, `entries` should safe-fallback
-
 ## Policy Summary
 
-- bare known noun -> execute after one strong safe semantic winner and valid target resolution
+- bare known noun -> execute after one strong safe semantic winner and valid target resolution; for duplicate-capable families, "valid" includes family-cardinality validation first
 - explicit question form -> do not execute; open-vs-docs or docs/info
 - duplicate-capable family noun -> clarify when multiple visible siblings exist
+- duplicate-capable family noun, with or without `open`, shares one runtime family policy
 
 This is intentionally simpler than treating every bare known noun as execute-or-clarify-or-docs by default, while still letting runtime cardinality decide family behavior.
 
@@ -475,8 +621,8 @@ This is intentionally simpler than treating every bare known noun as execute-or-
 After semantic retrieval:
 
 1. explicit question form -> do not execute; question-policy preempts default execute and chooses open-vs-docs, docs/info, or clarification
-2. one strong safe winner + one valid visible/resolvable target -> execute
-3. duplicate-capable family noun + multiple valid visible/resolvable siblings -> clarify
+2. duplicate-capable family noun + multiple valid visible/resolvable siblings -> clarify; family-cardinality validation preempts default execute
+3. one strong safe winner + one valid visible/resolvable target -> execute
 4. useful but not safe candidate -> clarify
 5. only if semantic/shared retrieval is empty or insufficient does downstream fallback run
 6. if all else fails, final outcome is clarification
@@ -519,11 +665,13 @@ Expected outcomes:
 - `open widget manager` -> execute
 - `navigator` -> execute when one valid visible/resolvable safe instance exists; clarify when multiple navigator-family siblings exist
 - `open navigator` -> same runtime family-cardinality rule
+- `navigator` and `open navigator` -> same outcome under the same runtime sibling state
 - `links panel?` -> open-vs-docs prompt with one concrete safe target; clarify if family ambiguity prevents a concrete target; docs/info if the family is known but zero valid targets exist
 - `what is links panel?` -> docs/info
-- `links panel` -> clarify
+- `links panel` -> execute when one valid visible/resolvable safe instance exists; clarify when multiple links-panel siblings exist
+- `open links panel` -> same runtime family-cardinality rule
+- `links panel` and `open links panel` -> same outcome under the same runtime sibling state
 - `quick links` -> same family behavior as `links panel`; clarify for generic family use unless runtime validation collapses to one safe target
-- `entries` -> clarify when multiple family siblings exist; execute only if runtime validation collapses to one safe visible instance
 - `is recent open?` -> state-info path, not the covered noun-question bypass path
 - `which navigator is open?` -> state-info path, not the covered noun-question bypass path
 
@@ -533,7 +681,7 @@ With live selection context:
 - known-noun defaults apply only when the user is not currently inside that active selection flow, or clearly breaks out of it
 - selection wins examples:
   - `1`
-  - `entries`
+  - `links panel a`
   - `open the second option from chat`
 - breakout wins examples:
   - `open recent`
@@ -541,10 +689,10 @@ With live selection context:
   - `what is recent?`
   - `open widget manager`
 - recoverable recent options still count as live selection context until they expire or the user clearly breaks out
-- recoverable recent options do **not** automatically claim generic ambiguous family phrases like `entries` unless the option set is still live
+- recoverable recent options do **not** automatically claim generic ambiguous family phrases like `links panel` unless the option set is still live
 - runtime-confirmed example:
-  - `open entries` -> live clarifier with `Entries`
-  - reply `entries` -> selection resolves and opens `Entries`
+  - `open links panel` -> live clarifier with `Links Panel A`
+  - reply `links panel a` -> selection resolves and opens `Links Panel A`
 
 ## Intended Use
 

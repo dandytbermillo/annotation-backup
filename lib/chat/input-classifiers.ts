@@ -1072,6 +1072,13 @@ const SEMANTIC_LANE_PATTERN = /\b(why did|explain|what (just )?happened|what was
 const DEFINITIONAL_QUERY_PATTERN = /^(what\s+is\s+|what\s+are\s+|what'?s\s+|define\s+|how\s+does\s+)/i
 
 /**
+ * State-info question patterns — questions about current UI state.
+ * These should stay on the state-info / arbiter path, not the semantic answer lane.
+ * Examples: "is recent open?", "which navigator is open?", "is links panel visible?"
+ */
+const STATE_INFO_QUESTION_PATTERN = /^(is|are|which|what)\s+.+\s+(open|opened|closed|visible|active|running|showing)\s*[?]?\s*$/i
+
+/**
  * Detect semantic question/imperative inputs for the semantic answer lane.
  * Catches both question-form ("why did I do that?") and imperative-form ("summarize my session").
  * Excludes command-like, selection-like, and definitional inputs to avoid false positives.
@@ -1093,6 +1100,8 @@ export function isSemanticQuestionInput(
   const trimmed = input.trim().toLowerCase()
   const stripped = trimmed.replace(/^(hi|hey|hello|yo)\s+/, '')
   if (DEFINITIONAL_QUERY_PATTERN.test(stripped)) return false
+  // Exclude state-info questions — "is X open?", "which X is open?" stay on state-info path.
+  if (STATE_INFO_QUESTION_PATTERN.test(stripped)) return false
 
   return hasQuestionIntent(input) || SEMANTIC_LANE_PATTERN.test(input)
 }

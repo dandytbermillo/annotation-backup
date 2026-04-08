@@ -63,7 +63,7 @@ import { reconstructSnapshotData } from '@/lib/chat/chat-routing-clarification-u
 import { handleCrossCorpusRetrieval } from '@/lib/chat/cross-corpus-handler'
 import { handleDocRetrieval } from '@/lib/chat/doc-routing'
 import { isAffirmationPhrase, isRejectionPhrase, matchesReshowPhrases, matchesShowAllHeuristic, hasGraceSkipActionVerb, hasQuestionIntent, ACTION_VERB_PATTERN, isCommandLike, isPoliteImperativeRequest } from '@/lib/chat/query-patterns'
-import { matchKnownNoun, detectQuestionGuard, validateVisibility, validateDuplicateFamily, resolveToVisiblePanel } from '@/lib/chat/known-noun-routing'
+import { matchKnownNoun, detectQuestionGuard, validateVisibility, validateDuplicateFamily, resolveToVisiblePanel, isFamilyLevelCandidate, resolveFamilyCardinality } from '@/lib/chat/known-noun-routing'
 import { callClarificationLLMClient, isLLMFallbackEnabledClient } from '@/lib/chat/clarification-llm-fallback'
 import { handleGroundingSetFallback, buildGroundingContext, checkSoftActiveWindow, isSelectionLike, validateGroundingCandidates, capAndTrimCandidates } from '@/lib/chat/grounding-set'
 import type { GroundingCandidate } from '@/lib/chat/grounding-set'
@@ -641,10 +641,10 @@ function detectHintScope(input: string): 'history_info' | 'navigation' | null {
   const KNOWN_NOUN_FORMS = new Set([
     'recent', 'widget manager', 'navigator',
     'links panel a', 'links panel b', 'links panel c', 'links panel d',
-    // Generic family nouns — enter semantic pipeline for Phase 5 lookup.
-    // links panel/navigator/quick links: Phase 5 finds near-tie instance seeds → clarification-first shows them.
-    // entries: isGenericAmbiguousPanelPhrase guard prevents phase5SkippedTierChain → tier chain handles correctly.
-    'links panel', 'quick links', 'entries', 'entry navigator',
+    // Generic family nouns per canonical cohort table — enter semantic pipeline.
+    // links panel/quick links: Phase 5 finds near-tie instance seeds → clarification-first shows them.
+    // entries: isGenericAmbiguousPanelPhrase guard prevents phase5SkippedTierChain → tier chain handles.
+    'links panel', 'quick links', 'entries',
   ])
   const bareInput = input.replace(/[?!.]+$/, '').trim().toLowerCase()
   if (KNOWN_NOUN_FORMS.has(bareInput)) return 'navigation'
@@ -1790,8 +1790,8 @@ export async function dispatchRouting(
       const KNOWN_NOUN_BYPASS = new Set([
         'recent', 'widget manager', 'navigator',
         'links panel a', 'links panel b', 'links panel c', 'links panel d',
-        // Generic family nouns bypass arbiter so they reach the semantic/tier-chain path
-        'links panel', 'quick links', 'entries', 'entry navigator',
+        // Generic family nouns per canonical cohort — bypass arbiter to reach semantic/tier-chain
+        'links panel', 'quick links', 'entries',
       ])
       const bareForBypass = ctx.trimmedInput.replace(/[?!.]+$/, '').trim().toLowerCase()
       // Also match question-prefixed forms: "what is links panel?", "what is recent?"
@@ -2556,8 +2556,25 @@ export async function dispatchRouting(
           // Question-policy: don't auto-execute if the input is a question about the target
           const questionGuard = detectQuestionGuard(ctx.trimmedInput)
           if (questionGuard === 'full_question') {
-            // Skip execution, let downstream docs/info path handle it
-            console.log('[dispatcher] Stage 5 question-policy: full_question, skipping replay:', { input: ctx.trimmedInput })
+            // Fix 3: Full question about a covered noun — provide docs/info directly using winner metadata.
+            // No input rewriting: the noun identity comes from the Stage 5 winner's slots_json, not from
+            // stripping prefixes off the user's query. This respects strict-exact-rules.
+            const fullQNounLabel = (s5Telemetry.winnerCandidate?.slots_json as any)?.target_name as string | undefined
+            if (fullQNounLabel) {
+              console.log('[dispatcher] Stage 5 question-policy: full_question, covered-noun docs/info:', { input: ctx.trimmedInput, noun: fullQNounLabel })
+              s5Telemetry = { ...s5Telemetry, validationResult: 'full_question_covered_noun' as any, fallbackReason: 'full_question_guard' }
+              const fullQDocsMsgId = `assistant-${Date.now()}`
+              const fullQDocsMsg: ChatMessage = {
+                id: fullQDocsMsgId, role: 'assistant',
+                content: `What would you like to know about ${fullQNounLabel}?`,
+                timestamp: new Date(), isError: false,
+              }
+              ctx.addMessage(fullQDocsMsg, { tierLabel: 'covered_noun_full_question_docs', provenance: 'safe_clarifier' })
+              ctx.setIsLoading(false)
+              return { handled: true, handledByTier: 4, tierLabel: 'covered_noun_full_question_docs', clarificationCleared: false, isNewQuestionOrCommandDetected: false, classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false, _devProvenanceHint: 'safe_clarifier' }
+            }
+            // No target_name in winner metadata — fall through to generic docs
+            console.log('[dispatcher] Stage 5 question-policy: full_question, no covered noun metadata, falling through:', { input: ctx.trimmedInput })
             s5Telemetry = { ...s5Telemetry, validationResult: 'replay_build_failed', fallbackReason: 'full_question_guard' }
           } else if (questionGuard === 'trailing_question') {
             // Show open-vs-docs prompt — only when target is valid and visible
@@ -2573,6 +2590,13 @@ export async function dispatchRouting(
               }
             }
             if (winnerId) {
+              // Check duplicate-family: multiple siblings → clarify, not open-vs-docs for one
+              const trailingDupCheck = validateDuplicateFamily(winnerId, ctx.uiContext?.dashboard?.visibleWidgets as Array<{ id: string; title: string; type: string }> | undefined)
+              if (!trailingDupCheck.valid) {
+                // Multiple siblings — skip to clarification-first which will show all options
+                console.log('[dispatcher] Stage 5 trailing-question: multiple family siblings, skipping open-vs-docs:', { input: ctx.trimmedInput, siblingCount: trailingDupCheck.siblingCount })
+                s5Telemetry = { ...s5Telemetry, validationResult: 'replay_build_failed', fallbackReason: `trailing_question_duplicate_family_${trailingDupCheck.siblingCount}` }
+              } else {
               const docsMsgId = `assistant-${Date.now()}`
               const docsOptions: import('@/lib/chat').SelectionOption[] = [
                 { type: 'panel_drawer', id: `open-${winnerId}`, label: `Open ${winnerLabel}`, sublabel: `Open the ${winnerLabel} panel`, data: { panelId: winnerId, panelTitle: String(winnerLabel), panelType: 'known_noun' } },
@@ -2585,24 +2609,181 @@ export async function dispatchRouting(
               ctx.setIsLoading(false)
               console.log('[dispatcher] Stage 5 question-policy: trailing_question, showing open-vs-docs:', { input: ctx.trimmedInput, target: winnerLabel })
               return { handled: true, handledByTier: 4, tierLabel: 'semantic_question_policy', clarificationCleared: false, isNewQuestionOrCommandDetected: false, classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false, _devProvenanceHint: 'safe_clarifier' }
-            }
-            // No concrete target — fall through to downstream (docs/info path will handle)
-            console.log('[dispatcher] Stage 5 question-policy: trailing_question but no concrete target, falling through:', { input: ctx.trimmedInput })
-            s5Telemetry = { ...s5Telemetry, validationResult: 'replay_build_failed', fallbackReason: 'trailing_question_no_target' }
-          } else {
-            // Duplicate-family check: don't auto-execute if multiple siblings exist
-            const navAction = (replayResult as any).navigationReplayAction
-            if (navAction?.type === 'open_panel' && navAction.panelId && ctx.uiContext?.dashboard?.visibleWidgets) {
-              const dupCheck = validateDuplicateFamily(navAction.panelId, ctx.uiContext.dashboard.visibleWidgets as Array<{ id: string; title: string; type: string }>)
-              if (!dupCheck.valid) {
-                console.log('[dispatcher] Stage 5 duplicate-family: multiple siblings, skipping replay:', { input: ctx.trimmedInput, panelId: navAction.panelId, siblingCount: dupCheck.siblingCount })
-                s5Telemetry = { ...s5Telemetry, validationResult: 'replay_build_failed', fallbackReason: `duplicate_family_${dupCheck.siblingCount}_siblings` }
-              } else {
-                // Early return — sendMessage() handles commit-point revalidation + log + write
-                return replayResult
               }
+            }
+            // Fix 1: Family-first trailing-question — check family cardinality before falling to docs/info
+            if (!winnerId && isFamilyLevelCandidate(s5Telemetry.winnerCandidate)) {
+              const trailingFamilyId = (s5Telemetry.winnerCandidate?.slots_json as any)?.family_id as string | undefined
+              const trailingVisWidgets = ctx.uiContext?.dashboard?.visibleWidgets as Array<{ id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }> | undefined
+              if (trailingFamilyId && trailingVisWidgets) {
+                const { siblings: trailingSiblings, count: trailingCount } = resolveFamilyCardinality(trailingFamilyId, trailingVisWidgets)
+                if (trailingCount > 1) {
+                  // Trailing ? + multiple siblings → clarify which panel the question is about
+                  console.log('[dispatcher] Stage 5 trailing-question family-first: multiple siblings, clarifying:', { input: ctx.trimmedInput, familyId: trailingFamilyId, siblingCount: trailingCount })
+                  const tqClarifyMsgId = `assistant-${Date.now()}`
+                  const tqClarifyOptions: SelectionOption[] = trailingSiblings.map((sib, idx) => ({
+                    type: 'panel_drawer' as const,
+                    id: `trailing_family_clarify_${idx}`,
+                    label: sib.title,
+                    sublabel: `Open ${sib.title}`,
+                    data: { panelId: sib.id, panelTitle: sib.title, panelType: sib.type },
+                  }))
+                  const tqClarifyMsg: ChatMessage = { id: tqClarifyMsgId, role: 'assistant', content: 'Which one did you mean?', timestamp: new Date(), isError: false, options: tqClarifyOptions }
+                  ctx.addMessage(tqClarifyMsg, { tierLabel: 'family_first_trailing_question_clarification', provenance: 'safe_clarifier' })
+                  ctx.setPendingOptions(tqClarifyOptions.map((opt, idx) => ({ index: idx + 1, label: opt.label, sublabel: opt.sublabel, type: opt.type, id: opt.id, data: opt.data })))
+                  ctx.setPendingOptionsMessageId(tqClarifyMsgId)
+                  ctx.setLastClarification({ type: 'disambiguation', originalIntent: ctx.trimmedInput, messageId: tqClarifyMsgId, timestamp: Date.now(), clarificationQuestion: 'Which one did you mean?', options: tqClarifyOptions.map(opt => ({ id: opt.id, label: opt.label, sublabel: opt.sublabel, type: opt.type })), metaCount: 0 })
+                  ctx.setIsLoading(false)
+                  return { handled: true, handledByTier: 4, tierLabel: 'family_first_trailing_question_clarification', clarificationCleared: false, isNewQuestionOrCommandDetected: false, classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false, _devProvenanceHint: 'safe_clarifier' }
+                } else if (trailingCount === 1) {
+                  // Trailing ? + one sibling → open-vs-docs for that sibling
+                  const sib = trailingSiblings[0]
+                  const tqDocsMsgId = `assistant-${Date.now()}`
+                  const tqDocsOptions: SelectionOption[] = [
+                    { type: 'panel_drawer', id: `open-${sib.id}`, label: `Open ${sib.title}`, sublabel: `Open the ${sib.title} panel`, data: { panelId: sib.id, panelTitle: sib.title, panelType: sib.type } },
+                    { type: 'doc' as any, id: `docs-${sib.id}`, label: `Read docs about ${sib.title}`, sublabel: `Learn what ${sib.title} does`, data: { docSlug: ctx.trimmedInput.replace(/[?]+$/, '').trim(), originalQuery: ctx.trimmedInput } },
+                  ]
+                  const tqDocsMsg: ChatMessage = { id: tqDocsMsgId, role: 'assistant', content: `Open ${sib.title}, or read docs about it?`, timestamp: new Date(), isError: false, options: tqDocsOptions }
+                  ctx.addMessage(tqDocsMsg)
+                  ctx.setPendingOptions(tqDocsOptions.map((opt, idx) => ({ index: idx + 1, label: opt.label, sublabel: opt.sublabel, type: opt.type, id: opt.id, data: opt.data })))
+                  ctx.setPendingOptionsMessageId(tqDocsMsgId)
+                  ctx.setIsLoading(false)
+                  console.log('[dispatcher] Stage 5 trailing-question family-first: one sibling, open-vs-docs:', { input: ctx.trimmedInput, familyId: trailingFamilyId, panelId: sib.id })
+                  return { handled: true, handledByTier: 4, tierLabel: 'semantic_question_policy', clarificationCleared: false, isNewQuestionOrCommandDetected: false, classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false, _devProvenanceHint: 'safe_clarifier' }
+                }
+                // trailingCount === 0 → fall through to docs/info below
+              }
+            }
+            // No concrete target and no family resolution — default to docs/info (per Phase 2 contract)
+            const strippedForDocs = ctx.trimmedInput.replace(/[?!.]+$/, '').trim()
+            const docsFallbackMsg: ChatMessage = {
+              id: `assistant-${Date.now()}`, role: 'assistant',
+              content: `What would you like to know about ${strippedForDocs}?`,
+              timestamp: new Date(), isError: false,
+            }
+            ctx.addMessage(docsFallbackMsg, { tierLabel: 'semantic_question_policy_docs', provenance: 'safe_clarifier' })
+            ctx.setIsLoading(false)
+            console.log('[dispatcher] Stage 5 question-policy: trailing_question, zero targets, docs/info default:', { input: ctx.trimmedInput })
+            return { handled: true, handledByTier: 4, tierLabel: 'semantic_question_policy_docs', clarificationCleared: false, isNewQuestionOrCommandDetected: false, classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false, _devProvenanceHint: 'safe_clarifier' }
+          } else {
+            // Runtime family-cardinality validation before execution.
+            // Family-first: check family identity before concrete instance resolution.
+            const navAction = (replayResult as any).navigationReplayAction
+            const visWidgets = ctx.uiContext?.dashboard?.visibleWidgets as Array<{ id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }> | undefined
+            if (navAction?.type === 'open_panel' && visWidgets) {
+              // Step 6b: Family-first resolution — check family identity before concrete resolution
+              if (isFamilyLevelCandidate(s5Telemetry.winnerCandidate)) {
+                const familyId = (s5Telemetry.winnerCandidate?.slots_json as any)?.family_id as string | undefined
+                if (familyId) {
+                  const { siblings, count } = resolveFamilyCardinality(familyId, visWidgets)
+                  if (count === 1) {
+                    // One sibling — resolve to that instance and execute
+                    navAction.panelId = siblings[0].id
+                    navAction.panelTitle = siblings[0].title
+                    console.log('[dispatcher] Stage 5 family-first: one sibling, executing:', { input: ctx.trimmedInput, familyId, panelId: siblings[0].id })
+                    return replayResult
+                  } else if (count > 1) {
+                    // Multiple siblings — build sibling-panel clarification directly and return.
+                    // This is the family-first clarification: cardinality preempts execute.
+                    console.log('[dispatcher] Stage 5 family-first: multiple siblings, building sibling clarifier:', { input: ctx.trimmedInput, familyId, siblingCount: count })
+                    s5Telemetry = { ...s5Telemetry, validationResult: 'family_clarify' as any, fallbackReason: `family_${count}_siblings` }
+                    const familyClarifyMsgId = `assistant-${Date.now()}`
+                    const familyClarifyOptions: SelectionOption[] = siblings.map((sib, idx) => ({
+                      type: 'panel_drawer' as const,
+                      id: `family_clarify_${idx}`,
+                      label: sib.title,
+                      sublabel: `Open ${sib.title}`,
+                      data: { panelId: sib.id, panelTitle: sib.title, panelType: sib.type },
+                    }))
+                    const familyClarifyMsg: ChatMessage = {
+                      id: familyClarifyMsgId,
+                      role: 'assistant',
+                      content: 'Which one did you mean?',
+                      timestamp: new Date(),
+                      isError: false,
+                      options: familyClarifyOptions,
+                    }
+                    ctx.addMessage(familyClarifyMsg, { tierLabel: 'family_first_clarification', provenance: 'safe_clarifier' })
+                    ctx.setPendingOptions(familyClarifyOptions.map((opt, idx) => ({
+                      index: idx + 1,
+                      label: opt.label,
+                      sublabel: opt.sublabel,
+                      type: opt.type,
+                      id: opt.id,
+                      data: opt.data,
+                    })))
+                    ctx.setPendingOptionsMessageId(familyClarifyMsgId)
+                    ctx.setLastClarification({
+                      type: 'disambiguation',
+                      originalIntent: ctx.trimmedInput,
+                      messageId: familyClarifyMsgId,
+                      timestamp: Date.now(),
+                      clarificationQuestion: 'Which one did you mean?',
+                      options: familyClarifyOptions.map(opt => ({ id: opt.id, label: opt.label, sublabel: opt.sublabel, type: opt.type })),
+                      metaCount: 0,
+                    })
+                    ctx.setIsLoading(false)
+                    replayResult._s5Telemetry = s5Telemetry
+                    if (turnSnapshotForLog) {
+                      try {
+                        const logPayload = buildRoutingLogPayloadFromSemanticMemory(ctx, replayResult, turnSnapshotForLog, s5Telemetry)
+                        if (logPayload) fireOutcomeLog(logPayload)
+                      } catch { /* telemetry best-effort */ }
+                    }
+                    return {
+                      handled: true, handledByTier: 4, tierLabel: 'family_first_clarification',
+                      clarificationCleared: false, isNewQuestionOrCommandDetected: false,
+                      classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
+                      _devProvenanceHint: 'safe_clarifier' as const,
+                      _s5Telemetry: s5Telemetry,
+                    } as any
+                  } else {
+                    // Zero siblings — safe fallback
+                    console.log('[dispatcher] Stage 5 family-first: zero targets, safe fallback:', { input: ctx.trimmedInput, familyId })
+                    s5Telemetry = { ...s5Telemetry, validationResult: 'replay_build_failed', fallbackReason: 'family_zero_targets' }
+                  }
+                } else {
+                  // Family candidate without family_id — treat as no concrete target
+                  console.log('[dispatcher] Stage 5 family-first: missing family_id, skipping:', { input: ctx.trimmedInput })
+                  s5Telemetry = { ...s5Telemetry, validationResult: 'replay_build_failed', fallbackReason: 'family_missing_id' }
+                }
+              } else {
+                // Instance-level candidate: existing concrete resolution + validateDuplicateFamily guard
+                let resolvedPanelId = navAction.panelId as string | undefined
+                // Curated seeds may have empty panelId — resolve from visible widgets at runtime
+                if (!resolvedPanelId) {
+                  const targetName = (s5Telemetry.winnerCandidate?.slots_json as any)?.target_name as string | undefined
+                  if (targetName) {
+                    const nounMatch = matchKnownNoun(targetName)
+                    if (nounMatch) {
+                      const resolved = resolveToVisiblePanel(nounMatch, visWidgets)
+                      if (resolved) {
+                        resolvedPanelId = resolved.id
+                        navAction.panelId = resolved.id
+                        navAction.panelTitle = resolved.title
+                      }
+                    }
+                  }
+                }
+                if (resolvedPanelId) {
+                  // Backstop: duplicate-family check for instance candidates
+                  const dupCheck = validateDuplicateFamily(resolvedPanelId, visWidgets)
+                  if (!dupCheck.valid) {
+                    console.log('[dispatcher] Stage 5 duplicate-family backstop: multiple siblings, skipping replay:', { input: ctx.trimmedInput, panelId: resolvedPanelId, siblingCount: dupCheck.siblingCount })
+                    s5Telemetry = { ...s5Telemetry, validationResult: 'replay_build_failed', fallbackReason: `duplicate_family_${dupCheck.siblingCount}_siblings` }
+                  } else {
+                    return replayResult
+                  }
+                } else {
+                  // No concrete target resolved — cannot execute safely
+                  console.log('[dispatcher] Stage 5: no concrete target resolved, skipping replay:', { input: ctx.trimmedInput })
+                  s5Telemetry = { ...s5Telemetry, validationResult: 'replay_build_failed', fallbackReason: 'no_concrete_target' }
+                }
+              }
+            } else if (navAction) {
+              // Non-panel action (go_home, etc.) — execute directly
+              return replayResult
             } else {
-              // Early return — sendMessage() handles commit-point revalidation + log + write
               return replayResult
             }
           }
@@ -2618,6 +2799,100 @@ export async function dispatchRouting(
 
   // Phase 5 lookup already ran before Stage 5 (unified candidate pool).
   // phase5HintResult is available from the earlier lookup.
+
+  // ---------------------------------------------------------------------------
+  // Fix 2: Covered-noun question interceptor — handles trailing ? and full questions
+  // on covered nouns when Stage 5 didn't produce a handled result.
+  // This catches short nouns like "recent?" where semantic embedding doesn't bridge
+  // the ? form reliably to the base seed.
+  // ---------------------------------------------------------------------------
+  if (earlyHintScope === 'navigation') {
+    const postS5QuestionGuard = detectQuestionGuard(ctx.trimmedInput)
+    if (postS5QuestionGuard !== 'none') {
+      // Only strip trailing punctuation — never strip prefixes/verbs from user input (strict-exact-rules).
+      const postS5Stripped = ctx.trimmedInput.replace(/[?!.]+$/, '').trim()
+      const postS5NounMatch = matchKnownNoun(postS5Stripped)
+      // Trailing-question path: "recent?" → stripped "recent" → matchKnownNoun finds it.
+      // Full-question path: "what is links panel?" → stripped "what is links panel" → matchKnownNoun
+      // won't find it (no prefix stripping). Full questions without a Stage 5 winner fall through
+      // to generic docs — that's correct, not a gap.
+      if (postS5NounMatch && postS5QuestionGuard === 'trailing_question') {
+        const postS5VisWidgets = ctx.uiContext?.dashboard?.visibleWidgets as Array<{ id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }> | undefined
+        if (postS5VisWidgets) {
+          // Trailing ? on covered noun — resolve via visibility + family cardinality
+          const knownNounFamily = (() => {
+            // Check if this noun belongs to a duplicate-capable family
+            const familyMap: Record<string, string> = { 'quick-links': 'quick-links', 'navigator': 'navigator' }
+            const panelId = postS5NounMatch.panelId
+            // Try direct family lookup (panelId might be 'quick-links' or 'navigator')
+            if (familyMap[panelId]) return familyMap[panelId]
+            // Try underscore variant
+            const underscored = panelId.replace(/-/g, '_')
+            const { getDuplicateFamily } = require('@/lib/dashboard/duplicate-family-map')
+            return getDuplicateFamily(underscored) ?? getDuplicateFamily(panelId) ?? null
+          })()
+
+          if (knownNounFamily) {
+            const { siblings, count } = resolveFamilyCardinality(knownNounFamily, postS5VisWidgets)
+            if (count > 1) {
+              // Multiple siblings → clarify
+              console.log('[dispatcher] covered-noun trailing-question interceptor: multiple siblings:', { input: ctx.trimmedInput, familyId: knownNounFamily, count })
+              const tqiClarifyMsgId = `assistant-${Date.now()}`
+              const tqiOptions: SelectionOption[] = siblings.map((sib, idx) => ({
+                type: 'panel_drawer' as const, id: `tqi_clarify_${idx}`, label: sib.title, sublabel: `Open ${sib.title}`,
+                data: { panelId: sib.id, panelTitle: sib.title, panelType: sib.type },
+              }))
+              const tqiMsg: ChatMessage = { id: tqiClarifyMsgId, role: 'assistant', content: 'Which one did you mean?', timestamp: new Date(), isError: false, options: tqiOptions }
+              ctx.addMessage(tqiMsg, { tierLabel: 'covered_noun_trailing_question_clarification', provenance: 'safe_clarifier' })
+              ctx.setPendingOptions(tqiOptions.map((opt, idx) => ({ index: idx + 1, label: opt.label, sublabel: opt.sublabel, type: opt.type, id: opt.id, data: opt.data })))
+              ctx.setPendingOptionsMessageId(tqiClarifyMsgId)
+              ctx.setLastClarification({ type: 'disambiguation', originalIntent: ctx.trimmedInput, messageId: tqiClarifyMsgId, timestamp: Date.now(), clarificationQuestion: 'Which one did you mean?', options: tqiOptions.map(opt => ({ id: opt.id, label: opt.label, sublabel: opt.sublabel, type: opt.type })), metaCount: 0 })
+              ctx.setIsLoading(false)
+              return { handled: true, handledByTier: 4, tierLabel: 'covered_noun_trailing_question_clarification', clarificationCleared: false, isNewQuestionOrCommandDetected: false, classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false, _devProvenanceHint: 'safe_clarifier' } as any
+            } else if (count === 1) {
+              // One sibling → open-vs-docs
+              const sib = siblings[0]
+              const tqiDocsMsgId = `assistant-${Date.now()}`
+              const tqiDocsOptions: SelectionOption[] = [
+                { type: 'panel_drawer', id: `open-${sib.id}`, label: `Open ${sib.title}`, sublabel: `Open the ${sib.title} panel`, data: { panelId: sib.id, panelTitle: sib.title, panelType: sib.type } },
+                { type: 'doc' as any, id: `docs-${sib.id}`, label: `Read docs about ${sib.title}`, sublabel: `Learn what ${sib.title} does`, data: { docSlug: postS5Stripped, originalQuery: ctx.trimmedInput } },
+              ]
+              const tqiDocsMsg: ChatMessage = { id: tqiDocsMsgId, role: 'assistant', content: `Open ${sib.title}, or read docs about it?`, timestamp: new Date(), isError: false, options: tqiDocsOptions }
+              ctx.addMessage(tqiDocsMsg)
+              ctx.setPendingOptions(tqiDocsOptions.map((opt, idx) => ({ index: idx + 1, label: opt.label, sublabel: opt.sublabel, type: opt.type, id: opt.id, data: opt.data })))
+              ctx.setPendingOptionsMessageId(tqiDocsMsgId)
+              ctx.setIsLoading(false)
+              console.log('[dispatcher] covered-noun trailing-question interceptor: one sibling, open-vs-docs:', { input: ctx.trimmedInput, panelId: sib.id })
+              return { handled: true, handledByTier: 4, tierLabel: 'covered_noun_trailing_question_policy', clarificationCleared: false, isNewQuestionOrCommandDetected: false, classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false, _devProvenanceHint: 'safe_clarifier' } as any
+            }
+            // count === 0 → fall through to docs/info
+          }
+          // Singleton noun (recent, widget manager) — resolve directly
+          const singletonResolved = resolveToVisiblePanel(postS5NounMatch, postS5VisWidgets)
+          if (singletonResolved) {
+            const sMsgId = `assistant-${Date.now()}`
+            const sOptions: SelectionOption[] = [
+              { type: 'panel_drawer', id: `open-${singletonResolved.id}`, label: `Open ${singletonResolved.title}`, sublabel: `Open the ${singletonResolved.title} panel`, data: { panelId: singletonResolved.id, panelTitle: singletonResolved.title, panelType: singletonResolved.type } },
+              { type: 'doc' as any, id: `docs-${singletonResolved.id}`, label: `Read docs about ${singletonResolved.title}`, sublabel: `Learn what ${singletonResolved.title} does`, data: { docSlug: postS5Stripped, originalQuery: ctx.trimmedInput } },
+            ]
+            const sMsg: ChatMessage = { id: sMsgId, role: 'assistant', content: `Open ${singletonResolved.title}, or read docs about it?`, timestamp: new Date(), isError: false, options: sOptions }
+            ctx.addMessage(sMsg)
+            ctx.setPendingOptions(sOptions.map((opt, idx) => ({ index: idx + 1, label: opt.label, sublabel: opt.sublabel, type: opt.type, id: opt.id, data: opt.data })))
+            ctx.setPendingOptionsMessageId(sMsgId)
+            ctx.setIsLoading(false)
+            console.log('[dispatcher] covered-noun trailing-question interceptor: singleton, open-vs-docs:', { input: ctx.trimmedInput, panelId: singletonResolved.id })
+            return { handled: true, handledByTier: 4, tierLabel: 'covered_noun_trailing_question_policy', clarificationCleared: false, isNewQuestionOrCommandDetected: false, classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false, _devProvenanceHint: 'safe_clarifier' } as any
+          }
+          // No visible target → docs/info
+          console.log('[dispatcher] covered-noun trailing-question interceptor: no visible target, docs/info:', { input: ctx.trimmedInput, noun: postS5NounMatch.title })
+          const tqiFallbackMsg: ChatMessage = { id: `assistant-${Date.now()}`, role: 'assistant', content: `What would you like to know about ${postS5NounMatch.title}?`, timestamp: new Date(), isError: false }
+          ctx.addMessage(tqiFallbackMsg, { tierLabel: 'covered_noun_trailing_question_docs', provenance: 'safe_clarifier' })
+          ctx.setIsLoading(false)
+          return { handled: true, handledByTier: 4, tierLabel: 'covered_noun_trailing_question_docs', clarificationCleared: false, isNewQuestionOrCommandDetected: false, classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false, _devProvenanceHint: 'safe_clarifier' } as any
+        }
+      }
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Phase 5: pre-tier-chain override for confident v1 hints
@@ -2744,8 +3019,19 @@ export async function dispatchRouting(
           result = { handled: true, handledByTier: 4, tierLabel: 'semantic_question_policy', clarificationCleared: false, isNewQuestionOrCommandDetected: false, classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false, _devProvenanceHint: 'safe_clarifier' }
         }
         // If dup-family invalid → fall through to generic clarification below
+      } else {
+        // Zero resolved targets but known covered family → docs/info default (per Phase 2 contract)
+        const strippedForDocs = ctx.trimmedInput.replace(/[?!.]+$/, '').trim()
+        const docsFallbackMsg: ChatMessage = {
+          id: `assistant-${Date.now()}`, role: 'assistant',
+          content: `What would you like to know about ${strippedForDocs}?`,
+          timestamp: new Date(), isError: false,
+        }
+        ctx.addMessage(docsFallbackMsg, { tierLabel: 'semantic_question_policy_docs', provenance: 'safe_clarifier' })
+        ctx.setIsLoading(false)
+        console.log('[dispatcher] clarification-first trailing-question: zero targets, docs/info default:', { input: ctx.trimmedInput })
+        result = { handled: true, handledByTier: 4, tierLabel: 'semantic_question_policy_docs', clarificationCleared: false, isNewQuestionOrCommandDetected: false, classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false, _devProvenanceHint: 'safe_clarifier' }
       }
-      // If no topId or dup-family invalid → fall through to generic clarification below
     }
     if (!result && clarifyQuestionGuard !== 'full_question' && unifiedReplayCandidates.length > 0) {
       // Build clarification options from unified candidates
@@ -2936,20 +3222,39 @@ export async function dispatchRouting(
           }
 
           if (resolvedPanel && ctx.openPanelDrawer) {
-            ctx.openPanelDrawer(resolvedPanel.id)
-            const semanticMsg: ChatMessage = {
-              id: `assistant-${Date.now()}`, role: 'assistant',
-              content: `Opening ${resolvedPanel.title ?? label}...`, timestamp: new Date(), isError: false,
+            // Step 6c: Family-first check before escape execution.
+            // If the input is a generic family noun, check cardinality before resolving.
+            const escapeFamilyId = (selected.slots_json as any)?.family_id as string | undefined
+            const escapeTargetKind = (selected.slots_json as any)?.target_kind as string | undefined
+            if (escapeFamilyId && escapeTargetKind === 'family' && visibleWidgets) {
+              const { count } = resolveFamilyCardinality(escapeFamilyId, visibleWidgets as Array<{ id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }>)
+              if (count > 1) {
+                console.log('[dispatcher] semantic escape blocked: family-first multiple siblings:', { familyId: escapeFamilyId, siblingCount: count, input: ctx.trimmedInput })
+                resolvedPanel = null // Block execution — fall through to re-clarify
+              }
+              // count <= 1: proceed with resolvedPanel (already resolved above)
             }
-            ctx.addMessage(semanticMsg, { tierLabel: 'semantic_escape_resolve', provenance: 'bounded_clarification' })
-            ctx.setIsLoading(false)
-            result = {
-              handled: true, handledByTier: 4, tierLabel: 'semantic_escape_resolve',
-              clarificationCleared: true, isNewQuestionOrCommandDetected: false,
-              classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
-              _devProvenanceHint: 'bounded_clarification' as const,
+            // Backstop: runtime duplicate-family guard for instance-level candidates
+            const escapeDupCheck = resolvedPanel ? validateDuplicateFamily(resolvedPanel.id, visibleWidgets as Array<{ id: string; title: string; type: string }> | undefined) : { valid: true }
+            if (!escapeDupCheck.valid) {
+              console.log('[dispatcher] semantic escape blocked: duplicate-family backstop:', { panelId: resolvedPanel?.id, siblingCount: escapeDupCheck.siblingCount, input: ctx.trimmedInput })
+              // Don't execute — let the turn fall through to re-clarify
+            } else if (resolvedPanel) {
+              ctx.openPanelDrawer(resolvedPanel.id)
+              const semanticMsg: ChatMessage = {
+                id: `assistant-${Date.now()}`, role: 'assistant',
+                content: `Opening ${resolvedPanel.title ?? label}...`, timestamp: new Date(), isError: false,
+              }
+              ctx.addMessage(semanticMsg, { tierLabel: 'semantic_escape_resolve', provenance: 'bounded_clarification' })
+              ctx.setIsLoading(false)
+              result = {
+                handled: true, handledByTier: 4, tierLabel: 'semantic_escape_resolve',
+                clarificationCleared: true, isNewQuestionOrCommandDetected: false,
+                classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
+                _devProvenanceHint: 'bounded_clarification' as const,
+              }
+              semanticHandled = true
             }
-            semanticHandled = true
           }
         }
 
@@ -3047,7 +3352,7 @@ export async function dispatchRouting(
     const KNOWN_NOUN_FORMS_FALLBACK = new Set([
       'recent', 'widget manager', 'navigator',
       'links panel a', 'links panel b', 'links panel c', 'links panel d',
-      'links panel', 'quick links', 'entries', 'entry navigator',
+      'links panel', 'quick links', 'entries',
     ])
     if (KNOWN_NOUN_FORMS_FALLBACK.has(bareInput) && !result.handled) {
       const fallbackMsg: ChatMessage = {

@@ -52,20 +52,28 @@ const CURATED_SEEDS: CuratedSeed[] = [
   { query: 'take me home', intent_id: 'go_home', intent_class: 'action_intent', slots_json: { action_type: 'go_home' } },
   { query: 'return home', intent_id: 'go_home', intent_class: 'action_intent', slots_json: { action_type: 'go_home' } },
   // Stable panel command families only — no user-specific targets
-  { query: 'open links panel a', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel a' } },
-  { query: 'open links panel b', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel b' } },
-  { query: 'open links panel c', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel c' } },
-  { query: 'open links panel d', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel d' } },
-  { query: 'open navigator', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'navigator' } },
+  // Instance seeds: explicit selector forms (family_id + target_kind: 'instance')
+  { query: 'open links panel a', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel a', family_id: 'quick-links', target_kind: 'instance' } },
+  { query: 'open links panel b', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel b', family_id: 'quick-links', target_kind: 'instance' } },
+  { query: 'open links panel c', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel c', family_id: 'quick-links', target_kind: 'instance' } },
+  { query: 'open links panel d', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel d', family_id: 'quick-links', target_kind: 'instance' } },
+  // Family seeds: generic duplicate-capable forms (family_id + target_kind: 'family')
+  { query: 'open navigator', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'navigator', family_id: 'navigator', target_kind: 'family' } },
+  { query: 'open links panel', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel', family_id: 'quick-links', target_kind: 'family' } },
+  // Singleton seeds: no family metadata (not duplicate-capable)
   { query: 'open widget manager', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'widget manager' } },
   // Phase 2: Bare-noun seeds — noun-only forms for semantic-first known-noun convergence
   { query: 'recent', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'recent' } },
   { query: 'widget manager', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'widget manager' } },
-  { query: 'navigator', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'navigator' } },
-  { query: 'links panel a', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel a' } },
-  { query: 'links panel b', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel b' } },
-  { query: 'links panel c', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel c' } },
-  { query: 'links panel d', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel d' } },
+  // Family seeds: bare-noun generic duplicate-capable forms
+  { query: 'navigator', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'navigator', family_id: 'navigator', target_kind: 'family' } },
+  { query: 'links panel', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel', family_id: 'quick-links', target_kind: 'family' } },
+  { query: 'quick links', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'quick links', family_id: 'quick-links', target_kind: 'family' } },
+  // Instance seeds: bare-noun explicit selector forms
+  { query: 'links panel a', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel a', family_id: 'quick-links', target_kind: 'instance' } },
+  { query: 'links panel b', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel b', family_id: 'quick-links', target_kind: 'instance' } },
+  { query: 'links panel c', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel c', family_id: 'quick-links', target_kind: 'instance' } },
+  { query: 'links panel d', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel d', family_id: 'quick-links', target_kind: 'instance' } },
   // Surface manifest seeds (Phase E) — dedicated surface resolver
   // Contract (surface-command-resolver-design.md:644-651):
   //   show recent / show recent widget / show recent widget entries → drawer/display

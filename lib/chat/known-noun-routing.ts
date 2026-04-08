@@ -247,6 +247,30 @@ export function validateDuplicateFamily(
   return { valid: true }
 }
 
+// =============================================================================
+// Family-First Resolution Helpers (Step 6b)
+// =============================================================================
+
+/**
+ * Check if a semantic candidate represents a family-level match (not a specific instance).
+ * Family-level candidates carry `target_kind: 'family'` in their slots_json.
+ */
+export function isFamilyLevelCandidate(candidate: { slots_json?: Record<string, unknown> } | null | undefined): boolean {
+  return (candidate?.slots_json?.target_kind as string) === 'family'
+}
+
+/**
+ * Get visible siblings for a duplicate-capable family.
+ * Returns the matching widgets and their count for cardinality-based routing decisions.
+ */
+export function resolveFamilyCardinality(
+  familyId: string,
+  visibleWidgets: Array<{ id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }>
+): { siblings: Array<{ id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }>; count: number } {
+  const siblings = visibleWidgets.filter(w => w.duplicateFamily === familyId)
+  return { siblings, count: siblings.length }
+}
+
 /**
  * Detect question-shaped input guards.
  * Returns 'full_question' for "what is X?", 'trailing_question' for "X?", 'none' otherwise.
