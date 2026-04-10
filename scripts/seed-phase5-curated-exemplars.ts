@@ -74,6 +74,30 @@ const CURATED_SEEDS: CuratedSeed[] = [
   { query: 'links panel b', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel b', family_id: 'quick-links', target_kind: 'instance' } },
   { query: 'links panel c', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel c', family_id: 'quick-links', target_kind: 'instance' } },
   { query: 'links panel d', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel d', family_id: 'quick-links', target_kind: 'instance' } },
+  // Step 10a: State-info seeds — semantic retrieval for freeform widget/panel state questions
+  // Generic open-state
+  { query: 'what panels are open?', intent_id: 'state_info', intent_class: 'info_intent', slots_json: { action_type: 'state_info', query_type: 'open_state', scope: 'panels' } },
+  { query: 'what widgets are open?', intent_id: 'state_info', intent_class: 'info_intent', slots_json: { action_type: 'state_info', query_type: 'open_state', scope: 'widgets' } },
+  { query: 'what panel is open?', intent_id: 'state_info', intent_class: 'info_intent', slots_json: { action_type: 'state_info', query_type: 'open_state', scope: 'panels' } },
+  { query: 'what panel are open?', intent_id: 'state_info', intent_class: 'info_intent', slots_json: { action_type: 'state_info', query_type: 'open_state', scope: 'panels' } },
+  { query: 'what widgets are visible?', intent_id: 'state_info', intent_class: 'info_intent', slots_json: { action_type: 'state_info', query_type: 'open_state', scope: 'widgets' } },
+  { query: 'which panels are open?', intent_id: 'state_info', intent_class: 'info_intent', slots_json: { action_type: 'state_info', query_type: 'open_state', scope: 'panels' } },
+  // Generic active-state
+  { query: 'what is the active panel?', intent_id: 'state_info', intent_class: 'info_intent', slots_json: { action_type: 'state_info', query_type: 'active_state', scope: 'panel' } },
+  { query: 'which panel is active?', intent_id: 'state_info', intent_class: 'info_intent', slots_json: { action_type: 'state_info', query_type: 'active_state', scope: 'panel' } },
+  { query: 'what is the active widget?', intent_id: 'state_info', intent_class: 'info_intent', slots_json: { action_type: 'state_info', query_type: 'active_state', scope: 'widget' } },
+  // Noun-specific open-state
+  { query: 'is recent open?', intent_id: 'state_info', intent_class: 'info_intent', slots_json: { action_type: 'state_info', query_type: 'open_state', target_name: 'recent' } },
+  { query: 'is recent widget open?', intent_id: 'state_info', intent_class: 'info_intent', slots_json: { action_type: 'state_info', query_type: 'open_state', target_name: 'recent', scope: 'widget' } },
+  { query: 'is navigator open?', intent_id: 'state_info', intent_class: 'info_intent', slots_json: { action_type: 'state_info', query_type: 'open_state', target_name: 'navigator', family_id: 'navigator' } },
+  { query: 'which navigator is open?', intent_id: 'state_info', intent_class: 'info_intent', slots_json: { action_type: 'state_info', query_type: 'open_state', target_name: 'navigator', family_id: 'navigator' } },
+  { query: 'is links panel open?', intent_id: 'state_info', intent_class: 'info_intent', slots_json: { action_type: 'state_info', query_type: 'open_state', target_name: 'links panel', family_id: 'quick-links' } },
+  { query: 'which links panel is open?', intent_id: 'state_info', intent_class: 'info_intent', slots_json: { action_type: 'state_info', query_type: 'open_state', target_name: 'links panel', family_id: 'quick-links' } },
+  { query: 'is links panel a open?', intent_id: 'state_info', intent_class: 'info_intent', slots_json: { action_type: 'state_info', query_type: 'open_state', target_name: 'links panel a' } },
+  { query: 'is links panel b open?', intent_id: 'state_info', intent_class: 'info_intent', slots_json: { action_type: 'state_info', query_type: 'open_state', target_name: 'links panel b' } },
+  { query: 'is links panel c open?', intent_id: 'state_info', intent_class: 'info_intent', slots_json: { action_type: 'state_info', query_type: 'open_state', target_name: 'links panel c' } },
+  { query: 'is links panel d open?', intent_id: 'state_info', intent_class: 'info_intent', slots_json: { action_type: 'state_info', query_type: 'open_state', target_name: 'links panel d' } },
+  { query: 'is widget manager open?', intent_id: 'state_info', intent_class: 'info_intent', slots_json: { action_type: 'state_info', query_type: 'open_state', target_name: 'widget manager' } },
   // Surface manifest seeds (Phase E) — dedicated surface resolver
   // Contract (surface-command-resolver-design.md:644-651):
   //   show recent / show recent widget / show recent widget entries → drawer/display

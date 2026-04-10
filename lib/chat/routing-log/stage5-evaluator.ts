@@ -33,7 +33,8 @@ interface MinimalTurnSnapshot {
 
 // Action types eligible for Stage 5 replay
 // No-clarifier convergence: surface_manifest_execute added for list_items/open_surface semantic replay
-const S5_ACTION_ALLOWLIST = new Set(['execute_widget_item', 'execute_referent', 'surface_manifest_execute', 'open_panel', 'open_entry', 'open_workspace', 'go_home'])
+// Step 10a: state_info added for semantic-first widget/panel state queries
+const S5_ACTION_ALLOWLIST = new Set(['execute_widget_item', 'execute_referent', 'surface_manifest_execute', 'open_panel', 'open_entry', 'open_workspace', 'go_home', 'state_info'])
 
 /**
  * Validation result — mutually exclusive, final.

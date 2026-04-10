@@ -76,7 +76,7 @@ export interface SemanticHintLookupResult {
 export async function lookupSemanticHints(payload: {
   raw_query_text: string
   context_snapshot: ContextSnapshotV1
-  intent_scope: 'history_info' | 'navigation'
+  intent_scope: 'history_info' | 'navigation' | 'state_info'
   max_candidates?: number
 }): Promise<SemanticHintLookupResult> {
   if (process.env.NEXT_PUBLIC_CHAT_ROUTING_MEMORY_HINT_READ !== 'true') {

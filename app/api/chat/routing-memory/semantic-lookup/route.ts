@@ -218,7 +218,7 @@ export async function POST(request: NextRequest) {
     const payload: {
       raw_query_text: string
       context_snapshot: ContextSnapshotV1
-      intent_scope?: 'history_info' | 'navigation'
+      intent_scope?: 'history_info' | 'navigation' | 'state_info'
       max_candidates?: number
     } = await request.json()
 
@@ -257,7 +257,8 @@ export async function POST(request: NextRequest) {
       const retrievalText = normalizeForRetrieval(normalizedText)
       const retrievalFingerprint = computeQueryFingerprint(retrievalText)
       const retrievalNormalizationApplied = retrievalText !== normalizedText
-      const intentClass = payload.intent_scope === 'history_info' ? 'info_intent' : 'action_intent'
+      // Step 10a: state_info seeds use info_intent (not action_intent)
+      const intentClass = (payload.intent_scope === 'history_info' || payload.intent_scope === 'state_info') ? 'info_intent' : 'action_intent'
       const maxCandidates = payload.max_candidates ?? 3
 
       // ── Exact-hit shortcut: check learned rows first, then curated seeds ──

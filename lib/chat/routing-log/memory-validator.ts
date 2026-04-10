@@ -195,6 +195,13 @@ export function validateMemoryCandidate(
     return { valid: true }
   }
 
+  // Step 10a: state_info actions are answered from the authoritative widget runtime registry,
+  // not from a physical target. The dispatcher reads ctx.uiContext.dashboard.visibleWidgets +
+  // the registry to compose the answer at execution time. No target ID validation here.
+  if (actionType === 'state_info') {
+    return { valid: true }
+  }
+
   // Unknown action type
   return { valid: false, reason: 'unknown_action_type' }
 }

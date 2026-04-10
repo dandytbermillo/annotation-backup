@@ -96,6 +96,15 @@ const widgetSnapshots = new Map<string, WidgetSnapshot>()
 let activeWidgetId: string | null = null
 
 // ============================================================================
+// Step 10a: Separate isOpen lifecycle store (keyed by panelId)
+// This is the authoritative source for widget open/close state.
+// It is separate from widgetSnapshots to prevent heartbeat re-registration from clobbering lifecycle state.
+// ============================================================================
+
+const widgetOpenState = new Map<string, boolean>()
+let stateInfoActivePanelId: string | null = null
+
+// ============================================================================
 // Validation Helpers
 // ============================================================================
 
@@ -243,6 +252,18 @@ export function registerWidgetSnapshot(snapshot: WidgetSnapshot): boolean {
 
 /**
  * Remove widget snapshot on unmount/hide.
+ *
+ * Step 10a: This MUST NOT touch widgetOpenState or stateInfoActivePanelId.
+ * Snapshot lifecycle (mount/unmount/heartbeat) is independent of open-state lifecycle.
+ *
+ * A single panel may register multiple snapshots (e.g., the dashboard tile
+ * RecentWidget = "w_recent_widget" and the drawer RecentPanel = "w_recent" both share
+ * panel.id). When the drawer's snapshot unmounts because the user opened a different
+ * drawer, the user has NOT closed the original panel — its open state must persist.
+ *
+ * Open state is owned exclusively by setWidgetOpen() / setStateInfoActivePanelId(),
+ * which DashboardView.tsx calls from explicit drawer open/close handlers and from
+ * panel hide/delete actions. clearAllSnapshots() handles full session reset.
  */
 export function unregisterWidgetSnapshot(widgetId: string): boolean {
   return widgetSnapshots.delete(widgetId)
@@ -280,12 +301,67 @@ export function getActiveWidgetId(): string | null {
 }
 
 // ============================================================================
+// Step 10a: Widget Open State API (authoritative lifecycle registry)
+// ============================================================================
+
+/**
+ * Set a widget's open state by panelId.
+ * No exclusivity: opening B does NOT close A. Widgets stay open until explicitly closed.
+ */
+export function setWidgetOpen(panelId: string, isOpen: boolean): void {
+  widgetOpenState.set(panelId, isOpen)
+}
+
+/**
+ * Get whether a widget is currently open by panelId.
+ * Defaults to false if not in the registry.
+ */
+export function getWidgetOpenState(panelId: string): boolean {
+  return widgetOpenState.get(panelId) ?? false
+}
+
+/**
+ * Get all currently open panelIds.
+ */
+export function getAllOpenPanelIds(): string[] {
+  const result: string[] = []
+  for (const [panelId, isOpen] of widgetOpenState) {
+    if (isOpen) result.push(panelId)
+  }
+  return result
+}
+
+/**
+ * Set the currently active/focused drawer panel.
+ * Singular — at most one panel is active at a time.
+ * This is separate from open state: active means "currently focused drawer",
+ * open means "opened and not yet closed".
+ */
+export function setStateInfoActivePanelId(panelId: string | null): void {
+  stateInfoActivePanelId = panelId
+}
+
+/**
+ * Get the currently active/focused drawer panel, or null.
+ */
+export function getStateInfoActivePanelId(): string | null {
+  return stateInfoActivePanelId
+}
+
+/** @deprecated Use getStateInfoActivePanelId() for state-info. Kept for backward compatibility. */
+export function getOpenPanelId(): string | null {
+  return stateInfoActivePanelId
+}
+
+// ============================================================================
 // Debug / Testing Helpers (not required for core behavior)
 // ============================================================================
 
 export function clearAllSnapshots(): void {
   widgetSnapshots.clear()
   activeWidgetId = null
+  widgetOpenState.clear()
+  stateInfoActivePanelId = null
 }
 
 export function getSnapshotCount(): number {

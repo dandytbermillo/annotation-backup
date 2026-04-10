@@ -103,7 +103,7 @@ import { runS6ShadowLoop, runS6EnforcementLoop, executeS6Loop, writeDurableEnfor
 import { classifyContentIntent, isAnchoredNoteResolverHardExcluded, isArbiterHardExcluded, isLikelyNavigateCommand, type NoteAnchorContext } from '@/lib/chat/content-intent-classifier'
 import { callAnchoredNoteResolver } from '@/lib/chat/anchored-note-intent-resolver'
 import { callCrossSurfaceArbiter } from '@/lib/chat/cross-surface-arbiter'
-import { resolveNoteStateInfo, isPanelOpenQuery, resolvePanelOpenStateInfo, resolvePanelWidgetStateInfo, resolveWorkspaceStateInfo, resolveDashboardStateInfo } from '@/lib/chat/state-info-resolvers'
+import { resolveNoteStateInfo, isPanelOpenQuery, resolvePanelOpenStateInfo, resolvePanelWidgetStateInfo, resolveWorkspaceStateInfo, resolveDashboardStateInfo, buildDashboardStateSnapshot, executeStateInfoFromRegistry } from '@/lib/chat/state-info-resolvers'
 import { resolveNoteCommand } from '@/lib/chat/note-command-resolver'
 import { executeS6OpenPanel, isDuplicateAction } from '@/lib/chat/stage6-execution-bridge'
 import type { S6ParsedAction, S6ActionSignature } from '@/lib/chat/stage6-execution-bridge'
@@ -581,7 +581,7 @@ export interface RoutingDispatcherResult {
 
   /** Phase 5: hint metadata from retrieval — consumed by navigate API to bias intent classification */
   _phase5HintIntent?: string
-  _phase5HintScope?: 'history_info' | 'navigation'
+  _phase5HintScope?: 'history_info' | 'navigation' | 'state_info'
   _phase5HintFromSeed?: boolean
 
   /** Phase 5: shared replay snapshot from live UI state — used for B1 lookup AND navigation writeback */
@@ -625,8 +625,12 @@ const HISTORY_INFO_PATTERN = /\b(what\s+did\s+i|what\s+was\s+my\s+last|remind\s+
  * Detect which Phase 5 hint scope applies to the input, if any.
  * Returns null when no hint scope applies (input should not trigger hint retrieval).
  */
-function detectHintScope(input: string): 'history_info' | 'navigation' | null {
+function detectHintScope(input: string): 'history_info' | 'navigation' | 'state_info' | null {
   if (HISTORY_INFO_PATTERN.test(input)) return 'history_info'
+  // Step 10a: State-info scope — freeform widget/panel state questions
+  // This is a routing-admission gate only, NOT a deterministic execution path.
+  const STATE_INFO_SCOPE_PATTERN = /^(is|are|which|what)\s+.+\s+(open|opened|visible|active)\s*[?]?\s*$/i
+  if (STATE_INFO_SCOPE_PATTERN.test(input.trim())) return 'state_info'
   // Home-specific navigation (v1)
   const HOME_NAV_PATTERN = /\b(go\s+(to\s+)?home|take\s+me\s+home|return\s+home|back\s+home)\b/i
   if (HOME_NAV_PATTERN.test(input)) return 'navigation'
@@ -663,7 +667,7 @@ function isGenericPanelStateQuestion(input: string): boolean {
   const hasPanelRef = /\b(panels?|widgets?|drawers?)\b/.test(lower)
   if (!hasPanelRef) return false
   // Must have a state/visibility question word
-  const hasStateWord = /\b(visible|active|current|there|showing|have|many)\b/.test(lower)
+  const hasStateWord = /\b(visible|active|current|there|showing|have|many|open)\b/.test(lower)
   // Must NOT have content-object nouns that indicate specific content request
   const hasContentObject = /\b(entr|item|content)\b/i.test(lower)
   return hasStateWord && !hasContentObject
@@ -2069,6 +2073,13 @@ export async function dispatchRouting(
 
       // ── Phase 4: panel_widget.state_info (migrated) ──
       } else if (isMigrated && rawDecision!.intentFamily === 'state_info' && rawDecision!.surface === 'panel_widget') {
+        // Step 10a: Defer to semantic pipeline for state-info when hint scope is state_info.
+        // The semantic pipeline (Stage 5) will find the curated state-info seed and route to
+        // the registry-backed executor. Do NOT handle here with raw-field resolvers.
+        if (detectHintScope(ctx.trimmedInput) === 'state_info') {
+          console.log('[dispatcher] arbiter panel_widget.state_info: deferring to semantic pipeline (state_info scope)')
+          // Fall through — do NOT set contentIntentMatchedThisTurn, let Stage 5 handle
+        } else {
         contentIntentMatchedThisTurn = true
 
         // Phase E: if a medium surface hint exists and the arbiter confirmed
@@ -2167,27 +2178,45 @@ export async function dispatchRouting(
           return clarifyResult
         }
 
-        const answer = isPanelOpenQuery(ctx.trimmedInput)
-          ? resolvePanelOpenStateInfo(ctx.uiContext ?? {})
-          : resolvePanelWidgetStateInfo(ctx.uiContext ?? {})
-        const panelStateMsg: ChatMessage = {
-          id: `assistant-${Date.now()}`, role: 'assistant', content: answer, timestamp: new Date(), isError: false,
+        // Step 10a: Use registry-based resolver for generic state-info
+        // Step 10a: Arbiter panel_widget.state_info for non-state_info scope.
+        // Use registry-backed executor, not raw-field resolvers.
+        const arbiterVisWidgets = ctx.uiContext?.dashboard?.visibleWidgets as Array<{ id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }> | undefined
+        if (arbiterVisWidgets) {
+          const arbiterSnapshot = buildDashboardStateSnapshot(arbiterVisWidgets)
+          // Try generic open/active state first, then note state
+          const arbiterStateResult = executeStateInfoFromRegistry(
+            { action_type: 'state_info', query_type: isPanelOpenQuery(ctx.trimmedInput) ? 'open_state' : 'open_state', scope: 'panels' },
+            arbiterSnapshot
+          )
+          if (arbiterStateResult.handled && arbiterStateResult.answer) {
+            const panelStateMsg: ChatMessage = {
+              id: `assistant-${Date.now()}`, role: 'assistant', content: arbiterStateResult.answer, timestamp: new Date(), isError: false,
+            }
+            ctx.addMessage(panelStateMsg, { tierLabel: 'arbiter_panel_widget_state_info', provenance: 'safe_clarifier' })
+            ctx.setIsLoading(false)
+            const panelStateResult: RoutingDispatcherResult = {
+              handled: true, handledByTier: 6, tierLabel: 'arbiter_panel_widget_state_info',
+              clarificationCleared: false, isNewQuestionOrCommandDetected: false,
+              classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
+              _devProvenanceHint: 'safe_clarifier',
+            }
+            const panelStatePayload = buildRoutingLogPayload(ctx, panelStateResult, turnSnapshotForLog)
+            Object.assign(panelStatePayload, arbiterTelemetry)
+            void recordRoutingLog(panelStatePayload)
+            return panelStateResult
+          }
         }
-        ctx.addMessage(panelStateMsg, { tierLabel: 'arbiter_panel_widget_state_info', provenance: 'deterministic' })
-        ctx.setIsLoading(false)
-        const panelStateResult: RoutingDispatcherResult = {
-          handled: true, handledByTier: 6, tierLabel: 'arbiter_panel_widget_state_info',
-          clarificationCleared: false, isNewQuestionOrCommandDetected: false,
-          classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
-          _devProvenanceHint: 'deterministic',
-        }
-        const panelStatePayload = buildRoutingLogPayload(ctx, panelStateResult, turnSnapshotForLog)
-        Object.assign(panelStatePayload, arbiterTelemetry)
-        void recordRoutingLog(panelStatePayload)
-        return panelStateResult
+        } // end else (non-state_info scope)
 
       // ── Phase 4: workspace.state_info (migrated) ──
       } else if (isMigrated && rawDecision!.intentFamily === 'state_info' && rawDecision!.surface === 'workspace') {
+        // Step 10a: Defer to semantic pipeline when our hint scope is state_info.
+        // Widget/panel state questions classified as workspace.state_info by the LLM arbiter
+        // (e.g., "is recent open?") must go through Stage 5 → registry executor, not raw fields.
+        if (detectHintScope(ctx.trimmedInput) === 'state_info') {
+          console.log('[dispatcher] arbiter workspace.state_info: deferring to semantic pipeline (state_info scope)')
+        } else {
         contentIntentMatchedThisTurn = true
         const answer = resolveWorkspaceStateInfo(ctx.uiContext ?? {})
         const wsStateMsg: ChatMessage = {
@@ -2205,9 +2234,17 @@ export async function dispatchRouting(
         Object.assign(wsStatePayload, arbiterTelemetry)
         void recordRoutingLog(wsStatePayload)
         return wsStateResult
+        } // end else (non-state_info scope)
 
       // ── Phase 4: dashboard.state_info (migrated) ──
       } else if (isMigrated && rawDecision!.intentFamily === 'state_info' && rawDecision!.surface === 'dashboard') {
+        // Step 10a: Defer to semantic pipeline when our hint scope is state_info.
+        // Widget/panel state questions classified as dashboard.state_info by the LLM arbiter
+        // (e.g., "what panel are open?", "is recent open?") must go through Stage 5 →
+        // registry executor, not raw uiContext.dashboard fields.
+        if (detectHintScope(ctx.trimmedInput) === 'state_info') {
+          console.log('[dispatcher] arbiter dashboard.state_info: deferring to semantic pipeline (state_info scope)')
+        } else {
         contentIntentMatchedThisTurn = true
         const answer = resolveDashboardStateInfo(ctx.uiContext ?? {})
         const dashStateMsg: ChatMessage = {
@@ -2225,6 +2262,7 @@ export async function dispatchRouting(
         Object.assign(dashStatePayload, arbiterTelemetry)
         void recordRoutingLog(dashStatePayload)
         return dashStateResult
+        } // end else (non-state_info scope)
 
       // ── Phase 4: non-note read_content → bounded not-supported ──
       } else if (arbiterResult.success && rawDecision?.intentFamily === 'read_content' && rawDecision?.surface !== 'note') {
@@ -2276,6 +2314,12 @@ export async function dispatchRouting(
 
       // ── Path 4a: Migrated pair below threshold / ambiguous intent / unknown surface / error → clarifier ──
       } else if (isMigratedLowConfidence || (!arbiterResult.success) || rawDecision?.surface === 'unknown' || rawDecision?.intentFamily === 'ambiguous') {
+        // Step 10a: Defer to semantic pipeline when our hint scope is state_info.
+        // Even if the cross-surface arbiter is ambiguous/low-confidence, the curated state_info
+        // seeds + registry executor are authoritative for widget/panel state queries.
+        if (detectHintScope(ctx.trimmedInput) === 'state_info') {
+          console.log('[dispatcher] arbiter ambiguous/unknown: deferring to semantic pipeline (state_info scope)')
+        } else {
         contentIntentMatchedThisTurn = true
         const clarifierMsg: ChatMessage = {
           id: `assistant-${Date.now()}`,
@@ -2296,6 +2340,7 @@ export async function dispatchRouting(
         Object.assign(clarifierPayload, arbiterTelemetry)
         void recordRoutingLog(clarifierPayload)
         return clarifierResult
+        } // end else (non-state_info scope)
 
       // ── Path 4b: Non-migrated pair below threshold → fall through ──
       } else {
@@ -2325,8 +2370,23 @@ export async function dispatchRouting(
           context_snapshot: lookupSnapshot,
           intent_scope: earlyHintScope,
         })
-      } catch {
+        if (earlyHintScope === 'state_info') {
+          console.log('[dispatcher] state_info Phase 5 lookup:', {
+            input: ctx.trimmedInput,
+            status: phase5HintResult?.status,
+            candidateCount: phase5HintResult?.candidates?.length ?? 0,
+            topScore: phase5HintResult?.candidates?.[0]?.similarity_score,
+            topIntentId: phase5HintResult?.candidates?.[0]?.intent_id,
+            topTargetName: (phase5HintResult?.candidates?.[0]?.slots_json as any)?.target_name,
+            exactHitUsed: phase5HintResult?.phase5ExactHitUsed,
+            exactHitSource: phase5HintResult?.phase5ExactHitSource,
+          })
+        }
+      } catch (hintErr) {
         // Fail-open: hint retrieval failed
+        if (earlyHintScope === 'state_info') {
+          console.error('[dispatcher] state_info Phase 5 lookup error:', hintErr)
+        }
       }
   }
 
@@ -2355,7 +2415,8 @@ export async function dispatchRouting(
     for (const hint of phase5HintResult.candidates) {
       const actionType = (hint.slots_json as any)?.action_type as string | undefined
       // Only replay-eligible hints enter the pool (must match Stage 5 allowlist)
-      const REPLAY_ELIGIBLE_ACTIONS = new Set(['execute_widget_item', 'execute_referent', 'surface_manifest_execute', 'open_panel', 'open_entry', 'open_workspace', 'go_home'])
+      // Step 10a: state_info added for semantic-first widget/panel state queries
+      const REPLAY_ELIGIBLE_ACTIONS = new Set(['execute_widget_item', 'execute_referent', 'surface_manifest_execute', 'open_panel', 'open_entry', 'open_workspace', 'go_home', 'state_info'])
       if (!actionType || !REPLAY_ELIGIBLE_ACTIONS.has(actionType)) continue
       if (hint.similarity_score < 0.85) continue
 
@@ -2399,6 +2460,36 @@ export async function dispatchRouting(
           // Override provenance for semantic memory
           replayResult.tierLabel = `memory_semantic:${s5Telemetry.winnerCandidate.intent_id}`
           replayResult._devProvenanceHint = 'memory_semantic'
+
+          // Step 10a: State-info — execute against registry, not as a navigation action
+          const stateInfoQuery = (replayResult as any)._stateInfoQuery as Record<string, unknown> | undefined
+          if (stateInfoQuery) {
+            try {
+              const stateInfoVisWidgets = ctx.uiContext?.dashboard?.visibleWidgets as Array<{ id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }> | undefined
+              if (stateInfoVisWidgets) {
+                const stateSnapshot = buildDashboardStateSnapshot(stateInfoVisWidgets)
+                const stateResult = executeStateInfoFromRegistry(stateInfoQuery, stateSnapshot)
+                if (stateResult.handled && stateResult.answer) {
+                  const stateMsg: ChatMessage = {
+                    id: `assistant-${Date.now()}`, role: 'assistant',
+                    content: stateResult.answer,
+                    timestamp: new Date(), isError: false,
+                  }
+                  ctx.addMessage(stateMsg, { tierLabel: 'semantic_state_info', provenance: 'safe_clarifier' })
+                  ctx.setIsLoading(false)
+                  console.log('[dispatcher] Stage 5 state-info: semantic-first registry answer:', { input: ctx.trimmedInput, answer: stateResult.answer })
+                  s5Telemetry = { ...s5Telemetry, validationResult: 'replay_executed' as any }
+                  replayResult._s5Telemetry = s5Telemetry
+                  // Do NOT write learned rows for state-info — answer depends on runtime state, not historical mapping
+                  return { handled: true, handledByTier: 4, tierLabel: 'semantic_state_info', clarificationCleared: false, isNewQuestionOrCommandDetected: false, classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false, _devProvenanceHint: 'safe_clarifier' }
+                }
+              }
+            } catch (stateInfoError) {
+              // Fail-open: log the error and let the query fall through to downstream handling
+              console.error('[dispatcher] Stage 5 state-info executor error:', stateInfoError)
+              s5Telemetry = { ...s5Telemetry, validationResult: 'replay_build_failed', fallbackReason: 'state_info_executor_error' } as any
+            }
+          }
 
           // No-clarifier convergence: handle surface-manifest-backed actions (list_items, open_surface)
           const manifestAction = (replayResult as any)._surfaceManifestAction as { executionPolicy: string; surfaceType: string } | undefined
@@ -2801,6 +2892,28 @@ export async function dispatchRouting(
   // phase5HintResult is available from the earlier lookup.
 
   // ---------------------------------------------------------------------------
+  // Step 10a: State-info clarification fallback.
+  // Per contract: if semantic retrieval for state_info scope did not produce a safe winner,
+  // the final outcome is clarification — NOT LLM fallback answering from raw fields.
+  // ---------------------------------------------------------------------------
+  if (earlyHintScope === 'state_info') {
+    const stateInfoFallbackMsg: ChatMessage = {
+      id: `assistant-${Date.now()}`, role: 'assistant',
+      content: "I couldn't determine the current widget state. Could you try rephrasing your question?",
+      timestamp: new Date(), isError: false,
+    }
+    ctx.addMessage(stateInfoFallbackMsg, { tierLabel: 'state_info_clarification_fallback', provenance: 'safe_clarifier' })
+    ctx.setIsLoading(false)
+    console.log('[dispatcher] state-info clarification fallback: semantic retrieval did not produce safe winner:', { input: ctx.trimmedInput })
+    return {
+      handled: true, handledByTier: 4, tierLabel: 'state_info_clarification_fallback',
+      clarificationCleared: false, isNewQuestionOrCommandDetected: false,
+      classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
+      _devProvenanceHint: 'safe_clarifier',
+    } as any
+  }
+
+  // ---------------------------------------------------------------------------
   // Fix 2: Covered-noun question interceptor — handles trailing ? and full questions
   // on covered nouns when Stage 5 didn't produce a handled result.
   // This catches short nouns like "recent?" where semantic embedding doesn't bridge
@@ -2902,9 +3015,11 @@ export async function dispatchRouting(
   // and those clarifiers call addMessage() as a side effect that can't be undone.
   // ---------------------------------------------------------------------------
   // V2: expanded to cover all known validated navigation families
+  // Step 10a: state_info added so confident state-info seeds skip the tier chain
   const PHASE5_OVERRIDE_INTENTS = new Set([
     'go_home', 'open_entry', 'open_panel', 'open_workspace',
     'last_action', 'explain_last_action', 'verify_action',
+    'state_info',
   ])
   let phase5SkippedTierChain = false
   let result: RoutingDispatcherResult | undefined
@@ -2981,8 +3096,11 @@ export async function dispatchRouting(
     // No-clarifier clarification-first rule (Step 1b):
     // If the unified replay pool has candidates but Stage 5 didn't find a safe winner,
     // generate clarification from those candidates instead of falling through to the navigate API.
+    // Step 10a: Old regex state-info interceptor REMOVED.
+    // State-info now goes through semantic pipeline (Stage 5) → registry executor.
+    // See Stage 5 state-info handler at ~line 2415.
     // Phase 2: Question-policy on clarification-first path
-    const clarifyQuestionGuard = detectQuestionGuard(ctx.trimmedInput)
+    const clarifyQuestionGuard = !result ? detectQuestionGuard(ctx.trimmedInput) : 'none' as const
     if (clarifyQuestionGuard === 'full_question') {
       // Full question — don't clarify from panel candidates, let docs/info handle
       console.log('[dispatcher] clarification-first question-policy: full_question, skipping to downstream:', { input: ctx.trimmedInput })
@@ -3725,6 +3843,9 @@ async function dispatchRoutingInner(
   // and marks them for bypass of clarification, cross-corpus, grounding, and docs tiers.
   // Input still falls through to LLM API — this only prevents interception.
   // =========================================================================
+  // Step 10a: Old regex state-info interceptor REMOVED from inner function.
+  // State-info now goes through semantic pipeline (Stage 5) → registry executor.
+
   const isSemanticAnswerLaneEnabled = process.env.NEXT_PUBLIC_SEMANTIC_CONTINUITY_ANSWER_LANE_ENABLED === 'true'
   const isSemanticQuestion = isSemanticAnswerLaneEnabled && isSemanticQuestionInput(ctx.trimmedInput)
 

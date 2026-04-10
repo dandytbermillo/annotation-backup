@@ -227,8 +227,7 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
     - "what were the options?" (when chatContext.lastOptions exists)
     - "how many items?" (when chatContext.lastListPreview exists)
     - "is D available?" (when chatContext.lastOptions exists → answer yes/no)
-    - "what panel is open?" (ALWAYS read uiContext.dashboard.openDrawer - this is the CURRENT open panel, do NOT use previous conversation answers)
-    - "what widgets are visible?" (when uiContext.dashboard.visibleWidgets or widgetStates exists → list widget names)
+    - "what panel is open?" / "what widgets are open?" / "what widgets are visible?" → These are handled by the semantic state-info pipeline. Do not answer these from raw uiContext fields.
     - "which notes are open?" (when uiContext.workspace.openNotes exists → list note names; if on dashboard, explain notes live in workspaces)
     Args:
       - contextAnswer (required): The answer based on chat context
@@ -238,13 +237,8 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
       - If the question is about what's currently visible on screen, use uiContext and widgetStates
       - This intent has NO side effects - it only returns a message
       - If asked whether something is in the options/list, answer explicitly yes/no and, if no, name the available options
-      - If asked about an open drawer/panel and uiContext.dashboard.openDrawer is missing, answer that no panel drawer is open
-      - PHASE 4 PRIORITY: For "what's visible/open" questions, prefer widgetStates summaries:
-        - Look for widgetStates with instanceIds like "dashboard-{entryId}" or "workspace-{workspaceId}"
-        - Dashboard state: use summary from dashboard widgetState (e.g., "Home dashboard with 7 widgets")
-        - Workspace state: use summary from workspace widgetState (e.g., "Workspace 6 with 3 open notes")
-        - If widgetStates missing or stale, fall back to uiContext
-      - For "what widgets are visible?": use dashboard widgetState summary first, then visibleWidgets list
+      - Widget/panel open-state and active-state questions are handled before reaching this prompt. If one reaches here unexpectedly, do not guess from raw fields — respond that you cannot determine the current state.
+      - For workspace questions: use workspace widgetState summary if available
       - For "which notes are open?":
         - If workspace widgetState exists: use its summary and openNotes count
         - If workspace widgetState has view="loading": respond "The workspace is still loading. Please try again in a moment."

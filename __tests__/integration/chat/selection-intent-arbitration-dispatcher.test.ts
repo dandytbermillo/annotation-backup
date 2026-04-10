@@ -54,6 +54,13 @@ jest.mock('@/lib/chat/cross-corpus-handler', () => ({
 jest.mock('@/lib/widgets/ui-snapshot-registry', () => ({
   getWidgetSnapshot: jest.fn().mockReturnValue(null),
   getAllVisibleSnapshots: jest.fn().mockReturnValue([]),
+  setWidgetOpen: jest.fn(),
+  getWidgetOpenState: jest.fn().mockReturnValue(false),
+  getOpenPanelId: jest.fn().mockReturnValue(null),
+  getStateInfoActivePanelId: jest.fn().mockReturnValue(null),
+  getAllOpenPanelIds: jest.fn().mockReturnValue([]),
+  setStateInfoActivePanelId: jest.fn(),
+  clearAllSnapshots: jest.fn(),
 }))
 
 // Mock known-noun routing (default: not handled)

@@ -182,6 +182,19 @@ export function buildResultFromMemory(
         handlerId: (manifest?.handlerId as string) ?? 'unknown',
       },
     } as MinimalRoutingResult
+  } else if (actionType === 'state_info') {
+    // Step 10a: State-info — pass slots_json through for registry-backed execution.
+    // The dispatcher will read query_type/target_name/family_id from slots_json
+    // and execute against the authoritative runtime registry.
+    return {
+      ...defaultResult,
+      handled: true,
+      handledByTier: undefined,
+      tierLabel: `memory_semantic:${candidate.intent_id}`,
+      _devProvenanceHint: 'memory_semantic',
+      _memoryCandidate: candidate,
+      _stateInfoQuery: candidate.slots_json as Record<string, unknown>,
+    } as MinimalRoutingResult
   } else {
     // Unknown action type — cannot reconstruct, fall through
     return null

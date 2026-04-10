@@ -636,6 +636,146 @@ This proposal implies:
 - helper functions such as question guards, visibility checks, duplicate-family checks, and visible-panel resolution should remain policy helpers only
 - active selection context still owns the next turn before normal known-noun defaults apply
 
+Freeform widget/panel state-info questions should still use the semantic retrieval
+layer for retrieval, validation, and scoping before execution.
+
+That means queries such as:
+
+- `what panels are open?`
+- `what widgets are open?`
+- `what is the active panel?`
+- `what is the active widget?`
+
+should be covered by seeded/learned semantic rows with rich metadata so retrieval can
+bind the right dashboard/workspace/family/instance context before execution.
+
+Deterministic handling should remain limited to bounded option-selection forms such
+as:
+
+- `1`, `2`, `3`
+- `first`, `second`, `third`
+
+and should not expand into freeform widget/panel state-info understanding or scope
+inference.
+
+For state-info questions, the implementation should use one normalized per-turn runtime
+state model rather than reading multiple raw UI fields ad hoc in different resolver
+branches.
+
+That normalized state model should act as one authoritative widget runtime registry
+for the resolver, routing layer, and LLM context.
+
+Widgets/panels should register current runtime lifecycle state into that registry
+when they are opened, closed, activated, focused, surfaced, or otherwise become
+relevant to the current interaction.
+
+For this contract, `open` means open until explicitly closed by the product. It is
+not limited to the one currently active drawer or the most recently surfaced panel.
+
+The runtime registry may still track active/current panel state separately when the
+product needs it, but that must not be conflated with open-state.
+
+For open-state questions:
+
+- `what panel is open?`
+- `what panel are open?`
+- `what panels are open?`
+- `what widgets are open?`
+
+should all resolve to the same registry-backed meaning:
+
+- all registry entries whose current `open` state is true
+
+So if widget/panel A is opened, then widget/panel B is opened, and A was not
+explicitly closed, both A and B should still be returned by those open-state
+queries.
+
+That includes the singular phrasing `what panel is open?` when the product uses
+`open` to mean opened-and-not-closed rather than only the current active drawer.
+
+If the product also needs current-focus or current-drawer answers, those should be
+handled as separate active/current-state questions rather than by narrowing the
+meaning of open-state.
+
+For active/current-state questions such as:
+
+- `what is the active panel?`
+- `what is the active widget?`
+- `which panel is active?`
+- `which widget is active?`
+
+the registry should answer from a separate active/current field such as the current
+focused drawer or active widget id.
+
+That active/current answer is expected to be singular in the normal case:
+
+- zero active -> bounded negative answer
+- one active -> name that panel/widget
+
+and it must not change the meaning of open-state queries.
+
+Existing app fields may still exist during migration, but only as producer inputs that
+populate or refresh the registry, for example:
+
+- current open panel drawer state
+- current open widget-shell state from the snapshot / `openWidgets` path
+- workspace-side runtime state when workspace support is intentionally in scope
+
+But the resolver-facing contract should remain one unified read layer / registry.
+
+When answering widget/panel state-info, the app or LLM should consult that one
+authoritative runtime registry only.
+
+So the intended split is:
+
+- semantic retrieval handles query recognition, validation, and dashboard/workspace
+  scoping using rich metadata
+- deterministic execution handles only already-resolved bounded intents and bounded
+  option selection
+- final widget/panel state-info answers come from the runtime registry, not from
+  seed rows, semantic retrieval payloads, or raw UI fields
+
+For freeform widget/panel state-info, this is not a "deterministic first,
+semantic second" ladder.
+
+The required execution ladder is:
+
+1. semantic retrieval builds the shared candidate set for the freeform query
+2. if one strong validated winner exists, the app may execute directly against
+   the runtime registry
+3. if useful candidates exist but no execution-safe winner exists, the app
+   should prefer clarification from that bounded candidate set
+4. bounded LLM may arbitrate only within that bounded candidate set
+5. only if the shared semantic candidate set is empty may downstream generic
+   LLM/navigation attempt
+6. if downstream still does not produce a safe winner, the final outcome should
+   be clarification rather than blind execution
+
+This means widget/panel state-info should not grow a second fallback policy
+engine inside `intent-prompt.ts` or other prompt-only logic. Prompt guidance may
+carry a thin safety guardrail, but it must not replace the semantic retrieval ->
+bounded arbitration -> clarification contract above.
+
+That means:
+
+- raw producer fields such as `openDrawer`, `visibleWidgets`, snapshot internals, or
+  workspace runtime structures must not be queried directly by separate state-info
+  resolver branches
+- those fields may only contribute data into the registry builder during migration
+- once the registry/model is built for the turn, all widget state-info answers should
+  be derived from that registry alone
+- no dual-path fallback should answer one widget state question from the registry and
+  another from a raw UI field with a different meaning
+
+In other words, there should be one authoritative runtime registry for widget state-info
+queries, even if multiple underlying producers still exist temporarily behind it.
+
+Important distinction:
+
+- installed/dashboard inventory is not the same thing as currently open or active state
+- current-state questions should read the runtime registry, not raw dashboard inventory
+- dashboard inventory queries may be added later as a separate follow-up if the product needs them
+
 ## Bounded Arbiter-Bypass Cohort
 
 The arbiter-bypass rule should be explicit and bounded.

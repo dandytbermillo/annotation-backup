@@ -28,7 +28,7 @@ import { snapToGrid, GRID_CELL_SIZE, GRID_GAP, GRID_OFFSET } from "@/lib/dashboa
 import { cn } from "@/lib/utils"
 import { debugLog } from "@/lib/utils/debug-logger"
 import { pruneStaleWidgetStates, getAllWidgetStates, upsertWidgetState, removeWidgetState } from "@/lib/widgets/widget-state-store"
-import { setActiveWidgetId } from "@/lib/widgets/ui-snapshot-registry"
+import { setActiveWidgetId, setWidgetOpen, setStateInfoActivePanelId } from "@/lib/widgets/ui-snapshot-registry"
 import { RefreshCw, ChevronRight, LayoutDashboard, Loader2 } from "lucide-react"
 import { useAutoScroll } from "@/components/canvas/use-auto-scroll"
 
@@ -1128,6 +1128,8 @@ export function DashboardView({
   // Widget Architecture: Handle widget double-click to open drawer
   const handleWidgetDoubleClick = useCallback((panel: WorkspacePanel) => {
     setDrawerPanel(panel)
+    setWidgetOpen(panel.id, true) // Step 10a: register open (persists until explicitly closed)
+    setStateInfoActivePanelId(panel.id) // Step 10a: set as active drawer
     if (isEntryActive) {
       // Phase 4: Filter out workspace widgetStates when on dashboard (same as main effect)
       // Filter by widgetId (not instanceId prefix) to avoid hiding third-party widgets
@@ -1179,8 +1181,11 @@ export function DashboardView({
 
   // Widget Architecture: Handle drawer close
   const handleDrawerClose = useCallback(() => {
+    const closingPanelId = drawerPanel?.id
     setDrawerPanel(null)
     setActiveWidgetId(null)
+    if (closingPanelId) setWidgetOpen(closingPanelId, false) // Step 10a: explicitly close
+    setStateInfoActivePanelId(null) // Step 10a: no active panel
     void debugLog({
       component: "DashboardView",
       action: "drawer_closed",
@@ -1215,6 +1220,8 @@ export function DashboardView({
         })
         setDrawerPanel(panel)
         setActiveWidgetId(panel.id)
+        setWidgetOpen(panel.id, true) // Step 10a: register open (persists until explicitly closed)
+        setStateInfoActivePanelId(panel.id) // Step 10a: set as active drawer
         // ActionTrace Phase B: Record open_panel at commit point
         const eventSource = e.detail.source === 'chat' ? 'chat' as const : 'direct_ui' as const
         const meta = e.detail.executionMeta
