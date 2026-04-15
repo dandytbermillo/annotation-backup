@@ -89,7 +89,7 @@ import { resolveContextDecision, isReferentialFollowUp as isReferentialInput } f
 // B1 memory-reader removed (Slice B3) — semantic retrieval replaces exact-memory lookup
 import { lookupSemanticMemory, type SemanticCandidate, type SemanticLookupResult } from '@/lib/chat/routing-log/memory-semantic-reader'
 import { validateMemoryCandidate } from '@/lib/chat/routing-log/memory-validator'
-import { buildResultFromMemory } from '@/lib/chat/routing-log/memory-action-builder'
+import { buildResultFromMemory, executorKindFor, type ExecutorKind } from '@/lib/chat/routing-log/memory-action-builder'
 import { computeClarifierReorderTelemetry, reorderClarifierCandidates, type ReorderableCandidate } from '@/lib/chat/routing-log/clarifier-reorder'
 import { evaluateStage5Replay } from '@/lib/chat/routing-log/stage5-evaluator'
 import { lookupSemanticHints } from '@/lib/chat/routing-log/memory-semantic-reader'
@@ -627,10 +627,16 @@ const HISTORY_INFO_PATTERN = /\b(what\s+did\s+i|what\s+was\s+my\s+last|remind\s+
  */
 function detectHintScope(input: string): 'history_info' | 'navigation' | 'state_info' | null {
   if (HISTORY_INFO_PATTERN.test(input)) return 'history_info'
-  // Step 10a: State-info scope — freeform widget/panel state questions
-  // This is a routing-admission gate only, NOT a deterministic execution path.
-  const STATE_INFO_SCOPE_PATTERN = /^(is|are|which|what)\s+.+\s+(open|opened|visible|active)\s*[?]?\s*$/i
-  if (STATE_INFO_SCOPE_PATTERN.test(input.trim())) return 'state_info'
+  // Semantic-First Unification — Change 5: the old state-info admission branch
+  // (anchored STATE_INFO_SCOPE_PATTERN) has been removed. State-info queries are
+  // now admitted via one of three paths: (1) navigation's BROAD_NAV_ACTION &&
+  // TARGET_FAMILY regex below catches most state-info queries because they
+  // mention a panel/widget noun, (2) the cross-surface arbiter's LLM classification
+  // sets arbiterStateInfoOverride, or (3) Change 6's speculative Phase 5
+  // last-resort admission. Phase 5 cross-class retrieval (Change 1) returns
+  // state_info candidates regardless of which admission path fired, and Stage 5 +
+  // line-3400 clarifier dispatch by candidate.slots_json.action_type via
+  // executorKindFor(). No state-info-specific scope gate is needed here.
   // Home-specific navigation (v1)
   const HOME_NAV_PATTERN = /\b(go\s+(to\s+)?home|take\s+me\s+home|return\s+home|back\s+home)\b/i
   if (HOME_NAV_PATTERN.test(input)) return 'navigation'
@@ -674,34 +680,39 @@ function isGenericPanelStateQuestion(input: string): boolean {
 }
 
 /**
- * Decide whether the cross-surface arbiter should be SKIPPED for this input.
- * True for action/imperative navigation commands. False for everything else.
+ * NEUTRALIZED — always returns false. Keeps the function signature so the
+ * call site at :1810 is unchanged and this change can be rolled back trivially.
  *
- * Navigate handles: "open budget100", "hey can please open the budget", "take me home"
- * Arbiter handles: everything else (state-info, read_content, ambiguous queries)
+ * This function previously used regex-based prediction to decide whether an
+ * input was an "action/imperative navigation command" so the arbiter eligibility
+ * gate at :1810 could SKIP the cross-surface arbiter for those inputs. That
+ * fast-path skip was regex-based guessing of user intent, which the project
+ * contract forbids: "no regex, no stripping, no guessing user queries."
  *
- * Uses unanchored action-verb detection — catches noisy wrappers like "hey can please open..."
- * without maintaining a wrapper-word list. The key insight: action verbs (open/show/go to/switch to)
- * appearing anywhere in the input signal an imperative command, not a state question.
- * State-info queries like "which panel is open?" also contain "open" but as an adjective,
- * not an imperative verb. The guard below distinguishes them.
+ * By returning false unconditionally:
+ * - `isActionNav` at :1810 is always false
+ * - `!isActionNav` in the arbiter eligibility gate is always true
+ * - All freeform queries flow through the cross-surface arbiter + Phase 5
+ *   semantic retrieval pipeline (subject to the other eligibility conditions
+ *   that do NOT depend on input-shape prediction: active clarification state,
+ *   known-noun bypass, content-intent classifier, hard exclusions for ordinals
+ *   and meta phrases).
+ *
+ * Trade-off: every freeform navigation command (`open recent`, `open links
+ * panel b`, `go home`, etc.) now pays one arbiter LLM call (~500ms) per turn.
+ * This is the contract-required cost of removing regex-based intent guessing.
+ * Functional correctness is preserved: the arbiter correctly classifies these
+ * as `panel_widget.navigate` and Phase 5 executes the curated seed.
+ *
+ * This is framed as "remove the arbiter-skip fast path" — not as a state-info
+ * fix. State-info query failures observed in runtime are addressed as a side
+ * effect of this architectural cleanup, but the primary justification is
+ * contract compliance.
+ *
+ * The `_input` parameter is preserved in the signature but unused.
  */
-function isActionNavigationCommand(input: string): boolean {
-  const lower = input.trim().toLowerCase()
-
-  // Guard: state-info queries must NOT be treated as action commands even though they contain "open"
-  // "which panel is open?" / "is any panel open?" / "what note is opened?" — "open" is a state adjective here
-  const STATE_INFO_GUARD = /\b(which|what|what's)\s+(note|document|page|panel|panels|widget|widgets|workspace|dashboard)\s+(is|are)\s+(open|active|visible|current|opened|showing)\b/i
-  const YN_STATE_GUARD = /\b(is|are)\s+(any|the|a)?\s*(note|document|page|panel|panels|widget|widgets|workspace|dashboard)\s*(drawer)?\s+(open|active|visible|current|opened|showing)\b/i
-  const WORKSPACE_STATE_GUARD = /\b(which|what)\s+workspace\s+(am\s+i\s+in|is\s+this|is\s+active)\b/i
-  const DASHBOARD_STATE_GUARD = /\b(what'?s\s+on\s+the\s+dashboard|how\s+many\s+(widget|panel)s?)\b/i
-  if (STATE_INFO_GUARD.test(lower) || YN_STATE_GUARD.test(lower) || WORKSPACE_STATE_GUARD.test(lower) || DASHBOARD_STATE_GUARD.test(lower)) {
-    return false // state-info query, not an action command
-  }
-
-  // Action verb detection: "open", "show", "go to", "switch to" as imperative
-  const ACTION_VERB = /\b(open|show|go\s+to|switch\s+to)\b/i
-  return ACTION_VERB.test(lower)
+export function isActionNavigationCommand(_input: string): boolean {
+  return false
 }
 
 // =============================================================================
@@ -1549,6 +1560,14 @@ export async function dispatchRouting(
   let contentIntentMatchedThisTurn = false
   // 6x.7 Phase A: resolver telemetry hoisted to outer scope so common log path can merge it
   let resolverTelemetryForLog: Record<string, unknown> | null = null
+  // Step 10a: Cross-surface arbiter override for state_info scoping. Set to true when
+  // the arbiter classifies the turn as state_info on any of the migrated surfaces
+  // (panel_widget, dashboard, workspace). Per state-info-semantic-vs-deterministic-contract.md,
+  // semantic retrieval (LLM arbiter + Phase 5) is the source of truth for freeform scoping —
+  // a strict regex would be a "rewrite broad query language" violation. The Phase 5 hint
+  // lookup uses this override to admit typo'd / non-canonical state-info questions into
+  // the semantic state-info pipeline.
+  let arbiterStateInfoOverride = false
 
   // Active clarification bounded arbiter: skip content-intent classifier when live clarification exists.
   // The STAGE6_SHADOW_ENABLED block itself must NOT be gated by clarification state —
@@ -1801,11 +1820,20 @@ export async function dispatchRouting(
       // Also match question-prefixed forms: "what is links panel?", "what is recent?"
       const questionStripped = bareForBypass.replace(/^(?:what\s+is|what\s+are|what's)\s+/i, '').trim()
       const isKnownNoun = KNOWN_NOUN_BYPASS.has(bareForBypass) || KNOWN_NOUN_BYPASS.has(questionStripped)
-      // Clarification owns the turn: skip arbiter entirely when clarification is active.
-      // Ordinals and bare nouns must reach the tier chain for deterministic/bounded-LLM handling.
-      // Include paused clarificationSnapshot — after escape, the user may be resuming
+      // Clarification owns the turn WHEN primary semantic admission already caught the query.
+      // Class A (plan §"Class A Patch — Remove Asymmetric Clarification Gates"):
+      // Ordinals and bare nouns still reach the tier chain via `isArbiterHardExcluded`
+      // (SELECTION_PATTERN) and `isKnownNoun` above. But freeform state-info question
+      // shapes whose noun isn't in TARGET_FAMILY (e.g. plural `what widgets are open?`)
+      // must still reach the arbiter under active clarification — otherwise they lose
+      // every semantic admission path and fall into grounding / LLM-influenced lanes.
+      // Allow the arbiter to run during clarification only when primary admission
+      // (`detectHintScope`) failed. The upstream comment at :1577-1579 already states
+      // the arbiter must run unconditionally to populate escape evidence; this change
+      // brings the gate into alignment with that documented intent.
       const hasActiveClarification = ctx.pendingOptions.length > 0 || !!ctx.lastClarification || !!ctx.clarificationSnapshot
-      return hasSurfaceContext && !contentResult.isContentIntent && !isArbiterHardExcluded(ctx.trimmedInput) && !isActionNav && !isHistoryInfo && !isHomeNav && !isKnownNoun && !hasActiveClarification
+      const primaryAdmissionCaught = detectHintScope(ctx.trimmedInput) !== null
+      return hasSurfaceContext && !contentResult.isContentIntent && !isArbiterHardExcluded(ctx.trimmedInput) && !isActionNav && !isHistoryInfo && !isHomeNav && !isKnownNoun && !(hasActiveClarification && primaryAdmissionCaught)
     })()) {
       // ── 6x.8 Phase 4: Cross-surface arbiter for uncertain turns across surfaces ──
       const NOTE_REFERENCE_PATTERN = /\b(this|that|the|my|which|what|any|a)\s+(note|document|page)\b/i
@@ -1897,6 +1925,33 @@ export async function dispatchRouting(
       const pairKey = `${rawDecision?.surface}:${rawDecision?.intentFamily}`
       const isMigrated = arbiterResult.success && confidence >= 0.75 && MIGRATED_PAIRS.has(pairKey)
       const isMigratedLowConfidence = arbiterResult.success && confidence < 0.75 && MIGRATED_PAIRS.has(pairKey)
+
+      // Step 10a: Promote arbiter state_info classifications to the semantic pipeline.
+      // The Phase 5 hint lookup uses this flag (alongside the regex-based detectHintScope)
+      // to admit typo'd / non-canonical state-info questions into the shared semantic
+      // retrieval ladder. The arbiter (LLM) is the semantic source of truth for scoping;
+      // detectHintScope's regex is only a fast-path for canonical forms.
+      if (
+        arbiterResult.success &&
+        rawDecision?.intentFamily === 'state_info' &&
+        (rawDecision?.surface === 'panel_widget' ||
+          rawDecision?.surface === 'dashboard' ||
+          rawDecision?.surface === 'workspace')
+      ) {
+        arbiterStateInfoOverride = true
+      }
+
+      // [classD-trace] Arbiter outcome — covers Signal 2a of the three-signal
+      // veto. Logs regardless of success/failure so we can diagnose why the
+      // override did or didn't fire.
+      console.log('[classD-trace] arbiter outcome:', {
+        input: ctx.trimmedInput,
+        arbiter_success: arbiterResult.success,
+        surface: rawDecision?.surface,
+        intentFamily: rawDecision?.intentFamily,
+        confidence,
+        arbiterStateInfoOverride_set: arbiterStateInfoOverride,
+      })
 
       // ── Path 1: note.read_content (migrated, above threshold) ──
       if (isMigrated && rawDecision!.intentFamily === 'read_content') {
@@ -2073,11 +2128,15 @@ export async function dispatchRouting(
 
       // ── Phase 4: panel_widget.state_info (migrated) ──
       } else if (isMigrated && rawDecision!.intentFamily === 'state_info' && rawDecision!.surface === 'panel_widget') {
-        // Step 10a: Defer to semantic pipeline for state-info when hint scope is state_info.
-        // The semantic pipeline (Stage 5) will find the curated state-info seed and route to
-        // the registry-backed executor. Do NOT handle here with raw-field resolvers.
-        if (detectHintScope(ctx.trimmedInput) === 'state_info') {
-          console.log('[dispatcher] arbiter panel_widget.state_info: deferring to semantic pipeline (state_info scope)')
+        // Step 10a: Defer panel_widget.state_info to the shared semantic pipeline.
+        // Per state-info-semantic-vs-deterministic-contract.md, semantic retrieval is the
+        // primary path for freeform state queries. The arbiter has classified this as
+        // state_info; we trust that classification (arbiterStateInfoOverride is set above)
+        // and let Phase 5 + Stage 5 + the registry-backed executor produce the answer or
+        // a bounded clarification. detectHintScope is kept as a fast-path for canonical
+        // forms; the override covers typo'd / non-canonical state-info questions.
+        if (detectHintScope(ctx.trimmedInput) === 'state_info' || arbiterStateInfoOverride) {
+          console.log('[dispatcher] arbiter panel_widget.state_info: deferring to semantic pipeline')
           // Fall through — do NOT set contentIntentMatchedThisTurn, let Stage 5 handle
         } else {
         contentIntentMatchedThisTurn = true
@@ -2211,11 +2270,11 @@ export async function dispatchRouting(
 
       // ── Phase 4: workspace.state_info (migrated) ──
       } else if (isMigrated && rawDecision!.intentFamily === 'state_info' && rawDecision!.surface === 'workspace') {
-        // Step 10a: Defer to semantic pipeline when our hint scope is state_info.
-        // Widget/panel state questions classified as workspace.state_info by the LLM arbiter
-        // (e.g., "is recent open?") must go through Stage 5 → registry executor, not raw fields.
-        if (detectHintScope(ctx.trimmedInput) === 'state_info') {
-          console.log('[dispatcher] arbiter workspace.state_info: deferring to semantic pipeline (state_info scope)')
+        // Step 10a: Defer workspace.state_info to the shared semantic pipeline.
+        // The arbiter override covers typo'd / non-canonical questions; the regex check
+        // is the fast path for canonical forms.
+        if (detectHintScope(ctx.trimmedInput) === 'state_info' || arbiterStateInfoOverride) {
+          console.log('[dispatcher] arbiter workspace.state_info: deferring to semantic pipeline')
         } else {
         contentIntentMatchedThisTurn = true
         const answer = resolveWorkspaceStateInfo(ctx.uiContext ?? {})
@@ -2238,12 +2297,11 @@ export async function dispatchRouting(
 
       // ── Phase 4: dashboard.state_info (migrated) ──
       } else if (isMigrated && rawDecision!.intentFamily === 'state_info' && rawDecision!.surface === 'dashboard') {
-        // Step 10a: Defer to semantic pipeline when our hint scope is state_info.
-        // Widget/panel state questions classified as dashboard.state_info by the LLM arbiter
-        // (e.g., "what panel are open?", "is recent open?") must go through Stage 5 →
-        // registry executor, not raw uiContext.dashboard fields.
-        if (detectHintScope(ctx.trimmedInput) === 'state_info') {
-          console.log('[dispatcher] arbiter dashboard.state_info: deferring to semantic pipeline (state_info scope)')
+        // Step 10a: Defer dashboard.state_info to the shared semantic pipeline.
+        // The arbiter override covers typo'd / non-canonical questions; the regex check
+        // is the fast path for canonical forms.
+        if (detectHintScope(ctx.trimmedInput) === 'state_info' || arbiterStateInfoOverride) {
+          console.log('[dispatcher] arbiter dashboard.state_info: deferring to semantic pipeline')
         } else {
         contentIntentMatchedThisTurn = true
         const answer = resolveDashboardStateInfo(ctx.uiContext ?? {})
@@ -2312,35 +2370,22 @@ export async function dispatchRouting(
       } else if (arbiterResult.success && confidence >= 0.75 && !isMigrated) {
         // Arbiter telemetry reaches common log via resolverTelemetryForLog
 
-      // ── Path 4a: Migrated pair below threshold / ambiguous intent / unknown surface / error → clarifier ──
+      // ── Path 4a: Migrated pair below threshold / ambiguous intent / unknown surface / error → fall through ──
       } else if (isMigratedLowConfidence || (!arbiterResult.success) || rawDecision?.surface === 'unknown' || rawDecision?.intentFamily === 'ambiguous') {
-        // Step 10a: Defer to semantic pipeline when our hint scope is state_info.
-        // Even if the cross-surface arbiter is ambiguous/low-confidence, the curated state_info
-        // seeds + registry executor are authoritative for widget/panel state queries.
-        if (detectHintScope(ctx.trimmedInput) === 'state_info') {
-          console.log('[dispatcher] arbiter ambiguous/unknown: deferring to semantic pipeline (state_info scope)')
-        } else {
-        contentIntentMatchedThisTurn = true
-        const clarifierMsg: ChatMessage = {
-          id: `assistant-${Date.now()}`,
-          role: 'assistant',
-          content: "I'm not sure what you're referring to. Could you be more specific?",
-          timestamp: new Date(),
-          isError: false,
-        }
-        ctx.addMessage(clarifierMsg, { tierLabel: 'arbiter_ambiguous', provenance: 'safe_clarifier' })
-        ctx.setIsLoading(false)
-        const clarifierResult: RoutingDispatcherResult = {
-          handled: true, handledByTier: 6, tierLabel: 'arbiter_ambiguous',
-          clarificationCleared: false, isNewQuestionOrCommandDetected: false,
-          classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
-          _devProvenanceHint: 'safe_clarifier',
-        }
-        const clarifierPayload = buildRoutingLogPayload(ctx, clarifierResult, turnSnapshotForLog)
-        Object.assign(clarifierPayload, arbiterTelemetry)
-        void recordRoutingLog(clarifierPayload)
-        return clarifierResult
-        } // end else (non-state_info scope)
+        // Semantic-First Unification: when the arbiter is uncertain (low confidence,
+        // ambiguous, unknown, or failed), do NOT return an early "arbiter_ambiguous"
+        // clarifier. Per the contract "all freeform queries use shared semantic
+        // retrieval first", the flow must continue past the arbiter to Phase 5
+        // (via detectHintScope or Change 6's speculative Phase 5 last-resort admission).
+        // If semantic retrieval also returns nothing, the line-3400 clarification-first
+        // path or the existing downstream tier chain runs. This branch is kept as a
+        // telemetry marker but no longer produces a user-visible result.
+        console.log('[dispatcher] arbiter uncertain (ambiguous/unknown/low-confidence/failed) — falling through to semantic retrieval', {
+          input: ctx.trimmedInput,
+          effectiveResult,
+          confidence,
+        })
+        // Fall through — result stays unset, pipeline continues.
 
       // ── Path 4b: Non-migrated pair below threshold → fall through ──
       } else {
@@ -2353,7 +2398,17 @@ export async function dispatchRouting(
   // Phase 5 hint lookup (moved before Stage 5 for unified candidate pool)
   // ---------------------------------------------------------------------------
   let phase5HintResult: SemanticHintLookupResult | null = null
-  const earlyHintScope = hintReadEnabled ? detectHintScope(ctx.trimmedInput) : null
+  // Step 10a: earlyHintScope reflects the SEMANTIC scope decision, not just regex shape.
+  // - detectHintScope is a fast-path for canonical forms (no typo recovery)
+  // - arbiterStateInfoOverride promotes LLM-arbiter state_info classifications
+  //   to the same lane, so typo'd / non-canonical state-info questions enter
+  //   the shared Phase 5 pipeline instead of falling into action navigation
+  //   or panel-items clarifiers.
+  const detectedHintScope = hintReadEnabled ? detectHintScope(ctx.trimmedInput) : null
+  // Change 6 (speculative Phase 5) may promote this to 'navigation' — declared let to allow.
+  let earlyHintScope: 'history_info' | 'navigation' | 'state_info' | null = hintReadEnabled
+    ? (detectedHintScope ?? (arbiterStateInfoOverride ? 'state_info' : null))
+    : null
   if (hintReadEnabled && earlyHintScope) {
       try {
         const lookupSnapshot = buildContextSnapshot({
@@ -2381,6 +2436,10 @@ export async function dispatchRouting(
             exactHitUsed: phase5HintResult?.phase5ExactHitUsed,
             exactHitSource: phase5HintResult?.phase5ExactHitSource,
           })
+          // Note: state_info typo/noise recovery is the bounded LLM's job, not a
+          // separate inline rewrite-then-retry. The unified pool keeps low-threshold
+          // (>= 0.70) state_info candidates so the bounded LLM has a meaningful set
+          // to interpret over. See state-info-semantic-vs-deterministic-contract.md.
         }
       } catch (hintErr) {
         // Fail-open: hint retrieval failed
@@ -2399,10 +2458,27 @@ export async function dispatchRouting(
   const unifiedReplayCandidates: UnifiedReplayCandidate[] = []
   const seenIdentities = new Set<string>()
 
+  // Compute a candidate identity for dedupe. Navigation uses (intent_id, target_id).
+  // State-info seeds all have intent_id='state_info' and empty target_ids, so we
+  // dedupe on (intent_id, query_type, target_name, family_id) — each state-info
+  // question form is a distinct candidate the bounded LLM should pick from.
+  const candidateIdentity = (c: SemanticCandidate): string => {
+    const slots = c.slots_json as any
+    const actionType = slots?.action_type as string | undefined
+    if (actionType === 'state_info') {
+      const queryType = slots?.query_type ?? 'unknown'
+      const targetName = slots?.target_name ?? 'generic'
+      const familyId = slots?.family_id ?? 'none'
+      const scope = slots?.scope ?? 'none'
+      return `state_info:${queryType}:${targetName}:${familyId}:${scope}`
+    }
+    return `${c.intent_id}:${c.target_ids[0] ?? 'none'}`
+  }
+
   // Add B2 learned candidates first (preferred)
   if (semanticCandidatesForLaneD) {
     for (const c of semanticCandidatesForLaneD) {
-      const identity = `${c.intent_id}:${c.target_ids[0] ?? 'none'}`
+      const identity = candidateIdentity(c)
       if (!seenIdentities.has(identity)) {
         seenIdentities.add(identity)
         unifiedReplayCandidates.push({ ...c, from_curated_seed: false })
@@ -2418,9 +2494,16 @@ export async function dispatchRouting(
       // Step 10a: state_info added for semantic-first widget/panel state queries
       const REPLAY_ELIGIBLE_ACTIONS = new Set(['execute_widget_item', 'execute_referent', 'surface_manifest_execute', 'open_panel', 'open_entry', 'open_workspace', 'go_home', 'state_info'])
       if (!actionType || !REPLAY_ELIGIBLE_ACTIONS.has(actionType)) continue
-      if (hint.similarity_score < 0.85) continue
+      // Per state-info-semantic-vs-deterministic-contract.md, low-threshold but still
+      // relevant semantic candidates remain part of the bounded candidate set so the
+      // bounded LLM can use them for typo/noise interpretation. State_info uses a more
+      // permissive floor (0.70) than navigation (0.85) to keep weak candidates in the
+      // bounded set; the Stage 5 strong-winner gate (>= 0.88) still gates direct
+      // execution either way.
+      const POOL_FLOOR = actionType === 'state_info' ? 0.70 : 0.85
+      if (hint.similarity_score < POOL_FLOOR) continue
 
-      const identity = `${hint.intent_id}:${hint.target_ids[0] ?? 'none'}`
+      const identity = candidateIdentity(hint)
       if (!seenIdentities.has(identity)) {
         seenIdentities.add(identity)
         unifiedReplayCandidates.push({ ...hint, from_curated_seed: hint.from_curated_seed })
@@ -2429,6 +2512,109 @@ export async function dispatchRouting(
   }
 
   console.log('[dispatcher] unified replay pool:', { b2Count: semanticCandidatesForLaneD?.length ?? 0, phase5Count: phase5HintResult?.candidates?.length ?? 0, unifiedCount: unifiedReplayCandidates.length })
+
+  // [classD-trace] Breakdown of action_types + scores in both the unified pool
+  // (post-filter candidates Stage 5 sees) and the raw Phase 5 results (pre-filter,
+  // includes below-POOL_FLOOR). Needed to diagnose why Layer 2 veto does/doesn't
+  // fire — we can see if Phase 5 returned state_info at all.
+  console.log('[classD-trace] retrieval breakdown for input:', {
+    input: ctx.trimmedInput,
+    arbiterStateInfoOverride,
+    unifiedPoolByAction: unifiedReplayCandidates.map(c => ({
+      action_type: (c.slots_json as Record<string, unknown> | undefined)?.action_type,
+      target_name: (c.slots_json as Record<string, unknown> | undefined)?.target_name,
+      score: c.similarity_score,
+      from_seed: c.from_curated_seed,
+    })),
+    phase5RawByAction: (phase5HintResult?.candidates ?? []).map(c => ({
+      action_type: (c.slots_json as Record<string, unknown> | undefined)?.action_type,
+      target_name: (c.slots_json as Record<string, unknown> | undefined)?.target_name,
+      score: c.similarity_score,
+      from_seed: c.from_curated_seed,
+    })),
+    hasStateInfoInPool: unifiedReplayCandidates.some(c => (c.slots_json as Record<string, unknown> | undefined)?.action_type === 'state_info'),
+    hasStateInfoInPhase5Raw: (phase5HintResult?.candidates ?? []).some(c => (c.slots_json as Record<string, unknown> | undefined)?.action_type === 'state_info'),
+  })
+
+  // ---------------------------------------------------------------------------
+  // Semantic-First Unification — Change 6: speculative Phase 5 last-resort admission
+  // ---------------------------------------------------------------------------
+  // When all primary admission paths missed (detectHintScope null, arbiterStateInfoOverride
+  // false, unified pool empty), run Phase 5 once more to close the admission gap. The
+  // contract says every freeform query (except bounded selection and docs/help) must
+  // reach semantic retrieval at least once. Command-shaped queries are explicitly included
+  // (no isActionNavigationCommand gate here). Must run BEFORE Stage 5 so the speculative
+  // candidates populate the unified pool in time for Stage 5 evaluation.
+  //
+  // Class A (plan §"Class A Patch — Remove Asymmetric Clarification Gates"):
+  // The former `!hasLiveClarificationForGate` guard was removed. The earlier gate assumed
+  // that under active clarification the primary Phase 5 call upstream always populates the
+  // pool, so Change 6 was redundant — but that assumption only holds when primary admission
+  // succeeded. When primary admission fails (e.g. state-info plural shapes missed by
+  // TARGET_FAMILY), Change 6 was the only remaining admission path yet was silently gated
+  // off. The `unifiedReplayCandidates.length === 0` condition already captures "primary
+  // retrieval didn't produce candidates," making the clarification skip redundant and
+  // harmful. Under active clarification, if the arbiter override populated the pool, this
+  // block skips on the empty-pool check. The escape-evidence path at :3163 / :3183 reads
+  // `unifiedReplayCandidates` regardless of population source, so Change 6 candidates still
+  // feed the correct downstream handling.
+  if (
+    hintReadEnabled &&
+    !earlyHintScope &&
+    !arbiterStateInfoOverride &&
+    unifiedReplayCandidates.length === 0
+  ) {
+    try {
+      const speculativeSnapshot = buildContextSnapshot({
+        openWidgetCount: turnSnapshotForLog.openWidgets?.length ?? 0,
+        pendingOptionsCount: ctx.pendingOptions?.length ?? 0,
+        activeOptionSetId: ctx.activeOptionSetId,
+        hasLastClarification: ctx.lastClarification !== null,
+        hasLastSuggestion: ctx.lastSuggestion !== null,
+        latchEnabled: process.env.NEXT_PUBLIC_SELECTION_INTENT_ARBITRATION_V1 === 'true',
+        messageCount: ctx.messages.length,
+      })
+      const speculativeResult = await lookupSemanticHints({
+        raw_query_text: ctx.trimmedInput,
+        context_snapshot: speculativeSnapshot,
+        intent_scope: 'navigation', // cross-class via Change 1 — returns both intent classes
+      })
+      const specCandCount = speculativeResult?.candidates?.length ?? 0
+      console.log('[dispatcher] Change 6 speculative Phase 5:', {
+        input: ctx.trimmedInput,
+        status: speculativeResult?.status,
+        candidateCount: specCandCount,
+        topScore: speculativeResult?.candidates?.[0]?.similarity_score,
+        topAction: (speculativeResult?.candidates?.[0]?.slots_json as any)?.action_type,
+      })
+      if (specCandCount > 0) {
+        // Promote admission: feed candidates into the unified pool via the same filter
+        // rules (per-action-type similarity floor, dispatch allowlist, dedupe) and set
+        // earlyHintScope so downstream gates (phase5SkippedTierChain + line-3400 clarifier)
+        // behave as if admission succeeded via the primary path.
+        phase5HintResult = speculativeResult
+        const REPLAY_ELIGIBLE_ACTIONS = new Set(['execute_widget_item', 'execute_referent', 'surface_manifest_execute', 'open_panel', 'open_entry', 'open_workspace', 'go_home', 'state_info'])
+        for (const hint of speculativeResult.candidates) {
+          const actionType = (hint.slots_json as any)?.action_type as string | undefined
+          if (!actionType || !REPLAY_ELIGIBLE_ACTIONS.has(actionType)) continue
+          const POOL_FLOOR = actionType === 'state_info' ? 0.70 : 0.85
+          if (hint.similarity_score < POOL_FLOOR) continue
+          const identity = candidateIdentity(hint)
+          if (!seenIdentities.has(identity)) {
+            seenIdentities.add(identity)
+            unifiedReplayCandidates.push({ ...hint, from_curated_seed: hint.from_curated_seed })
+          }
+        }
+        earlyHintScope = 'navigation'
+        console.log('[dispatcher] Change 6 promoted admission:', {
+          unifiedCount: unifiedReplayCandidates.length,
+          scope: earlyHintScope,
+        })
+      }
+    } catch (specErr) {
+      console.warn('[dispatcher] Change 6 speculative Phase 5 failed (non-fatal):', specErr)
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Stage 5: Semantic resolution reuse (unified pool)
@@ -2442,6 +2628,22 @@ export async function dispatchRouting(
       // navigation-specific (Phase 5) for navigation action types.
       const phase5NavFingerprint = phase5HintResult?.currentContextFingerprint
       s5Telemetry = evaluateStage5Replay(unifiedReplayCandidates, turnSnapshotForLog, b2CurrentContextFingerprint, ctx.uiContext?.dashboard?.visibleWidgets, phase5NavFingerprint)
+
+      // [classD-trace] Stage 5 outcome — winner action_type, validation result,
+      // fallback reason. Tells us whether Stage 5 executed a winner (and of what
+      // action_type) or rejected (and why). Critical for understanding why the
+      // query fell through to grounding.
+      console.log('[classD-trace] stage5 outcome:', {
+        input: ctx.trimmedInput,
+        validationResult: s5Telemetry?.validationResult,
+        topSimilarity: s5Telemetry?.topSimilarity,
+        candidateCount: s5Telemetry?.candidateCount,
+        fallbackReason: s5Telemetry?.fallbackReason,
+        winner_action_type: s5Telemetry?.winnerCandidate ? (s5Telemetry.winnerCandidate.slots_json as Record<string, unknown> | undefined)?.action_type : undefined,
+        winner_target_name: s5Telemetry?.winnerCandidate ? (s5Telemetry.winnerCandidate.slots_json as Record<string, unknown> | undefined)?.target_name : undefined,
+        winner_score: s5Telemetry?.winnerCandidate?.similarity_score,
+        replayedIntentId: s5Telemetry?.replayedIntentId,
+      })
 
       // Slice 2: enforcement — actually replay when eligible and flag is on
       const s5EnforcementEnabled = process.env.NEXT_PUBLIC_STAGE5_RESOLUTION_REUSE_ENABLED === 'true'
@@ -2647,6 +2849,20 @@ export async function dispatchRouting(
           // Question-policy: don't auto-execute if the input is a question about the target
           const questionGuard = detectQuestionGuard(ctx.trimmedInput)
           if (questionGuard === 'full_question') {
+            // Class D Layer 1: state_info winners must NOT be routed to covered-noun docs.
+            // If the winner's action_type is state_info, the state-info executor at
+            // ~line 2617-2643 should already have handled the turn; reaching here means
+            // that execution fell through (e.g., visibleWidgets was missing). Showing
+            // "What would you like to know about X?" for a state question is wrong —
+            // the user wants an answer, not a docs prompt. Fall through so downstream
+            // (clarification or safe-clarifier) handles it instead. Telemetry is not
+            // modified here to avoid introducing new type-assignment errors; the
+            // telemetry state from upstream state_info execution is already correct.
+            const winnerActionType = (s5Telemetry.winnerCandidate?.slots_json as any)?.action_type as string | undefined
+            if (winnerActionType === 'state_info') {
+              console.log('[dispatcher] Stage 5 question-policy: state_info winner detected, skipping covered-noun docs (Class D Layer 1):', { input: ctx.trimmedInput })
+              // Fall through without modifying telemetry.
+            } else {
             // Fix 3: Full question about a covered noun — provide docs/info directly using winner metadata.
             // No input rewriting: the noun identity comes from the Stage 5 winner's slots_json, not from
             // stripping prefixes off the user's query. This respects strict-exact-rules.
@@ -2667,6 +2883,7 @@ export async function dispatchRouting(
             // No target_name in winner metadata — fall through to generic docs
             console.log('[dispatcher] Stage 5 question-policy: full_question, no covered noun metadata, falling through:', { input: ctx.trimmedInput })
             s5Telemetry = { ...s5Telemetry, validationResult: 'replay_build_failed', fallbackReason: 'full_question_guard' }
+            }
           } else if (questionGuard === 'trailing_question') {
             // Show open-vs-docs prompt — only when target is valid and visible
             const winnerLabel = (s5Telemetry.winnerCandidate?.slots_json as any)?.target_name ?? (s5Telemetry.winnerCandidate?.slots_json as any)?.panelTitle ?? 'this panel'
@@ -2888,30 +3105,21 @@ export async function dispatchRouting(
     }
   }
 
-  // Phase 5 lookup already ran before Stage 5 (unified candidate pool).
-  // phase5HintResult is available from the earlier lookup.
-
-  // ---------------------------------------------------------------------------
-  // Step 10a: State-info clarification fallback.
-  // Per contract: if semantic retrieval for state_info scope did not produce a safe winner,
-  // the final outcome is clarification — NOT LLM fallback answering from raw fields.
-  // ---------------------------------------------------------------------------
-  if (earlyHintScope === 'state_info') {
-    const stateInfoFallbackMsg: ChatMessage = {
-      id: `assistant-${Date.now()}`, role: 'assistant',
-      content: "I couldn't determine the current widget state. Could you try rephrasing your question?",
-      timestamp: new Date(), isError: false,
-    }
-    ctx.addMessage(stateInfoFallbackMsg, { tierLabel: 'state_info_clarification_fallback', provenance: 'safe_clarifier' })
-    ctx.setIsLoading(false)
-    console.log('[dispatcher] state-info clarification fallback: semantic retrieval did not produce safe winner:', { input: ctx.trimmedInput })
-    return {
-      handled: true, handledByTier: 4, tierLabel: 'state_info_clarification_fallback',
-      clarificationCleared: false, isNewQuestionOrCommandDetected: false,
-      classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
-      _devProvenanceHint: 'safe_clarifier',
-    } as any
-  }
+  // Semantic-First Unification — Change 4: the state-info bounded ladder
+  // (Step A bounded LLM / Step B singleton auto-execute / Step C clarifier /
+  // Step D terminal fallback) that used to live here has been DELETED. It was
+  // duplicate code. State-info candidates now flow through navigation's existing
+  // semantic pipeline:
+  //   - Stage 5 strong-winner execution for state_info fires upstream at
+  //     ~line 2544 via the _stateInfoQuery handler inside the s5EnforcementEnabled
+  //     block — that path is unchanged and remains the strong-winner entry point.
+  //   - When Stage 5 finds no strong winner but the unified pool has candidates,
+  //     the line-3400 clarification-first path builds pills branched by
+  //     executorKindFor(candidate.action_type). State_info candidates become
+  //     state_info_seed pills that execute via executeStateInfoFromRegistry
+  //     on click; navigation candidates become panel_drawer pills.
+  //   - When the pool is truly empty, the existing downstream fall-through runs.
+  // See "Semantic-First Unification — Navigation as Foundation" in the plan file.
 
   // ---------------------------------------------------------------------------
   // Fix 2: Covered-noun question interceptor — handles trailing ? and full questions
@@ -3101,11 +3309,21 @@ export async function dispatchRouting(
     // See Stage 5 state-info handler at ~line 2415.
     // Phase 2: Question-policy on clarification-first path
     const clarifyQuestionGuard = !result ? detectQuestionGuard(ctx.trimmedInput) : 'none' as const
-    if (clarifyQuestionGuard === 'full_question') {
-      // Full question — don't clarify from panel candidates, let docs/info handle
-      console.log('[dispatcher] clarification-first question-policy: full_question, skipping to downstream:', { input: ctx.trimmedInput })
+    // Semantic-First Unification: the full_question skip is navigation-only.
+    // When the unified pool contains state_info candidates (e.g., "what widgets
+    // are open?"), those are legitimate state questions and must reach the
+    // line-3400 clarifier, not fall to downstream docs. Check whether any
+    // pool candidate has executor kind 'state_info_registry' before applying
+    // the full-question navigation-docs skip.
+    const poolHasStateInfoCandidate = unifiedReplayCandidates.some(c =>
+      executorKindFor((c.slots_json as any)?.action_type as string | undefined) === 'state_info_registry'
+    )
+    if (clarifyQuestionGuard === 'full_question' && !poolHasStateInfoCandidate) {
+      // Full question with only navigation candidates — don't clarify from panel candidates,
+      // let docs/info handle (existing navigation behavior).
+      console.log('[dispatcher] clarification-first question-policy: full_question (nav-only), skipping to downstream:', { input: ctx.trimmedInput })
       // Fall through to downstream (result stays unset → tier chain runs)
-    } else if (clarifyQuestionGuard === 'trailing_question' && unifiedReplayCandidates.length > 0) {
+    } else if (clarifyQuestionGuard === 'trailing_question' && !poolHasStateInfoCandidate && unifiedReplayCandidates.length > 0) {
       // Trailing question with candidates — try to show open-vs-docs for the top candidate
       const topCandidate = unifiedReplayCandidates[0]
       const topLabel = (topCandidate.slots_json as any)?.target_name ?? (topCandidate.slots_json as any)?.panelTitle ?? 'this panel'
@@ -3151,27 +3369,78 @@ export async function dispatchRouting(
         result = { handled: true, handledByTier: 4, tierLabel: 'semantic_question_policy_docs', clarificationCleared: false, isNewQuestionOrCommandDetected: false, classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false, _devProvenanceHint: 'safe_clarifier' }
       }
     }
-    if (!result && clarifyQuestionGuard !== 'full_question' && unifiedReplayCandidates.length > 0) {
-      // Build clarification options from unified candidates
-      const clarifyOptions: SelectionOption[] = unifiedReplayCandidates
+    // Semantic-First Unification: full_question gating applies only when the
+    // pool has no state_info candidates. For state_info pools, full questions
+    // ARE the natural input shape (e.g., "what widgets are open?") and must
+    // reach the line-3400 clarifier.
+    const allowClarifierForQuestionShape =
+      clarifyQuestionGuard !== 'full_question' || poolHasStateInfoCandidate
+    if (!result && allowClarifierForQuestionShape && unifiedReplayCandidates.length > 0) {
+      // Semantic-First Unification — Change 3: action_type-aware pill builder.
+      // Branch pills by executorKindFor(action_type). Only 'navigation' and
+      // 'state_info_registry' kinds appear as clarifier pills. Other allowlisted
+      // kinds (surface_manifest, inline_grounding, etc.) are filtered out of the
+      // clarifier — they only make sense as Stage 5 strong winners, not as
+      // clarifier options. The three-branch contract rule below handles the case
+      // where the filter leaves zero pills.
+      const clarifierPoolKinds = new Set<ExecutorKind>(['navigation', 'state_info_registry'])
+      const clarifierReadyCandidates = unifiedReplayCandidates.filter(c => {
+        const kind = executorKindFor((c.slots_json as any)?.action_type as string | undefined)
+        return clarifierPoolKinds.has(kind)
+      })
+
+      // Build clarification options from the filtered candidates. Each option's
+      // pill type + data shape is chosen by executor kind:
+      //   - navigation → panel_drawer pill (existing navigate executor)
+      //   - state_info_registry → state_info_seed pill (registry executor)
+      const clarifyOptions: SelectionOption[] = clarifierReadyCandidates
         .slice(0, 5) // Limit to top 5
         .map((c, idx) => {
-          const manifest = (c.slots_json as any)?.surface_manifest as Record<string, string> | undefined
-          const label = (c.slots_json as any)?.panelTitle
-            ?? (c.slots_json as any)?.target_name
+          const slots = c.slots_json as any
+          const kind = executorKindFor(slots?.action_type as string | undefined)
+
+          if (kind === 'state_info_registry') {
+            // Build a human-readable label from query_type + target_name + scope.
+            const queryType = slots?.query_type as string | undefined
+            const targetName = slots?.target_name as string | undefined
+            const scope = (slots?.scope as string | undefined) ?? 'panel'
+            const isWidgetScope = scope === 'widget' || scope === 'widgets'
+            const noun = isWidgetScope ? 'widget' : 'panel'
+            let label: string
+            if (queryType === 'open_state') {
+              label = targetName ? `Is ${targetName} open?` : `What ${noun}s are open?`
+            } else if (queryType === 'active_state') {
+              label = `What is the active ${noun}?`
+            } else {
+              label = String(queryType ?? c.intent_id)
+            }
+            return {
+              type: 'state_info_seed' as const,
+              id: `semantic_clarify_${idx}`,
+              label,
+              sublabel: `state_info • ${(c.similarity_score * 100).toFixed(0)}% match`,
+              data: { slots_json: c.slots_json, intent_id: c.intent_id },
+            }
+          }
+
+          // navigation (default): build panel_drawer pill
+          const manifest = slots?.surface_manifest as Record<string, string> | undefined
+          const label = slots?.panelTitle
+            ?? slots?.target_name
             ?? manifest?.surfaceType
-            ?? (c.slots_json as any)?.name
+            ?? slots?.name
             ?? c.intent_id
           return {
             type: 'panel_drawer' as const,
             id: `semantic_clarify_${idx}`,
             label: String(label),
             sublabel: `${c.intent_id} (${(c.similarity_score * 100).toFixed(0)}% match)`,
-            data: { panelId: (c.slots_json as any)?.panelId ?? '', panelTitle: String(label), panelType: manifest?.surfaceType ?? c.intent_id },
+            data: { panelId: slots?.panelId ?? '', panelTitle: String(label), panelType: manifest?.surfaceType ?? c.intent_id },
           }
         })
 
       if (clarifyOptions.length > 0) {
+        // Normal clarifier path — show pills from filtered candidate set.
         const clarifyMsgId = `assistant-${Date.now()}`
         const clarifyMsg: ChatMessage = {
           id: clarifyMsgId,
@@ -3210,11 +3479,38 @@ export async function dispatchRouting(
           classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
           _devProvenanceHint: 'safe_clarifier',
         }
+      } else {
+        // Pool has candidates but all were filtered out (non-navigation, non-state_info
+        // executor kinds like inline_grounding or surface_manifest). The contract says
+        // downstream generic fallback is allowed only when the shared semantic pool is
+        // truly empty. Here it's non-empty but non-clarifiable, so show a terminal
+        // safe clarification instead of falling through to downstream.
+        console.log('[dispatcher] semantic pool non-clarifiable: pool has candidates but none are navigation/state_info kind', {
+          input: ctx.trimmedInput,
+          poolSize: unifiedReplayCandidates.length,
+          actionTypes: unifiedReplayCandidates.map(c => (c.slots_json as any)?.action_type).slice(0, 5),
+        })
+        const nonClarifiableMsg: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: "I couldn't find a clear action for that. Could you be more specific?",
+          timestamp: new Date(),
+          isError: false,
+        }
+        ctx.addMessage(nonClarifiableMsg, { tierLabel: 'semantic_pool_nonclarifiable', provenance: 'safe_clarifier' })
+        ctx.setIsLoading(false)
+        result = {
+          handled: true, handledByTier: 4, tierLabel: 'semantic_pool_nonclarifiable',
+          clarificationCleared: false, isNewQuestionOrCommandDetected: false,
+          classifierCalled: false, classifierTimeout: false, classifierError: false, isFollowUp: false,
+          _devProvenanceHint: 'safe_clarifier',
+        }
       }
     }
 
     if (!result) {
       // Empty shared candidate set — fall through to downstream navigate API.
+      // This is only reached when unifiedReplayCandidates is truly empty.
       const topHint = phase5HintResult?.candidates?.[0]
       result = {
         handled: false,
@@ -3231,7 +3527,14 @@ export async function dispatchRouting(
     }
   } else {
     try {
-      result = await dispatchRoutingInner(ctx, semanticCandidatesForLaneD, b2LookupStatus, contentIntentMatchedThisTurn)
+      // Class D Layer 2: pass three-signal veto inputs so the grounding/S6 sites
+      // inside dispatchRoutingInner can enforce the widget/panel state-info invariant.
+      const classDSignals = {
+        arbiterStateInfoOverride,
+        unifiedReplayCandidates,
+        phase5RawCandidates: phase5HintResult?.candidates ?? [],
+      }
+      result = await dispatchRoutingInner(ctx, semanticCandidatesForLaneD, b2LookupStatus, contentIntentMatchedThisTurn, classDSignals)
     } catch (err) {
       routingError = err
     }
@@ -3678,6 +3981,17 @@ async function dispatchRoutingInner(
   semanticCandidatesForReorder?: SemanticCandidate[],
   b2LookupStatus?: 'ok' | 'empty' | 'timeout' | 'error' | 'disabled',
   contentIntentMatchedThisTurn = false,
+  // Class D Layer 2: three-signal semantic-evidence veto inputs.
+  // Passed from the outer dispatchRouting scope so the grounding LLM / S6
+  // enforcement sites (all inside dispatchRoutingInner) can check for
+  // state_info evidence before executing open_panel. Enforces the
+  // widget/panel state-info invariant: open-state questions never execute
+  // open_panel from grounding/S6 fallback paths.
+  classDSignals?: {
+    arbiterStateInfoOverride: boolean
+    unifiedReplayCandidates: Array<{ slots_json: Record<string, unknown> }>
+    phase5RawCandidates: Array<{ slots_json: Record<string, unknown> }>
+  },
 ): Promise<RoutingDispatcherResult> {
   const defaultResult: RoutingDispatcherResult = {
     handled: false,
@@ -3858,7 +4172,14 @@ async function dispatchRoutingInner(
   // Active clarification bounded arbiter: when a live clarifier exists, skip the semantic-question
   // guard entirely. The bounded LLM at the intercept's unresolved hook handles question vs selection.
   const hasLiveClarification = ctx.pendingOptions.length > 0 || !!ctx.lastClarification
-  if (isSemanticQuestion && !hasLiveClarification) {
+  // Defensive guard: only fire this branch when there are actual options to list.
+  // The original condition was internally contradictory — !hasLiveClarification meant
+  // pendingOptions was empty, but the message body referenced pendingOptions, producing
+  // a broken "Please select one: ." reply. Requiring pendingOptions.length > 0 makes the
+  // branch effectively dead-code (mutually exclusive with !hasLiveClarification), so a
+  // semantic question with no live options falls through to the semantic answer lane,
+  // which is the correct destination per the routing contract.
+  if (isSemanticQuestion && !hasLiveClarification && ctx.pendingOptions.length > 0) {
     const optionLabels = ctx.pendingOptions.map(o => o.label).join(', ')
     const assistantMessage: ChatMessage = {
       id: `assistant-${Date.now()}`,
@@ -7717,9 +8038,49 @@ async function dispatchRoutingInner(
                 // silently fall through to Tier 5 (no handler for option-type without
                 // message history, referent, or widget_option match).
                 if (selected.source === 'visible_panels') {
-                  // Shared guard: bare generic phrases should not auto-execute panel open.
-                  // Uses shared isGenericAmbiguousPanelPhrase() from generic-phrase-guard.ts
-                  if (isGenericAmbiguousPanelPhrase(ctx.trimmedInput)) {
+                  // Class D Layer 2: widget/panel state-info three-signal veto.
+                  // Invariant: widget/panel open-state questions NEVER execute open_panel
+                  // from grounding/S6 fallback paths. If ANY of three semantic-evidence
+                  // signals fires, skip grounding panel execution and let the turn fall
+                  // through to safe clarification. Uses only existing pipeline state
+                  // (passed via classDSignals from dispatchRouting) — no regex, no
+                  // stripping, no new predictor.
+                  const gl_hasStateInfoInPool = (classDSignals?.unifiedReplayCandidates ?? []).some(c =>
+                    (c.slots_json as Record<string, unknown> | undefined)?.action_type === 'state_info'
+                  )
+                  const gl_hasStateInfoInPhase5Raw = (classDSignals?.phase5RawCandidates ?? []).some(c =>
+                    (c.slots_json as Record<string, unknown> | undefined)?.action_type === 'state_info'
+                  )
+                  const gl_arbiterOverride = classDSignals?.arbiterStateInfoOverride ?? false
+                  const gl_hasStateInfoEvidence = gl_arbiterOverride || gl_hasStateInfoInPool || gl_hasStateInfoInPhase5Raw
+                  // [classD-trace] Log the three signals + veto decision REGARDLESS of
+                  // outcome — so we can see why the veto did or didn't fire.
+                  console.log('[classD-trace] grounding_llm_panel_execute site:', {
+                    input: ctx.trimmedInput,
+                    selected_label: selected.label,
+                    selected_source: selected.source,
+                    signal_2a_arbiter: gl_arbiterOverride,
+                    signal_2b_pool: gl_hasStateInfoInPool,
+                    signal_2c_phase5_raw: gl_hasStateInfoInPhase5Raw,
+                    veto_fires: gl_hasStateInfoEvidence,
+                    classDSignals_defined: !!classDSignals,
+                  })
+                  if (gl_hasStateInfoEvidence) {
+                    void debugLog({
+                      component: 'ChatNavigation',
+                      action: 'grounding_llm_panel_execute_blocked_state_info',
+                      metadata: {
+                        input: ctx.trimmedInput,
+                        candidateLabel: selected.label,
+                        signal_arbiter: gl_arbiterOverride,
+                        signal_pool: gl_hasStateInfoInPool,
+                        signal_phase5_raw: gl_hasStateInfoInPhase5Raw,
+                      },
+                    })
+                    // Fall through — do NOT execute open_panel for state-info questions.
+                  } else if (isGenericAmbiguousPanelPhrase(ctx.trimmedInput)) {
+                    // Shared guard: bare generic phrases should not auto-execute panel open.
+                    // Uses shared isGenericAmbiguousPanelPhrase() from generic-phrase-guard.ts
                     // Skip auto-execute — prefer bounded clarification for generic phrases.
                     void debugLog({
                       component: 'ChatNavigation',
@@ -7811,6 +8172,39 @@ async function dispatchRoutingInner(
                 if (process.env.NEXT_PUBLIC_STAGE6_ENFORCE_ENABLED === 'true') {
                   const s6Result = await runS6EnforcementLoop(s6Params)
                   if (s6Result?.outcome === 'action_executed' && s6Result.actionResult?.action === 'open_panel') {
+                    // Class D Layer 2: widget/panel state-info three-signal veto.
+                    // Same invariant and signal set as the grounding LLM site above.
+                    const s6a_hasStateInfoInPool = (classDSignals?.unifiedReplayCandidates ?? []).some(c =>
+                      (c.slots_json as Record<string, unknown> | undefined)?.action_type === 'state_info'
+                    )
+                    const s6a_hasStateInfoInPhase5Raw = (classDSignals?.phase5RawCandidates ?? []).some(c =>
+                      (c.slots_json as Record<string, unknown> | undefined)?.action_type === 'state_info'
+                    )
+                    const s6a_arbiterOverride = classDSignals?.arbiterStateInfoOverride ?? false
+                    const s6a_hasStateInfoEvidence = s6a_arbiterOverride || s6a_hasStateInfoInPool || s6a_hasStateInfoInPhase5Raw
+                    // [classD-trace] Same unconditional log as the grounding LLM site.
+                    console.log('[classD-trace] s6_enforced_stage4_abstain site:', {
+                      input: ctx.trimmedInput,
+                      s6_target_id: s6Result.telemetry.s6_action_target_id,
+                      signal_2a_arbiter: s6a_arbiterOverride,
+                      signal_2b_pool: s6a_hasStateInfoInPool,
+                      signal_2c_phase5_raw: s6a_hasStateInfoInPhase5Raw,
+                      veto_fires: s6a_hasStateInfoEvidence,
+                      classDSignals_defined: !!classDSignals,
+                    })
+                    if (s6a_hasStateInfoEvidence) {
+                      void debugLog({
+                        component: 'ChatNavigation',
+                        action: 's6_enforced_open_panel_blocked_state_info',
+                        metadata: {
+                          input: ctx.trimmedInput,
+                          signal_arbiter: s6a_arbiterOverride,
+                          signal_pool: s6a_hasStateInfoInPool,
+                          signal_phase5_raw: s6a_hasStateInfoInPhase5Raw,
+                        },
+                      })
+                      // Fall through — do NOT execute open_panel for state-info questions.
+                    } else {
                     const targetId = s6Result.telemetry.s6_action_target_id ?? ''
                     const s6Sig: S6ActionSignature = { interactionId: s6InteractionId, actionType: 'open_panel', targetId }
                     if (!isDuplicateAction(s6Sig, s6ExecutedActions)) {
@@ -7853,6 +8247,7 @@ async function dispatchRoutingInner(
                       }
                     }
                     // Bridge failed, TOCTOU stale, or duplicate → fall through to normal clarifier
+                    }
                   }
                   // S6 loop returned non-action or null → fall through to normal clarifier
                 } else {
@@ -8048,6 +8443,41 @@ async function dispatchRoutingInner(
               if (process.env.NEXT_PUBLIC_STAGE6_ENFORCE_ENABLED === 'true') {
                 const s6Result = await runS6EnforcementLoop(s6Params)
                 if (s6Result?.outcome === 'action_executed' && s6Result.actionResult?.action === 'open_panel') {
+                  // Class D Layer 2: widget/panel state-info three-signal veto.
+                  // Timeout twin of the stage4_abstain site above — same invariant,
+                  // same signal set. Widget/panel state-info questions must never
+                  // execute open_panel from S6 enforcement fallback.
+                  const s6t_hasStateInfoInPool = (classDSignals?.unifiedReplayCandidates ?? []).some(c =>
+                    (c.slots_json as Record<string, unknown> | undefined)?.action_type === 'state_info'
+                  )
+                  const s6t_hasStateInfoInPhase5Raw = (classDSignals?.phase5RawCandidates ?? []).some(c =>
+                    (c.slots_json as Record<string, unknown> | undefined)?.action_type === 'state_info'
+                  )
+                  const s6t_arbiterOverride = classDSignals?.arbiterStateInfoOverride ?? false
+                  const s6t_hasStateInfoEvidence = s6t_arbiterOverride || s6t_hasStateInfoInPool || s6t_hasStateInfoInPhase5Raw
+                  // [classD-trace] Same unconditional log as the other two sites.
+                  console.log('[classD-trace] s6_enforced_stage4_timeout site:', {
+                    input: ctx.trimmedInput,
+                    s6_target_id: s6Result.telemetry.s6_action_target_id,
+                    signal_2a_arbiter: s6t_arbiterOverride,
+                    signal_2b_pool: s6t_hasStateInfoInPool,
+                    signal_2c_phase5_raw: s6t_hasStateInfoInPhase5Raw,
+                    veto_fires: s6t_hasStateInfoEvidence,
+                    classDSignals_defined: !!classDSignals,
+                  })
+                  if (s6t_hasStateInfoEvidence) {
+                    void debugLog({
+                      component: 'ChatNavigation',
+                      action: 's6_timeout_open_panel_blocked_state_info',
+                      metadata: {
+                        input: ctx.trimmedInput,
+                        signal_arbiter: s6t_arbiterOverride,
+                        signal_pool: s6t_hasStateInfoInPool,
+                        signal_phase5_raw: s6t_hasStateInfoInPhase5Raw,
+                      },
+                    })
+                    // Fall through — do NOT execute open_panel for state-info questions.
+                  } else {
                   const targetId = s6Result.telemetry.s6_action_target_id ?? ''
                   const s6Sig: S6ActionSignature = { interactionId: s6InteractionId, actionType: 'open_panel', targetId }
                   if (!isDuplicateAction(s6Sig, s6ExecutedActions)) {
@@ -8090,6 +8520,7 @@ async function dispatchRoutingInner(
                     }
                   }
                   // Bridge failed, TOCTOU stale, or duplicate → fall through to timeout clarifier
+                  }
                 }
                 // S6 loop returned non-action or null → fall through to timeout clarifier
               } else {

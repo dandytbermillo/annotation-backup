@@ -227,7 +227,6 @@ export const INTENT_SYSTEM_PROMPT = `You are a navigation assistant for a note-t
     - "what were the options?" (when chatContext.lastOptions exists)
     - "how many items?" (when chatContext.lastListPreview exists)
     - "is D available?" (when chatContext.lastOptions exists → answer yes/no)
-    - "what panel is open?" / "what widgets are open?" / "what widgets are visible?" → These are handled by the semantic state-info pipeline. Do not answer these from raw uiContext fields.
     - "which notes are open?" (when uiContext.workspace.openNotes exists → list note names; if on dashboard, explain notes live in workspaces)
     Args:
       - contextAnswer (required): The answer based on chat context

@@ -62,6 +62,7 @@ export type {
   DocRetrievalState,
   CrossCorpusSelectData,
   ExitPillData,
+  StateInfoSeedData,
 } from './chat-navigation-context'
 
 // Schema utilities (for reference)

@@ -10,6 +10,63 @@
 import type { MemoryLookupResult } from './memory-reader'
 import type { ResolvedNoteCommand } from '@/lib/chat/note-command-manifest'
 
+// =============================================================================
+// Executor Kind — explicit execution direction per candidate
+// =============================================================================
+//
+// Per state-info-semantic-vs-deterministic-contract.md and the Semantic-First
+// Unification plan: each semantic row carries execution direction via its
+// `slots_json.action_type`. This helper maps the existing action_type values
+// to explicit executor kinds that the dispatcher reads at every dispatch site.
+//
+// One read-site, one enum, no seed schema change. Navigation candidates dispatch
+// to the navigate/panel-open executor; state_info candidates dispatch to
+// executeStateInfoFromRegistry; etc.
+
+/**
+ * Explicit executor kind for a resolved semantic candidate.
+ * Every candidate in the unified replay pool maps to exactly one kind.
+ */
+export type ExecutorKind =
+  | 'navigation'         // open_panel, open_entry, open_workspace, go_home → navigate action
+  | 'state_info_registry' // state_info → executeStateInfoFromRegistry
+  | 'docs'               // future: docs_retrieve, docs_info → docs retriever
+  | 'surface_manifest'   // surface_manifest_execute → surface manifest handler
+  | 'inline_grounding'   // execute_widget_item, execute_referent → inline grounding
+  | 'note_manifest'      // note_manifest_cache → note command resolver (Tier 4.2/4.25)
+  | 'unknown'
+
+/**
+ * Map a candidate's `slots_json.action_type` to its explicit executor kind.
+ *
+ * Pure function. Single read-site for dispatch decisions.
+ * Unknown action types return 'unknown' so callers can filter them out of
+ * dispatch paths rather than silently misroute.
+ */
+export function executorKindFor(actionType: string | undefined | null): ExecutorKind {
+  switch (actionType) {
+    case 'open_panel':
+    case 'open_entry':
+    case 'open_workspace':
+    case 'go_home':
+      return 'navigation'
+    case 'state_info':
+      return 'state_info_registry'
+    case 'docs_retrieve':
+    case 'docs_info':
+      return 'docs'
+    case 'surface_manifest_execute':
+      return 'surface_manifest'
+    case 'execute_widget_item':
+    case 'execute_referent':
+      return 'inline_grounding'
+    case 'note_manifest_cache':
+      return 'note_manifest'
+    default:
+      return 'unknown'
+  }
+}
+
 // Forward-reference to avoid importing full dispatcher (too many deps)
 interface MinimalRoutingResult {
   handled: boolean

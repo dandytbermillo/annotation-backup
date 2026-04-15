@@ -63,12 +63,29 @@ export interface ExitPillData {
   exitType: 'none' | 'start_over'
 }
 
+/**
+ * State-info seed pill data for the bounded state-info clarifier
+ * (per state-info-semantic-vs-deterministic-contract.md §State-Info Query Families).
+ *
+ * When the bounded state-info ladder cannot pick a winner (Stage 5 ambiguous +
+ * bounded LLM uncertain), the dispatcher builds a clarifier from the same
+ * semantic candidate set. Each pill carries the curated seed's slots_json so
+ * the selection handler can execute it via executeStateInfoFromRegistry against
+ * the live dashboard snapshot — same registry executor as the auto-execute path.
+ */
+export interface StateInfoSeedData {
+  /** slots_json from the curated state_info seed (query_type, target_name, family_id, scope) */
+  slots_json: Record<string, unknown>
+  /** intent_id from the seed (always 'state_info' today) */
+  intent_id: string
+}
+
 export interface SelectionOption {
-  type: 'workspace' | 'note' | 'entry' | 'confirm_delete' | 'quick_links_panel' | 'confirm_panel_write' | 'panel_drawer' | 'doc' | 'td7_clarification' | 'cross_corpus_select' | 'exit'
+  type: 'workspace' | 'note' | 'entry' | 'confirm_delete' | 'quick_links_panel' | 'confirm_panel_write' | 'panel_drawer' | 'doc' | 'td7_clarification' | 'cross_corpus_select' | 'exit' | 'state_info_seed'
   id: string
   label: string
   sublabel?: string
-  data: WorkspaceMatch | NoteMatch | EntryMatch | QuickLinksPanelData | PanelIntentData | PanelDrawerData | DocData | TD7ClarificationData | CrossCorpusSelectData | ExitPillData
+  data: WorkspaceMatch | NoteMatch | EntryMatch | QuickLinksPanelData | PanelIntentData | PanelDrawerData | DocData | TD7ClarificationData | CrossCorpusSelectData | ExitPillData | StateInfoSeedData
 }
 
 /** Suggestion candidate for typo fallback */

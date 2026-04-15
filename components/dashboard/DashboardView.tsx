@@ -104,8 +104,17 @@ export function DashboardView({
   const [highlightedPanelId, setHighlightedPanelId] = useState<string | null>(null)
   const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
-  // Widget Architecture: Full panel drawer state
-  const [drawerPanel, setDrawerPanel] = useState<WorkspacePanel | null>(null)
+  // Widget Architecture: Full panel drawer state.
+  // Bug 1 fix: store only the panel ID; derive the full drawerPanel object from
+  // the current `panels` state. This eliminates a stale snapshot that was the
+  // root cause of the drawer header showing the pre-rename title after a panel
+  // rename. Any consumer that reads drawerPanel.title / .panelType now always
+  // reflects the latest `panels` data — no re-sync effect needed.
+  const [drawerPanelId, setDrawerPanelId] = useState<string | null>(null)
+  const drawerPanel = useMemo<WorkspacePanel | null>(() => {
+    if (!drawerPanelId) return null
+    return panels.find(p => p.id === drawerPanelId) ?? null
+  }, [drawerPanelId, panels])
   const isDrawerOpen = drawerPanel !== null
 
   // Chat Navigation: Get functions to track view mode and workspace opens
@@ -196,6 +205,59 @@ export function DashboardView({
   const [activePanelId, setActivePanelId] = useState<string | null>(null)
   const dragStartRef = useRef<{ x: number; y: number; panelX: number; panelY: number } | null>(null)
 
+  // Bug 2 fix: shared dashboard uiContext builder.
+  // Extracted from the useEffect below so the rename handler (handleTitleChange)
+  // can publish uiContext synchronously after setPanels, avoiding a race where a
+  // chat turn between rename-commit and the next effect run would see stale
+  // widget titles in visibleWidgets. The helper takes current panels / drawer /
+  // focused-panel inputs explicitly so it can be invoked with freshly-updated
+  // values before React schedules the next render.
+  const buildDashboardUiContext = useCallback(
+    (
+      localPanels: WorkspacePanel[],
+      localDrawerPanelId: string | null,
+      localActivePanelId: string | null,
+    ) => {
+      const localVisibleWidgets = localPanels
+        .filter((panel) => panel.isVisible && !panel.deletedAt)
+        .map((panel) => ({
+          id: panel.id,
+          title: panel.title ?? panel.panelType,
+          type: panel.panelType,
+          instanceLabel: panel.instanceLabel ?? undefined,
+          duplicateFamily: panel.duplicateFamily ?? undefined,
+        }))
+      const localDrawerPanel = localDrawerPanelId
+        ? localPanels.find((p) => p.id === localDrawerPanelId) ?? null
+        : null
+      // Phase 4: Filter out workspace widgetStates when on dashboard
+      // This prevents stale workspace data from being sent to the LLM
+      // Filter by widgetId (not instanceId prefix) to avoid hiding third-party widgets
+      const allWidgetStates = getAllWidgetStates()
+      const dashboardWidgetStates = Object.fromEntries(
+        Object.entries(allWidgetStates).filter(([, state]) => state.widgetId !== 'workspace')
+      )
+      return {
+        mode: 'dashboard' as const,
+        dashboard: {
+          entryId,
+          entryName,
+          visibleWidgets: localVisibleWidgets,
+          openDrawer: localDrawerPanel
+            ? {
+                panelId: localDrawerPanel.id,
+                title: localDrawerPanel.title ?? localDrawerPanel.panelType,
+                type: localDrawerPanel.panelType,
+              }
+            : undefined,
+          focusedPanelId: localActivePanelId,
+          widgetStates: dashboardWidgetStates,
+        },
+      }
+    },
+    [entryId, entryName],
+  )
+
   useEffect(() => {
     // Debug: Track when this effect runs and what triggered it
     console.log('[DashboardView] uiContext_effect_entered:', {
@@ -225,13 +287,6 @@ export function DashboardView({
     }
     if (viewMode === 'dashboard') {
       const openDrawerTitle = drawerPanel?.title ?? drawerPanel?.panelType ?? null
-      // Phase 4: Filter out workspace widgetStates when on dashboard
-      // This prevents stale workspace data from being sent to the LLM
-      // Filter by widgetId (not instanceId prefix) to avoid hiding third-party widgets
-      const allWidgetStates = getAllWidgetStates()
-      const dashboardWidgetStates = Object.fromEntries(
-        Object.entries(allWidgetStates).filter(([, state]) => state.widgetId !== 'workspace')
-      )
       void debugLog({
         component: 'DashboardView',
         action: 'setUiContext_dashboard',
@@ -240,28 +295,9 @@ export function DashboardView({
           drawerPanelId: drawerPanel?.id,
           openDrawerTitle,
           hasDraw: !!drawerPanel,
-          allWidgetStatesCount: Object.keys(allWidgetStates).length,
-          dashboardWidgetStatesCount: Object.keys(dashboardWidgetStates).length,
-          filteredOutWorkspaceStates: Object.entries(allWidgetStates).filter(([, s]) => s.widgetId === 'workspace').map(([k]) => k),
         },
       })
-      setUiContext({
-        mode: 'dashboard',
-        dashboard: {
-          entryId,
-          entryName,
-          visibleWidgets,
-          openDrawer: drawerPanel
-            ? {
-                panelId: drawerPanel.id,
-                title: drawerPanel.title ?? drawerPanel.panelType,
-                type: drawerPanel.panelType,
-              }
-            : undefined,
-          focusedPanelId: activePanelId,
-          widgetStates: dashboardWidgetStates,
-        },
-      })
+      setUiContext(buildDashboardUiContext(panels, drawerPanelId, activePanelId))
       return
     }
     // Phase 3: Workspace mode uiContext is owned exclusively by AnnotationAppShell.
@@ -269,13 +305,13 @@ export function DashboardView({
     // AnnotationAppShell has access to openNotes from the dock, which DashboardView lacks.
   }, [
     viewMode,
-    entryId,
-    entryName,
-    visibleWidgets,
+    panels,
+    drawerPanelId,
     drawerPanel,
     activePanelId,
     setUiContext,
     isEntryActive,
+    buildDashboardUiContext,
   ])
 
   // Phase 4: Dashboard state reporting via widgetStates
@@ -1127,7 +1163,7 @@ export function DashboardView({
 
   // Widget Architecture: Handle widget double-click to open drawer
   const handleWidgetDoubleClick = useCallback((panel: WorkspacePanel) => {
-    setDrawerPanel(panel)
+    setDrawerPanelId(panel.id)
     setWidgetOpen(panel.id, true) // Step 10a: register open (persists until explicitly closed)
     setStateInfoActivePanelId(panel.id) // Step 10a: set as active drawer
     if (isEntryActive) {
@@ -1179,12 +1215,17 @@ export function DashboardView({
     })
   }, [activePanelId, entryId, entryName, isEntryActive, setLastAction, setUiContext, visibleWidgets, recordExecutedAction])
 
-  // Widget Architecture: Handle drawer close
+  // Widget Architecture: Handle drawer close.
+  // Use the functional setter so `closingPanelId` is always the latest drawer
+  // id — avoids a stale closure that previously captured `drawerPanel?.id`
+  // from the first render (when empty deps `[]` prevented callback refresh).
   const handleDrawerClose = useCallback(() => {
-    const closingPanelId = drawerPanel?.id
-    setDrawerPanel(null)
+    setDrawerPanelId((prev) => {
+      const closingPanelId = prev
+      if (closingPanelId) setWidgetOpen(closingPanelId, false) // Step 10a: explicitly close
+      return null
+    })
     setActiveWidgetId(null)
-    if (closingPanelId) setWidgetOpen(closingPanelId, false) // Step 10a: explicitly close
     setStateInfoActivePanelId(null) // Step 10a: no active panel
     void debugLog({
       component: "DashboardView",
@@ -1218,7 +1259,7 @@ export function DashboardView({
           action: "setDrawerPanel_calling",
           metadata: { panelId: panel.id, panelType: panel.panelType, panelTitle: panel.title },
         })
-        setDrawerPanel(panel)
+        setDrawerPanelId(panel.id)
         setActiveWidgetId(panel.id)
         setWidgetOpen(panel.id, true) // Step 10a: register open (persists until explicitly closed)
         setStateInfoActivePanelId(panel.id) // Step 10a: set as active drawer
@@ -1301,11 +1342,22 @@ export function DashboardView({
           throw new Error("Failed to update panel title")
         }
 
-        setPanels((prev) =>
-          prev.map((p) =>
-            p.id === panelId ? { ...p, title: newTitle } : p
-          )
+        // Bug 2 fix: compute the next panels snapshot once, set both states from
+        // the same snapshot. setUiContext is NOT called from inside the setPanels
+        // updater — that was an impure-updater pattern. Instead, compute `next`
+        // from the current `panels` closure, then fire setPanels and setUiContext
+        // as sibling calls. React batches them in the same render pass, so the
+        // next render sees both updates atomically. The existing useEffect will
+        // also publish on the next tick, but publishing here synchronously closes
+        // the race window where a chat turn between rename-commit and that tick
+        // would otherwise see stale visibleWidgets / openDrawer titles.
+        const next = panels.map((p) =>
+          p.id === panelId ? { ...p, title: newTitle } : p
         )
+        setPanels(next)
+        if (isEntryActive && viewMode === 'dashboard') {
+          setUiContext(buildDashboardUiContext(next, drawerPanelId, activePanelId))
+        }
 
         // Notify Links Overview and other panels that panel data changed
         requestDashboardPanelRefresh()
@@ -1319,7 +1371,7 @@ export function DashboardView({
         console.error("[DashboardView] Failed to update panel title:", err)
       }
     },
-    [workspaceId]
+    [workspaceId, isEntryActive, viewMode, setUiContext, buildDashboardUiContext, drawerPanelId, activePanelId, panels]
   )
 
   // Handle reset layout

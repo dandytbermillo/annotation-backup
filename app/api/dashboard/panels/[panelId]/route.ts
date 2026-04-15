@@ -162,6 +162,38 @@ export async function PATCH(
     const result = await serverPool.query(query, values)
     const row = result.rows[0]
 
+    // Cascade soft-delete stale learned open_panel rows on title rename.
+    // Narrow scope per the review: only learned rows (routing_dispatcher),
+    // only rows where slots_json.panelId matches this panel, only rows whose
+    // stored panelTitle differs from the new title. Curated seeds have no
+    // panelId/panelTitle in slots and are untouched. Best-effort — a failure
+    // here must not roll back the rename itself.
+    if (body.title !== undefined && typeof row?.title === 'string') {
+      try {
+        const cascadeResult = await serverPool.query(
+          `UPDATE chat_routing_memory_index
+             SET is_deleted = true, updated_at = NOW()
+           WHERE is_deleted = false
+             AND intent_id = 'open_panel'
+             AND scope_source = 'routing_dispatcher'
+             AND slots_json->>'panelId' = $1
+             AND slots_json->>'panelTitle' IS DISTINCT FROM $2
+           RETURNING id`,
+          [panelId, row.title]
+        )
+        if (cascadeResult.rowCount && cascadeResult.rowCount > 0) {
+          console.log(
+            `[dashboard/panels/${panelId}] Cascade soft-deleted ${cascadeResult.rowCount} stale learned open_panel row(s) after rename to "${row.title}"`
+          )
+        }
+      } catch (cascadeError) {
+        console.error(
+          `[dashboard/panels/${panelId}] Cascade soft-delete failed (rename already committed):`,
+          cascadeError
+        )
+      }
+    }
+
     const panel = {
       id: row.id,
       workspaceId: row.workspace_id,

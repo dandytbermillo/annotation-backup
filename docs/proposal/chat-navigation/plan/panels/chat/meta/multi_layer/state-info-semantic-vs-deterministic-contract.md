@@ -132,6 +132,14 @@ Outside bounded deterministic option-picking, the intended app-wide rule is:
 6. if downstream still does not produce a safe winner, the final outcome should
    be clarification rather than blind execution
 
+Important distinction:
+
+- the shared semantic candidate-set clarification path is the primary bounded
+  clarification path
+- later downstream grounding/LLM fallback is a separate, later lane
+- downstream fallback must not be treated as if it were the same thing as the
+  Stage 5/shared-semantic clarification path
+
 This preserves the existing no-clarifier convergence rule:
 
 - semantic retrieval is the main freeform retrieval system
@@ -301,3 +309,11 @@ The permanent rule is:
 - if no safe winner exists, the final freeform outcome is clarification
 - the final answer or action comes from the correct authoritative runtime source,
   not from raw UI fields or semantic rows themselves
+
+
+
+
+
+
+
+

@@ -636,6 +636,54 @@ This proposal implies:
 - helper functions such as question guards, visibility checks, duplicate-family checks, and visible-panel resolution should remain policy helpers only
 - active selection context still owns the next turn before normal known-noun defaults apply
 
+App-wide routing rule:
+
+- all freeform user queries should enter the shared semantic retrieval approach first
+- semantic retrieval should determine the likely intent family, scope, and bounded candidate set
+- once the intent is known, the app should dispatch to the correct executor or runtime truth source
+- seeded/learned semantic rows should therefore carry the execution direction for the resolved intent, not just the retrieval match itself
+- bounded deterministic handling remains reserved for live bounded selection replies such as `1`, `2`, `3`, `first`, `second`, and `third`
+- question queries about app documentation/help may remain a separate dedicated path when that is the intended product exception
+
+So this is not a model where different freeform query families each get their
+own ad hoc interpretation lane. The shared semantic retrieval layer is the
+primary interpreter for freeform queries across navigation, widget/panel
+state-info, and other runtime query families, and the executor choice happens
+after that interpretation step.
+
+In practice, that means seeded/learned rows should carry enough execution
+metadata for the dispatcher to know what kind of executor comes next after
+semantic retrieval resolves the query. Examples include:
+
+- navigation execution
+- widget/panel state-info execution against the authoritative runtime registry
+- app documentation/help execution
+- surface-manifest execution
+
+So retrieval rows are not only "what did this query probably mean?" rows. They
+are also "which validated executor/source of truth should this resolved query go
+to next?" rows.
+
+For implementers, this should be modeled explicitly in the retrieval metadata.
+This is not optional inference left to downstream fallback code. A preseeded row
+and a learned row should each expose an explicit execution-direction field for
+the resolved candidate. For example, a seeded/learned row should carry or
+resolve to a field such as:
+
+- `executor_kind: navigation`
+- `executor_kind: state_info_registry`
+- `executor_kind: docs`
+- `executor_kind: surface_manifest`
+
+The exact storage schema may vary, but the contract requires this information to
+be explicit in the resolved semantic candidate, not inferred later by ad hoc
+fallback logic. In other words:
+
+- semantic retrieval decides what the query means
+- the resolved candidate explicitly declares which executor comes next
+- the dispatcher should not guess the executor later from unrelated prompt,
+  fallback, or raw UI-field heuristics
+
 Freeform widget/panel state-info questions should still use the semantic retrieval
 layer for retrieval, validation, and scoping before execution.
 

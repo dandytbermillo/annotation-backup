@@ -52,6 +52,9 @@ import { type PendingOptionState, resetLLMArbitrationGuard } from '@/lib/chat/ch
 // Unified routing dispatcher (per routing-order-priority-plan.md)
 import { dispatchRouting, isExplicitCommand, type LastPreviewState } from '@/lib/chat/routing-dispatcher'
 import { getAllVisibleSnapshots, getActiveWidgetId, type SnapshotListSegment } from '@/lib/widgets/ui-snapshot-registry'
+// Step 10a: Registry-backed state-info executor — used for both bounded LLM auto-execute
+// (in routing-dispatcher) and pill-click selection (state_info_seed branch below).
+import { executeStateInfoFromRegistry, buildDashboardStateSnapshot } from '@/lib/chat/state-info-resolvers'
 // TD-3: Import consolidated patterns from query-patterns module
 import {
   stripConversationalPrefix,
@@ -1069,6 +1072,60 @@ function ChatNavigationPanelContent({
         return
       }
 
+      // Step 10a: State-info bounded clarifier pill selection.
+      // The dispatcher built these pills from the same semantic candidate set used by
+      // the bounded LLM (routing-dispatcher.ts state_info_bounded_clarifier path).
+      // Each pill carries the curated seed's slots_json — execute it via the same
+      // registry executor as the auto-execute path. No re-routing through the
+      // dispatcher; the user already picked the question form they meant.
+      if (option.type === 'state_info_seed') {
+        const seedData = option.data as { slots_json: Record<string, unknown>; intent_id: string }
+
+        void debugLog({
+          component: 'ChatNavigation',
+          action: 'state_info_seed_pill_selected',
+          metadata: {
+            optionId: option.id,
+            label: option.label,
+            queryType: (seedData.slots_json as { query_type?: string }).query_type,
+            targetName: (seedData.slots_json as { target_name?: string }).target_name,
+          },
+        })
+
+        // Clear pending options — selection consumed the clarifier
+        setPendingOptions([])
+        setPendingOptionsMessageId(null)
+        setPendingOptionsGraceCount(0)
+
+        // Execute against the live dashboard snapshot via the registry executor
+        const visibleWidgets = uiContext?.dashboard?.visibleWidgets as
+          | Array<{ id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }>
+          | undefined
+        let answerContent = "I couldn't determine the current widget state. Could you try rephrasing your question?"
+        if (visibleWidgets) {
+          try {
+            const snapshot = buildDashboardStateSnapshot(visibleWidgets)
+            const execResult = executeStateInfoFromRegistry(seedData.slots_json, snapshot)
+            if (execResult.handled && execResult.answer) {
+              answerContent = execResult.answer
+            }
+          } catch (execErr) {
+            console.error('[chat] state_info_seed selection executor error:', execErr)
+          }
+        }
+
+        const stateMsg: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: answerContent,
+          timestamp: new Date(),
+          isError: false,
+        }
+        addMessage(stateMsg)
+        setIsLoading(false)
+        return
+      }
+
       // Prereq 4: Handle cross-corpus pill selection
       if (option.type === 'cross_corpus_select') {
         const result = await handleCrossCorpusPillSelection(option as PendingOptionState, {
@@ -1104,12 +1161,12 @@ function ChatNavigationPanelContent({
           }
         }
 
-        // Note: TD-7, cross-corpus, and exit options are handled above and return early,
-        // so this code path is never reached for those types
+        // Note: TD-7, cross-corpus, exit, and state_info_seed options are handled
+        // above and return early, so this code path is never reached for those types.
         const result = await selectOption({
-          type: option.type as Exclude<SelectionOption['type'], 'td7_clarification' | 'cross_corpus_select' | 'exit'>,
+          type: option.type as Exclude<SelectionOption['type'], 'td7_clarification' | 'cross_corpus_select' | 'exit' | 'state_info_seed'>,
           id: option.id,
-          data: option.data as Exclude<SelectionOption['data'], import('@/lib/chat/chat-navigation-context').TD7ClarificationData | import('@/lib/chat/chat-navigation-context').CrossCorpusSelectData | import('@/lib/chat/chat-navigation-context').ExitPillData>,
+          data: option.data as Exclude<SelectionOption['data'], import('@/lib/chat/chat-navigation-context').TD7ClarificationData | import('@/lib/chat/chat-navigation-context').CrossCorpusSelectData | import('@/lib/chat/chat-navigation-context').ExitPillData | import('@/lib/chat/chat-navigation-context').StateInfoSeedData>,
         })
 
         // Note: Don't clear pending options here - grace window logic handles clearing.
@@ -1868,10 +1925,24 @@ function ChatNavigationPanelContent({
               message: 'Going home...',
             }
           } else if (navAction.type === 'open_panel') {
+            // Fix A (Bug 4): resolve the panel title from the live
+            // visibleWidgets state first. The cached navAction.panelTitle
+            // comes from the learned row's slots_json.panelTitle, which was
+            // snapshot at write time and is not invalidated on panel rename
+            // — so it can display the pre-rename title (e.g. "Links Panel A"
+            // after the panel has been renamed to "Links Panel aaa").
+            // Falling back to the cached title preserves behavior for edge
+            // cases where the panel is no longer in visibleWidgets (deleted,
+            // hidden, etc.). No stored data is mutated — this is purely a
+            // display-time resolution.
+            const liveTitle = uiContext?.dashboard?.visibleWidgets
+              ?.find((w: { id: string; title: string }) => w.id === navAction.panelId)
+              ?.title
+            const displayTitle = liveTitle ?? navAction.panelTitle
             replayResolution = {
               success: true,
               action: 'open_panel_drawer',
-              message: `Opening ${navAction.panelTitle}...`,
+              message: `Opening ${displayTitle}...`,
               panelId: navAction.panelId,
             }
           } else {
