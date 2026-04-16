@@ -1429,8 +1429,23 @@ export async function dispatchRouting(
       // "open entries" / "show entries" should continue to clarify on future turns,
       // not become Memory-Exact defaults — regardless of how the success happened
       // (clarified selection, auto-executed, or any other path).
-      const shouldSkipPromotion = pending.payload.intent_id === 'open_panel'
+      const isAmbiguousGenericOpenPanel = pending.payload.intent_id === 'open_panel'
         && isGenericAmbiguousPanelPhrase(pending.payload.raw_query_text ?? '')
+      // Phase 1.6 Fix 1: prevent state-info questions from being promoted as
+      // open_panel learned rows. If `is links panel h open?` ever auto-executes
+      // as an open_panel action (via LLM visible-panel path, seed gap, or any
+      // regression), the write should NOT be promoted — otherwise it poisons
+      // the pool and shadows curated state_info seeds on future turns.
+      const isStateInfoPromotedAsOpenPanel = pending.payload.intent_id === 'open_panel'
+        && isStateInfoQuestion(pending.payload.raw_query_text ?? '')
+      const shouldSkipPromotion = isAmbiguousGenericOpenPanel || isStateInfoPromotedAsOpenPanel
+
+      if (isStateInfoPromotedAsOpenPanel) {
+        emitPhase1Counter('memory_write_rejected_state_info_open_panel', {
+          raw_query_text: pending.payload.raw_query_text ?? '',
+          intent_id: pending.payload.intent_id,
+        })
+      }
 
       if (!shouldSkipPromotion) {
         void recordMemoryEntry(pending.payload).catch(() => {})
@@ -2527,6 +2542,62 @@ export async function dispatchRouting(
   }
 
   // =========================================================================
+  // Phase 1.6 Fix 1b: Retrieval-side veto for poisoned open_panel rows.
+  //
+  // Even after Fix 1 (write-side guard), two gaps remain:
+  //   1. Already-poisoned rows from before Fix 1 landed keep shadowing curated
+  //      state_info seeds every turn.
+  //   2. Write paths Fix 1 doesn't cover (e.g., direct recordMemoryEntry calls
+  //      outside the pending-write flow) could still land poisoned rows.
+  //
+  // When the input matches a state-info question AND a state_info candidate
+  // already covers the same lowercase target_name, any open_panel candidate
+  // for that same target is classified as stale/poisoned and dropped from the
+  // pool. State_info execution (or clarifier) then runs against a clean set.
+  //
+  // Plan reference: installed-widget-registry-and-alias-plan.md Phase 1.6
+  // Fix 1b "Retrieval-side veto (defense-in-depth, reviewer correction)".
+  // =========================================================================
+  if (isStateInfoQuestion(ctx.trimmedInput) && unifiedReplayCandidates.length > 0) {
+    const stateInfoTargets = new Set<string>()
+    for (const c of unifiedReplayCandidates) {
+      const slots = c.slots_json as any
+      if (slots?.action_type === 'state_info') {
+        const targetName = (slots?.target_name as string | undefined)?.toLowerCase()
+        if (targetName) stateInfoTargets.add(targetName)
+      }
+    }
+    if (stateInfoTargets.size > 0) {
+      let vetoedCount = 0
+      const vetoedEntries: Array<{ target: string; source: string | undefined }> = []
+      const filtered: UnifiedReplayCandidate[] = []
+      for (const c of unifiedReplayCandidates) {
+        const slots = c.slots_json as any
+        const isOpenPanel = slots?.action_type === 'open_panel' || c.intent_id === 'open_panel'
+        const targetName = (slots?.target_name as string | undefined)?.toLowerCase()
+        if (isOpenPanel && targetName && stateInfoTargets.has(targetName)) {
+          vetoedCount += 1
+          vetoedEntries.push({ target: targetName, source: c.from_curated_seed ? 'curated_seed' : 'learned_row' })
+          continue
+        }
+        filtered.push(c)
+      }
+      if (vetoedCount > 0) {
+        unifiedReplayCandidates.length = 0
+        for (const c of filtered) unifiedReplayCandidates.push(c)
+        // Rebuild seenIdentities so downstream dedupe (T17, etc.) sees the post-veto pool.
+        seenIdentities.clear()
+        for (const c of filtered) seenIdentities.add(candidateIdentity(c))
+        emitPhase1Counter('memory_retrieval_vetoed_state_info_open_panel', {
+          raw_query_text: ctx.trimmedInput,
+          vetoed_count: vetoedCount,
+          vetoed_entries: vetoedEntries,
+        })
+      }
+    }
+  }
+
+  // =========================================================================
   // Phase 1.5 T17: Live-derived state_info candidate synthesis.
   //
   // Why: curated seeds only cover `is links panel a/b/c/d open?`. When a user
@@ -2580,6 +2651,13 @@ export async function dispatchRouting(
       uiContextWorkspaceId: ctx.uiContext?.dashboard?.workspaceId ?? null,
     })
   }
+  // Phase 1.6 Fix 4: track the T17 exact-single-instance match target (if any)
+  // so that after the T17 block finishes populating the pool, we can suppress
+  // other state_info candidates whose target_name differs. Without this, the
+  // T17 1.0 winner near-ties against curated seeds for other panels at ~0.97
+  // (all semantically similar to "is links panel X open?"), Stage 5 rejects
+  // on the 0.03 near-tie margin, and the turn falls through to LLM navigation.
+  let t17ExactTargetName: string | undefined
   if (isStateInfoQuestion(ctx.trimmedInput) && turnSnapshotForLog.installedWidgets && turnSnapshotForLog.installedWidgets.length > 0) {
     const parsed = detectNounStateInfoQuery(ctx.trimmedInput)
     if (parsed) {
@@ -2608,8 +2686,20 @@ export async function dispatchRouting(
         const iw = exactTitleMatches[0]
         const syntheticInstance = {
           intent_id: 'state_info',
+          // Phase 1.6 Fix 2: complete MemoryLookupResult shape so Stage 5
+          // gates accept the synthetic. Without intent_class/risk_tier/
+          // success_count/context_fingerprint, Gate 2 rejects with
+          // `undefined !== 'low'` and Gate 0 rejects when a real fingerprint
+          // is in play. b2CurrentContextFingerprint is in scope here
+          // (declared at :1502, set at :1532); when B2 had no fingerprint,
+          // Gate 0 is bypassed anyway per the `if (gate0Fingerprint && ...)`
+          // guard at stage5-evaluator.ts:114.
+          intent_class: 'info_intent' as const,
           similarity_score: 1.0,
-          target_ids: [],
+          target_ids: [] as string[],
+          risk_tier: 'low' as const,
+          success_count: 0,
+          context_fingerprint: b2CurrentContextFingerprint ?? '',
           slots_json: {
             action_type: 'state_info',
             query_type: queryType,
@@ -2627,6 +2717,11 @@ export async function dispatchRouting(
             panelId: iw.panelId,
           })
         }
+        // Mark this turn as an exact-single-live-match so the Fix 4 dominance
+        // filter (below) can suppress other-target state_info candidates.
+        // Set regardless of whether the push above deduped — the authoritative
+        // target is known even if an equivalent curated seed already covered it.
+        t17ExactTargetName = iw.title
       } else if (exactTitleMatches.length === 0) {
         // No instance match — try family-level synthesis.
         // Find installedWidgets whose title starts with nounInput as a family phrase.
@@ -2641,8 +2736,14 @@ export async function dispatchRouting(
             const familyId = Array.from(familyIds)[0]
             const syntheticFamily = {
               intent_id: 'state_info',
+              // Phase 1.6 Fix 2: complete MemoryLookupResult shape (see
+              // instance synthesis above for rationale).
+              intent_class: 'info_intent' as const,
               similarity_score: 0.75, // above state_info POOL_FLOOR 0.70, below strong-winner 0.88
-              target_ids: [],
+              target_ids: [] as string[],
+              risk_tier: 'low' as const,
+              success_count: 0,
+              context_fingerprint: b2CurrentContextFingerprint ?? '',
               slots_json: {
                 action_type: 'state_info',
                 query_type: queryType,
@@ -2670,6 +2771,126 @@ export async function dispatchRouting(
     }
   }
 
+  // =========================================================================
+  // Phase 1.6 Fix 4: exact-target dominance for T17 single-instance matches.
+  //
+  // When T17 resolves an explicit state-info question to EXACTLY ONE live
+  // installed-widget match (e.g., `is links panel j open?` → Links Panel J),
+  // suppress other state_info pool candidates whose target_name differs.
+  // Those curated seeds (Panel A/B/C/D/H etc.) are semantically near-identical
+  // to the T17 winner in embedding space (~0.97-0.98 similarity), and without
+  // suppression Stage 5's 0.03 near-tie margin rejects the strong winner
+  // with `rejected_ambiguous` → `near_tie_N_survivors_margin_*`. The turn
+  // then falls through to LLM navigation and auto-opens the panel instead
+  // of answering the state-info question.
+  //
+  // Only runs for the EXACT SINGLE-INSTANCE case (1.0 synthetic). Family-level
+  // (0.75) synthesis and no-match cases leave the pool untouched — the other
+  // state_info candidates are meaningful disambiguation material there.
+  //
+  // Plan reference: installed-widget-registry-and-alias-plan.md Phase 1.6
+  // Fix 4 "Exact-target dominance for T17 single-instance synthetics".
+  // =========================================================================
+  if (t17ExactTargetName) {
+    const exactLower = t17ExactTargetName.toLowerCase()
+    let suppressedCount = 0
+    const suppressedEntries: Array<{ target: string; source: string }> = []
+    const kept: UnifiedReplayCandidate[] = []
+    for (const c of unifiedReplayCandidates) {
+      const slots = c.slots_json as any
+      if (slots?.action_type === 'state_info') {
+        const t = (slots?.target_name as string | undefined)?.toLowerCase()
+        if (t && t !== exactLower) {
+          suppressedCount += 1
+          suppressedEntries.push({ target: t, source: c.from_curated_seed ? 'curated_seed' : 'learned_or_synth' })
+          continue
+        }
+      }
+      kept.push(c)
+    }
+    if (suppressedCount > 0) {
+      unifiedReplayCandidates.length = 0
+      for (const c of kept) unifiedReplayCandidates.push(c)
+      seenIdentities.clear()
+      for (const c of kept) seenIdentities.add(candidateIdentity(c))
+      emitPhase1Counter('memory_state_info_exact_target_dominance', {
+        raw_query_text: ctx.trimmedInput,
+        exact_target: t17ExactTargetName,
+        suppressed_count: suppressedCount,
+        suppressed_entries: suppressedEntries,
+      })
+    }
+  }
+
+  // =========================================================================
+  // Fix 6: exact-instance dominance for open_panel candidates.
+  //
+  // Mirrors Fix 4 (state_info dominance) but for navigation. When the pool
+  // has an open_panel candidate with a panelId that maps to a live installed
+  // widget AND similarity >= 0.99 (exact-hit preseed), suppress other
+  // open_panel candidates whose panelId differs or is absent. Without this,
+  // the exact-hit preseed (1.0) near-ties against curated seeds and learned
+  // rows for other instances (B/C/J/K at ~0.99) and Stage 5 rejects with
+  // `rejected_ambiguous`.
+  //
+  // Uses panelId-based dominance (not target_name) because panelId is the
+  // stable unique identity — same-title collisions are theoretically
+  // possible.
+  // =========================================================================
+  {
+    let navExactTarget: { panelId: string; targetName: string; score: number } | undefined
+    for (const c of unifiedReplayCandidates) {
+      const slots = c.slots_json as any
+      if (slots?.action_type === 'open_panel' && slots?.panelId && c.similarity_score >= 0.99) {
+        if (!navExactTarget || c.similarity_score > navExactTarget.score) {
+          navExactTarget = {
+            panelId: slots.panelId as string,
+            targetName: (slots.target_name as string | undefined)?.toLowerCase() ?? '',
+            score: c.similarity_score,
+          }
+        }
+      }
+    }
+    if (navExactTarget) {
+      const isLive = turnSnapshotForLog.installedWidgets?.some(
+        iw => iw.panelId === navExactTarget!.panelId,
+      )
+      if (isLive) {
+        let suppressedCount = 0
+        const suppressedEntries: Array<{ panelId: string | undefined; target: string }> = []
+        const kept: UnifiedReplayCandidate[] = []
+        for (const c of unifiedReplayCandidates) {
+          const slots = c.slots_json as any
+          if (slots?.action_type === 'open_panel') {
+            const cPanelId = slots?.panelId as string | undefined
+            if (cPanelId !== navExactTarget.panelId) {
+              suppressedCount += 1
+              suppressedEntries.push({
+                panelId: cPanelId,
+                target: (slots?.target_name as string | undefined)?.toLowerCase() ?? '',
+              })
+              continue
+            }
+          }
+          kept.push(c)
+        }
+        if (suppressedCount > 0) {
+          unifiedReplayCandidates.length = 0
+          for (const c of kept) unifiedReplayCandidates.push(c)
+          seenIdentities.clear()
+          for (const c of kept) seenIdentities.add(candidateIdentity(c))
+          emitPhase1Counter('memory_open_panel_exact_instance_dominance', {
+            raw_query_text: ctx.trimmedInput,
+            exact_panel_id: navExactTarget.panelId,
+            exact_target_name: navExactTarget.targetName,
+            suppressed_count: suppressedCount,
+            suppressed_entries: suppressedEntries,
+          })
+        }
+      }
+    }
+  }
+
   console.log('[dispatcher] unified replay pool:', { b2Count: semanticCandidatesForLaneD?.length ?? 0, phase5Count: phase5HintResult?.candidates?.length ?? 0, unifiedCount: unifiedReplayCandidates.length })
 
   // [classD-trace] Breakdown of action_types + scores in both the unified pool
@@ -2682,12 +2903,16 @@ export async function dispatchRouting(
     unifiedPoolByAction: unifiedReplayCandidates.map(c => ({
       action_type: (c.slots_json as Record<string, unknown> | undefined)?.action_type,
       target_name: (c.slots_json as Record<string, unknown> | undefined)?.target_name,
+      // Fix 3 Part A T37a: expose panelId for widget_preseed retrieval-
+      // participation verification. Absent (undefined) for non-preseed rows.
+      panelId: (c.slots_json as Record<string, unknown> | undefined)?.panelId,
       score: c.similarity_score,
       from_seed: c.from_curated_seed,
     })),
     phase5RawByAction: (phase5HintResult?.candidates ?? []).map(c => ({
       action_type: (c.slots_json as Record<string, unknown> | undefined)?.action_type,
       target_name: (c.slots_json as Record<string, unknown> | undefined)?.target_name,
+      panelId: (c.slots_json as Record<string, unknown> | undefined)?.panelId,
       score: c.similarity_score,
       from_seed: c.from_curated_seed,
     })),

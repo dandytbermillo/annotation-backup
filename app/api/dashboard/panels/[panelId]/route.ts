@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { serverPool } from '@/lib/db/pool'
 import { resolveNoteWorkspaceUserId } from '@/app/api/note-workspaces/user-id'
+import {
+  writeSeedRowsForPanel,
+  softDeleteSeedRowsForPanel,
+  hardDeleteSeedRowsForPanel,
+} from '@/lib/chat/routing-log/seed-writer'
 
 /**
  * GET /api/dashboard/panels/[panelId]
@@ -192,6 +197,53 @@ export async function PATCH(
           cascadeError
         )
       }
+
+      // Fix 3 Part A: rename lifecycle for widget_preseed rows. Soft-delete
+      // the old title's preseeds and insert fresh ones with the new title.
+      // Scope is strictly 'widget_preseed' — the learned-row cascade above
+      // handles 'routing_dispatcher' rows; curated seeds are untouched.
+      try {
+        const softDeleted = await softDeleteSeedRowsForPanel(panelId)
+        const seedResult = await writeSeedRowsForPanel({
+          panelId: row.id,
+          userId,
+          title: row.title,
+          familyId: row.duplicate_family ?? null,
+          instanceLabel: row.instance_label ?? null,
+        })
+        console.log(
+          `[dashboard/panels/${panelId}] Preseed rename cascade: soft-deleted ${softDeleted}, inserted ${seedResult.succeeded}/${seedResult.succeeded + seedResult.failed} for "${row.title}"`
+        )
+      } catch (preseedErr) {
+        console.error(
+          `[dashboard/panels/${panelId}] Preseed rename cascade failed (rename already committed):`,
+          preseedErr
+        )
+      }
+    }
+
+    // Fix 3 Part A: restore lifecycle for widget_preseed rows. On restore,
+    // insert a fresh active seed set; prior soft-deleted rows remain soft-
+    // deleted (partial unique index allows coexistence) and fresh rows win
+    // at retrieval via `is_deleted = false` filter.
+    if (body.restore === true && typeof row?.title === 'string') {
+      try {
+        const seedResult = await writeSeedRowsForPanel({
+          panelId: row.id,
+          userId,
+          title: row.title,
+          familyId: row.duplicate_family ?? null,
+          instanceLabel: row.instance_label ?? null,
+        })
+        console.log(
+          `[dashboard/panels/${panelId}] Preseed restore: inserted ${seedResult.succeeded}/${seedResult.succeeded + seedResult.failed} for "${row.title}"`
+        )
+      } catch (restoreErr) {
+        console.error(
+          `[dashboard/panels/${panelId}] Preseed restore failed (restore already committed):`,
+          restoreErr
+        )
+      }
     }
 
     const panel = {
@@ -262,6 +314,20 @@ export async function DELETE(
         return NextResponse.json({ error: 'Panel not found' }, { status: 404 })
       }
 
+      // Fix 3 Part A: hard-delete widget_preseed rows on permanent panel delete.
+      // Best-effort — failure must not fail the delete response.
+      try {
+        const hardDeleted = await hardDeleteSeedRowsForPanel(panelId)
+        if (hardDeleted > 0) {
+          console.log(`[dashboard/panels/${panelId}] Preseed hard-delete: ${hardDeleted} rows`)
+        }
+      } catch (preseedErr) {
+        console.error(
+          `[dashboard/panels/${panelId}] Preseed hard-delete failed (permanent delete already committed):`,
+          preseedErr
+        )
+      }
+
       return NextResponse.json({ success: true, deletedId: panelId, permanent: true })
     } else {
       // Soft delete - set deleted_at and hide panel
@@ -278,6 +344,21 @@ export async function DELETE(
 
       if (result.rows.length === 0) {
         return NextResponse.json({ error: 'Panel not found' }, { status: 404 })
+      }
+
+      // Fix 3 Part A: soft-delete widget_preseed rows on panel soft-delete.
+      // On restore, the PATCH handler writes fresh active rows; these stay
+      // soft-deleted for audit history.
+      try {
+        const softDeleted = await softDeleteSeedRowsForPanel(panelId)
+        if (softDeleted > 0) {
+          console.log(`[dashboard/panels/${panelId}] Preseed soft-delete: ${softDeleted} rows`)
+        }
+      } catch (preseedErr) {
+        console.error(
+          `[dashboard/panels/${panelId}] Preseed soft-delete failed (soft-delete already committed):`,
+          preseedErr
+        )
       }
 
       return NextResponse.json({

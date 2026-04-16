@@ -21,7 +21,7 @@ For note commands, the system is moving to:
 For built-in non-note surfaces, the system is also moving to:
 
 - a dedicated surface-command resolver
-- DB-backed seeded + learned query rows as the phrase source of truth
+- DB-backed seeded + learned query rows as retrieval and recall inputs, not execution authority
 - manifest and live-context validation before execution
 - bounded arbiter/LLM handoff when retrieval is useful but not deterministic
 - explicit destination-aware and ambiguity-aware execution gating
@@ -261,10 +261,28 @@ This resolver sits before the bounded arbiter/LLM and is independent of Phase 5 
 
 #### Retrieval and fallback model
 
-The phrase layer for non-note surfaces comes from:
+The retrieval layer for non-note surfaces comes from:
 
-- curated seed rows
+- curated or system-created seed rows
 - eligible learned-success rows
+
+Those rows are retrieval aids, not the behavior or authority layer.
+
+- seeds provide canonical recall/bootstrap coverage for supported surface phrasing
+- learned rows capture successful user phrasing variants after runtime-validated success
+- neither seeds nor learned rows are allowed to bypass live resolver/executor validation
+
+The safe split is:
+
+- on surface/widget create, the system may preseed a small canonical set for that instance
+  - command/bare-noun forms
+  - canonical state-info forms when supported by the same live executor path
+- after successful execution, the system may learn only from clear, unambiguous, runtime-validated turns
+  - selector-specific or uniquely resolved command turns are eligible
+  - explicit state-info questions must not be learned as navigation
+  - bare interrogative shorthand such as `is <target>?` must not be learned as navigation unless product explicitly defines that shorthand
+  - docs/help/explanation turns must not be learned as navigation
+  - ambiguous or clarification-rescue turns must not be learned as navigation
 
 To improve recall without turning code into a phrase parser, the surface resolver may also use:
 
@@ -277,6 +295,13 @@ That fallback hint:
 - is advisory only
 - must never directly execute
 - exists to reduce avoidable misses on new phrasings before learned rows accumulate
+- must not guess between navigation and state-info when the phrasing is still ambiguous; unresolved question-shaped shorthand should clarify first
+
+Final authority remains:
+
+- the structured resolver that produces the canonical normalized command shape
+- the live published contract for the target surface/widget family
+- runtime freshness and validation before execution or state answer
 
 #### Delivery and destination cues
 

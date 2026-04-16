@@ -5,6 +5,7 @@ import { isValidPanelType, createDefaultPanel, panelTypeRegistry } from '@/lib/d
 import type { PanelTypeId } from '@/lib/dashboard/panel-registry'
 import { allocateInstanceLabel } from '@/lib/dashboard/instance-label-allocator'
 import { isSingletonPanelType } from '@/lib/dashboard/duplicate-family-map'
+import { writeSeedRowsForPanel } from '@/lib/chat/routing-log/seed-writer'
 
 /**
  * GET /api/dashboard/panels
@@ -213,6 +214,31 @@ export async function POST(request: NextRequest) {
     ])
 
     const row = result.rows[0]
+
+    // Fix 3 Part A: synchronously write 3 canonical preseed rows so the first
+    // chat turn after creation can resolve the new panel via retrieval. Seeds
+    // are recall-only; live installedWidgets + executor remain authority.
+    // Failures log but MUST NOT fail panel creation.
+    try {
+      const seedResult = await writeSeedRowsForPanel({
+        panelId: row.id,
+        userId,
+        title: row.title,
+        familyId: row.duplicate_family ?? null,
+        instanceLabel: row.instance_label ?? null,
+      })
+      if (seedResult.failed > 0) {
+        console.warn(
+          `[dashboard/panels] Preseed partially failed for ${row.id}: ${seedResult.succeeded}/${seedResult.succeeded + seedResult.failed} succeeded`,
+        )
+      }
+    } catch (seedErr) {
+      console.error(
+        `[dashboard/panels] Preseed write threw for ${row.id} (panel creation already committed):`,
+        seedErr,
+      )
+    }
+
     const panel = {
       id: row.id,
       workspaceId: row.workspace_id,

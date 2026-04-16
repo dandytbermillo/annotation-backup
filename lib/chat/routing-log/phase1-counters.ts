@@ -55,6 +55,14 @@ export type Phase1CounterName =
   | 'hardcoded_widget_authority_read'
   | 'installed_widget_resolution_mismatch'
   | 'installed_widget_contract_mismatch'
+  // Phase 1.6 Fix 1 (write-side poison guard):
+  | 'memory_write_rejected_state_info_open_panel'
+  // Phase 1.6 Fix 1b (retrieval-side veto):
+  | 'memory_retrieval_vetoed_state_info_open_panel'
+  // Phase 1.6 Fix 4 (exact-target dominance for T17 single-instance matches):
+  | 'memory_state_info_exact_target_dominance'
+  // Fix 6 (exact-instance dominance for open_panel preseeds):
+  | 'memory_open_panel_exact_instance_dominance'
   // Stubs (no consumer in Phase 1; Phase 2 consumers will wire these):
   | 'installed_widget_lookup_zero_result'
   | 'live_resolution_gate_dropped_candidate'
