@@ -35,6 +35,7 @@
  */
 
 import { debugLog } from '@/lib/utils/debug-logger'
+import { emitPhase1Counter } from '@/lib/chat/routing-log/phase1-counters'
 import type { ChatMessage, SelectionOption, ViewPanelContent } from '@/lib/chat'
 import type { UIContext } from '@/lib/chat/intent-prompt'
 import type { LastClarificationState } from '@/lib/chat/chat-navigation-context'
@@ -103,7 +104,7 @@ import { runS6ShadowLoop, runS6EnforcementLoop, executeS6Loop, writeDurableEnfor
 import { classifyContentIntent, isAnchoredNoteResolverHardExcluded, isArbiterHardExcluded, isLikelyNavigateCommand, type NoteAnchorContext } from '@/lib/chat/content-intent-classifier'
 import { callAnchoredNoteResolver } from '@/lib/chat/anchored-note-intent-resolver'
 import { callCrossSurfaceArbiter } from '@/lib/chat/cross-surface-arbiter'
-import { resolveNoteStateInfo, isPanelOpenQuery, resolvePanelOpenStateInfo, resolvePanelWidgetStateInfo, resolveWorkspaceStateInfo, resolveDashboardStateInfo, buildDashboardStateSnapshot, executeStateInfoFromRegistry } from '@/lib/chat/state-info-resolvers'
+import { resolveNoteStateInfo, isPanelOpenQuery, resolvePanelOpenStateInfo, resolvePanelWidgetStateInfo, resolveWorkspaceStateInfo, resolveDashboardStateInfo, buildDashboardStateSnapshot, executeStateInfoFromRegistry, isStateInfoQuestion, detectNounStateInfoQuery } from '@/lib/chat/state-info-resolvers'
 import { resolveNoteCommand } from '@/lib/chat/note-command-resolver'
 import { executeS6OpenPanel, isDuplicateAction } from '@/lib/chat/stage6-execution-bridge'
 import type { S6ParsedAction, S6ActionSignature } from '@/lib/chat/stage6-execution-bridge'
@@ -1407,7 +1408,7 @@ export async function dispatchRouting(
   }
   console.log('[dispatcher] INSTRUMENTED PATH entry:', ctx.trimmedInput)
 
-  const turnSnapshotForLog = buildTurnSnapshot({})
+  const turnSnapshotForLog = buildTurnSnapshot({ uiContext: ctx.uiContext ?? undefined })
 
   // ---------------------------------------------------------------------------
   // Phase 5: Pending write promotion / correction suppression
@@ -2242,7 +2243,15 @@ export async function dispatchRouting(
         // Use registry-backed executor, not raw-field resolvers.
         const arbiterVisWidgets = ctx.uiContext?.dashboard?.visibleWidgets as Array<{ id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }> | undefined
         if (arbiterVisWidgets) {
-          const arbiterSnapshot = buildDashboardStateSnapshot(arbiterVisWidgets)
+          // Phase 1 T11: pass published installed-widget contract + overlay
+          // from the already-built turnSnapshotForLog so the parallel-path
+          // divergence check fires. buildDashboardStateSnapshot returns the
+          // legacy result regardless; the new args drive diagnostic logging.
+          const arbiterSnapshot = buildDashboardStateSnapshot(arbiterVisWidgets, {
+            installedWidgets: turnSnapshotForLog.installedWidgets,
+            overlay: turnSnapshotForLog.overlay,
+            freshness: turnSnapshotForLog.installedWidgetFreshness,
+          })
           // Try generic open/active state first, then note state
           const arbiterStateResult = executeStateInfoFromRegistry(
             { action_type: 'state_info', query_type: isPanelOpenQuery(ctx.trimmedInput) ? 'open_state' : 'open_state', scope: 'panels' },
@@ -2467,7 +2476,13 @@ export async function dispatchRouting(
     const actionType = slots?.action_type as string | undefined
     if (actionType === 'state_info') {
       const queryType = slots?.query_type ?? 'unknown'
-      const targetName = slots?.target_name ?? 'generic'
+      // Phase 1.5 fix 1a: canonicalize target_name to lowercase so curated
+      // seeds (lowercase "links panel h") and T17 live synthetics (title-case
+      // "Links Panel H") collapse into one pool entry. Without this, identical
+      // logical state_info candidates survive dedupe as two entries, trigger
+      // Stage 5 near-tie rejection, and produce a clarifier instead of a
+      // strong winner. Applied here AND in semantic-lookup/route.ts (fix 1b).
+      const targetName = ((slots?.target_name as string | undefined) ?? 'generic').toLowerCase()
       const familyId = slots?.family_id ?? 'none'
       const scope = slots?.scope ?? 'none'
       return `state_info:${queryType}:${targetName}:${familyId}:${scope}`
@@ -2508,6 +2523,150 @@ export async function dispatchRouting(
         seenIdentities.add(identity)
         unifiedReplayCandidates.push({ ...hint, from_curated_seed: hint.from_curated_seed })
       }
+    }
+  }
+
+  // =========================================================================
+  // Phase 1.5 T17: Live-derived state_info candidate synthesis.
+  //
+  // Why: curated seeds only cover `is links panel a/b/c/d open?`. When a user
+  // creates a new instance (e.g., Links Panel F), there is no seed for it,
+  // so the semantic pool returns no state_info candidate and the LLM
+  // visible-panel path auto-opens the panel instead of answering.
+  //
+  // This block injects synthetic state_info candidates derived from the live
+  // installed-widget contract under STRICT rules (enforced to avoid the
+  // failure modes the plan-doc reviewer identified):
+  //
+  //   1. Only runs when the user query is shape-detected as a state-info
+  //      question (`is X open/opened/visible` etc.) AND the installed-widget
+  //      contract is available and non-empty.
+  //   2. Instance-specific query + EXACTLY ONE live match → strong winner
+  //      (similarity_score 1.0) with `{ target_name: <live title> }` and
+  //      NO `family_id` (because executeStateInfoFromRegistry filters by
+  //      familyId when present, which would answer about the whole family).
+  //   3. Instance-specific query + MULTIPLE live matches → skip synthesis.
+  //      Let the clarifier path handle disambiguation.
+  //   4. Family-level query (no instance token, e.g., "which links panel
+  //      is open?") → weak candidate (0.75) WITH family_id. Enters the pool
+  //      above POOL_FLOOR 0.70 but below strong-winner threshold 0.88, so
+  //      it reaches the clarifier builder without auto-executing.
+  //   5. Deduped via existing candidateIdentity() — skipped if a curated
+  //      seed or learned row already covers the same (queryType, target,
+  //      family, scope) tuple.
+  //
+  // This is the narrow Phase 2 "authority switch" scoped to state-info
+  // question handling. Documented in plan Phase 1.5.
+  // =========================================================================
+  // Phase 1.5 runtime diagnostic — fires ALWAYS when input matches state-info
+  // question shape. Not gated by installedWidgets presence. Shows T17's actual
+  // preconditions at runtime so we can diagnose why synthesis fails for new
+  // instances. REMOVE after runtime verification is complete.
+  if (isStateInfoQuestion(ctx.trimmedInput)) {
+    const diagParsed = detectNounStateInfoQuery(ctx.trimmedInput)
+    console.log('[dispatcher] phase1.5 state_info diagnostic:', {
+      input: ctx.trimmedInput,
+      isStateInfoQuestion: true,
+      hasInstalledWidgets: !!turnSnapshotForLog.installedWidgets,
+      installedWidgetCount: turnSnapshotForLog.installedWidgets?.length ?? 0,
+      installedWidgetTitles: turnSnapshotForLog.installedWidgets?.map(w => w.title) ?? [],
+      freshness: turnSnapshotForLog.installedWidgetFreshness,
+      viewStale: turnSnapshotForLog.installedWidgetViewStale,
+      parsedNoun: diagParsed?.nounInput ?? null,
+      parsedStateProperty: diagParsed?.stateProperty ?? null,
+      hasUiContext: !!ctx.uiContext,
+      hasDashboard: !!ctx.uiContext?.dashboard,
+      uiContextInstalledCount: ctx.uiContext?.dashboard?.installedWidgets?.length ?? 0,
+      uiContextWorkspaceId: ctx.uiContext?.dashboard?.workspaceId ?? null,
+    })
+  }
+  if (isStateInfoQuestion(ctx.trimmedInput) && turnSnapshotForLog.installedWidgets && turnSnapshotForLog.installedWidgets.length > 0) {
+    const parsed = detectNounStateInfoQuery(ctx.trimmedInput)
+    if (parsed) {
+      const { stateProperty, nounInput } = parsed
+      const queryType = stateProperty === 'open' ? 'open_state' : 'open_state' // both 'open' and 'visible' collapse to open_state for the executor
+      const nounLower = nounInput.toLowerCase()
+
+      // Instance-specific lookup: exact title match against installedWidgets.
+      const exactTitleMatches = turnSnapshotForLog.installedWidgets.filter(
+        (iw) => iw.title.toLowerCase() === nounLower,
+      )
+
+      // DIAGNOSTIC (REMOVE after runtime verification): show match result + the
+      // titles that were compared so we can see if the target is in the array
+      // and why the match did or didn't fire.
+      console.log('[dispatcher] phase1.5 T17 title-match diagnostic:', {
+        nounLower,
+        exactTitleMatchCount: exactTitleMatches.length,
+        matchedTitles: exactTitleMatches.map(m => m.title),
+        allTitlesLowercase: turnSnapshotForLog.installedWidgets.map(w => w.title.toLowerCase()),
+        targetInArray: turnSnapshotForLog.installedWidgets.some(w => w.title.toLowerCase() === nounLower),
+      })
+
+      if (exactTitleMatches.length === 1) {
+        // Single live match — synthesize strong winner with NO family_id.
+        const iw = exactTitleMatches[0]
+        const syntheticInstance = {
+          intent_id: 'state_info',
+          similarity_score: 1.0,
+          target_ids: [],
+          slots_json: {
+            action_type: 'state_info',
+            query_type: queryType,
+            target_name: iw.title,
+            // DELIBERATELY no family_id — instance-specific synthesis.
+          },
+        } as unknown as UnifiedReplayCandidate
+        const identity = candidateIdentity(syntheticInstance as unknown as SemanticCandidate)
+        if (!seenIdentities.has(identity)) {
+          seenIdentities.add(identity)
+          unifiedReplayCandidates.push({ ...syntheticInstance, from_curated_seed: false })
+          console.log('[dispatcher] phase1.5 state_info synthesis (instance):', {
+            input: ctx.trimmedInput,
+            targetName: iw.title,
+            panelId: iw.panelId,
+          })
+        }
+      } else if (exactTitleMatches.length === 0) {
+        // No instance match — try family-level synthesis.
+        // Find installedWidgets whose title starts with nounInput as a family phrase.
+        const familyMatches = turnSnapshotForLog.installedWidgets.filter(
+          (iw) => iw.title.toLowerCase().startsWith(nounLower + ' ')
+            || iw.title.toLowerCase() === nounLower,
+        )
+        if (familyMatches.length > 0) {
+          // All matches must agree on duplicateFamily for family synthesis to be valid.
+          const familyIds = new Set(familyMatches.map((iw) => iw.duplicateFamily).filter((f): f is string => !!f))
+          if (familyIds.size === 1) {
+            const familyId = Array.from(familyIds)[0]
+            const syntheticFamily = {
+              intent_id: 'state_info',
+              similarity_score: 0.75, // above state_info POOL_FLOOR 0.70, below strong-winner 0.88
+              target_ids: [],
+              slots_json: {
+                action_type: 'state_info',
+                query_type: queryType,
+                target_name: nounInput,
+                family_id: familyId,
+              },
+            } as unknown as UnifiedReplayCandidate
+            const identity = candidateIdentity(syntheticFamily as unknown as SemanticCandidate)
+            if (!seenIdentities.has(identity)) {
+              seenIdentities.add(identity)
+              unifiedReplayCandidates.push({ ...syntheticFamily, from_curated_seed: false })
+              console.log('[dispatcher] phase1.5 state_info synthesis (family):', {
+                input: ctx.trimmedInput,
+                targetName: nounInput,
+                familyId,
+                siblingCount: familyMatches.length,
+              })
+            }
+          }
+        }
+      }
+      // exactTitleMatches.length > 1 → deliberately skip synthesis. Let the
+      // clarifier path at :3440 handle disambiguation. Multi-match strong
+      // winners would silently auto-open the first match.
     }
   }
 
@@ -2627,7 +2786,25 @@ export async function dispatchRouting(
       // Pass both fingerprints: broad (B2) for non-navigation candidates,
       // navigation-specific (Phase 5) for navigation action types.
       const phase5NavFingerprint = phase5HintResult?.currentContextFingerprint
-      s5Telemetry = evaluateStage5Replay(unifiedReplayCandidates, turnSnapshotForLog, b2CurrentContextFingerprint, ctx.uiContext?.dashboard?.visibleWidgets, phase5NavFingerprint)
+
+      // Phase 1.5 fix 2b: when the input is an explicit state-info question
+      // AND the pool has at least one state_info candidate, filter the pool
+      // passed to Stage 5 to state_info candidates only. Without this,
+      // navigation candidates at ~98% similarity create a near-tie with the
+      // state_info winner at 100%, causing Stage 5 to reject the strong
+      // winner and fall through to the clarifier. Fix 2 (at :3598) only
+      // filters the clarifier display; this filters the Stage 5 input so
+      // the near-tie evaluation compares within the correct executor kind.
+      const s5PoolHasStateInfo = unifiedReplayCandidates.some(c =>
+        executorKindFor((c.slots_json as any)?.action_type as string | undefined) === 'state_info_registry'
+      )
+      const s5Candidates = isStateInfoQuestion(ctx.trimmedInput) && s5PoolHasStateInfo
+        ? unifiedReplayCandidates.filter(c =>
+            executorKindFor((c.slots_json as any)?.action_type as string | undefined) === 'state_info_registry'
+          )
+        : unifiedReplayCandidates
+
+      s5Telemetry = evaluateStage5Replay(s5Candidates, turnSnapshotForLog, b2CurrentContextFingerprint, ctx.uiContext?.dashboard?.visibleWidgets, phase5NavFingerprint)
 
       // [classD-trace] Stage 5 outcome — winner action_type, validation result,
       // fallback reason. Tells us whether Stage 5 executed a winner (and of what
@@ -2669,7 +2846,12 @@ export async function dispatchRouting(
             try {
               const stateInfoVisWidgets = ctx.uiContext?.dashboard?.visibleWidgets as Array<{ id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }> | undefined
               if (stateInfoVisWidgets) {
-                const stateSnapshot = buildDashboardStateSnapshot(stateInfoVisWidgets)
+                // Phase 1 T11: parallel-path divergence logging via published contract.
+                const stateSnapshot = buildDashboardStateSnapshot(stateInfoVisWidgets, {
+                  installedWidgets: turnSnapshotForLog.installedWidgets,
+                  overlay: turnSnapshotForLog.overlay,
+                  freshness: turnSnapshotForLog.installedWidgetFreshness,
+                })
                 const stateResult = executeStateInfoFromRegistry(stateInfoQuery, stateSnapshot)
                 if (stateResult.handled && stateResult.answer) {
                   const stateMsg: ChatMessage = {
@@ -2896,6 +3078,19 @@ export async function dispatchRouting(
                 const resolved = resolveToVisiblePanel(nounMatch, ctx.uiContext.dashboard.visibleWidgets as Array<{ id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }>)
                 if (resolved) winnerId = resolved.id
               }
+              // Phase 1 T13: read-only diagnostic from the published installed-widget contract.
+              // Reads ONLY from turnSnapshotForLog.installedWidgets — no registry,
+              // no workspace_panels, no second authority path (main plan line 11).
+              const diagInstalled = turnSnapshotForLog.installedWidgets?.find(
+                (w) => w.title.toLowerCase() === strippedInput.toLowerCase(),
+              )
+              emitPhase1Counter('hardcoded_widget_authority_read', {
+                site: 'covered_noun_full_question_docs',
+                input: strippedInput,
+                nounMatch: nounMatch ? { panelId: nounMatch.panelId, title: nounMatch.title } : null,
+                installedMatch: diagInstalled ? { panelId: diagInstalled.panelId, title: diagInstalled.title } : null,
+                wouldDiffer: !!(nounMatch && diagInstalled && nounMatch.panelId !== diagInstalled.panelId),
+              })
             }
             if (winnerId) {
               // Check duplicate-family: multiple siblings → clarify, not open-vs-docs for one
@@ -3071,6 +3266,17 @@ export async function dispatchRouting(
                         navAction.panelTitle = resolved.title
                       }
                     }
+                    // Phase 1 T13: diagnostic read from published contract only.
+                    const diagInstalled = turnSnapshotForLog.installedWidgets?.find(
+                      (w) => w.title.toLowerCase() === targetName.toLowerCase(),
+                    )
+                    emitPhase1Counter('hardcoded_widget_authority_read', {
+                      site: 'semantic_escape_target_name',
+                      input: targetName,
+                      nounMatch: nounMatch ? { panelId: nounMatch.panelId, title: nounMatch.title } : null,
+                      installedMatch: diagInstalled ? { panelId: diagInstalled.panelId, title: diagInstalled.title } : null,
+                      wouldDiffer: !!(nounMatch && diagInstalled && nounMatch.panelId !== diagInstalled.panelId),
+                    })
                   }
                 }
                 if (resolvedPanelId) {
@@ -3133,6 +3339,19 @@ export async function dispatchRouting(
       // Only strip trailing punctuation — never strip prefixes/verbs from user input (strict-exact-rules).
       const postS5Stripped = ctx.trimmedInput.replace(/[?!.]+$/, '').trim()
       const postS5NounMatch = matchKnownNoun(postS5Stripped)
+      // Phase 1 T13: diagnostic read from published installed-widget contract only.
+      {
+        const diagInstalled = turnSnapshotForLog.installedWidgets?.find(
+          (w) => w.title.toLowerCase() === postS5Stripped.toLowerCase(),
+        )
+        emitPhase1Counter('hardcoded_widget_authority_read', {
+          site: 'post_s5_known_noun',
+          input: postS5Stripped,
+          nounMatch: postS5NounMatch ? { panelId: postS5NounMatch.panelId, title: postS5NounMatch.title } : null,
+          installedMatch: diagInstalled ? { panelId: diagInstalled.panelId, title: diagInstalled.title } : null,
+          wouldDiffer: !!(postS5NounMatch && diagInstalled && postS5NounMatch.panelId !== diagInstalled.panelId),
+        })
+      }
       // Trailing-question path: "recent?" → stripped "recent" → matchKnownNoun finds it.
       // Full-question path: "what is links panel?" → stripped "what is links panel" → matchKnownNoun
       // won't find it (no prefix stripping). Full questions without a Stage 5 winner fall through
@@ -3336,6 +3555,17 @@ export async function dispatchRouting(
           const resolved = resolveToVisiblePanel(nounMatch, ctx.uiContext.dashboard.visibleWidgets as Array<{ id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }>)
           if (resolved) topId = resolved.id
         }
+        // Phase 1 T13: diagnostic read from published installed-widget contract only.
+        const diagInstalled = turnSnapshotForLog.installedWidgets?.find(
+          (w) => w.title.toLowerCase() === strippedInput.toLowerCase(),
+        )
+        emitPhase1Counter('hardcoded_widget_authority_read', {
+          site: 'clarification_first_top_candidate',
+          input: strippedInput,
+          nounMatch: nounMatch ? { panelId: nounMatch.panelId, title: nounMatch.title } : null,
+          installedMatch: diagInstalled ? { panelId: diagInstalled.panelId, title: diagInstalled.title } : null,
+          wouldDiffer: !!(nounMatch && diagInstalled && nounMatch.panelId !== diagInstalled.panelId),
+        })
       }
       if (topId) {
         // Check duplicate-family before showing open-vs-docs
@@ -3383,7 +3613,22 @@ export async function dispatchRouting(
       // clarifier — they only make sense as Stage 5 strong winners, not as
       // clarifier options. The three-branch contract rule below handles the case
       // where the filter leaves zero pills.
-      const clarifierPoolKinds = new Set<ExecutorKind>(['navigation', 'state_info_registry'])
+      // Phase 1.5 fix 2: when the input is an explicit state-info question AND
+      // the pool contains at least one state_info candidate, suppress navigation
+      // pills from the clarifier. Per the semantic-first contract, "is <panel>
+      // open?" should stay on the state_info lane after shared retrieval, not
+      // mix in open_panel clarifier pills that would be misclassified as
+      // "did you mean to open this?" when the user asked a question.
+      // Narrowed per reviewer: only suppress when at least one state_info
+      // candidate exists (otherwise navigation pills are the only option).
+      const poolHasStateInfo = unifiedReplayCandidates.some(c =>
+        executorKindFor((c.slots_json as any)?.action_type as string | undefined) === 'state_info_registry'
+      )
+      const clarifierPoolKinds = new Set<ExecutorKind>(
+        isStateInfoQuestion(ctx.trimmedInput) && poolHasStateInfo
+          ? ['state_info_registry']
+          : ['navigation', 'state_info_registry']
+      )
       const clarifierReadyCandidates = unifiedReplayCandidates.filter(c => {
         const kind = executorKindFor((c.slots_json as any)?.action_type as string | undefined)
         return clarifierPoolKinds.has(kind)
@@ -4067,7 +4312,7 @@ async function dispatchRoutingInner(
   // Per selection-intent-arbitration-incubation-plan.md: snapshot must be
   // available before intercept for focus-latch validity check.
   // =========================================================================
-  const turnSnapshot = buildTurnSnapshot({})
+  const turnSnapshot = buildTurnSnapshot({ uiContext: ctx.uiContext ?? undefined })
   const hasVisibleWidgetItems = turnSnapshot.openWidgets.length > 0
 
   // DIAGNOSTIC: Log openWidgets state
@@ -7791,7 +8036,7 @@ async function dispatchRoutingInner(
                   }
                 } else if (selected.source === 'widget_list') {
                   // Rebuild fresh snapshot to check if widget option still exists
-                  const freshSnapshot = buildTurnSnapshot({})
+                  const freshSnapshot = buildTurnSnapshot({ uiContext: ctx.uiContext ?? undefined })
                   const stillExists = freshSnapshot.openWidgets.some(w =>
                     w.options.some(opt => opt.id === selected.id)
                   )

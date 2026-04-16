@@ -14,6 +14,7 @@ import {
   hasQuestionIntent,
   isPoliteImperativeRequest,
 } from '@/lib/chat/query-patterns'
+import { isStateInfoQuestion } from '@/lib/chat/state-info-resolvers'
 import {
   classifyArbitrationConfidence,
   canonicalizeCommandInput,
@@ -208,10 +209,18 @@ async function tryLLMLastChance(params: {
   const hasBoundedEvidence = findMatchingOptions(trimmedInput, candidates as Array<{ id: string; label: string; sublabel?: string; type: string }>).length > 0
     || /\b(that\s+one|this\s+one|the\s+one)\b/i.test(trimmedInput)
   const isExplanation = EXPLANATION_INTENT.test(trimmedInput)
+  // Phase 1.5 T18: state-info questions like `is links panel f open?` contain
+  // the action verb "open" and will often have label overlap with a live
+  // clarifier (e.g., a `links panel` family clarifier showing Panel F as an
+  // option). Without this exclusion the arbiter hijacks the question as a
+  // bounded-selection open, producing `Opening Panel F...` instead of a
+  // state-info answer. The shared helper from state-info-resolvers.ts is
+  // the sole detection surface — no regex duplication here.
   const isSelectionRequest = hasActiveClarification
     && hasActionVerb
     && hasBoundedEvidence
     && !isExplanation
+    && !isStateInfoQuestion(trimmedInput)
 
   if (isQuestion && !isSelectionRequest) {
     return { attempted: false, suggestedId: null, fallbackReason: 'question_intent', autoExecute: false }

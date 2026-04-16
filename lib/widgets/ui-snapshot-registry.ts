@@ -105,6 +105,46 @@ const widgetOpenState = new Map<string, boolean>()
 let stateInfoActivePanelId: string | null = null
 
 // ============================================================================
+// Phase 1 (installed-widget-registry-and-alias-plan.md): workspace-keyed
+// revision counter. Bumped atomically with each call to updateInstalledPanels
+// (single-owner rule, T3). Read by DashboardView's buildDashboardUiContext
+// and by buildTurnSnapshot's T8 staleness check.
+//
+// PROVISIONAL SCOPE (Phase 1):
+// - Local-tab only — does not detect cross-tab or external-process mutations.
+// - Cross-tab / external staleness is caught by Phase 2's execution-time
+//   DB revalidation, not by this token.
+// - Non-global: keyed by workspaceId so workspace switches within a tab
+//   do not produce false staleness telemetry.
+// ============================================================================
+
+const installedWidgetRevisions = new Map<string, number>()
+
+export function bumpInstalledWidgetRevision(workspaceId: string): number {
+  if (!workspaceId) return 0
+  const next = (installedWidgetRevisions.get(workspaceId) ?? 0) + 1
+  installedWidgetRevisions.set(workspaceId, next)
+  return next
+}
+
+export function getInstalledWidgetRevision(workspaceId: string): number {
+  if (!workspaceId) return 0
+  return installedWidgetRevisions.get(workspaceId) ?? 0
+}
+
+/**
+ * Reset the revision counter for a workspace. Intended for test isolation.
+ * Do not call in production code — the counter is monotonic by design.
+ */
+export function _resetInstalledWidgetRevisionForTests(workspaceId?: string): void {
+  if (workspaceId) {
+    installedWidgetRevisions.delete(workspaceId)
+  } else {
+    installedWidgetRevisions.clear()
+  }
+}
+
+// ============================================================================
 // Validation Helpers
 // ============================================================================
 

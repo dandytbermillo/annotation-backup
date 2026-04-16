@@ -323,7 +323,10 @@ export async function POST(request: NextRequest) {
         const actionType = slots?.action_type as string | undefined
         if (actionType === 'state_info') {
           const queryType = (slots?.query_type as string | undefined) ?? 'unknown'
-          const targetName = (slots?.target_name as string | undefined) ?? 'generic'
+          // Phase 1.5 fix 1b: canonicalize target_name to lowercase so seeds
+          // and live-derived synthetics collapse during retrieval-level dedupe.
+          // Matches fix 1a in routing-dispatcher.ts candidateIdentity.
+          const targetName = ((slots?.target_name as string | undefined) ?? 'generic').toLowerCase()
           const familyId = (slots?.family_id as string | undefined) ?? 'none'
           const scope = (slots?.scope as string | undefined) ?? 'none'
           return `state_info:${queryType}:${targetName}:${familyId}:${scope}`

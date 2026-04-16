@@ -74,6 +74,9 @@ const CURATED_SEEDS: CuratedSeed[] = [
   { query: 'links panel b', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel b', family_id: 'quick-links', target_kind: 'instance' } },
   { query: 'links panel c', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel c', family_id: 'quick-links', target_kind: 'instance' } },
   { query: 'links panel d', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel d', family_id: 'quick-links', target_kind: 'instance' } },
+  // Links Panel H — test seeds for pre-seeding hypothesis (navigation)
+  { query: 'open links panel h', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel h', family_id: 'quick-links', target_kind: 'instance' } },
+  { query: 'links panel h', intent_id: 'open_panel', intent_class: 'action_intent', slots_json: { action_type: 'open_panel', target_name: 'links panel h', family_id: 'quick-links', target_kind: 'instance' } },
   // Step 10a: State-info seeds — semantic retrieval for freeform widget/panel state questions
   // Generic open-state
   { query: 'what panels are open?', intent_id: 'state_info', intent_class: 'info_intent', slots_json: { action_type: 'state_info', query_type: 'open_state', scope: 'panels' } },
@@ -97,6 +100,9 @@ const CURATED_SEEDS: CuratedSeed[] = [
   { query: 'is links panel b open?', intent_id: 'state_info', intent_class: 'info_intent', slots_json: { action_type: 'state_info', query_type: 'open_state', target_name: 'links panel b' } },
   { query: 'is links panel c open?', intent_id: 'state_info', intent_class: 'info_intent', slots_json: { action_type: 'state_info', query_type: 'open_state', target_name: 'links panel c' } },
   { query: 'is links panel d open?', intent_id: 'state_info', intent_class: 'info_intent', slots_json: { action_type: 'state_info', query_type: 'open_state', target_name: 'links panel d' } },
+  // Links Panel H — test seeds for pre-seeding hypothesis (verify that the existing
+  // pipeline handles new instances when proper seeds exist in the DB)
+  { query: 'is links panel h open?', intent_id: 'state_info', intent_class: 'info_intent', slots_json: { action_type: 'state_info', query_type: 'open_state', target_name: 'links panel h' } },
   { query: 'is widget manager open?', intent_id: 'state_info', intent_class: 'info_intent', slots_json: { action_type: 'state_info', query_type: 'open_state', target_name: 'widget manager' } },
   // Surface manifest seeds (Phase E) — dedicated surface resolver
   // Contract (surface-command-resolver-design.md:644-651):

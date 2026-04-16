@@ -594,15 +594,64 @@ export interface ChatContext {
 }
 
 /**
+ * Installed-widget view — canonical runtime shape published to routing consumers.
+ * Phase 1 of installed-widget-registry-and-alias-plan.md. Camel-case is the
+ * routing-contract naming convention; persistence layer keeps snake_case.
+ *
+ * One entry per non-deleted panel in the active workspace (visible + hidden).
+ * `isVisible` is a field, not a filter, so consumers can distinguish installed
+ * vs currently-rendered. `duplicateFamily` and `instanceLabel` are nullable;
+ * singleton widgets have both null.
+ */
+export interface InstalledWidgetView {
+  panelId: string
+  workspaceId: string
+  panelType: string
+  title: string
+  duplicateFamily: string | null
+  instanceLabel: string | null
+  isVisible: boolean
+  deletedAt: string | null
+  updatedAt: string
+}
+
+/**
+ * Freshness signal for the installed-widget view.
+ * Workspace-keyed local-tab revision token. Provisional Phase 1 scope:
+ * does not detect cross-tab or external-process mutations — those are
+ * caught by Phase 2 execution-time DB revalidation.
+ */
+export interface InstalledWidgetFreshness {
+  revisionId: number
+  workspaceId: string
+  capturedAtMs: number
+  maxUpdatedAt?: string
+}
+
+/**
  * UIContext for what's visible right now (dashboard/workspace).
  * This is a live snapshot, not historical.
  */
 export interface UIContext {
   mode: 'dashboard' | 'workspace'
   dashboard?: {
+    /**
+     * Single source of truth for "which workspace this uiContext was published for."
+     * Required when `dashboard` is present; consumed by T8 staleness check in
+     * buildTurnSnapshot. Do not derive from entryId — entryId is nullable and
+     * workspaces have independent identity.
+     */
+    workspaceId: string
     entryId?: string
     entryName?: string
     visibleWidgets?: Array<{ id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }>
+    /**
+     * Installed-widget catalog for the active workspace (visible + hidden, non-deleted).
+     * Paired with installedWidgetFreshness. Absent in non-dashboard contexts or
+     * when the installed catalog has not yet loaded.
+     */
+    installedWidgets?: InstalledWidgetView[]
+    installedWidgetFreshness?: InstalledWidgetFreshness
     openDrawer?: { panelId: string; title: string; type?: string }
     focusedPanelId?: string | null
     /** Widget internal states reported via widget.reportState() - for LLM context */

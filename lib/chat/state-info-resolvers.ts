@@ -11,6 +11,10 @@
 import { matchKnownNoun, resolveToVisiblePanel, resolveFamilyCardinality } from '@/lib/chat/known-noun-routing'
 import { getDuplicateFamily } from '@/lib/dashboard/duplicate-family-map'
 import { getWidgetOpenState as registryGetWidgetOpenState, getStateInfoActivePanelId as registryGetActivePanelId, getAllOpenPanelIds as registryGetAllOpenPanelIds } from '@/lib/widgets/ui-snapshot-registry'
+import type { InstalledWidgetView, InstalledWidgetFreshness } from '@/lib/chat/intent-prompt'
+import type { OverlayEntry } from '@/lib/chat/ui-snapshot-builder'
+import { debugLog } from '@/lib/utils/debug-logger'
+import { emitPhase1Counter } from '@/lib/chat/routing-log/phase1-counters'
 
 /**
  * Resolve note state-info queries from UI context.
@@ -130,14 +134,37 @@ export interface DashboardStateSnapshot {
 }
 
 /**
+ * Options for buildDashboardStateSnapshot. Phase 1 T10 migrated this from
+ * a positional signature to an options object so new Phase 1 fields
+ * (`installedWidgets`, `overlay`, `freshness`) can land without silently
+ * miswiring existing callers via positional-arg drift.
+ */
+export interface BuildDashboardStateSnapshotOptions {
+  registryOverride?: { getWidgetOpenState: (id: string) => boolean; getActivePanelId: () => string | null; getAllOpenPanelIds: () => string[] }
+  /** Phase 1 T10: published installed-widget contract for parallel-path divergence logging. */
+  installedWidgets?: InstalledWidgetView[]
+  /** Phase 1 T10: per-turn runtime overlay (Map keyed by panelId). */
+  overlay?: Map<string, OverlayEntry>
+  /** Phase 1 T10: freshness metadata paired with installedWidgets. */
+  freshness?: InstalledWidgetFreshness
+}
+
+/**
  * Build the per-turn dashboard state snapshot from raw producers.
  * This is the single source of truth for all state-info resolvers.
  * Resolvers must read only this snapshot — never raw sources directly.
+ *
+ * Phase 1 T10: accepts optional installedWidgets + overlay + freshness and
+ * computes a second parallel-path result for divergence logging. The parallel
+ * path is diagnostic only — this function still returns the legacy
+ * visibleWidgets-based result. The two-truth-layer separation (registry
+ * identity vs runtime overlay) is preserved.
  */
 export function buildDashboardStateSnapshot(
   visibleWidgets: Array<{ id: string; title: string; type: string; instanceLabel?: string; duplicateFamily?: string }>,
-  registryOverride?: { getWidgetOpenState: (id: string) => boolean; getActivePanelId: () => string | null; getAllOpenPanelIds: () => string[] },
+  options?: BuildDashboardStateSnapshotOptions,
 ): DashboardStateSnapshot {
+  const registryOverride = options?.registryOverride
   // Step 10a: Read open + active state from the authoritative registry
   let getWidgetOpenStateFn: (id: string) => boolean
   let getActivePanelIdFn: () => string | null
@@ -193,7 +220,105 @@ export function buildDashboardStateSnapshot(
     })
   }
 
-  return { entries, openDrawerPanelId, sourceSurface: 'dashboard' }
+  const legacyResult: DashboardStateSnapshot = { entries, openDrawerPanelId, sourceSurface: 'dashboard' }
+
+  // Phase 1 T10: parallel-path divergence logging.
+  //
+  // Compute a second entries[] from the published installed-widget contract
+  // plus the runtime overlay, preserving the registry-vs-overlay two-truth-layer
+  // separation. Overlay is authoritative for open/active/focused/visibility;
+  // installed-widget registry is authoritative for identity (title + family +
+  // instance_label). The parallel path still consumes the same registry
+  // getters for open/active state when an overlay is provided, falling back
+  // to the visibleWidgets-derived view for identity fields.
+  //
+  // This is log-only. The function returns legacyResult unchanged. Phase 2
+  // will evaluate whether to switch authority onto this path.
+  if (options?.installedWidgets && options.overlay) {
+    const newEntries: StateInfoWidgetEntry[] = []
+    const newSeenIds = new Set<string>()
+
+    for (const iw of options.installedWidgets) {
+      if (newSeenIds.has(iw.panelId)) continue
+      newSeenIds.add(iw.panelId)
+      const overlayEntry = options.overlay.get(iw.panelId)
+      // Read open/active from registry getters (overlay composition source)
+      // to preserve the two-truth-layer separation. If no overlay entry, the
+      // widget is installed but not in the runtime overlay — treat as closed.
+      const isOpenLive = overlayEntry?.isOpen ?? getWidgetOpenStateFn(iw.panelId)
+      newEntries.push({
+        instanceId: iw.panelId,
+        title: iw.title,
+        type: iw.panelType,
+        familyId: iw.duplicateFamily,
+        instanceLabel: iw.instanceLabel,
+        duplicateCapable: iw.duplicateFamily !== null,
+        open: isOpenLive,
+        // presentOnDashboard follows the overlay's visibility bit — the
+        // overlay says "currently visible on this turn" which is the same
+        // semantic the legacy path gets from `visibleWidgets` inclusion.
+        presentOnDashboard: overlayEntry?.isPresentInVisibleWidgets ?? false,
+      })
+    }
+
+    // Materialize open-but-not-installed panels (state-info materialization
+    // invariant preserved — see rules at installed-widget-registry-and-alias-plan.md:362).
+    const parallelOpenIds = getAllOpenPanelIdsFn()
+    const parallelMaterialize = new Set(parallelOpenIds)
+    if (openDrawerPanelId) parallelMaterialize.add(openDrawerPanelId)
+    for (const pid of parallelMaterialize) {
+      if (newSeenIds.has(pid)) continue
+      newSeenIds.add(pid)
+      newEntries.push({
+        instanceId: pid,
+        title: pid, // minimal — no title available outside installed-widget contract
+        type: '',
+        familyId: null,
+        instanceLabel: null,
+        duplicateCapable: false,
+        open: getWidgetOpenStateFn(pid),
+        presentOnDashboard: false,
+      })
+    }
+
+    // Diff and log each distinct mismatch dimension.
+    const legacyIds = new Set(entries.map((e) => e.instanceId))
+    const newIds = new Set(newEntries.map((e) => e.instanceId))
+
+    for (const id of newIds) {
+      if (!legacyIds.has(id)) {
+        emitPhase1Counter('installed_widget_resolution_mismatch', { mismatch_type: 'missing_in_legacy', panelId: id })
+      }
+    }
+    for (const id of legacyIds) {
+      if (!newIds.has(id)) {
+        emitPhase1Counter('installed_widget_resolution_mismatch', { mismatch_type: 'missing_in_new', panelId: id })
+      }
+    }
+
+    for (const legacyE of entries) {
+      const newE = newEntries.find((e) => e.instanceId === legacyE.instanceId)
+      if (!newE) continue
+      if (legacyE.open !== newE.open) {
+        emitPhase1Counter('installed_widget_resolution_mismatch', {
+          mismatch_type: 'open_state_diff',
+          panelId: legacyE.instanceId,
+          legacy: legacyE.open,
+          next: newE.open,
+        })
+      }
+      if (legacyE.title !== newE.title) {
+        emitPhase1Counter('installed_widget_resolution_mismatch', {
+          mismatch_type: 'title_diff',
+          panelId: legacyE.instanceId,
+          legacyTitle: legacyE.title,
+          newTitle: newE.title,
+        })
+      }
+    }
+  }
+
+  return legacyResult
 }
 
 // =============================================================================
@@ -316,6 +441,41 @@ export function resolveGenericStateInfo(
 type StateProperty = 'open' | 'visible'
 
 /**
+ * Shared state-info question-shape regex.
+ *
+ * Phase 1.5 (T16): promoted from local use inside detectNounStateInfoQuery to
+ * a module-level exported constant so multiple sites can reuse the same
+ * detector without duplicating the pattern.
+ *
+ * Matches the exact vocabulary covered by current state_info seeds:
+ *   - leading interrogative: is / are / which / what
+ *   - trailing state property: open / opened / visible
+ *
+ * Does NOT cover active / closed / focused — those shapes have no matching
+ * seeds or executor branch. Extending this regex without also extending the
+ * executor would produce "not handled" answers.
+ */
+export const STATE_INFO_QUESTION_SHAPE = /^(is|are|which|what)\s+.+\s+(open|opened|visible)\s*[?]?\s*$/i
+
+/**
+ * Phase 1.5 (T16): single exported predicate for state-info question detection.
+ *
+ * Consumers:
+ *   - lib/chat/chat-routing-arbitration.ts (T18) — excludes state-info questions
+ *     from isSelectionRequest so they are not hijacked by bounded selection.
+ *   - lib/chat/chat-routing-clarification-intercept.ts (T19) — lets state-info
+ *     questions bypass the live-clarification gate and reach routing.
+ *   - lib/chat/routing-dispatcher.ts (T17) — gates live-derived state_info
+ *     candidate synthesis on the unified semantic pool.
+ *
+ * Do NOT author a second regex elsewhere. All state-info question detection
+ * must import this helper.
+ */
+export function isStateInfoQuestion(input: string): boolean {
+  return STATE_INFO_QUESTION_SHAPE.test(input.trim().toLowerCase())
+}
+
+/**
  * Detect whether the input is a noun-specific state-info question and extract
  * the state property. Returns null if not a state-info question or if the noun
  * cannot be identified.
@@ -331,7 +491,7 @@ export function detectNounStateInfoQuery(input: string): {
 
   // Must match state-info question structure: starts with is/are/which/what, ends with state property.
   // This prevents matching commands like "open recent" or "open the second one pls".
-  const STATE_INFO_QUESTION_SHAPE = /^(is|are|which|what)\s+.+\s+(open|opened|visible)\s*[?]?\s*$/i
+  // Phase 1.5 T16: reuses the module-level STATE_INFO_QUESTION_SHAPE constant.
   if (!STATE_INFO_QUESTION_SHAPE.test(trimmed)) return null
 
   // Detect state property from the question

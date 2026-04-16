@@ -1104,7 +1104,16 @@ function ChatNavigationPanelContent({
         let answerContent = "I couldn't determine the current widget state. Could you try rephrasing your question?"
         if (visibleWidgets) {
           try {
-            const snapshot = buildDashboardStateSnapshot(visibleWidgets)
+            // Phase 1 T11: compose the options from the current uiContext so
+            // the parallel-path divergence check fires. buildTurnSnapshot gives
+            // us the overlay composed from registry getters; we already have
+            // installedWidgets and freshness on the uiContext.
+            const turnSnapshotForParallel = buildTurnSnapshot({ uiContext: uiContext ?? undefined })
+            const snapshot = buildDashboardStateSnapshot(visibleWidgets, {
+              installedWidgets: uiContext?.dashboard?.installedWidgets,
+              overlay: turnSnapshotForParallel.overlay,
+              freshness: uiContext?.dashboard?.installedWidgetFreshness,
+            })
             const execResult = executeStateInfoFromRegistry(seedData.slots_json, snapshot)
             if (execResult.handled && execResult.answer) {
               answerContent = execResult.answer
@@ -1768,7 +1777,7 @@ function ChatNavigationPanelContent({
       // failed log (best-effort). Result falls through to LLM API below.
       // ---------------------------------------------------------------------------
       if (routingResult._memoryCandidate) {
-        routingResult = revalidateMemoryHit(routingResult, buildTurnSnapshot({}), uiContext?.dashboard?.visibleWidgets)
+        routingResult = revalidateMemoryHit(routingResult, buildTurnSnapshot({ uiContext: uiContext ?? undefined }), uiContext?.dashboard?.visibleWidgets)
       }
 
       // ---------------------------------------------------------------------------

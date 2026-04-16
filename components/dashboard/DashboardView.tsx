@@ -28,7 +28,9 @@ import { snapToGrid, GRID_CELL_SIZE, GRID_GAP, GRID_OFFSET } from "@/lib/dashboa
 import { cn } from "@/lib/utils"
 import { debugLog } from "@/lib/utils/debug-logger"
 import { pruneStaleWidgetStates, getAllWidgetStates, upsertWidgetState, removeWidgetState } from "@/lib/widgets/widget-state-store"
-import { setActiveWidgetId, setWidgetOpen, setStateInfoActivePanelId } from "@/lib/widgets/ui-snapshot-registry"
+import { setActiveWidgetId, setWidgetOpen, setStateInfoActivePanelId, bumpInstalledWidgetRevision, getInstalledWidgetRevision } from "@/lib/widgets/ui-snapshot-registry"
+import type { InstalledWidgetView, InstalledWidgetFreshness } from "@/lib/chat/intent-prompt"
+import { emitPhase1Counter } from "@/lib/chat/routing-log/phase1-counters"
 import { RefreshCw, ChevronRight, LayoutDashboard, Loader2 } from "lucide-react"
 import { useAutoScroll } from "@/components/canvas/use-auto-scroll"
 
@@ -78,6 +80,46 @@ export function DashboardView({
   const [panels, setPanels] = useState<WorkspacePanel[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  // ============================================================================
+  // Phase 1 (installed-widget-registry-and-alias-plan.md): installed catalog.
+  //
+  // `installedPanels` is the full catalog for the active workspace (visible +
+  // hidden, non-deleted). Separate from `panels` so existing visible-only
+  // rendering paths are unchanged. Populated by `fetchInstalledCatalog` and
+  // by optimistic updates in direct mutation handlers.
+  //
+  // All state mutations go through `updateInstalledPanels` — single-owner T3
+  // rule ensures the workspace-keyed revision counter bumps exactly once per
+  // logical change to the installed catalog.
+  // ============================================================================
+  const [installedPanels, setInstalledPanels] = useState<WorkspacePanel[]>([])
+
+  // Live-current workspace ref for cross-fetch race guards (T4a). Kept in sync
+  // with the workspaceId prop via the useEffect below so async fetch callbacks
+  // can compare against the *current* workspace, not a closure-captured value.
+  const latestWorkspaceIdRef = useRef(workspaceId)
+  useEffect(() => { latestWorkspaceIdRef.current = workspaceId }, [workspaceId])
+
+  // Per-fetch sequence counters for same-workspace out-of-order guards (T4a).
+  // Separate counters per fetch pipeline so telemetry dimensions stay clean.
+  const inflightInstalledFetchIdRef = useRef(0)
+  const inflightVisibleFetchIdRef = useRef(0)
+  const inflightHiddenSingletonFetchIdRef = useRef(0)
+
+  /**
+   * Phase 1 T3 single-owner helper. Every mutation to `installedPanels` MUST
+   * go through this function. It atomically updates the state and bumps the
+   * workspace-keyed revision counter exactly once per call. Do not call
+   * `setInstalledPanels` directly anywhere else.
+   */
+  const updateInstalledPanels = useCallback(
+    (next: WorkspacePanel[] | ((prev: WorkspacePanel[]) => WorkspacePanel[])) => {
+      setInstalledPanels(next)
+      bumpInstalledWidgetRevision(workspaceId)
+    },
+    [workspaceId],
+  )
   const { hasSeenWelcome, markAsSeen } = useDashboardWelcome()
   const showWelcome = !hasSeenWelcome
 
@@ -215,6 +257,7 @@ export function DashboardView({
   const buildDashboardUiContext = useCallback(
     (
       localPanels: WorkspacePanel[],
+      localInstalledPanels: WorkspacePanel[],
       localDrawerPanelId: string | null,
       localActivePanelId: string | null,
     ) => {
@@ -230,6 +273,43 @@ export function DashboardView({
       const localDrawerPanel = localDrawerPanelId
         ? localPanels.find((p) => p.id === localDrawerPanelId) ?? null
         : null
+
+      // Phase 1 T4b: project installedPanels → canonical InstalledWidgetView[].
+      // Include visible AND hidden panels (isVisible is a field, not a filter).
+      // Exclude only soft-deleted. Camel-case naming is the routing-contract
+      // convention; snake_case stays in the DB.
+      const installedWidgetsPublished: InstalledWidgetView[] = localInstalledPanels
+        .filter((p) => !p.deletedAt)
+        .map((p) => ({
+          panelId: p.id,
+          workspaceId: p.workspaceId ?? workspaceId,
+          panelType: p.panelType,
+          title: p.title ?? p.panelType,
+          duplicateFamily: p.duplicateFamily ?? null,
+          instanceLabel: p.instanceLabel ?? null,
+          isVisible: p.isVisible,
+          // Canonical runtime contract uses ISO string; persistence type is Date.
+          // Serialize once at the publication boundary so every downstream
+          // consumer sees one shape.
+          deletedAt: p.deletedAt instanceof Date ? p.deletedAt.toISOString() : (p.deletedAt as string | null | undefined) ?? null,
+          updatedAt: p.updatedAt instanceof Date ? p.updatedAt.toISOString() : ((p.updatedAt as unknown as string | undefined) ?? ''),
+        }))
+
+      // Phase 1 T4b: freshness metadata paired with installedWidgets. Reads
+      // the workspace-keyed revision counter that updateInstalledPanels bumps.
+      // `maxUpdatedAt` is derived for diagnostics only; the authoritative
+      // freshness signal is the revisionId.
+      const maxUpdatedAt = installedWidgetsPublished.reduce<string | undefined>(
+        (acc, w) => (w.updatedAt && (!acc || w.updatedAt > acc) ? w.updatedAt : acc),
+        undefined,
+      )
+      const installedWidgetFreshnessPublished: InstalledWidgetFreshness = {
+        revisionId: getInstalledWidgetRevision(workspaceId),
+        workspaceId,
+        capturedAtMs: Date.now(),
+        maxUpdatedAt,
+      }
+
       // Phase 4: Filter out workspace widgetStates when on dashboard
       // This prevents stale workspace data from being sent to the LLM
       // Filter by widgetId (not instanceId prefix) to avoid hiding third-party widgets
@@ -240,9 +320,12 @@ export function DashboardView({
       return {
         mode: 'dashboard' as const,
         dashboard: {
+          workspaceId,
           entryId,
           entryName,
           visibleWidgets: localVisibleWidgets,
+          installedWidgets: installedWidgetsPublished,
+          installedWidgetFreshness: installedWidgetFreshnessPublished,
           openDrawer: localDrawerPanel
             ? {
                 panelId: localDrawerPanel.id,
@@ -255,7 +338,7 @@ export function DashboardView({
         },
       }
     },
-    [entryId, entryName],
+    [workspaceId, entryId, entryName],
   )
 
   useEffect(() => {
@@ -297,7 +380,7 @@ export function DashboardView({
           hasDraw: !!drawerPanel,
         },
       })
-      setUiContext(buildDashboardUiContext(panels, drawerPanelId, activePanelId))
+      setUiContext(buildDashboardUiContext(panels, installedPanels, drawerPanelId, activePanelId))
       return
     }
     // Phase 3: Workspace mode uiContext is owned exclusively by AnnotationAppShell.
@@ -306,6 +389,13 @@ export function DashboardView({
   }, [
     viewMode,
     panels,
+    // Phase 1 T4b: republish whenever the installed catalog changes.
+    // Missing this dep made `uiContext.dashboard.installedWidgets` lag the
+    // actual installedPanels state — T4a fetches and optimistic updates would
+    // bump the revision but the publisher would not re-fire, so every
+    // downstream consumer (T8 staleness, T9 overlay, T11 parallel path, T13
+    // diagnostic reads) observed a stale or empty contract.
+    installedPanels,
     drawerPanelId,
     drawerPanel,
     activePanelId,
@@ -524,36 +614,126 @@ export function DashboardView({
     containerRef: dashboardContainerRef,
   })
 
-  // Fetch panels from API
+  // Fetch panels from API (visible-only; feeds `panels` → `visibleWidgets`)
+  // Phase 1 T4a: race guards added — cross-workspace and out-of-order discards.
   const fetchPanels = useCallback(async () => {
+    const capturedWorkspaceId = workspaceId
+    const fetchId = ++inflightVisibleFetchIdRef.current
     try {
       setIsLoading(true)
       setError(null)
 
-      const response = await fetch(`/api/dashboard/panels?workspaceId=${workspaceId}`)
+      const response = await fetch(`/api/dashboard/panels?workspaceId=${capturedWorkspaceId}`)
+
+      // Race guards (Phase 1 T4a)
+      if (latestWorkspaceIdRef.current !== capturedWorkspaceId) {
+        emitPhase1Counter('installed_widget_view_stale_fetch_discarded', {
+          reason: 'workspace_switch',
+          source: 'visible_panels',
+          capturedWorkspaceId,
+          currentWorkspaceId: latestWorkspaceIdRef.current,
+        })
+        return
+      }
+      if (fetchId !== inflightVisibleFetchIdRef.current) {
+        emitPhase1Counter('installed_widget_view_stale_fetch_discarded', {
+          reason: 'out_of_order',
+          source: 'visible_panels',
+          fetchId,
+          latestFetchId: inflightVisibleFetchIdRef.current,
+        })
+        return
+      }
+
       if (!response.ok) {
         throw new Error("Failed to fetch panels")
       }
 
       const data = await response.json()
+
+      // Re-check post-parse (race guards can fire on either await)
+      if (latestWorkspaceIdRef.current !== capturedWorkspaceId) return
+      if (fetchId !== inflightVisibleFetchIdRef.current) return
+
       setPanels(Array.isArray(data) ? data : data.panels || [])
 
       void debugLog({
         component: "DashboardView",
         action: "panels_loaded",
-        metadata: { workspaceId, panelCount: (Array.isArray(data) ? data : data.panels || []).length },
+        metadata: { workspaceId: capturedWorkspaceId, panelCount: (Array.isArray(data) ? data : data.panels || []).length },
       })
     } catch (err) {
-      console.error("[DashboardView] Failed to fetch panels:", err)
-      setError("Failed to load dashboard panels")
+      // Only report errors when still relevant to the current workspace
+      if (latestWorkspaceIdRef.current === capturedWorkspaceId) {
+        console.error("[DashboardView] Failed to fetch panels:", err)
+        setError("Failed to load dashboard panels")
+      }
     } finally {
-      setIsLoading(false)
+      // Only clear loading when this is the latest fetch for the current workspace
+      if (latestWorkspaceIdRef.current === capturedWorkspaceId && fetchId === inflightVisibleFetchIdRef.current) {
+        setIsLoading(false)
+      }
     }
   }, [workspaceId])
 
+  /**
+   * Phase 1 T4a: fetch the installed-widget catalog with includeHidden=true.
+   * Populates `installedPanels` via the single-owner `updateInstalledPanels`
+   * helper, which also bumps the workspace-keyed revision counter.
+   *
+   * Race guards: cross-workspace (user switches workspace mid-fetch) and
+   * out-of-order (multiple triggers, newer response applied after older one).
+   * Both guard branches emit `installed_widget_view_stale_fetch_discarded`
+   * with a `reason` dimension.
+   */
+  const fetchInstalledCatalog = useCallback(async () => {
+    const capturedWorkspaceId = workspaceId
+    const fetchId = ++inflightInstalledFetchIdRef.current
+    try {
+      const response = await fetch(`/api/dashboard/panels?workspaceId=${capturedWorkspaceId}&includeHidden=true`)
+
+      if (latestWorkspaceIdRef.current !== capturedWorkspaceId) {
+        emitPhase1Counter('installed_widget_view_stale_fetch_discarded', {
+          reason: 'workspace_switch',
+          source: 'installed_catalog',
+          capturedWorkspaceId,
+          currentWorkspaceId: latestWorkspaceIdRef.current,
+        })
+        return
+      }
+      if (fetchId !== inflightInstalledFetchIdRef.current) {
+        emitPhase1Counter('installed_widget_view_stale_fetch_discarded', {
+          reason: 'out_of_order',
+          source: 'installed_catalog',
+          fetchId,
+          latestFetchId: inflightInstalledFetchIdRef.current,
+        })
+        return
+      }
+      if (!response.ok) return
+
+      const payload = await response.json()
+      const rows: WorkspacePanel[] = Array.isArray(payload) ? payload : payload.panels || []
+
+      // Re-check post-parse
+      if (latestWorkspaceIdRef.current !== capturedWorkspaceId) return
+      if (fetchId !== inflightInstalledFetchIdRef.current) return
+
+      updateInstalledPanels(rows)
+      void debugLog({
+        component: "DashboardView",
+        action: "installed_catalog_loaded",
+        metadata: { workspaceId: capturedWorkspaceId, panelCount: rows.length, revision: getInstalledWidgetRevision(capturedWorkspaceId) },
+      })
+    } catch {
+      // Fail-open: stale installed-catalog is caught by T8 freshness check.
+    }
+  }, [workspaceId, updateInstalledPanels])
+
   useEffect(() => {
     fetchPanels()
-  }, [fetchPanels])
+    fetchInstalledCatalog()
+  }, [fetchPanels, fetchInstalledCatalog])
 
   // Listen for highlight-dashboard-panel events (from Links Overview Eye icon click)
   useEffect(() => {
@@ -592,12 +772,65 @@ export function DashboardView({
   // Hidden singleton tracking for PanelCatalog consistency
   const [hiddenSingletonTypes, setHiddenSingletonTypes] = useState<string[]>([])
 
+  // Phase 1 T4a: race guards added to the hidden-singleton sibling fetch too.
   const fetchHiddenSingletons = useCallback(async () => {
+    const capturedWorkspaceId = workspaceId
+    const fetchId = ++inflightHiddenSingletonFetchIdRef.current
     try {
-      const res = await fetch(`/api/dashboard/panels?workspaceId=${workspaceId}&includeHidden=true`)
+      const res = await fetch(`/api/dashboard/panels?workspaceId=${capturedWorkspaceId}&includeHidden=true`)
+
+      if (latestWorkspaceIdRef.current !== capturedWorkspaceId) {
+        emitPhase1Counter('installed_widget_view_stale_fetch_discarded', {
+          reason: 'workspace_switch',
+          source: 'hidden_singletons',
+          capturedWorkspaceId,
+          currentWorkspaceId: latestWorkspaceIdRef.current,
+        })
+        return
+      }
+      if (fetchId !== inflightHiddenSingletonFetchIdRef.current) {
+        emitPhase1Counter('installed_widget_view_stale_fetch_discarded', {
+          reason: 'out_of_order',
+          source: 'hidden_singletons',
+          fetchId,
+          latestFetchId: inflightHiddenSingletonFetchIdRef.current,
+        })
+        return
+      }
       if (!res.ok) return
+
       const { panels: allPanels } = await res.json()
+
+      if (latestWorkspaceIdRef.current !== capturedWorkspaceId) return
+      if (fetchId !== inflightHiddenSingletonFetchIdRef.current) return
+
       const { isSingletonPanelType } = await import('@/lib/dashboard/duplicate-family-map')
+
+      // Phase 1 T4a: dynamic import is a third suspension point. Re-check
+      // both race guards after it resolves — the workspace may have switched
+      // (Race 1) or a newer fetch may have completed (Race 2) while we were
+      // waiting on the module load.
+      if (latestWorkspaceIdRef.current !== capturedWorkspaceId) {
+        emitPhase1Counter('installed_widget_view_stale_fetch_discarded', {
+          reason: 'workspace_switch',
+          source: 'hidden_singletons',
+          capturedWorkspaceId,
+          currentWorkspaceId: latestWorkspaceIdRef.current,
+          phase: 'post_import',
+        })
+        return
+      }
+      if (fetchId !== inflightHiddenSingletonFetchIdRef.current) {
+        emitPhase1Counter('installed_widget_view_stale_fetch_discarded', {
+          reason: 'out_of_order',
+          source: 'hidden_singletons',
+          fetchId,
+          latestFetchId: inflightHiddenSingletonFetchIdRef.current,
+          phase: 'post_import',
+        })
+        return
+      }
+
       const hidden = allPanels
         .filter((p: { isVisible: boolean; deletedAt: string | null; panelType: string }) =>
           !p.isVisible && !p.deletedAt && isSingletonPanelType(p.panelType)
@@ -619,13 +852,15 @@ export function DashboardView({
       })
       fetchPanels()
       fetchHiddenSingletons()
+      // Phase 1 T4a: installed catalog refetches alongside the visible refetch.
+      fetchInstalledCatalog()
     }
 
     window.addEventListener('refresh-dashboard-panels', handleRefreshPanels)
     return () => {
       window.removeEventListener('refresh-dashboard-panels', handleRefreshPanels)
     }
-  }, [fetchPanels, fetchHiddenSingletons, workspaceId])
+  }, [fetchPanels, fetchHiddenSingletons, fetchInstalledCatalog, workspaceId])
 
   // Fetch workspaces for the current entry (excluding Dashboard)
   useEffect(() => {
@@ -1117,6 +1352,11 @@ export function DashboardView({
         // Notify Links Overview panel to refresh so it shows the hidden panel
         requestDashboardPanelRefresh()
 
+        // Phase 1 T3 refetch path: dispatch the shared refresh event so the
+        // installed-catalog refetches through the single-owner helper.
+        // requestDashboardPanelRefresh alone only notifies category listeners.
+        window.dispatchEvent(new CustomEvent('refresh-dashboard-panels'))
+
         void debugLog({
           component: "DashboardView",
           action: "panel_hidden",
@@ -1149,6 +1389,11 @@ export function DashboardView({
         // Notify Links Overview panel to refresh so it shows in Trash section
         requestDashboardPanelRefresh()
 
+        // Phase 1 T3 refetch path: dispatch the shared refresh event so the
+        // installed-catalog refetches (requestDashboardPanelRefresh alone only
+        // notifies category listeners, not fetchInstalledCatalog).
+        window.dispatchEvent(new CustomEvent('refresh-dashboard-panels'))
+
         void debugLog({
           component: "DashboardView",
           action: "panel_deleted",
@@ -1161,33 +1406,19 @@ export function DashboardView({
     [workspaceId]
   )
 
-  // Widget Architecture: Handle widget double-click to open drawer
+  // Widget Architecture: Handle widget double-click to open drawer.
+  // Phase 1 T4b: this path previously bypassed buildDashboardUiContext and
+  // manually constructed the dashboard uiContext payload inline. It is now
+  // folded through the shared publisher so installedWidgets /
+  // installedWidgetFreshness / workspaceId land consistently on every dashboard
+  // publication. The rule "no setUiContext({ mode: 'dashboard' }) outside
+  // buildDashboardUiContext" is enforced here.
   const handleWidgetDoubleClick = useCallback((panel: WorkspacePanel) => {
     setDrawerPanelId(panel.id)
     setWidgetOpen(panel.id, true) // Step 10a: register open (persists until explicitly closed)
     setStateInfoActivePanelId(panel.id) // Step 10a: set as active drawer
     if (isEntryActive) {
-      // Phase 4: Filter out workspace widgetStates when on dashboard (same as main effect)
-      // Filter by widgetId (not instanceId prefix) to avoid hiding third-party widgets
-      const allWidgetStates = getAllWidgetStates()
-      const dashboardWidgetStates = Object.fromEntries(
-        Object.entries(allWidgetStates).filter(([, state]) => state.widgetId !== 'workspace')
-      )
-      setUiContext({
-        mode: 'dashboard',
-        dashboard: {
-          entryId,
-          entryName,
-          visibleWidgets,
-          openDrawer: {
-            panelId: panel.id,
-            title: panel.title ?? panel.panelType,
-            type: panel.panelType,
-          },
-          focusedPanelId: activePanelId,
-          widgetStates: dashboardWidgetStates,
-        },
-      })
+      setUiContext(buildDashboardUiContext(panels, installedPanels, panel.id, activePanelId))
     }
     // ActionTrace Phase B: Record open_panel at commit point (direct_ui only — double-click)
     // MUST fire before setLastAction so the freshness guard ref is set and blocks the redundant legacy write.
@@ -1213,7 +1444,24 @@ export function DashboardView({
       action: "drawer_opened",
       metadata: { panelId: panel.id, panelType: panel.panelType },
     })
-  }, [activePanelId, entryId, entryName, isEntryActive, setLastAction, setUiContext, visibleWidgets, recordExecutedAction])
+  }, [
+    activePanelId,
+    entryId,
+    entryName,
+    isEntryActive,
+    setLastAction,
+    setUiContext,
+    visibleWidgets,
+    recordExecutedAction,
+    // Phase 1 T4b: closed-over values used to build the dashboard uiContext
+    // payload must appear in deps so rebuilding the callback after either set
+    // of panels changes — otherwise the inline call to
+    // buildDashboardUiContext(panels, installedPanels, ...) publishes stale
+    // data even though the contract itself was updated.
+    panels,
+    installedPanels,
+    buildDashboardUiContext,
+  ])
 
   // Widget Architecture: Handle drawer close.
   // Use the functional setter so `closingPanelId` is always the latest drawer
@@ -1355,8 +1603,18 @@ export function DashboardView({
           p.id === panelId ? { ...p, title: newTitle } : p
         )
         setPanels(next)
+
+        // Phase 1 T3 rename (optimistic): apply the same title-swap to
+        // installedPanels through the single-owner helper. This bumps the
+        // workspace-keyed revision exactly once for the rename, and keeps
+        // the synchronous publish below from carrying a stale installed-catalog.
+        const nextInstalled = installedPanels.map((p) =>
+          p.id === panelId ? { ...p, title: newTitle } : p
+        )
+        updateInstalledPanels(nextInstalled)
+
         if (isEntryActive && viewMode === 'dashboard') {
-          setUiContext(buildDashboardUiContext(next, drawerPanelId, activePanelId))
+          setUiContext(buildDashboardUiContext(next, nextInstalled, drawerPanelId, activePanelId))
         }
 
         // Notify Links Overview and other panels that panel data changed
@@ -1371,7 +1629,22 @@ export function DashboardView({
         console.error("[DashboardView] Failed to update panel title:", err)
       }
     },
-    [workspaceId, isEntryActive, viewMode, setUiContext, buildDashboardUiContext, drawerPanelId, activePanelId, panels]
+    [
+      workspaceId,
+      isEntryActive,
+      viewMode,
+      setUiContext,
+      buildDashboardUiContext,
+      drawerPanelId,
+      activePanelId,
+      panels,
+      // Phase 1 T3 rename (optimistic): the callback reads installedPanels and
+      // calls updateInstalledPanels. Without these deps, a rename fired after
+      // a catalog refetch would splice the old installedPanels, erasing the
+      // refetched rows when it writes back through updateInstalledPanels.
+      installedPanels,
+      updateInstalledPanels,
+    ]
   )
 
   // Handle reset layout
@@ -1390,6 +1663,10 @@ export function DashboardView({
       const data = await response.json()
       setPanels(data.panels || [])
 
+      // Phase 1 T4a: reset-layout response changes localPanels; trigger
+      // installed-catalog refetch so the single-owner path bumps the revision.
+      fetchInstalledCatalog()
+
       void debugLog({
         component: "DashboardView",
         action: "layout_reset",
@@ -1398,7 +1675,7 @@ export function DashboardView({
     } catch (err) {
       console.error("[DashboardView] Failed to reset layout:", err)
     }
-  }, [workspaceId])
+  }, [workspaceId, fetchInstalledCatalog])
 
   // Handle panel position update (persist to server)
   const handlePositionChange = useCallback(
@@ -2162,7 +2439,13 @@ export function DashboardView({
               <div className="mt-6">
                 <AddPanelButton
                   workspaceId={workspaceId}
-                  onPanelAdded={() => fetchPanels()}
+                  onPanelAdded={() => {
+                    // Phase 1 T3 create (refetch path): empty-dashboard create
+                    // site. Must refetch BOTH visible panels AND the installed
+                    // catalog so `installedPanels` picks up the new row.
+                    fetchPanels()
+                    fetchInstalledCatalog()
+                  }}
                 />
               </div>
             </div>
@@ -2391,7 +2674,10 @@ export function DashboardView({
                 workspaceId={workspaceId}
                 existingPanelTypes={[...panels.filter(p => !p.deletedAt).map(p => p.panelType), ...hiddenSingletonTypes]}
                 onPanelAdded={() => {
+                  // Phase 1 T3 create (refetch path): populated-dashboard site.
+                  // Must refetch both visible panels and the installed catalog.
                   fetchPanels()
+                  fetchInstalledCatalog()
                   setIsPanelCatalogOpen(false)
                 }}
                 onClose={() => setIsPanelCatalogOpen(false)}

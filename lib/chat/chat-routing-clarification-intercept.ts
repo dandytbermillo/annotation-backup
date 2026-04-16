@@ -73,6 +73,7 @@ import {
 } from '@/lib/chat/clarification-llm-fallback'
 import { isExplicitCommand, isSelectionOnly, resolveScopeCue, canonicalizeCommandInput, isStrictExactMatch, evaluateDeterministicDecision, isVerifyOpenQuestion, findPoliteWrapperExactMatch, isStrictExactMode, type ScopeCueResult } from '@/lib/chat/input-classifiers'
 import { isSelectionLike } from '@/lib/chat/grounding-set'
+import { isStateInfoQuestion } from '@/lib/chat/state-info-resolvers'
 import {
   reconstructSnapshotData,
   toCanonicalTokens,
@@ -1314,7 +1315,16 @@ export async function handleClarificationIntercept(
     // Active clarification bounded arbiter: when live clarification exists, command-shaped
     // inputs must NOT bypass label matching. They should reach the bounded LLM at the
     // unresolved hook. Only allow bypass when no live clarification is present.
-    const hasLiveClarificationForBypass = pendingOptions.length > 0 || !!lastClarification || !!clarificationSnapshot
+    //
+    // Phase 1.5 T19: state-info questions (e.g., `is links panel f open?`) must
+    // ALWAYS escape the live-clarification gate so they reach Tier 4/5 state-info
+    // routing. Without this exemption, a state-info question fired while a
+    // `links panel` family clarifier is live stays locked in selection flow and
+    // is hijacked into a bounded-selection open. The shared helper from
+    // state-info-resolvers.ts is the sole detection surface.
+    const hasLiveClarificationForBypass =
+      (pendingOptions.length > 0 || !!lastClarification || !!clarificationSnapshot)
+      && !isStateInfoQuestion(trimmedInput)
     let commandBypassesLabelMatching =
       (isNewQuestionOrCommandDetected || inputIsExplicitCommand)
       && !inputIsSelectionLike
